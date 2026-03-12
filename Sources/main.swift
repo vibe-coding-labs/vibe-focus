@@ -198,19 +198,20 @@ class HotKeyManager {
 class WindowManager {
     static let shared = WindowManager()
 
-    private let savedStateKey = "savedWindowState"
+    private let savedStatesKey = "savedWindowStates"
+    private var windowElementsByStateID: [String: AXUIElement] = [:]
     private var lastWindowElement: AXUIElement?
     private var lastWindowToken: WindowToken?
     private var lastWindowFrame: CGRect?
     private var lastTargetFrame: CGRect?
-    private var savedWindowState: SavedWindowState?
-    private var isOnMainScreen = false
+    private var savedWindowStates: [SavedWindowState] = []
     private var didPromptForAccessibility = false
     private let frameTolerance: CGFloat = 10
     private let axWindowNumberAttribute = "AXWindowNumber"
     private let axFrameAttribute = "AXFrame"
 
     private struct WindowToken {
+        let stateID: String
         let pid: pid_t
         let bundleIdentifier: String?
         let appName: String?
@@ -237,6 +238,7 @@ class WindowManager {
     }
 
     private struct SavedWindowState: Codable {
+        let id: String
         let pid: Int32
         let bundleIdentifier: String?
         let appName: String?
@@ -261,11 +263,9 @@ class WindowManager {
     }
 
     private init() {
-        savedWindowState = loadSavedWindowState()
-        if let savedWindowState {
-            hydrateMemory(from: savedWindowState, window: nil)
-            isOnMainScreen = false
-            log("Loaded persisted window state from disk")
+        savedWindowStates = loadSavedWindowStates()
+        if !savedWindowStates.isEmpty {
+            log("Loaded persisted window states from disk: \(savedWindowStates.count)")
         }
     }
 
@@ -350,6 +350,7 @@ class WindowManager {
         }
 
         let savedState = SavedWindowState(
+            id: UUID().uuidString,
             pid: frontApp.processIdentifier,
             bundleIdentifier: bundleIdentifier,
             appName: appName,
@@ -360,18 +361,8 @@ class WindowManager {
             savedAt: Date()
         )
 
-        lastWindowElement = windowAX
-        lastWindowToken = WindowToken(
-            pid: frontApp.processIdentifier,
-            bundleIdentifier: bundleIdentifier,
-            appName: appName,
-            windowNumber: windowNumber,
-            title: windowTitle
-        )
-        lastWindowFrame = currentFrame
-        lastTargetFrame = targetFrame
-        saveWindowState(savedState)
-        isOnMainScreen = true
+        let persistedState = saveWindowState(savedState, window: windowAX)
+        hydrateMemory(from: persistedState, window: windowAX)
         log("✅ MOVED AND MAXIMIZED ON TARGET SCREEN")
     }
 
@@ -384,14 +375,14 @@ class WindowManager {
         }
 
         if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
-            if let savedWindowState {
-                hydrateMemory(from: savedWindowState, window: nil)
+            if shouldRestoreCurrentWindow() == false {
+                log("No saved window to restore")
+                return
             }
         }
 
         guard let token = lastWindowToken, let frame = lastWindowFrame else {
-            log("No saved window to restore")
-            isOnMainScreen = false
+            log("No active window state to restore")
             return
         }
 
@@ -429,12 +420,7 @@ class WindowManager {
             return
         }
 
-        isOnMainScreen = false
-        lastWindowElement = nil
-        lastWindowToken = nil
-        lastWindowFrame = nil
-        lastTargetFrame = nil
-        clearSavedWindowState()
+        resetActiveWindowContext(removeState: true)
         log("✅ RESTORED")
     }
 
@@ -468,45 +454,27 @@ class WindowManager {
     }
 
     private func shouldRestoreCurrentWindow() -> Bool {
-        if isOnMainScreen {
-            return true
-        }
-
         if !hasAccessibilityPermission() {
             return shouldRestoreCurrentWindowViaSystemEvents()
         }
 
-        guard let savedWindowState = savedWindowState ?? loadSavedWindowState(),
+        guard !savedWindowStates.isEmpty,
               let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
               let currentFrame = frame(of: focusedWindow) else {
             return false
         }
 
-        guard framesMatch(currentFrame, savedWindowState.targetFrame.cgRect) else {
+        guard let matchedState = matchingSavedState(
+            for: frontApp,
+            window: focusedWindow,
+            currentFrame: currentFrame
+        ) else {
             return false
         }
 
-        if let bundleIdentifier = savedWindowState.bundleIdentifier,
-           frontApp.bundleIdentifier != bundleIdentifier {
-            return false
-        }
-
-        if let appName = savedWindowState.appName,
-           let currentAppName = frontApp.localizedName,
-           currentAppName != appName {
-            return false
-        }
-
-        if let savedTitle = savedWindowState.title,
-           let currentTitle = title(of: focusedWindow),
-           currentTitle != savedTitle {
-            log("Persisted restore title mismatch; continuing because target frame matched")
-        }
-
-        hydrateMemory(from: savedWindowState, window: focusedWindow)
-        isOnMainScreen = true
-        log("Detected persisted moved window; next toggle will restore original frame")
+        hydrateMemory(from: matchedState, window: focusedWindow)
+        log("Detected moved window state for current AX window: \(matchedState.id)")
         return true
     }
 
@@ -526,6 +494,11 @@ class WindowManager {
             return lastWindowElement
         }
 
+        if let savedWindow = windowElementsByStateID[token.stateID], frame(of: savedWindow) != nil {
+            log("Restoring using cached window reference for state \(token.stateID)")
+            return savedWindow
+        }
+
         for app in candidateApplications(for: token) {
             if let window = restoreWindow(in: app, using: token) {
                 return window
@@ -538,6 +511,86 @@ class WindowManager {
         }
 
         return nil
+    }
+
+    private func matchingSavedState(
+        for app: NSRunningApplication,
+        window: AXUIElement,
+        currentFrame: CGRect
+    ) -> SavedWindowState? {
+        let currentWindowNumber = windowNumber(for: window)
+        let currentTitle = title(of: window)
+
+        for state in savedWindowStates.reversed() {
+            if let cachedWindow = windowElementsByStateID[state.id],
+               CFEqual(cachedWindow, window),
+               framesMatch(currentFrame, state.targetFrame.cgRect) {
+                return state
+            }
+        }
+
+        return savedWindowStates.reversed().first { state in
+            framesMatch(currentFrame, state.targetFrame.cgRect) &&
+            stateMatchesIdentity(
+                state,
+                pid: app.processIdentifier,
+                bundleIdentifier: app.bundleIdentifier,
+                appName: app.localizedName,
+                windowNumber: currentWindowNumber,
+                title: currentTitle
+            )
+        }
+    }
+
+    private func matchingSavedState(
+        for app: NSRunningApplication,
+        snapshot: ScriptWindowSnapshot
+    ) -> SavedWindowState? {
+        return savedWindowStates.reversed().first { state in
+            framesMatch(snapshot.frame, state.targetFrame.cgRect) &&
+            stateMatchesIdentity(
+                state,
+                pid: app.processIdentifier,
+                bundleIdentifier: app.bundleIdentifier,
+                appName: app.localizedName ?? snapshot.appName,
+                windowNumber: nil,
+                title: snapshot.title
+            )
+        }
+    }
+
+    private func stateMatchesIdentity(
+        _ state: SavedWindowState,
+        pid: pid_t,
+        bundleIdentifier: String?,
+        appName: String?,
+        windowNumber: Int?,
+        title: String?
+    ) -> Bool {
+        if let stateBundle = state.bundleIdentifier,
+           let bundleIdentifier,
+           stateBundle != bundleIdentifier {
+            return false
+        }
+
+        if let stateAppName = state.appName,
+           let appName,
+           state.bundleIdentifier == nil,
+           stateAppName != appName {
+            return false
+        }
+
+        if let stateWindowNumber = state.windowNumber,
+           let windowNumber {
+            return stateWindowNumber == windowNumber
+        }
+
+        if let stateTitle = normalizedTitle(state.title),
+           let title = normalizedTitle(title) {
+            return stateTitle == title
+        }
+
+        return state.pid == pid
     }
 
     private func candidateApplications(for token: WindowToken) -> [NSRunningApplication] {
@@ -589,6 +642,7 @@ class WindowManager {
         let bundleIdentifier = frontApp.bundleIdentifier
         let appName = frontApp.localizedName ?? snapshot.appName
         let savedState = SavedWindowState(
+            id: UUID().uuidString,
             pid: frontApp.processIdentifier,
             bundleIdentifier: bundleIdentifier,
             appName: appName,
@@ -607,22 +661,21 @@ class WindowManager {
             return
         }
 
-        saveWindowState(savedState)
-        hydrateMemory(from: savedState, window: nil)
-        isOnMainScreen = true
+        let persistedState = saveWindowState(savedState)
+        hydrateMemory(from: persistedState, window: nil)
         log("✅ MOVED WITH SYSTEM EVENTS FALLBACK")
     }
 
     private func restoreViaSystemEvents() {
         if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
-            if let savedWindowState {
-                hydrateMemory(from: savedWindowState, window: nil)
+            if shouldRestoreCurrentWindowViaSystemEvents() == false {
+                log("No saved window to restore via System Events")
+                return
             }
         }
 
         guard let token = lastWindowToken, let frame = lastWindowFrame else {
-            log("No saved window to restore via System Events")
-            isOnMainScreen = false
+            log("No active window state to restore via System Events")
             return
         }
 
@@ -638,12 +691,7 @@ class WindowManager {
                     return
                 }
 
-                isOnMainScreen = false
-                lastWindowElement = nil
-                lastWindowToken = nil
-                lastWindowFrame = nil
-                lastTargetFrame = nil
-                clearSavedWindowState()
+                resetActiveWindowContext(removeState: true)
                 log("✅ RESTORED WITH SYSTEM EVENTS FALLBACK")
                 return
             }
@@ -653,31 +701,21 @@ class WindowManager {
     }
 
     private func shouldRestoreCurrentWindowViaSystemEvents() -> Bool {
-        guard let savedWindowState = savedWindowState ?? loadSavedWindowState(),
+        guard !savedWindowStates.isEmpty,
               let frontApp = NSWorkspace.shared.frontmostApplication,
               let snapshot = systemEventsSnapshot(forPID: frontApp.processIdentifier) else {
             return false
         }
 
-        guard framesMatch(snapshot.frame, savedWindowState.targetFrame.cgRect) else {
+        guard let matchedState = matchingSavedState(
+            for: frontApp,
+            snapshot: snapshot
+        ) else {
             return false
         }
 
-        if let bundleIdentifier = savedWindowState.bundleIdentifier,
-           frontApp.bundleIdentifier != bundleIdentifier {
-            return false
-        }
-
-        if let appName = savedWindowState.appName {
-            let currentAppName = frontApp.localizedName ?? snapshot.appName
-            if currentAppName != appName {
-                return false
-            }
-        }
-
-        hydrateMemory(from: savedWindowState, window: nil)
-        isOnMainScreen = true
-        log("Detected persisted moved window via System Events; next toggle will restore original frame")
+        hydrateMemory(from: matchedState, window: nil)
+        log("Detected moved window state via System Events: \(matchedState.id)")
         return true
     }
 
@@ -914,33 +952,62 @@ class WindowManager {
         abs(lhs.height - rhs.height) <= frameTolerance
     }
 
-    private func saveWindowState(_ state: SavedWindowState) {
-        savedWindowState = state
-        guard let data = try? JSONEncoder().encode(state) else {
-            log("Failed to encode saved window state")
-            return
+    @discardableResult
+    private func saveWindowState(_ state: SavedWindowState, window: AXUIElement? = nil) -> SavedWindowState {
+        savedWindowStates.removeAll { existing in
+            shouldReplaceSavedState(existing, with: state, currentWindow: window)
         }
-        UserDefaults.standard.set(data, forKey: savedStateKey)
-        log("Persisted window state to UserDefaults")
-    }
+        savedWindowStates.append(state)
+        savedWindowStates.sort { $0.savedAt < $1.savedAt }
 
-    private func loadSavedWindowState() -> SavedWindowState? {
-        guard let data = UserDefaults.standard.data(forKey: savedStateKey),
-              let state = try? JSONDecoder().decode(SavedWindowState.self, from: data) else {
-            return nil
+        if let window {
+            windowElementsByStateID[state.id] = window
         }
+
+        persistSavedWindowStates()
+        log("Persisted window states to UserDefaults: \(savedWindowStates.count)")
         return state
     }
 
-    private func clearSavedWindowState() {
-        savedWindowState = nil
-        UserDefaults.standard.removeObject(forKey: savedStateKey)
-        log("Cleared persisted window state")
+    private func loadSavedWindowStates() -> [SavedWindowState] {
+        guard let data = UserDefaults.standard.data(forKey: savedStatesKey),
+              let states = try? JSONDecoder().decode([SavedWindowState].self, from: data) else {
+            return []
+        }
+        return states
+    }
+
+    private func persistSavedWindowStates() {
+        guard let data = try? JSONEncoder().encode(savedWindowStates) else {
+            log("Failed to encode saved window states")
+            return
+        }
+        UserDefaults.standard.set(data, forKey: savedStatesKey)
+    }
+
+    private func clearSavedWindowState(id: String?) {
+        guard let id else { return }
+        savedWindowStates.removeAll { $0.id == id }
+        windowElementsByStateID.removeValue(forKey: id)
+        persistSavedWindowStates()
+        log("Cleared persisted window state: \(id)")
+    }
+
+    private func resetActiveWindowContext(removeState: Bool) {
+        let activeStateID = lastWindowToken?.stateID
+        lastWindowElement = nil
+        lastWindowToken = nil
+        lastWindowFrame = nil
+        lastTargetFrame = nil
+        if removeState {
+            clearSavedWindowState(id: activeStateID)
+        }
     }
 
     private func hydrateMemory(from state: SavedWindowState, window: AXUIElement?) {
-        lastWindowElement = window
+        lastWindowElement = window ?? windowElementsByStateID[state.id]
         lastWindowToken = WindowToken(
+            stateID: state.id,
             pid: state.pid,
             bundleIdentifier: state.bundleIdentifier,
             appName: state.appName,
@@ -949,6 +1016,51 @@ class WindowManager {
         )
         lastWindowFrame = state.originalFrame.cgRect
         lastTargetFrame = state.targetFrame.cgRect
-        savedWindowState = state
+    }
+
+    private func shouldReplaceSavedState(
+        _ existing: SavedWindowState,
+        with incoming: SavedWindowState,
+        currentWindow: AXUIElement?
+    ) -> Bool {
+        if existing.id == incoming.id {
+            return true
+        }
+
+        if let currentWindow,
+           let cachedWindow = windowElementsByStateID[existing.id],
+           CFEqual(cachedWindow, currentWindow) {
+            return true
+        }
+
+        if let existingBundle = existing.bundleIdentifier,
+           let incomingBundle = incoming.bundleIdentifier,
+           existingBundle != incomingBundle {
+            return false
+        }
+
+        if let existingNumber = existing.windowNumber,
+           let incomingNumber = incoming.windowNumber {
+            return existingNumber == incomingNumber
+        }
+
+        if let existingTitle = normalizedTitle(existing.title),
+           let incomingTitle = normalizedTitle(incoming.title),
+           existingTitle == incomingTitle {
+            if existing.bundleIdentifier == incoming.bundleIdentifier || existing.appName == incoming.appName {
+                return framesMatch(existing.originalFrame.cgRect, incoming.originalFrame.cgRect) ||
+                    framesMatch(existing.targetFrame.cgRect, incoming.targetFrame.cgRect)
+            }
+        }
+
+        return false
+    }
+
+    private func normalizedTitle(_ title: String?) -> String? {
+        guard let title else {
+            return nil
+        }
+        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
     }
 }
