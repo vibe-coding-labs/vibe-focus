@@ -1,23 +1,26 @@
 #!/bin/bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="VibeFocus"
 EXECUTABLE_NAME="VibeFocusHotkeys"
-CERT_NAME="VibeFocus Local Code Signing"
-APP_DIR="$HOME/Applications/$APP_NAME.app"
+VERSION="$(awk -F'\"' '/static let current/ {print $2}' "$ROOT_DIR/Sources/AppVersion.swift")"
+VERSION="${VERSION:-0.0.0}"
+OUTPUT_DIR="${1:-$ROOT_DIR/dist}"
+
+APP_DIR="$OUTPUT_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PLIST_PATH="$CONTENTS_DIR/Info.plist"
-VERSION="$(awk -F'\"' '/static let current/ {print $2}' "$(dirname "$0")/Sources/AppVersion.swift")"
-VERSION="${VERSION:-0.0.0}"
 
 echo "== Building release binary =="
 swift build -c release
 
 echo "== Preparing app bundle =="
+rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp ".build/release/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
+cp "$ROOT_DIR/.build/release/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
 
 cat > "$PLIST_PATH" <<PLIST
@@ -54,20 +57,12 @@ cat > "$PLIST_PATH" <<PLIST
 PLIST
 
 if command -v codesign >/dev/null 2>&1; then
-  if security find-identity -v -p codesigning | grep -F "$CERT_NAME" >/dev/null 2>&1; then
-    echo "== Applying stable code signature: $CERT_NAME =="
-    codesign --force --deep --sign "$CERT_NAME" "$APP_DIR" >/dev/null
-  else
-    echo "== Applying ad-hoc code signature =="
-    codesign --force --deep --sign - "$APP_DIR" >/dev/null
-  fi
+  echo "== Applying ad-hoc code signature =="
+  codesign --force --deep --sign - "$APP_DIR" >/dev/null
 fi
 
-echo "== Restarting app =="
-pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
-open "$APP_DIR"
+ZIP_NAME="${APP_NAME}-${VERSION}-macos.zip"
+mkdir -p "$OUTPUT_DIR"
+ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$OUTPUT_DIR/$ZIP_NAME"
 
-echo
-echo "Installed to: $APP_DIR"
-echo "If this is the first launch, grant Accessibility access to:"
-echo "  $APP_DIR"
+echo "== Package ready: $OUTPUT_DIR/$ZIP_NAME =="

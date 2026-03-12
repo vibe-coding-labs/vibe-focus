@@ -113,10 +113,10 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(22)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.86))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
                 )
         )
@@ -182,6 +182,75 @@ private struct SettingsRow<Accessory: View>: View {
 
 private struct SettingsView: View {
     @EnvironmentObject private var hotKeyManager: HotKeyManager
+    @StateObject private var spaceController = SpaceController.shared
+    @AppStorage(SpacePreferences.integrationEnabledKey) private var spaceIntegrationEnabled = true
+    @AppStorage(SpacePreferences.restoreStrategyKey) private var restoreStrategyRaw = SpaceRestoreStrategy.switchToOriginal.rawValue
+
+    private var appVersionDisplay: String {
+        let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let version = (bundleVersion?.isEmpty == false) ? bundleVersion! : AppVersion.current
+        return "v\(version)"
+    }
+
+    private var spaceEffectiveEnabled: Bool {
+        spaceIntegrationEnabled && spaceController.availability == .available
+    }
+
+    private var spaceStatusTitle: String {
+        switch spaceController.availability {
+        case .available:
+            return "可用"
+        case .notInstalled:
+            return "未安装"
+        case .unavailable:
+            return "不可用"
+        case .unknown:
+            return "未检测"
+        }
+    }
+
+    private var spaceStatusTint: Color {
+        switch spaceController.availability {
+        case .available:
+            return .green
+        case .notInstalled, .unknown:
+            return .gray
+        case .unavailable:
+            return .orange
+        }
+    }
+
+    private var spaceStatusDetail: String {
+        switch spaceController.availability {
+        case .available:
+            return "检测到 yabai，可启用跨工作区移动。"
+        case .notInstalled:
+            return "未检测到 yabai，保持当前行为。"
+        case .unavailable:
+            return "yabai 未就绪，跨工作区不可用。"
+        case .unknown:
+            return "尚未检测 yabai 状态。"
+        }
+    }
+
+    private var spaceSidebarValue: String {
+        if spaceEffectiveEnabled {
+            return "已启用"
+        }
+        if spaceIntegrationEnabled {
+            switch spaceController.availability {
+            case .notInstalled:
+                return "未安装"
+            case .unavailable:
+                return "不可用"
+            case .available:
+                return "已关闭"
+            case .unknown:
+                return "未检测"
+            }
+        }
+        return "已关闭"
+    }
 
     var body: some View {
         ZStack {
@@ -199,7 +268,7 @@ private struct SettingsView: View {
             HStack(alignment: .top, spacing: 22) {
                 VStack(alignment: .leading, spacing: 22) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(
                                 LinearGradient(
                                     colors: [Color.accentColor.opacity(0.98), Color.accentColor.opacity(0.72)],
@@ -235,8 +304,10 @@ private struct SettingsView: View {
 
                     VStack(alignment: .leading, spacing: 14) {
                         SidebarInfoCard(title: "菜单栏标题", value: "VibeFocus")
+                        SidebarInfoCard(title: "版本", value: appVersionDisplay)
                         SidebarInfoCard(title: "当前快捷键", value: hotKeyManager.currentHotKey.displayString)
                         SidebarInfoCard(title: "辅助功能权限", value: hotKeyManager.accessibilityGranted ? "已授权" : "未授权")
+                        SidebarInfoCard(title: "跨工作区", value: spaceSidebarValue)
                     }
 
                     if !hotKeyManager.accessibilityGranted {
@@ -252,10 +323,10 @@ private struct SettingsView: View {
                 .frame(width: 236, alignment: .leading)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .background(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color(nsColor: .controlBackgroundColor).opacity(0.68))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
                         )
                 )
@@ -326,13 +397,71 @@ private struct SettingsView: View {
                         }
                     }
 
+                    SettingsCard(
+                        title: "跨工作区（高级）",
+                        subtitle: "检测到 yabai 后自动启用跨工作区移动；未安装或不可用时保持当前能力。"
+                    ) {
+                        SettingsRow(
+                            title: "yabai 状态",
+                            detail: spaceStatusDetail
+                        ) {
+                            HStack(spacing: 10) {
+                                SettingsStatusPill(
+                                    title: spaceStatusTitle,
+                                    tint: spaceStatusTint
+                                )
+
+                                Button("重新检测") {
+                                    spaceController.refreshAvailability(force: true)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        if let error = spaceController.lastErrorMessage,
+                           spaceController.availability == .unavailable,
+                           !error.isEmpty {
+                            Text("yabai 返回：\(error)")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "启用跨工作区",
+                            detail: "默认开启，yabai 不可用时不会影响现有行为。"
+                        ) {
+                            Toggle("", isOn: $spaceIntegrationEnabled)
+                                .labelsHidden()
+                        }
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "恢复策略",
+                            detail: "决定恢复窗口时是切回原工作区，还是把窗口拉到当前工作区。"
+                        ) {
+                            Picker("", selection: $restoreStrategyRaw) {
+                                Text("切回原工作区").tag(SpaceRestoreStrategy.switchToOriginal.rawValue)
+                                Text("拉到当前工作区").tag(SpaceRestoreStrategy.pullToCurrent.rawValue)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 220)
+                        }
+                    }
+
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .padding(28)
         }
-        .frame(width: 820, height: 520)
+        .frame(width: 820, height: 600)
+        .onAppear {
+            spaceController.refreshAvailability(force: true)
+        }
     }
 }
 
@@ -353,7 +482,7 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
         )
 
         let window = FocusableSettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -471,4 +600,3 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 }
-
