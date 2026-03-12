@@ -1506,25 +1506,6 @@ class WindowManager {
         abs(lhs.height - rhs.height) <= frameTolerance
     }
 
-    private func isLikelyMovedPresentation(_ currentFrame: CGRect, targetFrame: CGRect) -> Bool {
-        if framesMatch(currentFrame, targetFrame) {
-            return true
-        }
-
-        let expandedTarget = targetFrame.insetBy(dx: -frameTolerance * 4, dy: -frameTolerance * 4)
-        let originClose = expandedTarget.contains(currentFrame.origin)
-
-        let intersection = currentFrame.intersection(targetFrame)
-        let intersectionArea = max(0, intersection.width) * max(0, intersection.height)
-        let currentArea = max(1, currentFrame.width * currentFrame.height)
-        let overlapRatio = intersectionArea / currentArea
-
-        let widthCloseEnough = abs(currentFrame.width - targetFrame.width) <= 80
-        let heightCloseEnough = abs(currentFrame.height - targetFrame.height) <= 80
-
-        return originClose && (overlapRatio >= 0.7 || (widthCloseEnough && heightCloseEnough))
-    }
-
     @discardableResult
     private func saveWindowState(_ state: SavedWindowState, window: AXUIElement? = nil) -> SavedWindowState {
         savedWindowStates.removeAll { existing in
@@ -1615,11 +1596,4 @@ class WindowManager {
         return existingID == incomingID
     }
 
-    private func normalizedTitle(_ title: String?) -> String? {
-        guard let title else {
-            return nil
-        }
-        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty ? nil : normalized
-    }
 }
