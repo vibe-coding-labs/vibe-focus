@@ -11,11 +11,14 @@ class WindowManager {
     static let shared = WindowManager()
 
     let savedStatesKey = "savedWindowStates"
+    let spaceController = SpaceController.shared
     var windowElementsByStateID: [String: AXUIElement] = [:]
     var lastWindowElement: AXUIElement?
     var lastWindowToken: WindowToken?
     var lastWindowFrame: CGRect?
     var lastTargetFrame: CGRect?
+    var lastSourceSpaceIndex: Int?
+    var lastTargetSpaceIndex: Int?
     var savedWindowStates: [SavedWindowState] = []
     var didPromptForAccessibility = false
     let frameTolerance: CGFloat = 10
@@ -60,6 +63,8 @@ class WindowManager {
         let title: String?
         let originalFrame: RectPayload
         let targetFrame: RectPayload
+        let sourceSpaceIndex: Int?
+        let targetSpaceIndex: Int?
         let savedAt: Date
     }
 
@@ -130,6 +135,8 @@ class WindowManager {
             return
         }
 
+        let spaceContext = spaceController.captureSpaceContext(windowID: currentWindowID)
+
         guard isAttributeSettable(windowAX, attribute: kAXPositionAttribute) else {
             log("Window position is not settable")
             return
@@ -179,6 +186,8 @@ class WindowManager {
             title: windowTitle,
             originalFrame: RectPayload(currentFrame),
             targetFrame: RectPayload(targetFrame),
+            sourceSpaceIndex: spaceContext.sourceSpaceIndex,
+            targetSpaceIndex: spaceContext.targetSpaceIndex,
             savedAt: Date()
         )
 
@@ -206,6 +215,8 @@ class WindowManager {
             log("No active window state to restore")
             return
         }
+
+        applySpaceStrategyForRestore(windowID: token.windowID)
 
         guard let window = restoreWindow(using: token) else {
             log("Window not found")
@@ -283,11 +294,11 @@ class WindowManager {
               let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
               let currentWindowID = windowHandle(for: focusedWindow) else {
-            return false
+            return shouldRestoreAcrossSpaces()
         }
 
         guard let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) else {
-            return false
+            return shouldRestoreAcrossSpaces()
         }
 
         hydrateMemory(from: matchedState, window: focusedWindow)
@@ -321,6 +332,59 @@ class WindowManager {
         }
 
         return nil
+    }
+
+    func shouldRestoreAcrossSpaces() -> Bool {
+        spaceController.refreshAvailabilityIfNeeded()
+        guard spaceController.isEnabled else {
+            return false
+        }
+
+        guard let currentSpace = spaceController.currentSpaceIndex(),
+              let candidate = savedWindowStates.last,
+              let sourceSpace = candidate.sourceSpaceIndex,
+              sourceSpace != currentSpace else {
+            return false
+        }
+
+        hydrateMemory(from: candidate, window: nil)
+        log("Detected moved window state across spaces: source=\(sourceSpace) current=\(currentSpace)")
+        return true
+    }
+
+    func applySpaceStrategyForRestore(windowID: UInt32?) {
+        guard let windowID else { return }
+
+        spaceController.refreshAvailabilityIfNeeded()
+        guard spaceController.isEnabled else {
+            return
+        }
+
+        guard let currentSpace = spaceController.currentSpaceIndex() else {
+            return
+        }
+
+        switch SpacePreferences.restoreStrategy {
+        case .switchToOriginal:
+            if let sourceSpace = lastSourceSpaceIndex, sourceSpace != currentSpace {
+                if spaceController.focusSpace(sourceSpace) {
+                    log("Focused space \(sourceSpace) for restore")
+                } else {
+                    log("Failed to focus space \(sourceSpace) for restore")
+                }
+            }
+            _ = spaceController.focusWindow(windowID)
+        case .pullToCurrent:
+            if let sourceSpace = lastSourceSpaceIndex, sourceSpace != currentSpace {
+                if spaceController.moveWindow(windowID, toSpaceIndex: currentSpace, focus: true) {
+                    log("Moved window to current space \(currentSpace) for restore")
+                } else {
+                    log("Failed to move window to current space \(currentSpace)")
+                }
+            } else {
+                _ = spaceController.focusWindow(windowID)
+            }
+        }
     }
 
 }

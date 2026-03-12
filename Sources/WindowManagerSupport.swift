@@ -65,6 +65,8 @@ extension WindowManager {
             title: snapshot.title,
             originalFrame: RectPayload(snapshot.frame),
             targetFrame: RectPayload(targetFrame),
+            sourceSpaceIndex: nil,
+            targetSpaceIndex: nil,
             savedAt: Date()
         )
 
@@ -391,6 +393,8 @@ extension WindowManager {
         lastWindowToken = nil
         lastWindowFrame = nil
         lastTargetFrame = nil
+        lastSourceSpaceIndex = nil
+        lastTargetSpaceIndex = nil
         if removeState {
             clearSavedWindowState(id: activeStateID)
         }
@@ -409,6 +413,8 @@ extension WindowManager {
         )
         lastWindowFrame = state.originalFrame.cgRect
         lastTargetFrame = state.targetFrame.cgRect
+        lastSourceSpaceIndex = state.sourceSpaceIndex
+        lastTargetSpaceIndex = state.targetSpaceIndex
     }
 
     func shouldReplaceSavedState(
