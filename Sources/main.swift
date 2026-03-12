@@ -5,6 +5,9 @@ import ApplicationServices.HIServices
 import CoreFoundation
 import Foundation
 
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(_ element: AXUIElement, _ out: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 // 全局日志函数
 private func log(_ message: String) {
     NSLog("[VibeFocus] %@", message)
@@ -37,9 +40,13 @@ struct HotKeyConfiguration: Codable, Equatable {
     let modifiers: UInt32
 
     static let userDefaultsKey = "hotKeyConfiguration"
-    static let `default` = HotKeyConfiguration(
+    static let legacyDefault = HotKeyConfiguration(
         keyCode: UInt32(kVK_ANSI_M),
         modifiers: UInt32(controlKey | optionKey | cmdKey)
+    )
+    static let `default` = HotKeyConfiguration(
+        keyCode: UInt32(kVK_ANSI_M),
+        modifiers: UInt32(controlKey)
     )
 
     static let knownConflicts: [HotKeyConflict] = [
@@ -179,6 +186,8 @@ private final class ShortcutRecorderButton: NSButton {
         super.init(frame: .zero)
         bezelStyle = .rounded
         setButtonType(.momentaryPushIn)
+        controlSize = .large
+        font = .monospacedSystemFont(ofSize: 13, weight: .semibold)
         target = self
         action = #selector(beginRecording)
         updateAppearance()
@@ -228,6 +237,7 @@ private final class ShortcutRecorderButton: NSButton {
 
     private func updateAppearance() {
         title = isRecording ? "按下新的快捷键" : displayedShortcut
+        contentTintColor = isRecording ? .controlAccentColor : .labelColor
     }
 }
 
@@ -248,51 +258,247 @@ private struct ShortcutRecorderView: NSViewRepresentable {
     }
 }
 
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .lineSpacing(2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            content
+        }
+        .padding(22)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.86))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.06), radius: 18, y: 10)
+    }
+}
+
+private struct SettingsStatusPill: View {
+    let title: String
+    let tint: Color
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.12))
+            )
+            .foregroundStyle(tint)
+    }
+}
+
+private struct SidebarInfoCard: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 14, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct SettingsRow<Accessory: View>: View {
+    let title: String
+    let detail: String
+    @ViewBuilder let accessory: Accessory
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 13))
+                    .lineSpacing(2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            accessory
+        }
+    }
+}
+
 private struct SettingsView: View {
     @EnvironmentObject private var hotKeyManager: HotKeyManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("VibeFocus")
-                .font(.title2.weight(.semibold))
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .windowBackgroundColor),
+                    Color(nsColor: .underPageBackgroundColor),
+                    Color.accentColor.opacity(0.08)
+                ],
+                startPoint: .top,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-            Text("自定义菜单栏快捷键；录制后实时生效，并自动检测常见系统冲突。")
-                .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 22) {
+                VStack(alignment: .leading, spacing: 22) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.accentColor.opacity(0.98), Color.accentColor.opacity(0.72)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 84, height: 84)
+                            .shadow(color: Color.accentColor.opacity(0.18), radius: 18, y: 8)
 
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("当前快捷键")
-                    Spacer()
-                    Text(hotKeyManager.currentHotKey.displayString)
-                        .font(.system(.body, design: .monospaced))
-                }
-
-                ShortcutRecorderView(displayedShortcut: hotKeyManager.currentHotKey.displayString) { hotKey in
-                    hotKeyManager.applyShortcut(hotKey)
-                }
-                .frame(width: 220)
-
-                HStack(spacing: 12) {
-                    Button("恢复默认") {
-                        hotKeyManager.resetToDefaultShortcut()
+                        Image(systemName: "rectangle.3.group.bubble.left.fill")
+                            .font(.system(size: 32, weight: .semibold))
+                            .foregroundStyle(.white)
                     }
 
-                    Text("默认：\(HotKeyConfiguration.default.displayString)")
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("VibeFocus")
+                            .font(.system(size: 30, weight: .semibold))
+                        Text("菜单栏里的窗口流转工具")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Text("把全局快捷键、状态反馈和权限引导，收进一个更接近 macOS 原生偏好设置体验的面板里。")
+                            .font(.system(size: 13))
+                            .lineSpacing(3)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    SettingsStatusPill(
+                        title: hotKeyManager.shortcutStatusIsError ? "需要处理" : "工作正常",
+                        tint: hotKeyManager.shortcutStatusIsError ? .red : .green
+                    )
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        SidebarInfoCard(title: "菜单栏标题", value: "VibeFocus")
+                        SidebarInfoCard(title: "当前快捷键", value: hotKeyManager.currentHotKey.displayString)
+                        SidebarInfoCard(title: "辅助功能权限", value: hotKeyManager.accessibilityGranted ? "已授权" : "未授权")
+                    }
+
+                    if !hotKeyManager.accessibilityGranted {
+                        Button("打开辅助功能设置") {
+                            hotKeyManager.openAccessibilitySettings()
+                        }
+                        .buttonStyle(.link)
+                    }
+
+                    Spacer(minLength: 0)
                 }
+                .padding(24)
+                .frame(width: 236, alignment: .leading)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.68))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.05), radius: 20, y: 12)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    SettingsCard(
+                        title: "快捷键",
+                        subtitle: "点击录制按钮后直接按下新组合键。修改后立即生效；如果命中常见系统快捷键会直接阻止。"
+                    ) {
+                        SettingsRow(
+                            title: "当前快捷键",
+                            detail: "全局热键与菜单栏 Toggle 会实时切换到这个组合。"
+                        ) {
+                            Text(hotKeyManager.currentHotKey.displayString)
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(Color(nsColor: .controlBackgroundColor))
+                                )
+                        }
+
+                        Divider()
+
+                        HStack(spacing: 12) {
+                            ShortcutRecorderView(displayedShortcut: hotKeyManager.currentHotKey.displayString) { hotKey in
+                                hotKeyManager.applyShortcut(hotKey)
+                            }
+                            .frame(width: 220)
+
+                            Button("恢复默认") {
+                                hotKeyManager.resetToDefaultShortcut()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Spacer()
+                        }
+
+                        Text("默认快捷键：\(HotKeyConfiguration.default.displayString) · 按 Esc 可取消录制")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    SettingsCard(
+                        title: "状态与提示",
+                        subtitle: "把当前配置结果、权限状态和交互提示整合在一起，减少来回排查的成本。"
+                    ) {
+                        SettingsRow(
+                            title: "当前状态",
+                            detail: hotKeyManager.shortcutStatusMessage
+                        ) {
+                            SettingsStatusPill(
+                                title: hotKeyManager.shortcutStatusIsError ? "冲突" : "正常",
+                                tint: hotKeyManager.shortcutStatusIsError ? .red : .blue
+                            )
+                        }
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "交互说明",
+                            detail: "设置窗现在会主动获取前台焦点，录制按钮被点击后会直接进入监听状态。"
+                        ) {
+                            Image(systemName: "keyboard")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .padding(16)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            Text(hotKeyManager.shortcutStatusMessage)
-                .foregroundStyle(hotKeyManager.shortcutStatusIsError ? .red : .secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer()
+            .padding(28)
         }
-        .padding(20)
-        .frame(width: 480, height: 260)
+        .frame(width: 820, height: 520)
     }
 }
 
@@ -313,17 +519,22 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
         )
 
         let window = FocusableSettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 260),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "VibeFocus 设置"
         window.center()
         window.isReleasedWhenClosed = false
-        window.level = .floating
+        window.level = .normal
         window.collectionBehavior = [.moveToActiveSpace]
         window.tabbingMode = .disallowed
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.toolbarStyle = .unifiedCompact
+        window.backgroundColor = .clear
         window.contentViewController = hostingController
         super.init(window: window)
         window.delegate = self
@@ -435,6 +646,11 @@ final class HotKeyManager: ObservableObject {
     @Published private(set) var currentHotKey: HotKeyConfiguration
     @Published private(set) var shortcutStatusMessage = "当前快捷键已生效"
     @Published private(set) var shortcutStatusIsError = false
+
+    var accessibilityGranted: Bool {
+        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
 
     private let hotkeySignature: OSType = 0x56424648
     private let hotkeyIdentifier: UInt32 = 1
@@ -598,6 +814,12 @@ final class HotKeyManager: ObservableObject {
         applyShortcut(.default)
     }
 
+    func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func validate(_ hotKey: HotKeyConfiguration) -> String? {
         if hotKey.modifiers & (UInt32(cmdKey) | UInt32(optionKey) | UInt32(controlKey)) == 0 {
             return "快捷键至少需要包含 ⌘ / ⌥ / ⌃ 之一"
@@ -613,6 +835,9 @@ final class HotKeyManager: ObservableObject {
     private static func loadStoredHotKey() -> HotKeyConfiguration {
         guard let data = UserDefaults.standard.data(forKey: HotKeyConfiguration.userDefaultsKey),
               let hotKey = try? JSONDecoder().decode(HotKeyConfiguration.self, from: data) else {
+            return .default
+        }
+        if hotKey == .legacyDefault {
             return .default
         }
         return hotKey
@@ -648,6 +873,7 @@ class WindowManager {
         let pid: pid_t
         let bundleIdentifier: String?
         let appName: String?
+        let windowID: UInt32?
         let windowNumber: Int?
         let title: String?
     }
@@ -675,6 +901,7 @@ class WindowManager {
         let pid: Int32
         let bundleIdentifier: String?
         let appName: String?
+        let windowID: UInt32?
         let windowNumber: Int?
         let title: String?
         let originalFrame: RectPayload
@@ -683,6 +910,7 @@ class WindowManager {
     }
 
     private struct ScriptWindowSnapshot: Codable {
+        let windowID: UInt32?
         let appName: String
         let title: String?
         let x: CGFloat
@@ -743,6 +971,11 @@ class WindowManager {
             return
         }
 
+        guard let currentWindowID = windowHandle(for: windowAX) else {
+            log("Cannot get stable window handle for focused window")
+            return
+        }
+
         guard isAttributeSettable(windowAX, attribute: kAXPositionAttribute) else {
             log("Window position is not settable")
             return
@@ -787,6 +1020,7 @@ class WindowManager {
             pid: frontApp.processIdentifier,
             bundleIdentifier: bundleIdentifier,
             appName: appName,
+            windowID: currentWindowID,
             windowNumber: windowNumber,
             title: windowTitle,
             originalFrame: RectPayload(currentFrame),
@@ -894,20 +1128,16 @@ class WindowManager {
         guard !savedWindowStates.isEmpty,
               let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
-              let currentFrame = frame(of: focusedWindow) else {
+              let currentWindowID = windowHandle(for: focusedWindow) else {
             return false
         }
 
-        guard let matchedState = matchingSavedState(
-            for: frontApp,
-            window: focusedWindow,
-            currentFrame: currentFrame
-        ) else {
+        guard let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) else {
             return false
         }
 
         hydrateMemory(from: matchedState, window: focusedWindow)
-        log("Detected moved window state for current AX window: \(matchedState.id)")
+        log("Detected moved window state for current handle: \(currentWindowID)")
         return true
     }
 
@@ -922,108 +1152,21 @@ class WindowManager {
     }
 
     private func restoreWindow(using token: WindowToken) -> AXUIElement? {
-        if let lastWindowElement, frame(of: lastWindowElement) != nil {
-            log("Restoring using saved AX window reference")
-            return lastWindowElement
-        }
-
-        if let savedWindow = windowElementsByStateID[token.stateID], frame(of: savedWindow) != nil {
-            log("Restoring using cached window reference for state \(token.stateID)")
-            return savedWindow
-        }
-
-        for app in candidateApplications(for: token) {
-            if let window = restoreWindow(in: app, using: token) {
-                return window
-            }
-        }
-
-        if let focused = focusedWindow(for: token.pid) {
-            log("Restoring using focused window fallback")
+        if let focused = focusedWindow(for: token.pid),
+           let currentWindowID = windowHandle(for: focused),
+           currentWindowID == token.windowID {
+            log("Restoring using focused window handle match")
             return focused
         }
 
+        if let lastWindowElement,
+           let currentWindowID = windowHandle(for: lastWindowElement),
+           currentWindowID == token.windowID {
+            log("Restoring using saved AX handle match")
+            return lastWindowElement
+        }
+
         return nil
-    }
-
-    private func matchingSavedState(
-        for app: NSRunningApplication,
-        window: AXUIElement,
-        currentFrame: CGRect
-    ) -> SavedWindowState? {
-        let currentWindowNumber = windowNumber(for: window)
-        let currentTitle = title(of: window)
-
-        for state in savedWindowStates.reversed() {
-            if let cachedWindow = windowElementsByStateID[state.id],
-               CFEqual(cachedWindow, window),
-               framesMatch(currentFrame, state.targetFrame.cgRect) {
-                return state
-            }
-        }
-
-        return savedWindowStates.reversed().first { state in
-            framesMatch(currentFrame, state.targetFrame.cgRect) &&
-            stateMatchesIdentity(
-                state,
-                pid: app.processIdentifier,
-                bundleIdentifier: app.bundleIdentifier,
-                appName: app.localizedName,
-                windowNumber: currentWindowNumber,
-                title: currentTitle
-            )
-        }
-    }
-
-    private func matchingSavedState(
-        for app: NSRunningApplication,
-        snapshot: ScriptWindowSnapshot
-    ) -> SavedWindowState? {
-        return savedWindowStates.reversed().first { state in
-            framesMatch(snapshot.frame, state.targetFrame.cgRect) &&
-            stateMatchesIdentity(
-                state,
-                pid: app.processIdentifier,
-                bundleIdentifier: app.bundleIdentifier,
-                appName: app.localizedName ?? snapshot.appName,
-                windowNumber: nil,
-                title: snapshot.title
-            )
-        }
-    }
-
-    private func stateMatchesIdentity(
-        _ state: SavedWindowState,
-        pid: pid_t,
-        bundleIdentifier: String?,
-        appName: String?,
-        windowNumber: Int?,
-        title: String?
-    ) -> Bool {
-        if let stateBundle = state.bundleIdentifier,
-           let bundleIdentifier,
-           stateBundle != bundleIdentifier {
-            return false
-        }
-
-        if let stateAppName = state.appName,
-           let appName,
-           state.bundleIdentifier == nil,
-           stateAppName != appName {
-            return false
-        }
-
-        if let stateWindowNumber = state.windowNumber,
-           let windowNumber {
-            return stateWindowNumber == windowNumber
-        }
-
-        if let stateTitle = normalizedTitle(state.title),
-           let title = normalizedTitle(title) {
-            return stateTitle == title
-        }
-
-        return state.pid == pid
     }
 
     private func candidateApplications(for token: WindowToken) -> [NSRunningApplication] {
@@ -1079,6 +1222,7 @@ class WindowManager {
             pid: frontApp.processIdentifier,
             bundleIdentifier: bundleIdentifier,
             appName: appName,
+            windowID: snapshot.windowID,
             windowNumber: nil,
             title: snapshot.title,
             originalFrame: RectPayload(snapshot.frame),
@@ -1107,30 +1251,23 @@ class WindowManager {
             }
         }
 
-        guard let token = lastWindowToken, let frame = lastWindowFrame else {
+        guard let token = lastWindowToken,
+              let frame = lastWindowFrame,
+              let frontApp = NSWorkspace.shared.frontmostApplication,
+              let snapshot = systemEventsSnapshot(forPID: frontApp.processIdentifier),
+              snapshot.windowID == token.windowID else {
             log("No active window state to restore via System Events")
             return
         }
 
-        for app in candidateApplications(for: token) {
-            guard let snapshot = systemEventsSnapshot(forPID: app.processIdentifier) else {
-                continue
-            }
-
-            if let targetFrame = lastTargetFrame, framesMatch(snapshot.frame, targetFrame) {
-                log("Restoring with System Events using target frame match")
-                guard systemEventsApply(frame: frame, toPID: app.processIdentifier) else {
-                    log("System Events fallback failed to restore window")
-                    return
-                }
-
-                resetActiveWindowContext(removeState: true)
-                log("✅ RESTORED WITH SYSTEM EVENTS FALLBACK")
-                return
-            }
+        log("Restoring with System Events using window handle match")
+        guard systemEventsApply(frame: frame, toPID: frontApp.processIdentifier) else {
+            log("System Events fallback failed to restore window")
+            return
         }
 
-        log("System Events fallback could not find moved window to restore")
+        resetActiveWindowContext(removeState: true)
+        log("✅ RESTORED WITH SYSTEM EVENTS FALLBACK")
     }
 
     private func shouldRestoreCurrentWindowViaSystemEvents() -> Bool {
@@ -1140,58 +1277,14 @@ class WindowManager {
             return false
         }
 
-        guard let matchedState = matchingSavedState(
-            for: frontApp,
-            snapshot: snapshot
-        ) else {
+        guard let currentWindowID = snapshot.windowID,
+              let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) else {
             return false
         }
 
         hydrateMemory(from: matchedState, window: nil)
-        log("Detected moved window state via System Events: \(matchedState.id)")
+        log("Detected moved window state via System Events handle: \(currentWindowID)")
         return true
-    }
-
-    private func restoreWindow(in app: NSRunningApplication, using token: WindowToken) -> AXUIElement? {
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        var windowsRef: CFTypeRef?
-        let windowsStatus = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-        guard windowsStatus == .success, let windows = windowsRef as? [AXUIElement] else {
-            return nil
-        }
-
-        if let windowNumber = token.windowNumber {
-            for window in windows where self.windowNumber(for: window) == windowNumber {
-                log("Restoring using window number match")
-                return window
-            }
-        }
-
-        if let targetFrame = lastTargetFrame {
-            for window in windows {
-                if let currentFrame = frame(of: window), framesMatch(currentFrame, targetFrame) {
-                    if let title = token.title {
-                        let currentTitle = self.title(of: window)
-                        if currentTitle == title {
-                            log("Restoring using target frame + title match")
-                            return window
-                        }
-                    } else {
-                        log("Restoring using target frame match")
-                        return window
-                    }
-                }
-            }
-        }
-
-        if let title = token.title {
-            for window in windows where self.title(of: window) == title {
-                log("Restoring using title match")
-                return window
-            }
-        }
-
-        return nil
     }
 
     private func systemEventsSnapshot(forPID pid: pid_t) -> ScriptWindowSnapshot? {
@@ -1203,6 +1296,7 @@ class WindowManager {
         const win = proc.windows[0];
         if (!win) throw new Error('NO_WINDOW');
         JSON.stringify({
+          windowID: null,
           appName: proc.name(),
           title: (() => { try { return win.name(); } catch (_) { return ""; } })(),
           x: win.position()[0],
@@ -1218,7 +1312,15 @@ class WindowManager {
             return nil
         }
 
-        return snapshot
+        return ScriptWindowSnapshot(
+            windowID: nil,
+            appName: snapshot.appName,
+            title: snapshot.title,
+            x: snapshot.x,
+            y: snapshot.y,
+            width: snapshot.width,
+            height: snapshot.height
+        )
     }
 
     private func systemEventsApply(frame targetFrame: CGRect, toPID pid: pid_t) -> Bool {
@@ -1249,6 +1351,25 @@ class WindowManager {
 
         return framesMatch(snapshot.frame, targetFrame)
     }
+
+    private func windowHandle(for window: AXUIElement) -> UInt32? {
+        var windowID: CGWindowID = 0
+        let status = _AXUIElementGetWindow(window, &windowID)
+        guard status == .success, windowID != 0 else {
+            log("Cannot get stable window handle from AXUIElement: \(status.rawValue)")
+            return nil
+        }
+        return windowID
+    }
+
+    private struct CGWindowSnapshot {
+        let windowID: UInt32
+        let title: String?
+        let frame: CGRect
+        let ownerPID: pid_t
+        let layer: Int
+    }
+
 
     private func runJXAScript(_ script: String) -> String? {
         let process = Process()
@@ -1385,6 +1506,25 @@ class WindowManager {
         abs(lhs.height - rhs.height) <= frameTolerance
     }
 
+    private func isLikelyMovedPresentation(_ currentFrame: CGRect, targetFrame: CGRect) -> Bool {
+        if framesMatch(currentFrame, targetFrame) {
+            return true
+        }
+
+        let expandedTarget = targetFrame.insetBy(dx: -frameTolerance * 4, dy: -frameTolerance * 4)
+        let originClose = expandedTarget.contains(currentFrame.origin)
+
+        let intersection = currentFrame.intersection(targetFrame)
+        let intersectionArea = max(0, intersection.width) * max(0, intersection.height)
+        let currentArea = max(1, currentFrame.width * currentFrame.height)
+        let overlapRatio = intersectionArea / currentArea
+
+        let widthCloseEnough = abs(currentFrame.width - targetFrame.width) <= 80
+        let heightCloseEnough = abs(currentFrame.height - targetFrame.height) <= 80
+
+        return originClose && (overlapRatio >= 0.7 || (widthCloseEnough && heightCloseEnough))
+    }
+
     @discardableResult
     private func saveWindowState(_ state: SavedWindowState, window: AXUIElement? = nil) -> SavedWindowState {
         savedWindowStates.removeAll { existing in
@@ -1407,7 +1547,7 @@ class WindowManager {
               let states = try? JSONDecoder().decode([SavedWindowState].self, from: data) else {
             return []
         }
-        return states
+        return states.filter { $0.windowID != nil }
     }
 
     private func persistSavedWindowStates() {
@@ -1444,6 +1584,7 @@ class WindowManager {
             pid: state.pid,
             bundleIdentifier: state.bundleIdentifier,
             appName: state.appName,
+            windowID: state.windowID,
             windowNumber: state.windowNumber,
             title: state.title
         )
@@ -1466,27 +1607,12 @@ class WindowManager {
             return true
         }
 
-        if let existingBundle = existing.bundleIdentifier,
-           let incomingBundle = incoming.bundleIdentifier,
-           existingBundle != incomingBundle {
+        guard let existingID = existing.windowID,
+              let incomingID = incoming.windowID else {
             return false
         }
 
-        if let existingNumber = existing.windowNumber,
-           let incomingNumber = incoming.windowNumber {
-            return existingNumber == incomingNumber
-        }
-
-        if let existingTitle = normalizedTitle(existing.title),
-           let incomingTitle = normalizedTitle(incoming.title),
-           existingTitle == incomingTitle {
-            if existing.bundleIdentifier == incoming.bundleIdentifier || existing.appName == incoming.appName {
-                return framesMatch(existing.originalFrame.cgRect, incoming.originalFrame.cgRect) ||
-                    framesMatch(existing.targetFrame.cgRect, incoming.targetFrame.cgRect)
-            }
-        }
-
-        return false
+        return existingID == incomingID
     }
 
     private func normalizedTitle(_ title: String?) -> String? {
