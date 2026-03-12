@@ -23,6 +23,336 @@ private func log(_ message: String) {
     }
 }
 
+private extension Notification.Name {
+    static let hotKeyConfigurationDidChange = Notification.Name("HotKeyConfigurationDidChange")
+}
+
+struct HotKeyConflict: Equatable {
+    let configuration: HotKeyConfiguration
+    let reason: String
+}
+
+struct HotKeyConfiguration: Codable, Equatable {
+    let keyCode: UInt32
+    let modifiers: UInt32
+
+    static let userDefaultsKey = "hotKeyConfiguration"
+    static let `default` = HotKeyConfiguration(
+        keyCode: UInt32(kVK_ANSI_M),
+        modifiers: UInt32(controlKey | optionKey | cmdKey)
+    )
+
+    static let knownConflicts: [HotKeyConflict] = [
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey)), reason: "与 Spotlight 冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | optionKey)), reason: "与 Finder 搜索冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey)), reason: "与应用切换器冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey | shiftKey)), reason: "与反向应用切换冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_ANSI_Q), modifiers: UInt32(cmdKey)), reason: "与退出应用冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_ANSI_W), modifiers: UInt32(cmdKey)), reason: "与关闭窗口冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_ANSI_M), modifiers: UInt32(cmdKey)), reason: "与最小化窗口冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_ANSI_H), modifiers: UInt32(cmdKey)), reason: "与隐藏应用冲突"),
+        HotKeyConflict(configuration: .init(keyCode: UInt32(kVK_ANSI_F), modifiers: UInt32(cmdKey | controlKey)), reason: "与许多应用的全屏快捷键冲突")
+    ]
+
+    var displayString: String {
+        modifierDisplay + Self.displayKey(for: keyCode)
+    }
+
+    private var modifierDisplay: String {
+        var output = ""
+        if modifiers & UInt32(controlKey) != 0 { output += "⌃" }
+        if modifiers & UInt32(optionKey) != 0 { output += "⌥" }
+        if modifiers & UInt32(shiftKey) != 0 { output += "⇧" }
+        if modifiers & UInt32(cmdKey) != 0 { output += "⌘" }
+        return output
+    }
+
+    func matches(event: NSEvent) -> Bool {
+        UInt32(event.keyCode) == keyCode &&
+        event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers == modifiers
+    }
+
+    static func from(event: NSEvent) -> HotKeyConfiguration? {
+        let modifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
+        guard modifiers != 0 else {
+            return nil
+        }
+
+        let keyCode = UInt32(event.keyCode)
+        guard displayKey(for: keyCode) != "?" else {
+            return nil
+        }
+
+        return HotKeyConfiguration(keyCode: keyCode, modifiers: modifiers)
+    }
+
+    static func displayKey(for keyCode: UInt32) -> String {
+        switch Int(keyCode) {
+        case Int(kVK_ANSI_A): return "A"
+        case Int(kVK_ANSI_B): return "B"
+        case Int(kVK_ANSI_C): return "C"
+        case Int(kVK_ANSI_D): return "D"
+        case Int(kVK_ANSI_E): return "E"
+        case Int(kVK_ANSI_F): return "F"
+        case Int(kVK_ANSI_G): return "G"
+        case Int(kVK_ANSI_H): return "H"
+        case Int(kVK_ANSI_I): return "I"
+        case Int(kVK_ANSI_J): return "J"
+        case Int(kVK_ANSI_K): return "K"
+        case Int(kVK_ANSI_L): return "L"
+        case Int(kVK_ANSI_M): return "M"
+        case Int(kVK_ANSI_N): return "N"
+        case Int(kVK_ANSI_O): return "O"
+        case Int(kVK_ANSI_P): return "P"
+        case Int(kVK_ANSI_Q): return "Q"
+        case Int(kVK_ANSI_R): return "R"
+        case Int(kVK_ANSI_S): return "S"
+        case Int(kVK_ANSI_T): return "T"
+        case Int(kVK_ANSI_U): return "U"
+        case Int(kVK_ANSI_V): return "V"
+        case Int(kVK_ANSI_W): return "W"
+        case Int(kVK_ANSI_X): return "X"
+        case Int(kVK_ANSI_Y): return "Y"
+        case Int(kVK_ANSI_Z): return "Z"
+        case Int(kVK_ANSI_0): return "0"
+        case Int(kVK_ANSI_1): return "1"
+        case Int(kVK_ANSI_2): return "2"
+        case Int(kVK_ANSI_3): return "3"
+        case Int(kVK_ANSI_4): return "4"
+        case Int(kVK_ANSI_5): return "5"
+        case Int(kVK_ANSI_6): return "6"
+        case Int(kVK_ANSI_7): return "7"
+        case Int(kVK_ANSI_8): return "8"
+        case Int(kVK_ANSI_9): return "9"
+        case Int(kVK_Space): return "Space"
+        case Int(kVK_Return): return "Return"
+        case Int(kVK_Escape): return "Esc"
+        case Int(kVK_Delete): return "Delete"
+        case Int(kVK_ForwardDelete): return "Fn⌫"
+        case Int(kVK_Tab): return "Tab"
+        case Int(kVK_LeftArrow): return "←"
+        case Int(kVK_RightArrow): return "→"
+        case Int(kVK_UpArrow): return "↑"
+        case Int(kVK_DownArrow): return "↓"
+        case Int(kVK_F1): return "F1"
+        case Int(kVK_F2): return "F2"
+        case Int(kVK_F3): return "F3"
+        case Int(kVK_F4): return "F4"
+        case Int(kVK_F5): return "F5"
+        case Int(kVK_F6): return "F6"
+        case Int(kVK_F7): return "F7"
+        case Int(kVK_F8): return "F8"
+        case Int(kVK_F9): return "F9"
+        case Int(kVK_F10): return "F10"
+        case Int(kVK_F11): return "F11"
+        case Int(kVK_F12): return "F12"
+        default: return "?"
+        }
+    }
+}
+
+private extension NSEvent.ModifierFlags {
+    static let hotKeyRelevantFlags: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+
+    var carbonHotKeyModifiers: UInt32 {
+        var result: UInt32 = 0
+        if contains(.command) { result |= UInt32(cmdKey) }
+        if contains(.option) { result |= UInt32(optionKey) }
+        if contains(.control) { result |= UInt32(controlKey) }
+        if contains(.shift) { result |= UInt32(shiftKey) }
+        return result
+    }
+}
+
+private final class ShortcutRecorderButton: NSButton {
+    var displayedShortcut = HotKeyConfiguration.default.displayString {
+        didSet { updateAppearance() }
+    }
+    var onShortcutCaptured: ((HotKeyConfiguration) -> Void)?
+    private var isRecording = false {
+        didSet { updateAppearance() }
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    init() {
+        super.init(frame: .zero)
+        bezelStyle = .rounded
+        setButtonType(.momentaryPushIn)
+        target = self
+        action = #selector(beginRecording)
+        updateAppearance()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func beginRecording() {
+        isRecording = true
+        NSApp.activate(ignoringOtherApps: true)
+        window?.orderFrontRegardless()
+        window?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [weak self] in
+            self?.window?.makeFirstResponder(self)
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        isRecording = false
+        return result
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isRecording else {
+            super.keyDown(with: event)
+            return
+        }
+
+        if event.keyCode == UInt16(kVK_Escape) {
+            isRecording = false
+            return
+        }
+
+        guard let hotKey = HotKeyConfiguration.from(event: event) else {
+            NSSound.beep()
+            return
+        }
+
+        onShortcutCaptured?(hotKey)
+        isRecording = false
+        window?.makeFirstResponder(nil)
+    }
+
+    private func updateAppearance() {
+        title = isRecording ? "按下新的快捷键" : displayedShortcut
+    }
+}
+
+private struct ShortcutRecorderView: NSViewRepresentable {
+    let displayedShortcut: String
+    let onShortcutCaptured: (HotKeyConfiguration) -> Void
+
+    func makeNSView(context: Context) -> ShortcutRecorderButton {
+        let button = ShortcutRecorderButton()
+        button.displayedShortcut = displayedShortcut
+        button.onShortcutCaptured = onShortcutCaptured
+        return button
+    }
+
+    func updateNSView(_ nsView: ShortcutRecorderButton, context: Context) {
+        nsView.displayedShortcut = displayedShortcut
+        nsView.onShortcutCaptured = onShortcutCaptured
+    }
+}
+
+private struct SettingsView: View {
+    @EnvironmentObject private var hotKeyManager: HotKeyManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("VibeFocus")
+                .font(.title2.weight(.semibold))
+
+            Text("自定义菜单栏快捷键；录制后实时生效，并自动检测常见系统冲突。")
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("当前快捷键")
+                    Spacer()
+                    Text(hotKeyManager.currentHotKey.displayString)
+                        .font(.system(.body, design: .monospaced))
+                }
+
+                ShortcutRecorderView(displayedShortcut: hotKeyManager.currentHotKey.displayString) { hotKey in
+                    hotKeyManager.applyShortcut(hotKey)
+                }
+                .frame(width: 220)
+
+                HStack(spacing: 12) {
+                    Button("恢复默认") {
+                        hotKeyManager.resetToDefaultShortcut()
+                    }
+
+                    Text("默认：\(HotKeyConfiguration.default.displayString)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(16)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            Text(hotKeyManager.shortcutStatusMessage)
+                .foregroundStyle(hotKeyManager.shortcutStatusIsError ? .red : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer()
+        }
+        .padding(20)
+        .frame(width: 480, height: 260)
+    }
+}
+
+@MainActor
+private final class FocusableSettingsWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+@MainActor
+private final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    static let shared = SettingsWindowController()
+
+    private init() {
+        let hostingController = NSHostingController(
+            rootView: SettingsView()
+                .environmentObject(HotKeyManager.shared)
+        )
+
+        let window = FocusableSettingsWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 260),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "VibeFocus 设置"
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace]
+        window.tabbingMode = .disallowed
+        window.contentViewController = hostingController
+        super.init(window: window)
+        window.delegate = self
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func show() {
+        guard let window else { return }
+        NSApp.setActivationPolicy(.regular)
+        DispatchQueue.main.async {
+            NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+            NSApp.activate(ignoringOtherApps: true)
+            window.center()
+            window.orderFrontRegardless()
+            window.makeMain()
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        window?.orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
+    }
+}
+
 // MARK: - 主程序
 @main
 struct VibeFocusApp: App {
@@ -30,7 +360,8 @@ struct VibeFocusApp: App {
 
     var body: some Scene {
         Settings {
-            EmptyView()
+            SettingsView()
+                .environmentObject(HotKeyManager.shared)
         }
     }
 }
@@ -39,26 +370,56 @@ struct VibeFocusApp: App {
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
+    private var toggleMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
         setupMenuBar()
         HotKeyManager.shared.setup()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(refreshMenuLabels),
+            name: .hotKeyConfigurationDidChange,
+            object: nil
+        )
     }
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem?.button?.title = "VF"
+        statusItem?.button?.title = "VibeFocus"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Toggle (\(HotKeyManager.hotkeyDisplay))", action: #selector(toggle), keyEquivalent: ""))
+        let toggleItem = NSMenuItem(title: "", action: #selector(toggle), keyEquivalent: "")
+        toggleItem.target = self
+        toggleMenuItem = toggleItem
+        menu.addItem(toggleItem)
+
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
         statusItem?.menu = menu
+        refreshMenuLabels()
+    }
+
+    @objc private func refreshMenuLabels() {
+        toggleMenuItem?.title = "Toggle (\(HotKeyManager.shared.currentHotKey.displayString))"
     }
 
     @objc private func toggle() {
         WindowManager.shared.toggle()
+    }
+
+    @objc private func openSettings() {
+        DispatchQueue.main.async {
+            SettingsWindowController.shared.show()
+        }
     }
 
     @objc private func quit() {
@@ -68,17 +429,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - HotKey Manager
 @MainActor
-class HotKeyManager {
+final class HotKeyManager: ObservableObject {
     static let shared = HotKeyManager()
-    static let hotkeyDisplay = "⌃⌥⌘M"
-    private let hotkeyKeyCode: UInt32 = UInt32(kVK_ANSI_M)
-    private let hotkeyModifiers: UInt32 = UInt32(controlKey | optionKey | cmdKey)
+
+    @Published private(set) var currentHotKey: HotKeyConfiguration
+    @Published private(set) var shortcutStatusMessage = "当前快捷键已生效"
+    @Published private(set) var shortcutStatusIsError = false
+
     private let hotkeySignature: OSType = 0x56424648
     private let hotkeyIdentifier: UInt32 = 1
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private var globalMonitor: Any?
     private var localMonitor: Any?
+
+    private init() {
+        currentHotKey = Self.loadStoredHotKey()
+    }
 
     func setup() {
         installHandlerIfNeeded()
@@ -104,13 +471,11 @@ class HotKeyManager {
     }
 
     private func handleFallbackEvent(_ event: NSEvent, source: String) -> Bool {
-        let relevantFlags: NSEvent.ModifierFlags = [.control, .option, .command, .shift]
-        let matchedModifiers = event.modifierFlags.intersection(relevantFlags)
-        guard UInt32(event.keyCode) == hotkeyKeyCode, matchedModifiers == [.control, .option, .command] else {
+        guard currentHotKey.matches(event: event) else {
             return false
         }
 
-        log("Fallback hotkey \(Self.hotkeyDisplay) triggered from \(source)")
+        log("Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
         WindowManager.shared.toggle()
         return true
     }
@@ -155,15 +520,19 @@ class HotKeyManager {
 
         let hotKeyID = EventHotKeyID(signature: hotkeySignature, id: hotkeyIdentifier)
         let registerStatus = RegisterEventHotKey(
-            hotkeyKeyCode,
-            hotkeyModifiers,
+            currentHotKey.keyCode,
+            currentHotKey.modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
             &hotKeyRef
         )
 
-        log("Register hotkey \(Self.hotkeyDisplay) status: \(registerStatus)")
+        shortcutStatusMessage = registerStatus == noErr
+            ? "当前快捷键：\(currentHotKey.displayString)"
+            : "快捷键注册失败：\(currentHotKey.displayString)"
+        shortcutStatusIsError = registerStatus != noErr
+        log("Register hotkey \(currentHotKey.displayString) status: \(registerStatus)")
     }
 
     private func handleHotKeyEvent(_ eventRef: EventRef) -> OSStatus {
@@ -187,9 +556,73 @@ class HotKeyManager {
             return noErr
         }
 
-        log("Hotkey \(Self.hotkeyDisplay) triggered")
+        log("Hotkey \(currentHotKey.displayString) triggered")
         WindowManager.shared.toggle()
         return noErr
+    }
+
+    func applyShortcut(_ hotKey: HotKeyConfiguration) {
+        if hotKey == currentHotKey {
+            shortcutStatusMessage = "快捷键未变化：\(hotKey.displayString)"
+            shortcutStatusIsError = false
+            return
+        }
+
+        if let validationError = validate(hotKey) {
+            shortcutStatusMessage = validationError
+            shortcutStatusIsError = true
+            NSSound.beep()
+            return
+        }
+
+        let previousHotKey = currentHotKey
+        currentHotKey = hotKey
+        registerHotKey()
+
+        if shortcutStatusIsError {
+            currentHotKey = previousHotKey
+            registerHotKey()
+            shortcutStatusMessage = "快捷键已恢复为 \(currentHotKey.displayString)"
+            shortcutStatusIsError = true
+            NSSound.beep()
+            return
+        }
+
+        saveStoredHotKey(hotKey)
+        shortcutStatusMessage = "快捷键已更新：\(hotKey.displayString)"
+        shortcutStatusIsError = false
+        NotificationCenter.default.post(name: .hotKeyConfigurationDidChange, object: nil)
+    }
+
+    func resetToDefaultShortcut() {
+        applyShortcut(.default)
+    }
+
+    private func validate(_ hotKey: HotKeyConfiguration) -> String? {
+        if hotKey.modifiers & (UInt32(cmdKey) | UInt32(optionKey) | UInt32(controlKey)) == 0 {
+            return "快捷键至少需要包含 ⌘ / ⌥ / ⌃ 之一"
+        }
+
+        if let conflict = HotKeyConfiguration.knownConflicts.first(where: { $0.configuration == hotKey }) {
+            return "快捷键冲突：\(conflict.reason)"
+        }
+
+        return nil
+    }
+
+    private static func loadStoredHotKey() -> HotKeyConfiguration {
+        guard let data = UserDefaults.standard.data(forKey: HotKeyConfiguration.userDefaultsKey),
+              let hotKey = try? JSONDecoder().decode(HotKeyConfiguration.self, from: data) else {
+            return .default
+        }
+        return hotKey
+    }
+
+    private func saveStoredHotKey(_ hotKey: HotKeyConfiguration) {
+        guard let data = try? JSONEncoder().encode(hotKey) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: HotKeyConfiguration.userDefaultsKey)
     }
 }
 
