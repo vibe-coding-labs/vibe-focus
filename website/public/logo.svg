@@ -1,0 +1,81 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>VibeFocus Logo</title>
+  <desc>
+    A distinctive VibeFocus mark: two converging V-shaped currents locking onto a center point, supported by a calm focus cradle.
+  </desc>
+
+  <defs>
+    <linearGradient id="vf-bg" x1="512" y1="44" x2="512" y2="980" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101A36"/>
+      <stop offset="1" stop-color="#378A8E"/>
+    </linearGradient>
+
+    <linearGradient id="vf-frame" x1="154" y1="134" x2="870" y2="896" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#C9F8FF" stop-opacity="0.20"/>
+    </linearGradient>
+
+    <linearGradient id="vf-main" x1="300" y1="270" x2="726" y2="736" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.58" stop-color="#F8FCFF"/>
+      <stop offset="1" stop-color="#9DEFFF"/>
+    </linearGradient>
+
+    <linearGradient id="vf-secondary" x1="382" y1="422" x2="638" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#CFF9FF"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+
+    <radialGradient id="vf-core-ring" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(512 512) rotate(90) scale(84)">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="184" fill="url(#vf-bg)"/>
+
+  <rect
+    x="124"
+    y="124"
+    width="776"
+    height="776"
+    rx="244"
+    stroke="url(#vf-frame)"
+    stroke-width="28"
+  />
+
+  <path
+    d="M300 300C364 320 418 366 468 452"
+    stroke="url(#vf-main)"
+    stroke-width="98"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <path
+    d="M724 300C660 320 606 366 556 452"
+    stroke="url(#vf-main)"
+    stroke-width="98"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <path
+    d="M336 654C388 726 450 764 512 764C574 764 636 726 688 654"
+    stroke="url(#vf-main)"
+    stroke-width="92"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <path
+    d="M430 600C454 634 482 652 512 652C542 652 570 634 594 600"
+    stroke="url(#vf-secondary)"
+    stroke-width="46"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <circle cx="512" cy="512" r="84" fill="url(#vf-core-ring)"/>
+  <circle cx="512" cy="512" r="22" fill="#FFFFFF"/>
+</svg>
