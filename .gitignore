@@ -1,3 +1,30 @@
 .build/
 .DS_Store
 /tmp/
+
+# Local logs and process files
+*.log
+*.pid
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# SwiftPM local state
+.swiftpm/
+
+# Website (Vite + TypeScript)
+/website/node_modules/
+/website/dist/
+/website/.vite/
+/website/.cache/
+/website/coverage/
+/website/*.tsbuildinfo
+/website/npm-debug.log*
+/website/yarn-debug.log*
+/website/yarn-error.log*
+/website/pnpm-debug.log*
+/website/vite.config.js
+/website/vite.config.d.ts
+
