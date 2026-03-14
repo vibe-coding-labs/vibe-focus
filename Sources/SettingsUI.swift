@@ -5,6 +5,56 @@ import ApplicationServices.HIServices
 import CoreFoundation
 import Foundation
 
+private func bundledAppIconImage() -> NSImage? {
+    if let icnsURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+       let image = NSImage(contentsOf: icnsURL) {
+        return image
+    }
+    if let pngURL = Bundle.main.url(forResource: "AppIcon", withExtension: "png"),
+       let image = NSImage(contentsOf: pngURL) {
+        return image
+    }
+    return nil
+}
+
+private struct AppLogoBadge: View {
+    var size: CGFloat = 84
+
+    var body: some View {
+        Group {
+            if let image = bundledAppIconImage() {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: "rectangle.3.group.bubble.left.fill")
+                    .font(.system(size: size * 0.38, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.accentColor.opacity(0.98), Color.accentColor.opacity(0.72)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    )
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
+    }
+}
+
 private final class ShortcutRecorderButton: NSButton {
     var displayedShortcut = HotKeyConfiguration.default.displayString {
         didSet { updateAppearance() }
@@ -305,22 +355,7 @@ private struct SettingsView: View {
 
                 HStack(alignment: .top, spacing: 22) {
                     VStack(alignment: .leading, spacing: 22) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.accentColor.opacity(0.98), Color.accentColor.opacity(0.72)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 84, height: 84)
-                            .shadow(color: Color.accentColor.opacity(0.18), radius: 18, y: 8)
-
-                        Image(systemName: "rectangle.3.group.bubble.left.fill")
-                            .font(.system(size: 32, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
+                    AppLogoBadge()
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("VibeFocus")
@@ -730,6 +765,10 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
     func show() {
         guard let window else { return }
         NSApp.setActivationPolicy(.regular)
+        if let icon = bundledAppIconImage() {
+            NSApp.applicationIconImage = icon
+            window.miniwindowImage = icon
+        }
         DispatchQueue.main.async {
             NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
             NSApp.activate(ignoringOtherApps: true)
@@ -771,6 +810,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard enforceExpectedInstallLocation() else {
             return
         }
+        applyApplicationIcon()
         setupMenuBar()
         HotKeyManager.shared.setup()
         promptAccessibilityIfNeeded()
@@ -847,7 +887,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleAppBecameActive() {
+        applyApplicationIcon()
         HotKeyManager.shared.refreshAccessibilityStatus()
+    }
+
+    private func applyApplicationIcon() {
+        guard let icon = bundledAppIconImage() else {
+            return
+        }
+        NSApp.applicationIconImage = icon
     }
 
     private func expectedAppBundlePath() -> String {
