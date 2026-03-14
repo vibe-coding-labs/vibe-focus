@@ -13,10 +13,10 @@ final class HotKeyManager: ObservableObject {
     @Published private(set) var currentHotKey: HotKeyConfiguration
     @Published private(set) var shortcutStatusMessage = "当前快捷键已生效"
     @Published private(set) var shortcutStatusIsError = false
+    @Published private(set) var accessibilityStatus = false
 
     var accessibilityGranted: Bool {
-        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+        accessibilityStatus
     }
 
     private let hotkeySignature: OSType = 0x56424648
@@ -28,9 +28,12 @@ final class HotKeyManager: ObservableObject {
 
     private init() {
         currentHotKey = Self.loadStoredHotKey()
+        accessibilityStatus = Self.checkAccessibility()
     }
 
     func setup() {
+        refreshAccessibilityStatus()
+        log("HotKey setup start: current=\(currentHotKey.displayString) keyCode=\(currentHotKey.keyCode) modifiers=\(currentHotKey.modifiers)")
         installHandlerIfNeeded()
         registerHotKey()
         installFallbackMonitors()
@@ -187,6 +190,15 @@ final class HotKeyManager: ObservableObject {
         }
     }
 
+    func refreshAccessibilityStatus() {
+        accessibilityStatus = Self.checkAccessibility()
+    }
+
+    private static func checkAccessibility() -> Bool {
+        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
     private func validate(_ hotKey: HotKeyConfiguration) -> String? {
         if hotKey.modifiers & (UInt32(cmdKey) | UInt32(optionKey) | UInt32(controlKey)) == 0 {
             return "快捷键至少需要包含 ⌘ / ⌥ / ⌃ 之一"
@@ -217,4 +229,3 @@ final class HotKeyManager: ObservableObject {
         UserDefaults.standard.set(data, forKey: HotKeyConfiguration.userDefaultsKey)
     }
 }
-

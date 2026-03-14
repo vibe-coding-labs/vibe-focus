@@ -241,7 +241,7 @@ extension WindowManager {
 
         if process.terminationStatus != 0 {
             let errorText = String(data: errorData, encoding: .utf8) ?? "unknown error"
-            log("osascript failed: \(errorText.trimmingCharacters(in: .whitespacesAndNewlines))")
+            log("osascript failed (exit \(process.terminationStatus), scriptLength=\(script.count)): \(errorText.trimmingCharacters(in: .whitespacesAndNewlines))")
             return nil
         }
 
