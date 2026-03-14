@@ -103,6 +103,7 @@ class WindowManager {
         log("AX trusted = \(axTrusted)")
 
         if !axTrusted {
+            logDiagnostics("ax_trusted_false_move")
             moveToMainScreenViaSystemEvents()
             return
         }
@@ -200,6 +201,7 @@ class WindowManager {
         log("=== RESTORE ===")
 
         if !hasAccessibilityPermission() {
+            logDiagnostics("ax_trusted_false_restore")
             restoreViaSystemEvents()
             return
         }

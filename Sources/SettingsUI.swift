@@ -113,10 +113,10 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(22)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.86))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
                 )
         )
@@ -134,7 +134,7 @@ private struct SettingsStatusPill: View {
             .padding(.horizontal, 11)
             .padding(.vertical, 7)
             .background(
-                Capsule(style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(tint.opacity(0.12))
             )
             .foregroundStyle(tint)
@@ -183,13 +183,46 @@ private struct SettingsRow<Accessory: View>: View {
 private struct SettingsView: View {
     @EnvironmentObject private var hotKeyManager: HotKeyManager
     @StateObject private var spaceController = SpaceController.shared
+    @StateObject private var loginItemManager = LoginItemManager.shared
     @AppStorage(SpacePreferences.integrationEnabledKey) private var spaceIntegrationEnabled = true
     @AppStorage(SpacePreferences.restoreStrategyKey) private var restoreStrategyRaw = SpaceRestoreStrategy.switchToOriginal.rawValue
+    @State private var duplicateAppPaths: [String] = []
+    @State private var isCheckingInstallations = false
 
     private var appVersionDisplay: String {
         let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         let version = (bundleVersion?.isEmpty == false) ? bundleVersion! : AppVersion.current
         return "v\(version)"
+    }
+
+    private var bundleIdentifier: String {
+        Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
+    }
+
+    private var loginItemSidebarValue: String {
+        if loginItemManager.isEnabled {
+            return "已启用"
+        }
+        if loginItemManager.requiresApproval {
+            return "待确认"
+        }
+        return "未启用"
+    }
+
+    private var currentAppPath: String {
+        Bundle.main.bundleURL.path
+    }
+
+    private var expectedAppPath: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent("Applications/VibeFocus.app")
+    }
+
+    private var otherInstallations: [String] {
+        duplicateAppPaths.filter { $0 != currentAppPath }
+    }
+
+    private var resetAccessCommand: String {
+        "tccutil reset Accessibility \(bundleIdentifier)"
     }
 
     private var spaceEffectiveEnabled: Bool {
@@ -265,10 +298,15 @@ private struct SettingsView: View {
             )
             .ignoresSafeArea()
 
-            HStack(alignment: .top, spacing: 22) {
-                VStack(alignment: .leading, spacing: 22) {
+            GeometryReader { proxy in
+                let inset: CGFloat = 28
+                let contentWidth = max(0, proxy.size.width - inset * 2)
+                let contentHeight = max(0, proxy.size.height - inset * 2)
+
+                HStack(alignment: .top, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 22) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(
                                 LinearGradient(
                                     colors: [Color.accentColor.opacity(0.98), Color.accentColor.opacity(0.72)],
@@ -307,6 +345,7 @@ private struct SettingsView: View {
                         SidebarInfoCard(title: "版本", value: appVersionDisplay)
                         SidebarInfoCard(title: "当前快捷键", value: hotKeyManager.currentHotKey.displayString)
                         SidebarInfoCard(title: "辅助功能权限", value: hotKeyManager.accessibilityGranted ? "已授权" : "未授权")
+                        SidebarInfoCard(title: "开机启动", value: loginItemSidebarValue)
                         SidebarInfoCard(title: "跨工作区", value: spaceSidebarValue)
                     }
 
@@ -316,23 +355,21 @@ private struct SettingsView: View {
                         }
                         .buttonStyle(.link)
                     }
-
-                    Spacer(minLength: 0)
                 }
                 .padding(24)
-                .frame(width: 236, alignment: .leading)
-                .frame(maxHeight: .infinity, alignment: .top)
+                .frame(width: 236, height: contentHeight, alignment: .top)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Color(nsColor: .controlBackgroundColor).opacity(0.68))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
-                        )
-                )
-                .shadow(color: .black.opacity(0.05), radius: 20, y: 12)
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.05), radius: 20, y: 12)
 
-                VStack(alignment: .leading, spacing: 20) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
                     SettingsCard(
                         title: "快捷键",
                         subtitle: "点击录制按钮后直接按下新组合键。修改后立即生效；如果命中常见系统快捷键会直接阻止。"
@@ -346,7 +383,7 @@ private struct SettingsView: View {
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .background(
-                                    Capsule(style: .continuous)
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                                         .fill(Color(nsColor: .controlBackgroundColor))
                                 )
                         }
@@ -394,6 +431,167 @@ private struct SettingsView: View {
                         ) {
                             Image(systemName: "keyboard")
                                 .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    SettingsCard(
+                        title: "权限与授权",
+                        subtitle: "用于确认当前实例是否已获得辅助功能权限，并提供快速跳转与修复指引。"
+                    ) {
+                        SettingsRow(
+                            title: "辅助功能权限",
+                            detail: hotKeyManager.accessibilityGranted
+                                ? "系统已允许 VibeFocus 控制其他应用的窗口。"
+                                : "未授权，快捷键会触发但窗口无法移动。"
+                        ) {
+                            HStack(spacing: 10) {
+                                SettingsStatusPill(
+                                    title: hotKeyManager.accessibilityGranted ? "已授权" : "未授权",
+                                    tint: hotKeyManager.accessibilityGranted ? .green : .red
+                                )
+
+                                Button("重新检测") {
+                                    hotKeyManager.refreshAccessibilityStatus()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "快速操作",
+                            detail: "如果系统显示已授权但这里仍未授权，通常是签名变化或多副本导致。"
+                        ) {
+                            HStack(spacing: 10) {
+                                Button("打开辅助功能设置") {
+                                    hotKeyManager.openAccessibilitySettings()
+                                }
+                                .buttonStyle(.borderedProminent)
+
+                                Button("复制重置命令") {
+                                    let pasteboard = NSPasteboard.general
+                                    pasteboard.clearContents()
+                                    pasteboard.setString(resetAccessCommand, forType: .string)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        Text("重置命令需要在终端运行，执行后请重新打开 VibeFocus 再授权。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "当前运行路径",
+                            detail: currentAppPath
+                        ) {
+                            Button("在 Finder 中显示") {
+                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: currentAppPath)])
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if currentAppPath != expectedAppPath {
+                            Text("检测到非标准安装路径，建议仅保留：\(expectedAppPath)")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "安装位置检查",
+                            detail: otherInstallations.isEmpty
+                                ? "未检测到其他安装副本。"
+                                : "检测到其他安装副本，建议只保留一个。"
+                        ) {
+                            HStack(spacing: 10) {
+                                if isCheckingInstallations {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                }
+                                Button("重新检测") {
+                                    refreshInstallations()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        if !otherInstallations.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("其他副本：")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                ForEach(otherInstallations, id: \.self) { path in
+                                    Text(path)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+
+                    SettingsCard(
+                        title: "开机启动",
+                        subtitle: "控制 VibeFocus 是否在登录后自动启动；如需确认或移除，可在系统设置中操作。"
+                    ) {
+                        SettingsRow(
+                            title: "登录时启动",
+                            detail: loginItemManager.statusDetail
+                        ) {
+                            HStack(spacing: 10) {
+                                SettingsStatusPill(
+                                    title: loginItemManager.statusTitle,
+                                    tint: loginItemManager.isEnabled
+                                        ? .green
+                                        : (loginItemManager.requiresApproval ? .orange : Color.secondary)
+                                )
+                                Toggle("", isOn: Binding(
+                                    get: { loginItemManager.isEnabled },
+                                    set: { loginItemManager.setEnabled($0) }
+                                ))
+                                .labelsHidden()
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+
+                        if loginItemManager.requiresApproval {
+                            Text("系统需要你在「系统设置 → 通用 → 登录项」中确认启用。")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        if let error = loginItemManager.lastErrorMessage, !error.isEmpty {
+                            Text("启用失败：\(error)")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "系统设置",
+                            detail: "在登录项中确认或移除开机启动。"
+                        ) {
+                            HStack(spacing: 10) {
+                                Button("打开登录项设置") {
+                                    loginItemManager.openLoginItemsSettings()
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button("重新检测") {
+                                    loginItemManager.refresh()
+                                }
+                                .buttonStyle(.bordered)
+                            }
                         }
                     }
 
@@ -451,16 +649,36 @@ private struct SettingsView: View {
                             .frame(width: 220)
                         }
                     }
-
-                    Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.vertical, 2)
+                    }
+                    .scrollIndicators(.visible)
+                .frame(maxWidth: .infinity, maxHeight: contentHeight, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(width: contentWidth, height: contentHeight, alignment: .top)
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
             }
-            .padding(28)
         }
-        .frame(width: 820, height: 600)
+        .frame(minWidth: 820, idealWidth: 820, minHeight: 900, idealHeight: 900)
         .onAppear {
             spaceController.refreshAvailability(force: true)
+            hotKeyManager.refreshAccessibilityStatus()
+            loginItemManager.refresh()
+            refreshInstallations()
+        }
+    }
+
+    private func refreshInstallations() {
+        guard !isCheckingInstallations else { return }
+        isCheckingInstallations = true
+        let bundleID = bundleIdentifier
+        DispatchQueue.global(qos: .userInitiated).async {
+            let paths = findAppBundlePaths(bundleIdentifier: bundleID)
+            DispatchQueue.main.async {
+                duplicateAppPaths = paths
+                isCheckingInstallations = false
+            }
         }
     }
 }
@@ -482,13 +700,14 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
         )
 
         let window = FocusableSettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 900),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "VibeFocus 设置"
         window.center()
+        window.minSize = NSSize(width: 820, height: 900)
         window.isReleasedWhenClosed = false
         window.level = .normal
         window.collectionBehavior = [.moveToActiveSpace]
@@ -548,19 +767,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
+        logDiagnostics("launch")
+        guard enforceExpectedInstallLocation() else {
+            return
+        }
         setupMenuBar()
         HotKeyManager.shared.setup()
+        promptAccessibilityIfNeeded()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(refreshMenuLabels),
             name: .hotKeyConfigurationDidChange,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppBecameActive),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
     }
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem?.button?.title = "VibeFocus"
+        if let button = statusItem?.button, let image = loadStatusBarImage() {
+            button.image = image
+            button.imagePosition = .imageOnly
+            button.title = ""
+        } else {
+            statusItem?.button?.title = "VibeFocus"
+        }
 
         let menu = NSMenu()
         let toggleItem = NSMenuItem(title: "", action: #selector(toggle), keyEquivalent: "")
@@ -582,6 +818,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenuLabels()
     }
 
+    private func loadStatusBarImage() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "StatusBarIcon", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
+    }
+
     @objc private func refreshMenuLabels() {
         toggleMenuItem?.title = "Toggle (\(HotKeyManager.shared.currentHotKey.displayString))"
     }
@@ -598,5 +844,63 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func handleAppBecameActive() {
+        HotKeyManager.shared.refreshAccessibilityStatus()
+    }
+
+    private func expectedAppBundlePath() -> String {
+        let home = NSHomeDirectory()
+        return (home as NSString).appendingPathComponent("Applications/VibeFocus.app")
+    }
+
+    @discardableResult
+    private func enforceExpectedInstallLocation() -> Bool {
+        let actualURL = Bundle.main.bundleURL
+        let actual = actualURL.path
+        if actualURL.pathExtension != "app" {
+            log("Skipping install-location enforcement for direct binary run: \(actual)")
+            return true
+        }
+
+        let expected = expectedAppBundlePath()
+        guard actual == expected else {
+            log("Unexpected app location. actual=\(actual) expected=\(expected)")
+            logDiagnostics("unexpected_location")
+
+            if FileManager.default.fileExists(atPath: expected) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: expected))
+            }
+
+            showWrongLocationAlert(actual: actual, expected: expected)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                NSApp.terminate(nil)
+            }
+            return false
+        }
+        return true
+    }
+
+    private func showWrongLocationAlert(actual: String, expected: String) {
+        let alert = NSAlert()
+        alert.messageText = "VibeFocus 安装位置异常"
+        alert.informativeText = "当前运行位置：\n\(actual)\n\n建议使用：\n\(expected)"
+        alert.addButton(withTitle: "退出")
+
+        NSApp.setActivationPolicy(.regular)
+        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+        alert.runModal()
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    private func promptAccessibilityIfNeeded() {
+        guard HotKeyManager.shared.accessibilityGranted == false else {
+            return
+        }
+        log("Accessibility not granted; opening System Settings.")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            HotKeyManager.shared.openAccessibilitySettings()
+        }
     }
 }
