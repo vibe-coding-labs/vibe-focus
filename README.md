@@ -14,6 +14,13 @@
 ./install.sh
 ```
 
+> 首次安装前需要准备一次“本地稳定签名证书”（否则会造成辅助功能授权不稳定）：
+> 1) 打开 Keychain Access
+> 2) 菜单：Keychain Access → Certificate Assistant → Create a Certificate
+> 3) Name: `VibeFocus Local Code Signing`
+> 4) Identity Type: `Self Signed Root`
+> 5) Certificate Type: `Code Signing`
+
 安装完成后会生成：
 ```
 ~/Applications/VibeFocus.app
@@ -56,6 +63,7 @@ open ~/Applications/VibeFocus.app
 - 菜单栏入口：点击 **VibeFocus** → **Toggle (⌃M)**
 - 打开设置页：点击 **VibeFocus** → **设置…**
 - 在设置页里录制新的快捷键后会实时生效，并自动检测常见系统冲突
+- 设置页提供 **开机启动** 开关，用于控制登录后是否自动启动
 
 ## 故障排查
 
