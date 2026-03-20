@@ -68,8 +68,15 @@ cat > "$PLIST_PATH" <<PLIST
 PLIST
 
 if command -v codesign >/dev/null 2>&1; then
-  echo "== Applying ad-hoc code signature =="
-  codesign --force --deep --sign - "$APP_DIR" >/dev/null
+  CERT_NAME="VibeFocus Local Code Signing"
+  if security find-identity -v -p codesigning | grep -F "$CERT_NAME" >/dev/null 2>&1; then
+    echo "== Applying local code signature: $CERT_NAME =="
+    codesign --force --deep --sign "$CERT_NAME" "$APP_DIR" >/dev/null
+  else
+    echo "WARNING: Local certificate '$CERT_NAME' not found, using ad-hoc signature"
+    echo "Create it with: security create-certificate -c '$CERT_NAME' -p codeSigning"
+    codesign --force --deep --sign - "$APP_DIR" >/dev/null
+  fi
 fi
 
 ZIP_NAME="${APP_NAME}-${VERSION}-macos.zip"
