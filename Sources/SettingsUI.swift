@@ -695,7 +695,7 @@ private struct SettingsView: View {
                 .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
             }
         }
-        .frame(minWidth: 1140, idealWidth: 1140, minHeight: 900, idealHeight: 900)
+        .frame(minWidth: 1456, idealWidth: 1456, minHeight: 900, idealHeight: 900)
         .onAppear {
             spaceController.refreshAvailability(force: true)
             hotKeyManager.refreshAccessibilityStatus()
