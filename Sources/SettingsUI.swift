@@ -830,11 +830,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        log("setupMenuBar called")
         if let button = statusItem?.button, let image = loadStatusBarImage() {
+            log("Setting image to status bar")
             button.image = image
             button.imagePosition = .imageOnly
             button.title = ""
         } else {
+            log("Failed to load image, using text fallback")
             statusItem?.button?.title = "VibeFocus"
         }
 
@@ -859,10 +862,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func loadStatusBarImage() -> NSImage? {
-        guard let url = Bundle.main.url(forResource: "StatusBarIcon", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
+        let bundlePath = Bundle.main.bundleURL.path
+        log("loadStatusBarImage: bundle path=\(bundlePath)")
+        guard let url = Bundle.main.url(forResource: "StatusBarIcon", withExtension: "png") else {
+            log("loadStatusBarImage: Resource URL not found")
             return nil
         }
+        log("loadStatusBarImage: Found URL \(url.path)")
+        guard let image = NSImage(contentsOf: url) else {
+            log("loadStatusBarImage: Failed to load image from URL")
+            return nil
+        }
+        log("loadStatusBarImage: Image loaded successfully \(image.size)")
         image.isTemplate = true
         image.size = NSSize(width: 18, height: 18)
         return image
