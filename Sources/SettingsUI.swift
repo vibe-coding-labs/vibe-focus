@@ -898,9 +898,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.applicationIconImage = icon
     }
 
-    private func expectedAppBundlePath() -> String {
+    private func expectedAppBundlePaths() -> [String] {
         let home = NSHomeDirectory()
-        return (home as NSString).appendingPathComponent("Applications/VibeFocus.app")
+        return [
+            (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
+            "/Applications/VibeFocus.app"
+        ]
     }
 
     @discardableResult
@@ -912,28 +915,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
 
-        let expected = expectedAppBundlePath()
-        guard actual == expected else {
-            log("Unexpected app location. actual=\(actual) expected=\(expected)")
-            logDiagnostics("unexpected_location")
+        let expectedPaths = expectedAppBundlePaths()
+        guard !expectedPaths.contains(actual) else {
+            return true
+        }
 
+        log("Unexpected app location. actual=\(actual) expected=\(expectedPaths)")
+        logDiagnostics("unexpected_location")
+
+        // Try to open existing copy if found
+        for expected in expectedPaths {
             if FileManager.default.fileExists(atPath: expected) {
                 NSWorkspace.shared.open(URL(fileURLWithPath: expected))
+                break
             }
-
-            showWrongLocationAlert(actual: actual, expected: expected)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                NSApp.terminate(nil)
-            }
-            return false
         }
-        return true
+
+        showWrongLocationAlert(actual: actual, expected: expectedPaths.first!)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NSApp.terminate(nil)
+        }
+        return false
     }
 
     private func showWrongLocationAlert(actual: String, expected: String) {
         let alert = NSAlert()
         alert.messageText = "VibeFocus 安装位置异常"
-        alert.informativeText = "当前运行位置：\n\(actual)\n\n建议使用：\n\(expected)"
+        alert.informativeText = "当前运行位置：\n\(actual)\n\n建议位置：\n~\(expected)" +
+            "\n或\n/Applications/VibeFocus.app"
         alert.addButton(withTitle: "退出")
 
         NSApp.setActivationPolicy(.regular)
