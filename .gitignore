@@ -28,3 +28,4 @@
 /website/vite.config.js
 /website/vite.config.d.ts
 
+website/demos/node_modules/

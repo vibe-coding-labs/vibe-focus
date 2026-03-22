@@ -1,11 +1,24 @@
 import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback
+} from 'react';
+import {
   AppstoreOutlined,
   CheckCircleOutlined,
   DesktopOutlined,
   EyeOutlined,
+  GithubOutlined,
   PlayCircleOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  PauseCircleOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
+  LoadingOutlined,
+  MacCommandOutlined
 } from '@ant-design/icons';
+import { MonitorFrame } from './components/MonitorFrame';
 import {
   Anchor,
   Button,
@@ -19,17 +32,18 @@ import {
   Statistic,
   Steps,
   Tag,
-  Typography
+  Typography,
+  Tooltip
 } from 'antd';
 
 const { Header, Content, Footer } = Layout;
 const { Title, Paragraph, Text } = Typography;
 
 const pains = [
+  '带鱼屏、曲面屏等大屏幕用户，频繁扭头看副屏窗口，长期导致颈椎不适。',
   '当前工作窗口跑到了副屏，录屏、演示、开会前还要手动拖回主屏。',
   '拖回主屏之后还要自己调尺寸，注意力会从任务本身切出去。',
-  '聚焦结束后，很难精确恢复原来的位置和大小。',
-  '原生全屏太重，手动摆窗太慢，日常使用缺少一个刚刚好的“临时聚焦”动作。'
+  '聚焦结束后，很难精确恢复原来的位置和大小。'
 ];
 
 const capabilities = [
@@ -40,7 +54,7 @@ const capabilities = [
   },
   {
     title: '一键恢复原布局',
-    description: '临时聚焦完成后，再按一次快捷键就恢复原位置和大小。',
+    description: '临时聚焦完成后，再按一次快捷键就恢复原位置和大小。支持自定义恢复策略：可切回原工作区，也可将窗口拉到当前工作区。',
     icon: <CheckCircleOutlined />
   },
   {
@@ -52,14 +66,19 @@ const capabilities = [
     title: '权限与状态可诊断',
     description: '设置页可以检查授权、安装路径、登录项和快捷键配置，减少排查成本。',
     icon: <EyeOutlined />
+  },
+  {
+    title: 'yabai 跨工作区支持',
+    description: '检测到 yabai 窗口管理器后，可跨 Space（工作区）移动和恢复窗口。',
+    icon: <MacCommandOutlined />
   }
 ];
 
 const scenarios = [
-  '录屏、演示、直播前，把当前窗口立即拉回主屏。',
-  '写作、编码、分析时进入短时“只看一个窗口”的深度工作状态。',
-  '多显示器办公时，降低频繁拖窗和重新摆窗的机械劳动。',
-  '临时聚焦结束后，快速回到原来的桌面布局。'
+  '带鱼屏、曲面屏等大屏幕用户，无需频繁扭头即可查看副屏窗口内容，保护颈椎。',
+  '录屏、演示、直播前，把当前窗口立即拉回主屏，保持自然视线。',
+  '写作、编码、分析时进入短时"只看一个窗口"的深度工作状态。',
+  '多显示器办公时，降低频繁拖窗和重新摆窗的机械劳动。'
 ];
 
 type DemoMediaKind = 'GIF' | 'Video';
@@ -72,6 +91,12 @@ type DemoItem = {
   expectedPath: string;
   src?: string;
   poster?: string;
+  // 视频配置选项
+  playsInline?: boolean;
+  controls?: boolean;
+  muted?: boolean;
+  loop?: boolean;
+  autoPlay?: boolean;
 };
 
 const demoAssets: DemoItem[] = [
@@ -80,30 +105,46 @@ const demoAssets: DemoItem[] = [
     title: '演示 01：一键拉回主屏并铺满',
     description: '展示从副屏窗口快速进入主屏聚焦态，适合录屏前 3 秒切换。',
     kind: 'GIF',
-    expectedPath: '/demos/focus-to-main-display.gif'
+    expectedPath: '/vibe-focus/demos/focus-to-main-display.gif',
+    src: '/vibe-focus/demos/focus-to-main-display.gif',
+    poster: '/vibe-focus/demos/focus-to-main-display-poster.jpg'
   },
   {
     key: 'restore-original-layout',
     title: '演示 02：再次触发恢复原布局',
     description: '展示聚焦结束后窗口回到原位置与尺寸，避免手动摆窗。',
     kind: 'Video',
-    expectedPath: '/demos/restore-original-layout.mp4'
+    expectedPath: '/vibe-focus/demos/restore-original-layout.mp4',
+    src: '/vibe-focus/demos/restore-original-layout.mp4',
+    poster: '/vibe-focus/demos/restore-original-layout-poster.jpg',
+    playsInline: true,
+    controls: false,
+    muted: true,
+    loop: true,
+    autoPlay: true
   },
   {
     key: 'permissions-diagnostics',
     title: '演示 03：权限和状态诊断',
     description: '展示设置页里的辅助功能权限、登录项和快捷键状态检查。',
     kind: 'Video',
-    expectedPath: '/demos/permissions-diagnostics.mp4'
+    expectedPath: '/vibe-focus/demos/permissions-diagnostics.mp4',
+    src: '/vibe-focus/demos/permissions-diagnostics.mp4',
+    poster: '/vibe-focus/demos/permissions-diagnostics-poster.jpg',
+    playsInline: true,
+    controls: false,
+    muted: true,
+    loop: true,
+    autoPlay: true
   }
 ];
 
 const faqs = [
   {
     key: '1',
-    label: 'Vibe Focus 解决的核心问题是什么？',
+    label: 'Vibe Focus 为什么能保护颈椎？',
     children:
-      '它解决的是多显示器工作流里“临时聚焦某个窗口”这件事太繁琐的问题，让拖窗、缩放、恢复布局这套重复动作变成一次快捷键切换。'
+      '带鱼屏、曲面屏等 40 英寸以上大屏幕用户，经常需要扭头看副屏窗口。Vibe Focus 让你一键将窗口聚焦到主屏中央，无需频繁转动头部，有效减少颈椎压力，特别适合长时间 Vibe Coding 的用户。'
   },
   {
     key: '2',
@@ -115,15 +156,334 @@ const faqs = [
     key: '3',
     label: '为什么需要辅助功能权限？',
     children:
-      '因为应用需要控制其他 App 的窗口位置和大小，这是 macOS 的受保护能力，所以首次使用必须给 Vibe Focus 辅助功能权限。'
+      '因为应用需要控制其他 App 的窗口位置和大小，这是 macOS 的受保护能力，所以首次使用必须给 Vibe Focus 辅助功能权限。如果权限异常，可在设置页复制重置命令（tccutil reset Accessibility）并在终端执行。Vibe Focus 在未授权时也会尝试使用 System Events 作为降级方案。'
   },
   {
     key: '4',
+    label: '什么是跨工作区支持？',
+    children:
+      '当系统安装了 yabai 窗口管理器时，Vibe Focus 可以跨 Space（工作区）移动窗口，并提供两种恢复策略：切回原工作区，或把窗口拉到当前工作区。'
+  },
+  {
+    key: '5',
+    label: '为什么提示安装位置异常？',
+    children:
+      'Vibe Focus 会检查安装位置，建议放在 ~/Applications/ 或 /Applications/ 目录。检测到多副本时也会提示，建议只保留一个副本运行。'
+  },
+  {
+    key: '6',
     label: '哪些人最适合用它？',
     children:
       '经常开会、录屏、做演示，或者日常在双屏/多屏环境下深度工作的人，会最明显感受到收益。'
   }
 ];
+
+// 自定义 Hook：视频视口自动播放
+function useVideoAutoPlay(videoRef: React.RefObject<HTMLVideoElement>) {
+  const [isInViewport, setIsInViewport] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          setIsInViewport(entry.isIntersecting);
+        });
+      },
+      { threshold: 0.3 }
+    );
+
+    observer.observe(video);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [videoRef]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (isInViewport) {
+      video.play().catch(() => {
+        // 自动播放可能被浏览器阻止，忽略错误
+      });
+    } else {
+      video.pause();
+    }
+  }, [isInViewport, videoRef]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+
+    return () => {
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+    };
+  }, [videoRef]);
+
+  return { isInViewport, isPlaying };
+}
+
+// 视频播放器组件
+interface VideoPlayerProps {
+  item: DemoItem;
+}
+
+function VideoPlayer({ item }: VideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { isPlaying } = useVideoAutoPlay(videoRef);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  const toggleFullscreen = useCallback(async () => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    try {
+      if (!isFullscreen) {
+        if (container.requestFullscreen) {
+          await container.requestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.error('Fullscreen error:', err);
+    }
+  }, [isFullscreen]);
+
+  const togglePlay = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (video.paused) {
+      video.play();
+    } else {
+      video.pause();
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const handleVideoClick = () => {
+    toggleFullscreen();
+  };
+
+  const handleLoadedData = () => {
+    setIsLoaded(true);
+  };
+
+  // 视频内容
+  const videoContent = (
+    <video
+      ref={videoRef}
+      className="demo-media"
+      src={item.src}
+      poster={item.poster}
+      muted={item.muted !== false}
+      loop={item.loop !== false}
+      playsInline={item.playsInline !== false}
+      controls={isFullscreen || item.controls}
+      onClick={handleVideoClick}
+      onLoadedData={handleLoadedData}
+      preload="metadata"
+      style={{
+        width: '100%',
+        height: '100%',
+        objectFit: 'contain',
+        display: 'block',
+      }}
+    >
+      <source src={item.src} type="video/mp4" />
+    </video>
+  );
+
+  return (
+    <div
+      ref={containerRef}
+      className={`video-player-container ${isFullscreen ? 'is-fullscreen' : ''}`}
+    >
+      {!isLoaded && (
+        <div className="video-loading">
+          <LoadingOutlined className="video-loading-icon" />
+        </div>
+      )}
+
+      {/* 全屏模式：直接显示视频 */}
+      {isFullscreen ? (
+        videoContent
+      ) : (
+        /* 正常模式：用 MonitorFrame 包裹 */
+        <MonitorFrame isActive={isPlaying} brand="Vibe Focus">
+          {videoContent}
+        </MonitorFrame>
+      )}
+
+      {/* 播放/暂停指示器 - 仅在非全屏时显示 */}
+      {!isFullscreen && (
+        <div className={`video-play-indicator ${isPlaying ? 'is-playing' : 'is-paused'}`}>
+          {isPlaying ? (
+            <PauseCircleOutlined className="video-indicator-icon" />
+          ) : (
+            <PlayCircleOutlined className="video-indicator-icon" />
+          )}
+        </div>
+      )}
+
+      {/* 视频控制栏 */}
+      <div className="video-controls">
+        <Tooltip title={isPlaying ? '暂停' : '播放'}>
+          <button
+            className="video-control-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePlay();
+            }}
+          >
+            {isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+          </button>
+        </Tooltip>
+        <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
+          <button
+            className="video-control-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFullscreen();
+            }}
+          >
+            {isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
+// Hero 视频组件
+function HeroVideoPlayer() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { isPlaying } = useVideoAutoPlay(videoRef);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const toggleFullscreen = useCallback(async () => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    try {
+      if (!isFullscreen) {
+        if (container.requestFullscreen) {
+          await container.requestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.error('Fullscreen error:', err);
+    }
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  // 视频内容
+  const videoContent = (
+    <video
+      ref={videoRef}
+      className="hero-video-player"
+      src="/vibe-focus/demos/hero-loop-preview.mp4?v=9"
+      autoPlay
+      muted
+      loop
+      playsInline
+      controls={isFullscreen}
+      onClick={toggleFullscreen}
+      style={{
+        width: '100%',
+        height: '100%',
+        objectFit: 'contain',
+        objectPosition: 'center center',
+        display: 'block',
+      }}
+    />
+  );
+
+  return (
+    <div
+      ref={containerRef}
+      className={`video-player-container hero-video-wrapper ${isFullscreen ? 'is-fullscreen' : ''}`}
+    >
+      {/* 全屏模式：直接显示视频 */}
+      {isFullscreen ? (
+        videoContent
+      ) : (
+        /* 正常模式：用 MonitorFrame 包裹 */
+        <MonitorFrame isActive={isPlaying} brand="Vibe Focus">
+          {videoContent}
+        </MonitorFrame>
+      )}
+
+      {/* 播放/暂停指示器 - 仅在非全屏时显示 */}
+      {!isFullscreen && (
+        <div className={`video-play-indicator ${isPlaying ? 'is-playing' : 'is-paused'}`}>
+          {isPlaying ? (
+            <PauseCircleOutlined className="video-indicator-icon" />
+          ) : (
+            <PlayCircleOutlined className="video-indicator-icon" />
+          )}
+        </div>
+      )}
+
+      {/* 视频控制栏 */}
+      <div className="video-controls">
+        <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
+          <button
+            className="video-control-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFullscreen();
+            }}
+          >
+            {isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   return (
@@ -133,7 +493,7 @@ export default function App() {
           <img src="/logo.svg" alt="Vibe Focus Logo" className="brand-logo" />
           <div>
             <div className="brand-title">Vibe Focus</div>
-            <div className="brand-subtitle">把拖窗动作变成一次按键</div>
+            <div className="brand-subtitle">保护颈椎，专注编码</div>
           </div>
         </div>
         <Anchor
@@ -148,6 +508,14 @@ export default function App() {
             { key: 'faq', href: '#faq', title: 'FAQ' }
           ]}
         />
+        <a
+          href="https://github.com/vibe-coding-labs/vibe-focus"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="github-link"
+        >
+          <GithubOutlined />
+        </a>
       </Header>
 
       <Content className="site-content">
@@ -155,20 +523,18 @@ export default function App() {
           <div className="hero-bg" />
           <div className="hero-content">
             <Row gutter={[28, 28]} align="middle" className="hero-grid">
-              <Col xs={24} lg={14}>
+              <Col xs={24} lg={9}>
                 <Space direction="vertical" size={20} className="hero-main">
                   <Tag color="cyan" className="hero-tag">
-                    macOS 菜单栏效率工具
+                    保护颈椎，专注编码
                   </Tag>
                   <Title className="hero-title">
-                    把窗口聚焦，做成一个
-                    <span>不打断心流</span>
-                    的动作
+                    <span>告别频繁扭头</span>
+                    保护颈椎健康
                   </Title>
                   <Paragraph className="hero-description">
-                    Vibe Focus 专为多显示器工作流设计：
-                    一键把当前窗口移动到主屏并铺满可见区域，再一键恢复原布局。
-                    你不用再拖窗、调尺寸、记位置，只需要继续工作。
+                    专为带鱼屏、曲面屏等 40 英寸以上大屏幕用户设计。Vibe Focus 让你无需频繁扭头看副屏窗口，
+                    一键将窗口聚焦到主屏中央，有效减少颈椎压力，让 Vibe Coding 更持久、更健康。
                   </Paragraph>
                   <Space wrap size={16}>
                     <Button type="primary" size="large" href="#solution">
@@ -181,22 +547,11 @@ export default function App() {
                 </Space>
               </Col>
 
-              <Col xs={24} lg={10}>
+              <Col xs={24} lg={15}>
                 <Card className="hero-video-card" bordered={false}>
                   <div className="hero-video-shell">
-                    <div className="hero-video-placeholder">
-                      <PlayCircleOutlined className="hero-video-icon" />
-                      <Text className="hero-video-title">Banner 演示视频占位</Text>
-                      <Text className="hero-video-hint">
-                        后续替换成自动播放、静音、循环的演示视频
-                      </Text>
-                      <Text className="hero-video-path">/demos/hero-loop-preview.mp4</Text>
-                    </div>
+                    <HeroVideoPlayer />
                   </div>
-                  <Space size={8}>
-                    <Tag color="cyan">Loop Preview</Tag>
-                    <Tag>16:9</Tag>
-                  </Space>
                 </Card>
               </Col>
 
@@ -229,15 +584,18 @@ export default function App() {
         </section>
 
         <section id="problem" className="section">
-          <Title level={2}>我们解决的问题</Title>
-          <Paragraph className="section-lead">
-            Vibe Focus 不是通用窗口管理器，而是专门解决“临时把当前窗口拉回主屏并聚焦”这件高频小事。
-          </Paragraph>
-          <Row gutter={[20, 20]}>
-            {pains.map((item) => (
-              <Col xs={24} md={12} key={item}>
-                <Card className="info-card">
-                  <Paragraph>{item}</Paragraph>
+          <div className="section-header">
+            <Title level={2}>大屏幕用户的颈椎困扰</Title>
+            <Paragraph className="section-lead">
+              40 英寸以上的带鱼屏、曲面屏在 Vibe Coding 时提供了更大的视野，但也带来了频繁扭头的问题。Vibe Focus 专门解决这一健康隐患。
+            </Paragraph>
+          </div>
+          <Row gutter={[24, 24]}>
+            {pains.map((item, index) => (
+              <Col xs={24} md={12} key={index}>
+                <Card className="info-card" bordered={false}>
+                  <div className="info-card-number">0{index + 1}</div>
+                  <Paragraph className="info-card-text">{item}</Paragraph>
                 </Card>
               </Col>
             ))}
@@ -245,17 +603,20 @@ export default function App() {
         </section>
 
         <section id="solution" className="section section-alt">
-          <Title level={2}>Vibe Focus 的解决方式</Title>
-          <Paragraph className="section-lead">
-            它不试图接管你的整个桌面，而是只优化一个关键时刻：你需要马上聚焦当前窗口的时候。
-          </Paragraph>
+          <div className="section-header">
+            <Title level={2}>保护颈椎，从减少扭头开始</Title>
+            <Paragraph className="section-lead">
+              它不只优化窗口管理，更重要的是保护你的颈椎健康。通过减少频繁扭头，让你在享受大屏幕带来的效率提升的同时，远离颈椎问题。
+            </Paragraph>
+          </div>
           <Steps
             responsive
             current={3}
+            className="solution-steps"
             items={[
               {
                 title: '按下快捷键',
-                description: '默认是 Ctrl+M，也可以在设置页里重新录制。'
+                description: '默认是 ⌃M（Control+M），也可以在设置页里重新录制。请确保快捷键不与系统快捷键冲突。'
               },
               {
                 title: '移动并铺满主屏',
@@ -274,29 +635,22 @@ export default function App() {
         </section>
 
         <section id="demo" className="section">
-          <Title level={2}>效果演示</Title>
-          <Paragraph className="section-lead">
-            下面预留了 GIF 和 Video 的展示位。把素材放到
-            <Text code>website/public/demos</Text>，
-            然后在 <Text code>demoAssets</Text> 里填入对应 <Text code>src</Text> 即可上线展示。
-          </Paragraph>
-          <Row gutter={[20, 20]}>
+          <div className="section-header">
+            <Title level={2}>效果演示</Title>
+            <Paragraph className="section-lead">
+              以下演示展示了 Vibe Focus 的核心功能，使用 Remotion 生成。
+              <br />
+              每个演示都展示了多显示器工作流中的实际应用场景。
+            </Paragraph>
+          </div>
+          <Row gutter={[24, 32]}>
             {demoAssets.map((item) => (
-              <Col xs={24} lg={8} key={item.key}>
-                <Card className="demo-card">
+              <Col xs={24} md={12} lg={8} key={item.key}>
+                <Card className="demo-card" bordered={false}>
                   <div className="demo-media-shell">
                     {item.src ? (
                       item.kind === 'Video' ? (
-                        <video
-                          className="demo-media"
-                          controls
-                          muted
-                          loop
-                          playsInline
-                          poster={item.poster}
-                        >
-                          <source src={item.src} type="video/mp4" />
-                        </video>
+                        <VideoPlayer item={item} />
                       ) : (
                         <img className="demo-media" src={item.src} alt={item.title} />
                       )
@@ -308,14 +662,16 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                  <Space direction="vertical" size={8}>
-                    <Space size={8}>
-                      <Tag color="blue">{item.kind}</Tag>
-                      <Tag>{item.key}</Tag>
+                  <div className="demo-card-content">
+                    <Space size={8} className="demo-card-tags">
+                      <Tag color="cyan">{item.kind}</Tag>
+                      <Tag color="blue">演示 0{item.key.split('-').pop()?.slice(0, 2) || '1'}</Tag>
                     </Space>
-                    <Title level={4}>{item.title}</Title>
-                    <Paragraph>{item.description}</Paragraph>
-                  </Space>
+                    <Title level={4} className="demo-card-title">{item.title}</Title>
+                    <Paragraph className="demo-card-description">
+                      {item.description}
+                    </Paragraph>
+                  </div>
                 </Card>
               </Col>
             ))}
@@ -323,18 +679,25 @@ export default function App() {
         </section>
 
         <section id="features" className="section">
-          <Title level={2}>核心功能</Title>
-          <Row gutter={[20, 20]}>
-            {capabilities.map((item) => (
+          <div className="section-header">
+            <Title level={2}>核心功能</Title>
+            <Paragraph className="section-lead">
+              五大核心能力，覆盖多显示器工作流中的关键场景
+            </Paragraph>
+          </div>
+          <Row gutter={[24, 24]}>
+            {capabilities.map((item, index) => (
               <Col xs={24} md={12} key={item.title}>
-                <Card className="feature-card">
-                  <Space size={14} align="start">
-                    <div className="feature-icon">{item.icon}</div>
-                    <div>
+                <Card className="feature-card" bordered={false}>
+                  <div className="feature-card-content">
+                    <div className="feature-icon-wrapper">
+                      {item.icon}
+                    </div>
+                    <div className="feature-text">
                       <Title level={4}>{item.title}</Title>
                       <Paragraph>{item.description}</Paragraph>
                     </div>
-                  </Space>
+                  </div>
                 </Card>
               </Col>
             ))}
@@ -342,37 +705,46 @@ export default function App() {
         </section>
 
         <section id="scenes" className="section section-alt">
-          <Title level={2}>适用场景</Title>
-          <Row gutter={[20, 20]}>
-            {scenarios.map((item) => (
-              <Col xs={24} md={12} key={item}>
-                <Card className="scene-card">
-                  <Space align="start">
-                    <AppstoreOutlined className="scene-icon" />
-                    <Text>{item}</Text>
-                  </Space>
+          <div className="section-header">
+            <Title level={2}>适合谁用</Title>
+            <Paragraph className="section-lead">
+              如果你在使用带鱼屏、曲面屏等 40 英寸以上大屏幕，这些场景会让你感受到 Vibe Focus 的价值
+            </Paragraph>
+          </div>
+          <Row gutter={[24, 24]}>
+            {scenarios.map((item, index) => (
+              <Col xs={24} md={12} key={index}>
+                <Card className="scene-card" bordered={false}>
+                  <div className="scene-card-content">
+                    <div className="scene-icon-wrapper">
+                      <AppstoreOutlined />
+                    </div>
+                    <Text className="scene-text">{item}</Text>
+                  </div>
                 </Card>
               </Col>
             ))}
           </Row>
         </section>
 
-        <section className="section">
-          <Card className="cta-card">
-            <Row gutter={[24, 24]} align="middle">
-              <Col xs={24} lg={15}>
-                <Title level={2}>它不是为了“管理所有窗口”，而是为了减少一次次机械操作</Title>
-                <Paragraph>
-                  如果你已经知道自己要聚焦哪个窗口，Vibe Focus 就会是最快的一步。
-                  它帮助你把手从触控板和拖拽动作里解放出来，把注意力还给任务本身。
+        <section className="section section-cta">
+          <Card className="cta-card" bordered={false}>
+            <Row gutter={[48, 32]} align="middle">
+              <Col xs={24} lg={16}>
+                <Title level={2} className="cta-title">
+                  享受大屏幕的效率，同时保护颈椎健康
+                </Title>
+                <Paragraph className="cta-description">
+                  40 英寸以上的带鱼屏、曲面屏让 Vibe Coding 更高效，但频繁扭头会给颈椎带来压力。
+                  Vibe Focus 帮助你减少扭头次数，把窗口带到视线中央，让高效工作与健康颈椎兼得。
                 </Paragraph>
               </Col>
-              <Col xs={24} lg={9}>
-                <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                  <Button type="primary" size="large" block href="#faq">
+              <Col xs={24} lg={8}>
+                <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                  <Button type="primary" size="large" block href="#faq" className="cta-button-primary">
                     查看常见问题
                   </Button>
-                  <Button size="large" block href="https://github.com/vibe-coding-labs/vibe-focus">
+                  <Button size="large" block href="https://github.com/vibe-coding-labs/vibe-focus" className="cta-button-secondary">
                     查看项目仓库
                   </Button>
                 </Space>
@@ -382,20 +754,42 @@ export default function App() {
         </section>
 
         <section id="faq" className="section">
-          <Title level={2}>常见问题</Title>
-          <Collapse items={faqs} className="faq" />
+          <div className="section-header">
+            <Title level={2}>常见问题</Title>
+            <Paragraph className="section-lead">
+              关于 Vibe Focus 的使用疑问，在这里找到答案
+            </Paragraph>
+          </div>
+          <Collapse items={faqs} className="faq" bordered={false} />
         </section>
 
         <Divider />
       </Content>
 
       <Footer className="site-footer">
-        <Space direction="vertical" size={6}>
-          <Text strong>Vibe Focus</Text>
-          <Text type="secondary">
-            一款为 macOS 多显示器工作流设计的窗口聚焦工具。
+        <div className="footer-content">
+          <div className="footer-brand">
+            <img src="/logo.svg" alt="Vibe Focus" className="footer-logo" />
+            <div>
+              <Text strong className="footer-title">Vibe Focus</Text>
+              <Text className="footer-subtitle">
+                为带鱼屏、曲面屏等大屏幕用户设计的颈椎保护工具
+              </Text>
+            </div>
+          </div>
+          <div className="footer-links">
+            <Space size={24} className="footer-nav">
+              <a href="#problem">问题</a>
+              <a href="#solution">解决方案</a>
+              <a href="#demo">效果演示</a>
+              <a href="#features">功能</a>
+              <a href="#faq">FAQ</a>
+            </Space>
+          </div>
+          <Text className="footer-copyright">
+            © 2024 Vibe Focus. All rights reserved.
           </Text>
-        </Space>
+        </div>
       </Footer>
     </Layout>
   );
