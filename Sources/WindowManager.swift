@@ -299,13 +299,61 @@ class WindowManager {
             return shouldRestoreAcrossSpaces()
         }
 
-        guard let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) else {
-            return shouldRestoreAcrossSpaces()
+        // 第一级匹配：通过 windowID（最可靠的方式）
+        if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
+            hydrateMemory(from: matchedState, window: focusedWindow)
+            log("Detected moved window state for current handle: \(currentWindowID)")
+            return true
         }
 
-        hydrateMemory(from: matchedState, window: focusedWindow)
-        log("Detected moved window state for current handle: \(currentWindowID)")
-        return true
+        // 第二级匹配：通过 PID + 窗口标题 + 大致位置（备用机制）
+        if let currentFrame = frame(of: focusedWindow),
+           let currentTitle = title(of: focusedWindow),
+           let matchedState = findStateByFallbackMatching(
+               pid: frontApp.processIdentifier,
+               title: currentTitle,
+               frame: currentFrame,
+               windowID: currentWindowID
+           ) {
+            hydrateMemory(from: matchedState, window: focusedWindow)
+            log("Detected moved window state via fallback matching (PID+title+position)")
+            return true
+        }
+
+        return shouldRestoreAcrossSpaces()
+    }
+
+    /// 备用匹配机制：当 windowID 匹配失败时使用
+    /// 基于 PID + 窗口标题 + 大致位置进行匹配
+    private func findStateByFallbackMatching(
+        pid: pid_t,
+        title: String,
+        frame: CGRect,
+        windowID: UInt32
+    ) -> SavedWindowState? {
+        // 匹配条件：
+        // 1. PID 相同
+        // 2. 窗口标题相同（或都为空）
+        // 3. 当前位置接近保存的 targetFrame（因为窗口已经被移动过）
+
+        let positionTolerance: CGFloat = 50.0  // 位置容差 50 像素
+
+        return savedWindowStates.reversed().first { state in
+            // PID 必须匹配
+            guard state.pid == pid else { return false }
+
+            // 窗口标题必须匹配（都为空也算匹配）
+            let stateTitle = state.title ?? ""
+            let currentTitle = title
+            guard stateTitle == currentTitle else { return false }
+
+            // 当前窗口位置应该接近保存的 targetFrame（因为窗口已经被移动到主屏幕）
+            let targetFrame = state.targetFrame.cgRect
+            let xDiff = abs(frame.origin.x - targetFrame.origin.x)
+            let yDiff = abs(frame.origin.y - targetFrame.origin.y)
+
+            return xDiff <= positionTolerance && yDiff <= positionTolerance
+        }
     }
 
     func focusedWindow(for pid: pid_t) -> AXUIElement? {
@@ -319,6 +367,7 @@ class WindowManager {
     }
 
     func restoreWindow(using token: WindowToken) -> AXUIElement? {
+        // 第一级匹配：通过 windowID 匹配当前聚焦窗口
         if let focused = focusedWindow(for: token.pid),
            let currentWindowID = windowHandle(for: focused),
            currentWindowID == token.windowID {
@@ -326,11 +375,30 @@ class WindowManager {
             return focused
         }
 
+        // 第二级匹配：通过 windowID 匹配缓存的窗口引用
         if let lastWindowElement,
            let currentWindowID = windowHandle(for: lastWindowElement),
            currentWindowID == token.windowID {
             log("Restoring using saved AX handle match")
             return lastWindowElement
+        }
+
+        // 第三级匹配：备用匹配（PID + 标题 + 大致位置）
+        if let frontApp = NSWorkspace.shared.frontmostApplication,
+           let focused = focusedWindow(for: frontApp.processIdentifier),
+           let currentTitle = title(of: focused),
+           let currentFrame = frame(of: focused),
+           let lastTarget = lastTargetFrame {
+            // 检查当前窗口是否匹配 token 的描述
+            let pidMatches = frontApp.processIdentifier == token.pid
+            let titleMatches = (token.title ?? "") == currentTitle
+            let positionMatches = abs(currentFrame.origin.x - lastTarget.origin.x) <= 50 &&
+                                 abs(currentFrame.origin.y - lastTarget.origin.y) <= 50
+
+            if pidMatches && titleMatches && positionMatches {
+                log("Restoring using fallback matching (PID+title+position)")
+                return focused
+            }
         }
 
         return nil
