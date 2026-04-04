@@ -339,6 +339,8 @@ extension WindowManager {
     }
 
     func apply(frame targetFrame: CGRect, to window: AXUIElement) -> Bool {
+        var lastAppliedFrame: CGRect?
+
         for attempt in 1...6 {
             var targetSize = CGSize(width: targetFrame.width, height: targetFrame.height)
             guard let sizeValue = AXValueCreate(.cgSize, &targetSize) else {
@@ -366,9 +368,25 @@ extension WindowManager {
 
             if let appliedFrame = frame(of: window) {
                 log("Applied frame after attempt \(attempt): \(appliedFrame)")
+                lastAppliedFrame = appliedFrame
                 if framesMatch(appliedFrame, targetFrame) {
                     return true
                 }
+            }
+        }
+
+        // 如果精确匹配失败，但窗口已成功应用了接近的尺寸（可能是窗口有最小尺寸限制）
+        // 我们也认为是成功的
+        if let lastFrame = lastAppliedFrame {
+            // 检查是否在合理范围内（位置正确，大小接近）
+            let positionMatches = abs(lastFrame.origin.x - targetFrame.origin.x) <= frameTolerance &&
+                                 abs(lastFrame.origin.y - targetFrame.origin.y) <= frameTolerance
+            let sizeCloseEnough = abs(lastFrame.width - targetFrame.width) <= frameTolerance * 2 &&
+                                 abs(lastFrame.height - targetFrame.height) <= 100 // 允许高度有较大偏差（最小尺寸限制）
+
+            if positionMatches && sizeCloseEnough {
+                log("Applied frame within tolerance (window may have size constraints): \(lastFrame)")
+                return true
             }
         }
 
@@ -377,10 +395,11 @@ extension WindowManager {
 
     func axFrame(forVisibleFrameOf screen: NSScreen) -> CGRect {
         let visibleFrame = screen.visibleFrame
-        let zeroScreenMaxY = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
+        // 使用当前屏幕的 frame.maxY 进行坐标转换
+        let screenMaxY = screen.frame.maxY
         return CGRect(
             x: visibleFrame.origin.x,
-            y: zeroScreenMaxY - visibleFrame.maxY,
+            y: screenMaxY - visibleFrame.maxY,
             width: visibleFrame.width,
             height: visibleFrame.height
         )
