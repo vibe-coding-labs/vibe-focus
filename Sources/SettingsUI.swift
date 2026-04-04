@@ -629,15 +629,49 @@ private struct SettingsView: View {
                         }
 
                         if !otherInstallations.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("其他副本：")
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("检测到其他副本（建议删除，只保留当前运行的版本）：")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.secondary)
-                                ForEach(otherInstallations, id: \.self) { path in
-                                    Text(path)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                ForEach(otherInstallations, id: \.self) { (path: String) in
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(.orange)
+                                            .font(.system(size: 10))
+                                        Text(path)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                        Spacer()
+                                        HStack(spacing: 6) {
+                                            Button("Finder") {
+                                                showDuplicateInFinder(path: path)
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.blue)
+                                            Button("删除") {
+                                                moveDuplicateToTrash(path: path)
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.red)
+                                        }
+                                    }
+                                    .padding(8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.orange.opacity(0.08))
+                                    )
+                                }
+                                HStack {
+                                    Spacer()
+                                    Button("全部删除") {
+                                        moveAllDuplicatesToTrash()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .foregroundStyle(.red)
                                 }
                             }
                         }
@@ -842,6 +876,74 @@ private struct SettingsView: View {
                 duplicateAppPaths = paths
                 isCheckingInstallations = false
             }
+        }
+    }
+
+    private func showDuplicateInFinder(path: String) {
+        let url = URL(fileURLWithPath: path)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func moveDuplicateToTrash(path: String) {
+        let alert = NSAlert()
+        alert.messageText = "确认删除"
+        alert.informativeText = "确定要将以下应用移到废纸篓吗？\n\n\(path)\n\n此操作不可撤销。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "移到废纸篓")
+        alert.addButton(withTitle: "取消")
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        do {
+            let url = URL(fileURLWithPath: path)
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            log("Moved duplicate to trash: \(path)")
+            refreshInstallations()
+        } catch {
+            let errorAlert = NSAlert()
+            errorAlert.messageText = "删除失败"
+            errorAlert.informativeText = "无法移到废纸篓：\(error.localizedDescription)"
+            errorAlert.alertStyle = .critical
+            errorAlert.addButton(withTitle: "确定")
+            errorAlert.runModal()
+        }
+    }
+
+    private func moveAllDuplicatesToTrash() {
+        let pathsToDelete = otherInstallations
+        guard !pathsToDelete.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "确认批量删除"
+        alert.informativeText = "确定要将以下 \(pathsToDelete.count) 个副本全部移到废纸篓吗？\n\n此操作不可撤销。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "全部移到废纸篓")
+        alert.addButton(withTitle: "取消")
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        var failedPaths: [String] = []
+        for path in pathsToDelete {
+            do {
+                let url = URL(fileURLWithPath: path)
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                log("Moved duplicate to trash: \(path)")
+            } catch {
+                failedPaths.append(path)
+            }
+        }
+
+        refreshInstallations()
+
+        if !failedPaths.isEmpty {
+            let errorAlert = NSAlert()
+            errorAlert.messageText = "部分删除失败"
+            errorAlert.informativeText = "以下 \(failedPaths.count) 个副本未能删除：\n\n\(failedPaths.joined(separator: "\n"))"
+            errorAlert.alertStyle = .warning
+            errorAlert.addButton(withTitle: "确定")
+            errorAlert.runModal()
         }
     }
 }
