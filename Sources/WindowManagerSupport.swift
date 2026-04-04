@@ -117,17 +117,40 @@ extension WindowManager {
             return false
         }
 
-        guard let currentWindowID = snapshot.windowID,
-              let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) else {
-            return false
+        // 第一级匹配：通过 windowID
+        if let currentWindowID = snapshot.windowID,
+           let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
+            hydrateMemory(from: matchedState, window: nil)
+            log("Detected moved window state via System Events handle: \(currentWindowID)")
+            return true
         }
 
-        hydrateMemory(from: matchedState, window: nil)
-        log("Detected moved window state via System Events handle: \(currentWindowID)")
-        return true
+        // 第二级匹配：通过 PID + 窗口标题 + 大致位置
+        let positionTolerance: CGFloat = 50.0
+        if let matchedState = savedWindowStates.reversed().first(where: { state in
+            guard state.pid == frontApp.processIdentifier else { return false }
+            let stateTitle = state.title ?? ""
+            let currentTitle = snapshot.title ?? ""
+            guard stateTitle == currentTitle else { return false }
+
+            // 检查当前位置是否接近保存的 targetFrame
+            let targetFrame = state.targetFrame.cgRect
+            let xDiff = abs(snapshot.x - targetFrame.origin.x)
+            let yDiff = abs(snapshot.y - targetFrame.origin.y)
+            return xDiff <= positionTolerance && yDiff <= positionTolerance
+        }) {
+            hydrateMemory(from: matchedState, window: nil)
+            log("Detected moved window state via System Events fallback matching (PID+title+position)")
+            return true
+        }
+
+        return false
     }
 
     func systemEventsSnapshot(forPID pid: pid_t) -> ScriptWindowSnapshot? {
+        // 先尝试通过 CGWindow 获取 windowID
+        let windowID = systemEventsGetWindowID(forPID: pid)
+
         let script = """
         const se = Application('System Events');
         const pid = \(pid);
@@ -152,8 +175,9 @@ extension WindowManager {
             return nil
         }
 
+        // 将从 CGWindow 获取的 windowID 注入结果
         return ScriptWindowSnapshot(
-            windowID: nil,
+            windowID: windowID,
             appName: snapshot.appName,
             title: snapshot.title,
             x: snapshot.x,
@@ -161,6 +185,29 @@ extension WindowManager {
             width: snapshot.width,
             height: snapshot.height
         )
+    }
+
+    /// 通过 CGWindowList 获取窗口 ID（备用方案）
+    private func systemEventsGetWindowID(forPID pid: pid_t) -> UInt32? {
+        // 获取该 PID 的所有窗口
+        let options = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        // 找到属于该 PID 且是可见的普通窗口
+        for windowInfo in windowList {
+            if let windowPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
+               windowPID == pid,
+               let windowID = windowInfo[kCGWindowNumber as String] as? UInt32 {
+                // 过滤掉系统 UI 元素（如菜单栏、Dock）
+                let layer = windowInfo[kCGWindowLayer as String] as? Int ?? 0
+                if layer == 0 {
+                    return windowID
+                }
+            }
+        }
+        return nil
     }
 
     func systemEventsApply(frame targetFrame: CGRect, toPID pid: pid_t) -> Bool {
