@@ -174,6 +174,77 @@ private struct SettingsCard<Content: View>: View {
     }
 }
 
+// MARK: - Code Block View
+private struct CodeBlockView: View {
+    let code: String
+    let language: String
+    @State private var isCopied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(language)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.secondary.opacity(0.1))
+                    )
+
+                Spacer()
+
+                Button(action: copyToClipboard) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        Text(isCopied ? "已复制" : "复制")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(isCopied ? .green : .accentColor)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code)
+                    .font(.system(size: 12, design: .monospaced))
+                    .lineSpacing(2)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .textBackgroundColor))
+                    )
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    private func copyToClipboard() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(code, forType: .string)
+
+        withAnimation {
+            isCopied = true
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation {
+                isCopied = false
+            }
+        }
+    }
+}
+
 private struct SettingsStatusPill: View {
     let title: String
     let tint: Color
@@ -308,9 +379,9 @@ private struct SettingsView: View {
         case .available:
             return "检测到 yabai，可启用跨工作区移动。"
         case .notInstalled:
-            return "未检测到 yabai，保持当前行为。"
+            return "未检测到 yabai。安装后可启用跨工作区移动功能。"
         case .unavailable:
-            return "yabai 未就绪，跨工作区不可用。"
+            return "yabai 已安装但未就绪（可能需要配置 SIP 或授予权限）。"
         case .unknown:
             return "尚未检测 yabai 状态。"
         }
@@ -646,6 +717,63 @@ private struct SettingsView: View {
 
                                 Button("重新检测") {
                                     spaceController.refreshAvailability(force: true)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        if spaceController.availability == .notInstalled {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("安装 yabai 可启用跨工作区移动功能：")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+
+                                CodeBlockView(
+                                    code: "brew install koekeishiya/formulae/yabai",
+                                    language: "bash"
+                                )
+
+                                CodeBlockView(
+                                    code: "brew services start yabai",
+                                    language: "bash"
+                                )
+
+                                HStack(spacing: 12) {
+                                    Button("查看完整指南") {
+                                        if let url = URL(string: "https://github.com/CC11001100/vibe-focus/blob/main/docs/yabai-guide/README.md") {
+                                            NSWorkspace.shared.open(url)
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+
+                                    Button("验证安装") {
+                                        spaceController.refreshAvailability(force: true)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+
+                                Text("安装完成后点击「验证安装」按钮，或重新打开设置窗口。")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if spaceController.availability == .unavailable {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("yabai 需要系统权限才能正常工作。请确保：")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                Text("1. 在「系统设置 → 隐私与安全 → 辅助功能」中允许 yabai")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                Text("2. 如果启用了 SIP，需要额外配置（详见 yabai 文档）")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+
+                                Button("打开 yabai 文档") {
+                                    if let url = URL(string: "https://github.com/koekeishiya/yabai/wiki/Configuration#macos-version-compatibility") {
+                                        NSWorkspace.shared.open(url)
+                                    }
                                 }
                                 .buttonStyle(.bordered)
                             }
