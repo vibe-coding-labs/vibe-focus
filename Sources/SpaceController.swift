@@ -48,15 +48,30 @@ final class SpaceController: ObservableObject {
 
     @Published private(set) var availability: SpaceAvailability = .unknown
     @Published private(set) var lastErrorMessage: String?
+    @Published private(set) var isEnabled: Bool = false
 
     private var lastCheckAt: Date?
     private var cachedYabaiPath: String?
     private let checkInterval: TimeInterval = 5
 
-    private init() {}
+    private init() {
+        // Delay initial check to ensure log function is available
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            NSLog("[SpaceController] Initializing...")
+            self?.refreshAvailability(force: true)
+        }
+    }
 
-    var isEnabled: Bool {
-        SpacePreferences.integrationEnabled && availability == .available
+    deinit {
+        NSLog("[SpaceController] Deinit called")
+    }
+
+    private func updateEnabledState() {
+        let newValue = SpacePreferences.integrationEnabled && availability == .available
+        if isEnabled != newValue {
+            isEnabled = newValue
+            NSLog("[SpaceController] isEnabled changed to: \(newValue)")
+        }
     }
 
     func refreshAvailabilityIfNeeded() {
@@ -64,32 +79,48 @@ final class SpaceController: ObservableObject {
     }
 
     func refreshAvailability(force: Bool) {
+        log("refreshAvailability called, force=\(force), lastCheckAt=\(String(describing: lastCheckAt))")
+
         if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < checkInterval {
+            log("Skipping refresh - within check interval")
             return
         }
 
         lastCheckAt = Date()
         lastErrorMessage = nil
 
+        log("Looking for yabai...")
         guard let yabaiPath = locateYabai() else {
+            log("yabai not found - setting availability to .notInstalled")
             availability = .notInstalled
+            updateEnabledState()
             return
         }
 
+        log("Found yabai at: \(yabaiPath)")
         cachedYabaiPath = yabaiPath
 
+        log("Running yabai query...")
         guard let result = runYabai(arguments: ["-m", "query", "--spaces"]) else {
+            log("Failed to run yabai - setting availability to .unavailable")
             availability = .unavailable
             lastErrorMessage = "Unable to launch yabai"
+            updateEnabledState()
             return
         }
 
+        log("yabai query result: exitCode=\(result.exitCode), stdout=\(result.stdout.prefix(100)), stderr=\(result.stderr)")
+
         if result.exitCode == 0 {
+            log("yabai available - setting availability to .available")
             availability = .available
             lastErrorMessage = nil
+            updateEnabledState()
         } else {
+            log("yabai query failed - setting availability to .unavailable")
             availability = .unavailable
             lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+            updateEnabledState()
         }
     }
 
@@ -142,6 +173,7 @@ final class SpaceController: ObservableObject {
         }
         availability = .unavailable
         lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+        updateEnabledState()
         return false
     }
 
@@ -159,6 +191,7 @@ final class SpaceController: ObservableObject {
         }
         availability = .unavailable
         lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+        updateEnabledState()
         return false
     }
 
@@ -176,24 +209,111 @@ final class SpaceController: ObservableObject {
         }
         availability = .unavailable
         lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+        updateEnabledState()
         return false
     }
 
     private func locateYabai() -> String? {
+        NSLog("[SpaceController] locateYabai called")
+
         if let cachedYabaiPath, !cachedYabaiPath.isEmpty {
+            log("Using cached yabai path: \(cachedYabaiPath)")
             return cachedYabaiPath
         }
 
-        guard let result = runProcess(executable: "/usr/bin/which", arguments: ["yabai"]),
+        // First, try common installation paths
+        let commonPaths = [
+            "/opt/homebrew/bin/yabai",
+            "/usr/local/bin/yabai",
+            "/usr/bin/yabai",
+            "/bin/yabai",
+            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/yabai"),
+            (NSHomeDirectory() as NSString).appendingPathComponent("bin/yabai"),
+            (NSHomeDirectory() as NSString).appendingPathComponent(".nix-profile/bin/yabai")
+        ]
+
+        log("Checking common paths: \(commonPaths)")
+        for path in commonPaths {
+            let exists = FileManager.default.fileExists(atPath: path)
+            log("  Path \(path): exists=\(exists)")
+            if exists {
+                cachedYabaiPath = path
+                NSLog("[SpaceController] Found yabai at: \(path)")
+                return path
+            }
+        }
+
+        // Fallback 1: try to find using user's shell environment
+        log("Trying to find yabai via user shell...")
+        if let shellPath = getYabaiPathFromUserShell() {
+            cachedYabaiPath = shellPath
+            NSLog("[SpaceController] Found yabai via shell: \(shellPath)")
+            return shellPath
+        }
+
+        // Fallback 2: try to find using which via bash -l
+        log("Trying to find yabai via bash -l...")
+        guard let result = runProcess(executable: "/bin/bash", arguments: ["-l", "-c", "which yabai"]),
               result.exitCode == 0 else {
+            log("Failed to find yabai via bash -l")
+            NSLog("[SpaceController] yabai not found via bash -l")
             return nil
         }
 
         let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else {
+            log("which yabai returned empty path")
+            NSLog("[SpaceController] which yabai returned empty path")
             return nil
         }
+        cachedYabaiPath = path
+        NSLog("[SpaceController] Found yabai via which: \(path)")
         return path
+    }
+
+    private func getYabaiPathFromUserShell() -> String? {
+        // Get user's default shell
+        let shellTask = Process()
+        shellTask.launchPath = "/usr/bin/env"
+        shellTask.arguments = ["bash", "-l", "-c", "echo $SHELL"]
+
+        let shellPipe = Pipe()
+        shellTask.standardOutput = shellPipe
+        shellTask.standardError = Pipe()
+
+        do {
+            try shellTask.run()
+            shellTask.waitUntilExit()
+
+            let shellData = shellPipe.fileHandleForReading.readDataToEndOfFile()
+            guard let userShell = String(data: shellData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !userShell.isEmpty else {
+                return nil
+            }
+
+            // Use user's shell to find yabai
+            let whichTask = Process()
+            whichTask.launchPath = userShell
+            whichTask.arguments = ["-l", "-c", "which yabai"]
+
+            let whichPipe = Pipe()
+            whichTask.standardOutput = whichPipe
+            whichTask.standardError = Pipe()
+
+            try whichTask.run()
+            whichTask.waitUntilExit()
+
+            let pathData = whichPipe.fileHandleForReading.readDataToEndOfFile()
+            if let path = String(data: pathData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !path.isEmpty,
+               FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        } catch {
+            log("Failed to get yabai path from user shell: \(error)")
+        }
+
+        return nil
     }
 
     private func queryFocusedSpace() -> YabaiSpaceInfo? {

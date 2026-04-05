@@ -49,19 +49,24 @@ class OverlayWindow: NSWindow {
         let text = "\(displayScreenIndex)-\(spaceIndex)"
         log("OverlayWindow text: '\(text)'")
 
-        // 计算尺寸
-        let font = NSFont.systemFont(ofSize: preferences.fontSize, weight: .bold)
+        // 计算尺寸（应用面板缩放）
+        let scaledFontSize = preferences.fontSize * preferences.panelScale
+        let font = NSFont.systemFont(ofSize: scaledFontSize, weight: .bold)
+
+        // 使用配置的文字颜色
+        let textColor = NSColor(preferences.textColor.swiftUIColor)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor.white
+            .foregroundColor: textColor
         ]
         let attributedString = NSAttributedString(string: text, attributes: attributes)
         let textSize = attributedString.size()
 
-        let horizontalPadding: CGFloat = preferences.fontSize * 0.8
-        let verticalPadding: CGFloat = preferences.fontSize * 0.5
-        let minWidth: CGFloat = preferences.fontSize * 3.5
-        let minHeight: CGFloat = preferences.fontSize * 2.0
+        // 基础尺寸（应用缩放）
+        let horizontalPadding: CGFloat = scaledFontSize * 0.8
+        let verticalPadding: CGFloat = scaledFontSize * 0.5
+        let minWidth: CGFloat = scaledFontSize * 3.5
+        let minHeight: CGFloat = scaledFontSize * 2.0
 
         let width = max(textSize.width + horizontalPadding * 2, minWidth)
         let height = max(textSize.height + verticalPadding * 2, minHeight)
@@ -71,12 +76,13 @@ class OverlayWindow: NSWindow {
         // 设置窗口尺寸
         self.setContentSize(CGSize(width: width, height: height))
 
-        // 设置背景
+        // 设置背景（使用配置的颜色和透明度）
         contentView?.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        contentView?.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.9).cgColor
-        contentView?.layer?.cornerRadius = 8
+        let bgColor = NSColor(preferences.backgroundColor.swiftUIColor).withAlphaComponent(preferences.opacity)
+        contentView?.layer?.backgroundColor = bgColor.cgColor
+        contentView?.layer?.cornerRadius = 8 * preferences.panelScale
         contentView?.layer?.masksToBounds = false
-        contentView?.layer?.borderWidth = 2
+        contentView?.layer?.borderWidth = 2 * preferences.panelScale
         contentView?.layer?.borderColor = NSColor.white.cgColor
 
         // 设置文本层
