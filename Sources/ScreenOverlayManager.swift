@@ -21,12 +21,13 @@ class ScreenOverlayManager: ObservableObject {
     private var refreshTimer: Timer?
 
     // Query result caching to prevent redundant yabai calls
-    private var lastQueryTime: Date?
     private var cachedSpaceIndices: [UUID: Int] = [:]
+    private var lastQueryTimes: [UUID: Date] = [:]  // Per-screen query time tracking
     private let queryDebounceInterval: TimeInterval = 0.3  // 300ms debounce
 
     private init() {
         self.preferences = ScreenIndexPreferences.load()
+        log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
         setupScreenNotifications()
         setupSignalHandler()
         registerYabaiSignals()
@@ -40,13 +41,34 @@ class ScreenOverlayManager: ObservableObject {
 
         let source = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
         source.setEventHandler { [weak self] in
-            log("Received SIGUSR1, refreshing space indices")
-            self?.refreshSpaceIndices()
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            log("[SIGUSR1] Received signal at \(timestamp), clearing caches and refreshing...")
+            // Clear cache to force fresh query on space change
+            self?.clearSpaceIndexCache()
+            // Add delay to allow yabai to complete space switch
+            // First refresh at 50ms (fast response)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                log("[SIGUSR1] First refresh (50ms after signal)")
+                self?.refreshSpaceIndices(force: true)
+                // Second refresh at 300ms to catch any race conditions
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    log("[SIGUSR1] Second refresh (300ms after signal)")
+                    self?.refreshSpaceIndices(force: true)
+                }
+            }
         }
         source.resume()
 
         ScreenOverlayManager.signalSource = source
         log("Signal handler setup complete")
+    }
+
+    private func clearSpaceIndexCache() {
+        cachedSpaceIndices.removeAll()
+        lastQueryTimes.removeAll()
+        // 关键修复：同时清除 screenSpaceCache，确保信号触发时强制刷新
+        screenSpaceCache.removeAll()
+        log("Cleared all caches including screenSpaceCache")
     }
 
     private func registerYabaiSignals() {
@@ -102,13 +124,14 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func startRefreshTimer() {
-        // 降低轮询频率到10秒，作为fallback机制
-        // 主要更新由 yabai 信号驱动
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+        // 轮询频率1秒，作为Mac三指滑动的备用检测机制
+        // yabai信号提供即时更新，轮询确保三指滑动也能被检测到
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshSpaceIndices()
             }
         }
+        log("Started refresh timer with 1.0s interval (for native workspace switching)")
     }
 
     @objc private func handleScreenChange() {
@@ -132,6 +155,7 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     func refreshOverlays() {
+        log("refreshOverlays called, isEnabled=\(preferences.isEnabled)")
         hideOverlays()
         if preferences.isEnabled {
             showOverlays()
@@ -195,11 +219,17 @@ class ScreenOverlayManager: ObservableObject {
         }
     }
 
-    private func refreshSpaceIndices() {
+    private func refreshSpaceIndices(force: Bool = false) {
         guard preferences.isEnabled else { return }
+
+        if force {
+            log("[refreshSpaceIndices] Force refresh requested, clearing screenSpaceCache")
+            screenSpaceCache.removeAll()
+        }
 
         let screens = NSScreen.screens
         var needsRefresh = false
+        var changedScreens: [String] = []
 
         for (index, screen) in screens.enumerated() {
             let uuid = uuidForScreen(screen)
@@ -209,20 +239,28 @@ class ScreenOverlayManager: ObservableObject {
             if let cached = screenSpaceCache[uuid] {
                 if cached.screenIndex != index || cached.spaceIndex != currentSpaceIndex {
                     needsRefresh = true
+                    changedScreens.append("Screen\(index): \(cached.spaceIndex)->\(currentSpaceIndex)")
                     screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: currentSpaceIndex)
 
                     if let overlay = overlayWindows[uuid] {
+                        log("[refreshSpaceIndices] Updating overlay for screen \(index): spaceIndex \(currentSpaceIndex)")
                         overlay.update(screenIndex: index, spaceIndex: currentSpaceIndex, preferences: preferences)
                         overlay.updatePosition(for: screen, position: preferences.position)
+                        overlay.show() // 确保窗口在最前面
                     }
                 }
             } else {
                 needsRefresh = true
+                changedScreens.append("Screen\(index): new->\(currentSpaceIndex)")
+                screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: currentSpaceIndex)
             }
         }
 
         if needsRefresh || overlayWindows.count != screens.count {
+            log("[refreshSpaceIndices] needsRefresh=\(needsRefresh), changedScreens: \(changedScreens.joined(separator: ", "))")
             refreshOverlays()
+        } else if force {
+            log("[refreshSpaceIndices] Force refresh but no changes detected")
         }
     }
 
@@ -230,28 +268,30 @@ class ScreenOverlayManager: ObservableObject {
     private func getSpaceIndex(for screen: NSScreen) -> Int? {
         let uuid = uuidForScreen(screen)
 
-        // Check cache to prevent redundant queries within debounce interval
-        if let lastQuery = lastQueryTime,
+        // Check cache to prevent redundant queries within debounce interval (per screen)
+        if let lastQuery = lastQueryTimes[uuid],
            Date().timeIntervalSince(lastQuery) < queryDebounceInterval,
            let cached = cachedSpaceIndices[uuid] {
+            log("Using cached space index for screen \(uuid): \(cached)")
             return cached
         }
 
         // Try to get from yabai first
         let result: Int?
+        log("Querying space index for screen \(uuid)...")
         if let yabaiIndex = getYabaiSpaceIndex(for: screen) {
-            log("Got space index from yabai: \(yabaiIndex)")
+            log("Got space index from yabai for screen \(uuid): \(yabaiIndex)")
             result = yabaiIndex
         } else if let cgIndex = getCGSpaceIndex(for: screen) {
-            log("Got space index from CG: \(cgIndex)")
+            log("Got space index from CG for screen \(uuid): \(cgIndex)")
             result = cgIndex
         } else {
-            log("Could not get space index for screen, returning 0")
+            log("Could not get space index for screen \(uuid), returning nil")
             result = nil
         }
 
-        // Update cache
-        lastQueryTime = Date()
+        // Update cache for this specific screen
+        lastQueryTimes[uuid] = Date()
         cachedSpaceIndices[uuid] = result
 
         return result
@@ -478,29 +518,42 @@ class ScreenOverlayManager: ObservableObject {
             log("yabai returned \(json.count) spaces for display \(displayIndex)")
             for (i, space) in json.enumerated() {
                 let idx = space["index"] as? Int ?? 0
-                let visible = space["is-visible"] as? Int ?? 0
-                let focused = space["has-focus"] as? Int ?? 0
+                // Handle both Bool and Int types (yabai returns Bool in newer versions)
+                let visible: Bool
+                let focused: Bool
+                if let visibleBool = space["is-visible"] as? Bool {
+                    visible = visibleBool
+                } else {
+                    visible = (space["is-visible"] as? Int ?? 0) == 1
+                }
+                if let focusedBool = space["has-focus"] as? Bool {
+                    focused = focusedBool
+                } else {
+                    focused = (space["has-focus"] as? Int ?? 0) == 1
+                }
                 log("Space \(i): index=\(idx), is-visible=\(visible), has-focus=\(focused)")
             }
 
             // Find the visible or focused space on this display
-            if let activeSpace = json.first(where: {
-                ($0["is-visible"] as? Int) == 1
-            }) ?? json.first(where: {
-                ($0["has-focus"] as? Int) == 1
-            }) {
-                let globalSpaceIndex = activeSpace["index"] as? Int ?? 0
-
-                // Find the position in the display's space list (0-based local index)
-                if let localIndex = json.firstIndex(where: {
-                    ($0["index"] as? Int) == globalSpaceIndex
-                }) {
-                    log("Found yabai space: global=\(globalSpaceIndex), local=\(localIndex)")
-                    return localIndex
+            if let activeSpaceIndex = json.firstIndex(where: {
+                // Handle both Bool and Int types
+                if let visible = $0["is-visible"] as? Bool {
+                    return visible
                 }
+                return ($0["is-visible"] as? Int ?? 0) == 1
+            }) ?? json.firstIndex(where: {
+                if let focused = $0["has-focus"] as? Bool {
+                    return focused
+                }
+                return ($0["has-focus"] as? Int ?? 0) == 1
+            }) {
+                // 返回屏幕级别的工作区索引（1-based）
+                // 比如：屏幕2的第1个工作区，显示 1 而不是全局索引 4
+                let localSpaceIndex = activeSpaceIndex + 1
+                let globalSpaceIndex = json[activeSpaceIndex]["index"] as? Int ?? 0
 
-                log("Found yabai space index for display \(displayIndex): \(globalSpaceIndex)")
-                return globalSpaceIndex - 1  // Fallback: assume consecutive numbering
+                log("Found yabai space: local=\(localSpaceIndex), global=\(globalSpaceIndex)")
+                return localSpaceIndex
             }
 
             log("No visible/focused space found for display \(displayIndex)")

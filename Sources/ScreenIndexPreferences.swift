@@ -41,6 +41,7 @@ struct ScreenIndexPreferences: Codable {
     var opacity: CGFloat
     var textColor: CodableColor
     var backgroundColor: CodableColor
+    var panelScale: CGFloat  // 新增：面板缩放比例
     var yabaiPath: String?
 
     static let `default` = ScreenIndexPreferences(
@@ -50,6 +51,7 @@ struct ScreenIndexPreferences: Codable {
         opacity: 0.8,
         textColor: CodableColor(.white),
         backgroundColor: CodableColor(.black.opacity(0.6)),
+        panelScale: 1.0,  // 默认不缩放
         yabaiPath: nil
     )
 
@@ -67,6 +69,11 @@ struct ScreenIndexPreferences: Codable {
                 return prefs
             } catch {
                 log("ScreenIndexPreferences decode error: \(error)")
+                // 尝试加载旧版本设置（向后兼容）
+                if let oldPrefs = loadLegacyPreferences(from: data) {
+                    log("ScreenIndexPreferences: Loaded legacy preferences with migration")
+                    return oldPrefs
+                }
             }
         }
         // 回退到 UserDefaults.standard
@@ -77,10 +84,45 @@ struct ScreenIndexPreferences: Codable {
                 return prefs
             } catch {
                 log("ScreenIndexPreferences decode error from standard: \(error)")
+                // 尝试加载旧版本设置（向后兼容）
+                if let oldPrefs = loadLegacyPreferences(from: data) {
+                    log("ScreenIndexPreferences: Loaded legacy preferences from standard with migration")
+                    return oldPrefs
+                }
             }
         }
         log("ScreenIndexPreferences: Using defaults (isEnabled=false)")
         return .default
+    }
+
+    // 向后兼容：加载旧版本设置并迁移到新版本
+    private static func loadLegacyPreferences(from data: Data) -> ScreenIndexPreferences? {
+        struct LegacyPreferences: Codable {
+            var isEnabled: Bool
+            var position: IndexPosition
+            var fontSize: CGFloat
+            var opacity: CGFloat
+            var textColor: CodableColor
+            var backgroundColor: CodableColor
+            var yabaiPath: String?
+        }
+
+        do {
+            let legacy = try JSONDecoder().decode(LegacyPreferences.self, from: data)
+            return ScreenIndexPreferences(
+                isEnabled: legacy.isEnabled,
+                position: legacy.position,
+                fontSize: legacy.fontSize,
+                opacity: legacy.opacity,
+                textColor: legacy.textColor,
+                backgroundColor: legacy.backgroundColor,
+                panelScale: 1.0,  // 旧版本没有此字段，使用默认值
+                yabaiPath: legacy.yabaiPath
+            )
+        } catch {
+            log("ScreenIndexPreferences: Failed to load legacy preferences: \(error)")
+            return nil
+        }
     }
 
     func save() {
