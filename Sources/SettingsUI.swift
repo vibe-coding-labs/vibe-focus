@@ -142,6 +142,64 @@ private struct ShortcutRecorderView: NSViewRepresentable {
     }
 }
 
+// MARK: - Draggable Slider
+// 使用 NSSlider 包装器实现真正的拖动功能
+struct DraggableSlider: NSViewRepresentable {
+    @Binding var value: Double
+    var minValue: Double
+    var maxValue: Double
+    var step: Double
+
+    func makeNSView(context: Context) -> NSSlider {
+        let slider = NSSlider()
+        slider.minValue = minValue
+        slider.maxValue = maxValue
+        slider.numberOfTickMarks = 0
+        slider.allowsTickMarkValuesOnly = false
+        slider.isContinuous = true  // 关键：启用连续更新
+
+        // 使用闭包来处理值变化
+        let coordinator = context.coordinator
+        slider.target = coordinator
+        slider.action = #selector(Coordinator.sliderValueChanged(_:))
+
+        return slider
+    }
+
+    func updateNSView(_ nsView: NSSlider, context: Context) {
+        // 只在值显著不同时更新，避免覆盖用户拖动
+        if abs(nsView.doubleValue - value) > 0.01 {
+            nsView.doubleValue = value
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    @MainActor
+    class Coordinator: NSObject {
+        var parent: DraggableSlider
+
+        init(_ parent: DraggableSlider) {
+            self.parent = parent
+        }
+
+        @objc func sliderValueChanged(_ sender: NSSlider) {
+            let newValue = sender.doubleValue
+
+            var finalValue = newValue
+            // 应用步进
+            if self.parent.step > 0 {
+                finalValue = round(newValue / self.parent.step) * self.parent.step
+            }
+            // 限制范围
+            finalValue = max(self.parent.minValue, min(self.parent.maxValue, finalValue))
+            self.parent.value = finalValue
+        }
+    }
+}
+
 private struct SettingsCard<Content: View>: View {
     let title: String
     let subtitle: String
@@ -940,16 +998,17 @@ private struct SettingsView: View {
                                 detail: "调整序号显示的大小"
                             ) {
                                 HStack(spacing: 8) {
-                                    Slider(
+                                    DraggableSlider(
                                         value: Binding(
-                                            get: { overlayManager.preferences.fontSize },
+                                            get: { Double(overlayManager.preferences.fontSize) },
                                             set: { newValue in
                                                 var prefs = overlayManager.preferences
-                                                prefs.fontSize = newValue
+                                                prefs.fontSize = CGFloat(newValue)
                                                 overlayManager.preferences = prefs
                                             }
                                         ),
-                                        in: 24...72,
+                                        minValue: 24,
+                                        maxValue: 72,
                                         step: 4
                                     )
                                     .frame(width: 120)
@@ -968,16 +1027,17 @@ private struct SettingsView: View {
                                 detail: "调整序号标签背景的透明程度"
                             ) {
                                 HStack(spacing: 8) {
-                                    Slider(
+                                    DraggableSlider(
                                         value: Binding(
-                                            get: { overlayManager.preferences.opacity },
+                                            get: { Double(overlayManager.preferences.opacity) },
                                             set: { newValue in
                                                 var prefs = overlayManager.preferences
-                                                prefs.opacity = newValue
+                                                prefs.opacity = CGFloat(newValue)
                                                 overlayManager.preferences = prefs
                                             }
                                         ),
-                                        in: 0.3...1.0,
+                                        minValue: 0.3,
+                                        maxValue: 1.0,
                                         step: 0.1
                                     )
                                     .frame(width: 120)
@@ -996,16 +1056,17 @@ private struct SettingsView: View {
                                 detail: "调整索引面板的整体缩放比例"
                             ) {
                                 HStack(spacing: 8) {
-                                    Slider(
+                                    DraggableSlider(
                                         value: Binding(
-                                            get: { overlayManager.preferences.panelScale },
+                                            get: { Double(overlayManager.preferences.panelScale) },
                                             set: { newValue in
                                                 var prefs = overlayManager.preferences
-                                                prefs.panelScale = newValue
+                                                prefs.panelScale = CGFloat(newValue)
                                                 overlayManager.preferences = prefs
                                             }
                                         ),
-                                        in: 0.5...2.0,
+                                        minValue: 0.5,
+                                        maxValue: 2.0,
                                         step: 0.1
                                     )
                                     .frame(width: 120)

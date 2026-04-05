@@ -92,11 +92,18 @@ class ScreenOverlayManager: ObservableObject {
             return
         }
 
-        // 获取脚本路径
-        guard let scriptPath = Bundle.main.path(forResource: "yabai-space-changed", ofType: "sh") else {
-            log("Could not find yabai-space-changed.sh script")
+        // 获取脚本路径 - 优先从 Bundle 查找，如果不存在则从项目目录查找
+        let scriptPath: String
+        if let bundlePath = Bundle.main.path(forResource: "yabai-space-changed", ofType: "sh") {
+            scriptPath = bundlePath
+        } else if FileManager.default.fileExists(atPath: "Resources/yabai-space-changed.sh") {
+            // 开发模式：从项目根目录查找
+            scriptPath = (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent("Resources/yabai-space-changed.sh")
+        } else {
+            log("Could not find yabai-space-changed.sh script in Bundle or project directory")
             return
         }
+        log("Using yabai-space-changed script at: \(scriptPath)")
 
         // 注册信号: 空间切换时触发
         let registerTask = Process()
@@ -201,7 +208,7 @@ class ScreenOverlayManager: ObservableObject {
 
     private func hideOverlays() {
         for (_, overlay) in overlayWindows {
-            overlay.hide()
+            overlay.close()  // 使用 close() 完全关闭窗口，而不是仅隐藏
         }
         overlayWindows.removeAll()
         log("Hid all overlays")
@@ -256,9 +263,14 @@ class ScreenOverlayManager: ObservableObject {
             }
         }
 
-        if needsRefresh || overlayWindows.count != screens.count {
-            log("[refreshSpaceIndices] needsRefresh=\(needsRefresh), changedScreens: \(changedScreens.joined(separator: ", "))")
+        // 只有在屏幕数量变化时才需要重建窗口
+        // 工作区索引变化已经在上面直接更新了 overlay
+        if overlayWindows.count != screens.count {
+            log("[refreshSpaceIndices] Screen count changed, refreshing overlays")
             refreshOverlays()
+        } else if needsRefresh {
+            log("[refreshSpaceIndices] Space indices updated: \(changedScreens.joined(separator: ", "))")
+            // 工作区变化已经通过 overlay.update() 直接更新，不需要重建窗口
         } else if force {
             log("[refreshSpaceIndices] Force refresh but no changes detected")
         }
