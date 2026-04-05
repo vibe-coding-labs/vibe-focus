@@ -23,7 +23,7 @@ class ScreenOverlayManager: ObservableObject {
     // Query result caching to prevent redundant yabai calls
     private var cachedSpaceIndices: [UUID: Int] = [:]
     private var lastQueryTimes: [UUID: Date] = [:]  // Per-screen query time tracking
-    private let queryDebounceInterval: TimeInterval = 0.3  // 300ms debounce
+    private let queryDebounceInterval: TimeInterval = 0.05  // 50ms debounce - 减少延迟
 
     private init() {
         self.preferences = ScreenIndexPreferences.load()
@@ -45,16 +45,14 @@ class ScreenOverlayManager: ObservableObject {
             log("[SIGUSR1] Received signal at \(timestamp), clearing caches and refreshing...")
             // Clear cache to force fresh query on space change
             self?.clearSpaceIndexCache()
-            // Add delay to allow yabai to complete space switch
-            // First refresh at 50ms (fast response)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                log("[SIGUSR1] First refresh (50ms after signal)")
+            // 立即刷新，减少延迟
+            log("[SIGUSR1] Immediate refresh")
+            self?.refreshSpaceIndices(force: true)
+
+            // 100ms 后再次刷新作为保险（处理可能的竞态条件）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                log("[SIGUSR1] Second refresh (100ms after signal)")
                 self?.refreshSpaceIndices(force: true)
-                // Second refresh at 300ms to catch any race conditions
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    log("[SIGUSR1] Second refresh (300ms after signal)")
-                    self?.refreshSpaceIndices(force: true)
-                }
             }
         }
         source.resume()
@@ -131,14 +129,13 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func startRefreshTimer() {
-        // 轮询频率1秒，作为Mac三指滑动的备用检测机制
-        // yabai信号提供即时更新，轮询确保三指滑动也能被检测到
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // 轮询频率 200ms，快速检测三指滑动（yabai 信号提供即时更新，轮询作为备用）
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshSpaceIndices()
             }
         }
-        log("Started refresh timer with 1.0s interval (for native workspace switching)")
+        log("Started refresh timer with 0.2s interval (for native workspace switching)")
     }
 
     @objc private func handleScreenChange() {
