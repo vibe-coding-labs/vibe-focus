@@ -13,6 +13,10 @@ let package = Package(
         .executableTarget(
             name: "VibeFocusHotkeys",
             path: "Sources",
+            exclude: [],
+            resources: [
+                .copy("../Resources/yabai-space-changed.sh")
+            ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
