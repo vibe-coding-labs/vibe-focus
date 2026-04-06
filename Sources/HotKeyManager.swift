@@ -61,8 +61,11 @@ final class HotKeyManager: ObservableObject {
             return false
         }
 
-        log("Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
+        log("[HotKey] Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
+        let startTime = Date()
         WindowManager.shared.toggle()
+        let elapsed = Date().timeIntervalSince(startTime)
+        log("[HotKey] toggle() completed in \(String(format: "%.3f", elapsed))s")
         return true
     }
 
@@ -142,8 +145,11 @@ final class HotKeyManager: ObservableObject {
             return noErr
         }
 
-        log("Hotkey \(currentHotKey.displayString) triggered")
+        log("[HotKey] Carbon hotkey \(currentHotKey.displayString) triggered")
+        let startTime = Date()
         WindowManager.shared.toggle()
+        let elapsed = Date().timeIntervalSince(startTime)
+        log("[HotKey] toggle() completed in \(String(format: "%.3f", elapsed))s")
         return noErr
     }
 
