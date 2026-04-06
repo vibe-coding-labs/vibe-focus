@@ -405,7 +405,8 @@ class WindowManager {
     }
 
     func shouldRestoreAcrossSpaces() -> Bool {
-        spaceController.refreshAvailabilityIfNeeded()
+        // 不要在这里调用 refreshAvailabilityIfNeeded()，避免阻塞
+        // 依赖 spaceController 已有的状态
         guard spaceController.isEnabled else {
             return false
         }
