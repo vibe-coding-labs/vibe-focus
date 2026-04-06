@@ -1002,9 +1002,7 @@ private struct SettingsView: View {
                                         value: Binding(
                                             get: { Double(overlayManager.preferences.fontSize) },
                                             set: { newValue in
-                                                var prefs = overlayManager.preferences
-                                                prefs.fontSize = CGFloat(newValue)
-                                                overlayManager.preferences = prefs
+                                                overlayManager.updateAppearance(fontSize: CGFloat(newValue))
                                             }
                                         ),
                                         minValue: 24,
@@ -1031,9 +1029,7 @@ private struct SettingsView: View {
                                         value: Binding(
                                             get: { Double(overlayManager.preferences.opacity) },
                                             set: { newValue in
-                                                var prefs = overlayManager.preferences
-                                                prefs.opacity = CGFloat(newValue)
-                                                overlayManager.preferences = prefs
+                                                overlayManager.updateAppearance(opacity: CGFloat(newValue))
                                             }
                                         ),
                                         minValue: 0.3,
@@ -1060,9 +1056,7 @@ private struct SettingsView: View {
                                         value: Binding(
                                             get: { Double(overlayManager.preferences.panelScale) },
                                             set: { newValue in
-                                                var prefs = overlayManager.preferences
-                                                prefs.panelScale = CGFloat(newValue)
-                                                overlayManager.preferences = prefs
+                                                overlayManager.updateAppearance(panelScale: CGFloat(newValue))
                                             }
                                         ),
                                         minValue: 0.5,
@@ -1088,9 +1082,7 @@ private struct SettingsView: View {
                                     selection: Binding(
                                         get: { overlayManager.preferences.textColor.swiftUIColor },
                                         set: { newValue in
-                                            var prefs = overlayManager.preferences
-                                            prefs.textColor = CodableColor(newValue)
-                                            overlayManager.preferences = prefs
+                                            overlayManager.updateAppearance(textColor: CodableColor(newValue))
                                         }
                                     )
                                 )
@@ -1108,9 +1100,7 @@ private struct SettingsView: View {
                                     selection: Binding(
                                         get: { overlayManager.preferences.backgroundColor.swiftUIColor },
                                         set: { newValue in
-                                            var prefs = overlayManager.preferences
-                                            prefs.backgroundColor = CodableColor(newValue)
-                                            overlayManager.preferences = prefs
+                                            overlayManager.updateAppearance(backgroundColor: CodableColor(newValue))
                                         }
                                     )
                                 )

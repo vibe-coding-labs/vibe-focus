@@ -158,11 +158,36 @@ class ScreenOverlayManager: ObservableObject {
         updateOverlayPositions()
     }
 
-    func refreshOverlays() {
-        log("refreshOverlays called, isEnabled=\(preferences.isEnabled)")
-        hideOverlays()
-        if preferences.isEnabled {
-            showOverlays()
+    /// 直接更新外观属性，不触发 preferences 的 didSet
+    /// 用于 Slider 拖动时实时预览，避免窗口重建
+    func updateAppearance(fontSize: CGFloat? = nil, opacity: CGFloat? = nil, panelScale: CGFloat? = nil,
+                          textColor: CodableColor? = nil, backgroundColor: CodableColor? = nil) {
+        // 直接修改内部 preferences 不触发 didSet
+        if let fontSize = fontSize { preferences.fontSize = fontSize }
+        if let opacity = opacity { preferences.opacity = opacity }
+        if let panelScale = panelScale { preferences.panelScale = panelScale }
+        if let textColor = textColor { preferences.textColor = textColor }
+        if let backgroundColor = backgroundColor { preferences.backgroundColor = backgroundColor }
+
+        // 保存到存储
+        preferences.save()
+
+        // 直接更新现有窗口外观
+        updateOverlayAppearance()
+    }
+
+    func refreshOverlays(appearanceOnly: Bool = false) {
+        log("refreshOverlays called, isEnabled=\(preferences.isEnabled), appearanceOnly=\(appearanceOnly)")
+
+        if appearanceOnly && preferences.isEnabled && !overlayWindows.isEmpty {
+            // 如果只是外观属性变化，直接更新现有窗口
+            updateOverlayAppearance()
+        } else {
+            // 其他情况：销毁重建
+            hideOverlays()
+            if preferences.isEnabled {
+                showOverlays()
+            }
         }
     }
 
@@ -209,6 +234,25 @@ class ScreenOverlayManager: ObservableObject {
         }
         overlayWindows.removeAll()
         log("Hid all overlays")
+    }
+
+    private func updateOverlayAppearance() {
+        let screens = NSScreen.screens
+
+        for (index, screen) in screens.enumerated() {
+            let uuid = uuidForScreen(screen)
+
+            if let overlay = overlayWindows[uuid] {
+                // 获取当前空间索引
+                let spaceIndex = getSpaceIndex(for: screen) ?? 0
+
+                // 直接更新窗口的外观属性
+                overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
+                overlay.updatePosition(for: screen, position: preferences.position)
+
+                log("[updateOverlayAppearance] Updated overlay for screen \(index)")
+            }
+        }
     }
 
     private func updateOverlayPositions() {
