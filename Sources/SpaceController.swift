@@ -54,6 +54,12 @@ final class SpaceController: ObservableObject {
     private var cachedYabaiPath: String?
     private let checkInterval: TimeInterval = 5
 
+    // 空间索引缓存 - 减少 yabai 调用频率
+    private var cachedCurrentSpace: Int?
+    private var cachedWindowSpaces: [UInt32: Int] = [:]
+    private var cacheTimestamp: Date?
+    private let cacheValidity: TimeInterval = 0.3  // 300ms 缓存
+
     private init() {
         // Delay initial check to ensure log function is available
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -72,6 +78,19 @@ final class SpaceController: ObservableObject {
             isEnabled = newValue
             NSLog("[SpaceController] isEnabled changed to: \(newValue)")
         }
+    }
+
+    // MARK: - Cache Management
+    private func isCacheValid() -> Bool {
+        guard let timestamp = cacheTimestamp else { return false }
+        return Date().timeIntervalSince(timestamp) < cacheValidity
+    }
+
+    func invalidateCache() {
+        cachedCurrentSpace = nil
+        cachedWindowSpaces.removeAll()
+        cacheTimestamp = nil
+        log("[SpaceController] Cache invalidated")
     }
 
     func refreshAvailabilityIfNeeded() {
@@ -140,17 +159,35 @@ final class SpaceController: ObservableObject {
 
     func currentSpaceIndex() -> Int? {
         refreshAvailabilityIfNeeded()
-        guard isEnabled, let space = queryFocusedSpace() else {
-            return nil
+        guard isEnabled else { return nil }
+
+        // 使用缓存避免频繁调用 yabai
+        if isCacheValid(), let cached = cachedCurrentSpace {
+            log("[SpaceController] Using cached current space: \(cached)")
+            return cached
         }
+
+        guard let space = queryFocusedSpace() else { return nil }
+        cachedCurrentSpace = space.index
+        cacheTimestamp = Date()
+        log("[SpaceController] Queried current space: \(space.index ?? -1)")
         return space.index
     }
 
     func windowSpaceIndex(windowID: UInt32) -> Int? {
         refreshAvailabilityIfNeeded()
-        guard isEnabled, let window = queryWindow(windowID: windowID) else {
-            return nil
+        guard isEnabled else { return nil }
+
+        // 使用缓存避免频繁调用 yabai
+        if isCacheValid(), let cached = cachedWindowSpaces[windowID] {
+            log("[SpaceController] Using cached window space for \(windowID): \(cached)")
+            return cached
         }
+
+        guard let window = queryWindow(windowID: windowID) else { return nil }
+        cachedWindowSpaces[windowID] = window.space
+        cacheTimestamp = Date()
+        log("[SpaceController] Queried window space for \(windowID): \(window.space ?? -1)")
         return window.space
     }
 
@@ -169,6 +206,7 @@ final class SpaceController: ObservableObject {
             return false
         }
         if result.exitCode == 0 {
+            invalidateCache()  // 窗口移动后失效缓存
             return true
         }
         availability = .unavailable
@@ -187,6 +225,7 @@ final class SpaceController: ObservableObject {
             return false
         }
         if result.exitCode == 0 {
+            invalidateCache()  // 切换空间后失效缓存
             return true
         }
         availability = .unavailable
