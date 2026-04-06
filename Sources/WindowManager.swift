@@ -90,7 +90,10 @@ class WindowManager {
     }
 
     func toggle() {
-        if shouldRestoreCurrentWindow() {
+        log("[WindowManager] toggle() called")
+        let shouldRestore = shouldRestoreCurrentWindow()
+        log("[WindowManager] shouldRestoreCurrentWindow() = \(shouldRestore)")
+        if shouldRestore {
             restore()
         } else {
             moveToMainScreen()
@@ -98,9 +101,10 @@ class WindowManager {
     }
 
     func moveToMainScreen() {
-        log("=== MOVE TO MAIN SCREEN ===")
+        log("[WindowManager] === MOVE TO MAIN SCREEN ===")
+        let startTime = Date()
         let axTrusted = hasAccessibilityPermission()
-        log("AX trusted = \(axTrusted)")
+        log("[WindowManager] AX trusted = \(axTrusted)")
 
         if !axTrusted {
             logDiagnostics("ax_trusted_false_move")
@@ -194,68 +198,74 @@ class WindowManager {
 
         let persistedState = saveWindowState(savedState, window: windowAX)
         hydrateMemory(from: persistedState, window: windowAX)
-        log("✅ MOVED AND MAXIMIZED ON TARGET SCREEN")
+        let elapsed = Date().timeIntervalSince(startTime)
+        log("[WindowManager] ✅ MOVED AND MAXIMIZED ON TARGET SCREEN (took \(String(format: "%.3f", elapsed))s)")
     }
 
     func restore() {
-        log("=== RESTORE ===")
+        log("[WindowManager] === RESTORE ===")
+        let startTime = Date()
 
         if !hasAccessibilityPermission() {
-            logDiagnostics("ax_trusted_false_restore")
+            log("[WindowManager] No accessibility permission, using SystemEvents fallback")
             restoreViaSystemEvents()
             return
         }
 
         if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
+            log("[WindowManager] No active memory state, checking saved states")
             if shouldRestoreCurrentWindow() == false {
-                log("No saved window to restore")
+                log("[WindowManager] No saved window to restore")
                 return
             }
         }
 
         guard let token = lastWindowToken, let frame = lastWindowFrame else {
-            log("No active window state to restore")
+            log("[WindowManager] No active window state to restore")
             return
         }
+
+        log("[WindowManager] Restoring window: pid=\(token.pid), windowID=\(String(describing: token.windowID))")
 
         applySpaceStrategyForRestore(windowID: token.windowID)
 
         guard let window = restoreWindow(using: token) else {
-            log("Window not found")
+            log("[WindowManager] ❌ Window not found")
             return
         }
 
         guard isAttributeSettable(window, attribute: kAXPositionAttribute) else {
-            log("Window position is not settable")
+            log("[WindowManager] ❌ Window position is not settable")
             return
         }
 
         guard isAttributeSettable(window, attribute: kAXSizeAttribute) else {
-            log("Window size is not settable")
+            log("[WindowManager] ❌ Window size is not settable")
             return
         }
 
-        log("Restoring to: \(frame)")
+        log("[WindowManager] Restoring to frame: \(frame)")
 
         guard apply(frame: frame, to: window) else {
-            log("❌ RESTORE FAILED")
+            log("[WindowManager] ❌ RESTORE FAILED: apply() returned false")
             return
         }
 
         guard let restoredFrame = self.frame(of: window) else {
-            log("❌ RESTORE FAILED: cannot read back frame")
+            log("[WindowManager] ❌ RESTORE FAILED: cannot read back frame")
             return
         }
 
-        log("Restored frame: \(restoredFrame)")
+        log("[WindowManager] Restored frame: \(restoredFrame)")
 
         guard framesMatch(restoredFrame, frame) else {
-            log("❌ RESTORE FAILED: verification mismatch")
+            log("[WindowManager] ❌ RESTORE FAILED: verification mismatch")
             return
         }
 
         resetActiveWindowContext(removeState: true)
-        log("✅ RESTORED")
+        let elapsed = Date().timeIntervalSince(startTime)
+        log("[WindowManager] ✅ RESTORED (took \(String(format: "%.3f", elapsed))s)")
     }
 
     func getMainScreen() -> NSScreen? {
@@ -288,7 +298,11 @@ class WindowManager {
     }
 
     func shouldRestoreCurrentWindow() -> Bool {
+        log("[WindowManager] shouldRestoreCurrentWindow() called")
+        log("[WindowManager] savedWindowStates.count = \(savedWindowStates.count)")
+
         if !hasAccessibilityPermission() {
+            log("[WindowManager] No accessibility permission, using SystemEvents fallback")
             return shouldRestoreCurrentWindowViaSystemEvents()
         }
 
@@ -296,15 +310,21 @@ class WindowManager {
               let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
               let currentWindowID = windowHandle(for: focusedWindow) else {
-            return shouldRestoreAcrossSpaces()
+            log("[WindowManager] No saved states or cannot get window, checking across spaces")
+            let result = shouldRestoreAcrossSpaces()
+            log("[WindowManager] shouldRestoreAcrossSpaces() = \(result)")
+            return result
         }
+
+        log("[WindowManager] Checking window: pid=\(frontApp.processIdentifier), windowID=\(currentWindowID)")
 
         // 第一级匹配：通过 windowID（最可靠的方式）
         if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
             hydrateMemory(from: matchedState, window: focusedWindow)
-            log("Detected moved window state for current handle: \(currentWindowID)")
+            log("[WindowManager] ✓ Found match by windowID: \(currentWindowID)")
             return true
         }
+        log("[WindowManager] ✗ No match by windowID")
 
         // 第二级匹配：通过 PID + 窗口标题 + 大致位置（备用机制）
         if let currentFrame = frame(of: focusedWindow),
@@ -316,11 +336,14 @@ class WindowManager {
                windowID: currentWindowID
            ) {
             hydrateMemory(from: matchedState, window: focusedWindow)
-            log("Detected moved window state via fallback matching (PID+title+position)")
+            log("[WindowManager] ✓ Found match by fallback (PID+title+position)")
             return true
         }
+        log("[WindowManager] ✗ No match by fallback")
 
-        return shouldRestoreAcrossSpaces()
+        let result = shouldRestoreAcrossSpaces()
+        log("[WindowManager] shouldRestoreAcrossSpaces() = \(result)")
+        return result
     }
 
     /// 备用匹配机制：当 windowID 匹配失败时使用
