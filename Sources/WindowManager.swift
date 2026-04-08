@@ -297,9 +297,28 @@ class WindowManager {
 
         guard !savedWindowStates.isEmpty,
               let frontApp = NSWorkspace.shared.frontmostApplication,
-              let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
-              let currentWindowID = windowHandle(for: focusedWindow) else {
-            return shouldRestoreAcrossSpaces()
+              let focusedWindow = focusedWindow(for: frontApp.processIdentifier) else {
+            return false
+        }
+
+        let currentTitle = title(of: focusedWindow) ?? ""
+        let currentFrame = frame(of: focusedWindow)
+        guard let currentWindowID = windowHandle(for: focusedWindow) else {
+            guard let currentFrame else {
+                return false
+            }
+
+            if let matchedState = findStateByFallbackMatching(
+                pid: frontApp.processIdentifier,
+                title: currentTitle,
+                frame: currentFrame
+            ) {
+                hydrateMemory(from: matchedState, window: focusedWindow)
+                log("Detected moved window state via fallback matching (PID+title+position, no windowID)")
+                return true
+            }
+
+            return false
         }
 
         // 第一级匹配：通过 windowID（最可靠的方式）
@@ -312,20 +331,18 @@ class WindowManager {
         log("[WindowManager] ✗ No match by windowID")
 
         // 第二级匹配：通过 PID + 窗口标题 + 大致位置（备用机制）
-        if let currentFrame = frame(of: focusedWindow),
-           let currentTitle = title(of: focusedWindow),
+        if let currentFrame,
            let matchedState = findStateByFallbackMatching(
                pid: frontApp.processIdentifier,
                title: currentTitle,
-               frame: currentFrame,
-               windowID: currentWindowID
+               frame: currentFrame
            ) {
             hydrateMemory(from: matchedState, window: focusedWindow)
             log("Detected moved window state via fallback matching (PID+title+position)")
             return true
         }
 
-        return shouldRestoreAcrossSpaces()
+        return false
     }
 
     /// 备用匹配机制：当 windowID 匹配失败时使用
@@ -333,8 +350,7 @@ class WindowManager {
     private func findStateByFallbackMatching(
         pid: pid_t,
         title: String,
-        frame: CGRect,
-        windowID: UInt32
+        frame: CGRect
     ) -> SavedWindowState? {
         // 匹配条件：
         // 1. PID 相同
