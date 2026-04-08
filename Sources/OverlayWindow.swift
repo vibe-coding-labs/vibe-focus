@@ -9,8 +9,9 @@ class OverlayWindow: NSWindow {
     private var spaceIndex: Int = 0
 
     init(screen: NSScreen) {
+        let initialFrame = NSRect(x: 0, y: 0, width: 200, height: 100)
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+            contentRect: initialFrame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -23,6 +24,10 @@ class OverlayWindow: NSWindow {
         self.ignoresMouseEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle, .fullScreenAuxiliary]
 
+        log("[DRAW] OverlayWindow initialized for screen: \(screen.frame), window level: \(self.level)")
+
+        // FIX: 必须先设置 contentView，否则 setupTextLayer 无法添加子图层
+        self.contentView = NSView()
         setupTextLayer()
     }
 
@@ -35,19 +40,19 @@ class OverlayWindow: NSWindow {
         contentView?.layer?.addSublayer(layer)
         self.textLayer = layer
 
-        log("OverlayWindow: CATextLayer added")
+        log("[DRAW] CATextLayer setup complete, contentsScale: \(layer.contentsScale)")
     }
 
     func update(screenIndex: Int, spaceIndex: Int, preferences: ScreenIndexPreferences) {
         self.screenIndex = screenIndex
         self.spaceIndex = spaceIndex
 
-        log("OverlayWindow update: screenIndex=\(screenIndex), spaceIndex=\(spaceIndex)")
+        log("[DRAW] OverlayWindow.update called: screenIndex=\(screenIndex), spaceIndex=\(spaceIndex)")
 
         // 屏幕索引从1开始（对用户更友好）
         let displayScreenIndex = screenIndex + 1
         let text = "\(displayScreenIndex)-\(spaceIndex)"
-        log("OverlayWindow text: '\(text)'")
+        log("[DRAW] Generated text: '\(text)' (displayScreenIndex=\(displayScreenIndex), spaceIndex=\(spaceIndex))")
 
         // 计算尺寸（应用面板缩放）
         let scaledFontSize = preferences.fontSize * preferences.panelScale
@@ -61,6 +66,7 @@ class OverlayWindow: NSWindow {
         ]
         let attributedString = NSAttributedString(string: text, attributes: attributes)
         let textSize = attributedString.size()
+        log("[DRAW] Text size: \(textSize), scaledFontSize: \(scaledFontSize)")
 
         // 基础尺寸（应用缩放）
         let horizontalPadding: CGFloat = scaledFontSize * 0.8
@@ -71,7 +77,7 @@ class OverlayWindow: NSWindow {
         let width = max(textSize.width + horizontalPadding * 2, minWidth)
         let height = max(textSize.height + verticalPadding * 2, minHeight)
 
-        log("OverlayWindow size: \(width)x\(height), textSize: \(textSize)")
+        log("[DRAW] Window size: \(width)x\(height), textSize: \(textSize)")
 
         // 设置窗口尺寸
         self.setContentSize(CGSize(width: width, height: height))
@@ -87,17 +93,20 @@ class OverlayWindow: NSWindow {
 
         // 设置文本层
         textLayer?.string = attributedString
-        textLayer?.frame = NSRect(
+        let textFrame = NSRect(
             x: (width - textSize.width) / 2,
             y: (height - textSize.height) / 2 - 5, // 微调垂直居中
             width: textSize.width,
             height: textSize.height
         )
-        log("OverlayWindow textLayer frame: \(textLayer?.frame ?? .zero)")
+        textLayer?.frame = textFrame
+        log("[DRAW] textLayer frame: \(textFrame), text: '\(text)'")
 
         // 强制重绘
         contentView?.needsDisplay = true
         textLayer?.setNeedsDisplay()
+
+        log("[DRAW] OverlayWindow update completed for '\(text)'")
     }
 
     func updatePosition(for screen: NSScreen, position: IndexPosition = .topRight) {
@@ -105,7 +114,7 @@ class OverlayWindow: NSWindow {
         let windowSize = self.contentView?.bounds.size ?? CGSize(width: 100, height: 60)
         let margin: CGFloat = 20
 
-        log("OverlayWindow updatePosition: screenFrame=\(screenFrame), windowSize=\(windowSize)")
+        log("[DRAW] updatePosition: screenFrame=\(screenFrame), windowSize=\(windowSize)")
 
         var origin: CGPoint
         switch position {
@@ -123,14 +132,16 @@ class OverlayWindow: NSWindow {
             origin = CGPoint(x: screenFrame.maxX - windowSize.width - margin, y: screenFrame.minY + margin)
         }
 
-        log("OverlayWindow setting origin: \(origin)")
+        log("[DRAW] Setting window origin: \(origin), position: \(position)")
         self.setFrameOrigin(origin)
+        log("[DRAW] Window frame after setFrameOrigin: \(self.frame)")
     }
 
     func show() {
-        log("OverlayWindow show() called")
+        log("[DRAW] show() called, window frame: \(self.frame), isVisible: \(self.isVisible)")
         self.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
+        log("[DRAW] show() completed, isVisible: \(self.isVisible)")
     }
 
     func hide() {

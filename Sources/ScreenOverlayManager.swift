@@ -19,11 +19,23 @@ class ScreenOverlayManager: ObservableObject {
     private var overlayWindows: [UUID: OverlayWindow] = [:]
     private var screenSpaceCache: [UUID: (screenIndex: Int, spaceIndex: Int)] = [:]
     private var refreshTimer: Timer?
+    private var pendingSignalRefreshWorkItems: [DispatchWorkItem] = []
+    private var workspaceSpaceChangeObserver: NSObjectProtocol?
+    private var swipeEventMonitor: Any?
+    private var lastForceRefreshTriggerAt: Date = .distantPast
+    private var lastSwipeTriggerAt: Date = .distantPast
 
     // Query result caching to prevent redundant yabai calls
     private var cachedSpaceIndices: [UUID: Int] = [:]
+    private var cachedDisplayIndices: [UUID: Int] = [:]
     private var lastQueryTimes: [UUID: Date] = [:]  // Per-screen query time tracking
     private let queryDebounceInterval: TimeInterval = 0.05  // 50ms debounce - 减少延迟
+    private let signalFollowUpRefreshDelays: [TimeInterval] = [0.03, 0.1]
+    private let yabaiCommandTimeout: TimeInterval = 0.22
+    private let minForceRefreshTriggerInterval: TimeInterval = 0.06
+    private let minSwipeTriggerInterval: TimeInterval = 0.12
+    private let singleScreenFallbackRefreshInterval: TimeInterval = 0.35
+    private let multiScreenFallbackRefreshInterval: TimeInterval = 0.8
 
     private init() {
         self.preferences = ScreenIndexPreferences.load()
@@ -41,19 +53,12 @@ class ScreenOverlayManager: ObservableObject {
 
         let source = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
         source.setEventHandler { [weak self] in
-            let timestamp = ISO8601DateFormatter().string(from: Date())
-            log("[SIGUSR1] Received signal at \(timestamp), clearing caches and refreshing...")
-            // Clear cache to force fresh query on space change
-            self?.clearSpaceIndexCache()
-            // 立即刷新，减少延迟
-            log("[SIGUSR1] Immediate refresh")
-            self?.refreshSpaceIndices(force: true)
-
-            // 100ms 后再次刷新作为保险（处理可能的竞态条件）
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                log("[SIGUSR1] Second refresh (100ms after signal)")
-                self?.refreshSpaceIndices(force: true)
+            guard let self else {
+                return
             }
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            log("[SIGUSR1] ====== WORKSPACE SWITCH DETECTED at \(timestamp) ======")
+            self.triggerForceRefresh(reason: "sigusr1")
         }
         source.resume()
 
@@ -67,6 +72,48 @@ class ScreenOverlayManager: ObservableObject {
         // 关键修复：同时清除 screenSpaceCache，确保信号触发时强制刷新
         screenSpaceCache.removeAll()
         log("Cleared all caches including screenSpaceCache")
+    }
+
+    private func cancelPendingSignalRefreshes() {
+        for workItem in pendingSignalRefreshWorkItems {
+            workItem.cancel()
+        }
+        pendingSignalRefreshWorkItems.removeAll()
+    }
+
+    private func scheduleSignalFollowUpRefreshes() {
+        for (offset, delay) in signalFollowUpRefreshDelays.enumerated() {
+            let isLast = offset == signalFollowUpRefreshDelays.count - 1
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else {
+                    return
+                }
+                log("[SIGUSR1] Follow-up refresh (\(Int(delay * 1000))ms after signal)")
+                self.refreshSpaceIndices(force: true)
+                if isLast {
+                    log("[SIGUSR1] ====== WORKSPACE SWITCH HANDLING COMPLETE ======")
+                }
+            }
+            pendingSignalRefreshWorkItems.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    }
+
+    private func triggerForceRefresh(reason: String) {
+        let now = Date()
+        if now.timeIntervalSince(lastForceRefreshTriggerAt) < minForceRefreshTriggerInterval {
+            log("[FORCE_REFRESH] Skip duplicated trigger reason=\(reason)")
+            return
+        }
+        lastForceRefreshTriggerAt = now
+
+        log("[FORCE_REFRESH] Triggered by reason=\(reason), clearing caches and refreshing")
+        cancelPendingSignalRefreshes()
+        clearSpaceIndexCache()
+
+        log("[FORCE_REFRESH] Immediate refresh starting...")
+        refreshSpaceIndices(force: true)
+        scheduleSignalFollowUpRefreshes()
     }
 
     private func registerYabaiSignals() {
@@ -126,20 +173,66 @@ class ScreenOverlayManager: ObservableObject {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+
+        workspaceSpaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else {
+                return
+            }
+            log("[SPACE_NOTIFY] NSWorkspace activeSpaceDidChangeNotification")
+            Task { @MainActor [weak self] in
+                self?.triggerForceRefresh(reason: "nsworkspace_active_space")
+            }
+        }
+
+        swipeEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.swipe]) { [weak self] event in
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+                guard self.preferences.isEnabled else {
+                    return
+                }
+
+                let horizontalDelta = abs(event.deltaX)
+                let verticalDelta = abs(event.deltaY)
+                guard horizontalDelta > verticalDelta, horizontalDelta > 0.8 else {
+                    return
+                }
+
+                let now = Date()
+                if now.timeIntervalSince(self.lastSwipeTriggerAt) < self.minSwipeTriggerInterval {
+                    return
+                }
+                self.lastSwipeTriggerAt = now
+
+                log("[SWIPE] Global swipe detected deltaX=\(event.deltaX)")
+                self.triggerForceRefresh(reason: "global_swipe")
+            }
+        }
     }
 
     private func startRefreshTimer() {
-        // 轮询频率 200ms，快速检测三指滑动（yabai 信号提供即时更新，轮询作为备用）
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+        // Faster fallback on single display while keeping multi-display polling conservative.
+        let interval = NSScreen.screens.count <= 1
+            ? singleScreenFallbackRefreshInterval
+            : multiScreenFallbackRefreshInterval
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshSpaceIndices()
             }
         }
-        log("Started refresh timer with 0.2s interval (for native workspace switching)")
+        log("Started refresh timer with \(interval)s interval")
     }
 
     @objc private func handleScreenChange() {
         log("Screen configuration changed, refreshing overlays")
+        cachedDisplayIndices.removeAll()
+        cancelPendingSignalRefreshes()
         refreshOverlays()
     }
 
@@ -158,36 +251,11 @@ class ScreenOverlayManager: ObservableObject {
         updateOverlayPositions()
     }
 
-    /// 直接更新外观属性，不触发 preferences 的 didSet
-    /// 用于 Slider 拖动时实时预览，避免窗口重建
-    func updateAppearance(fontSize: CGFloat? = nil, opacity: CGFloat? = nil, panelScale: CGFloat? = nil,
-                          textColor: CodableColor? = nil, backgroundColor: CodableColor? = nil) {
-        // 直接修改内部 preferences 不触发 didSet
-        if let fontSize = fontSize { preferences.fontSize = fontSize }
-        if let opacity = opacity { preferences.opacity = opacity }
-        if let panelScale = panelScale { preferences.panelScale = panelScale }
-        if let textColor = textColor { preferences.textColor = textColor }
-        if let backgroundColor = backgroundColor { preferences.backgroundColor = backgroundColor }
-
-        // 保存到存储
-        preferences.save()
-
-        // 直接更新现有窗口外观
-        updateOverlayAppearance()
-    }
-
-    func refreshOverlays(appearanceOnly: Bool = false) {
-        log("refreshOverlays called, isEnabled=\(preferences.isEnabled), appearanceOnly=\(appearanceOnly)")
-
-        if appearanceOnly && preferences.isEnabled && !overlayWindows.isEmpty {
-            // 如果只是外观属性变化，直接更新现有窗口
-            updateOverlayAppearance()
-        } else {
-            // 其他情况：销毁重建
-            hideOverlays()
-            if preferences.isEnabled {
-                showOverlays()
-            }
+    func refreshOverlays() {
+        log("refreshOverlays called, isEnabled=\(preferences.isEnabled)")
+        hideOverlays()
+        if preferences.isEnabled {
+            showOverlays()
         }
     }
 
@@ -217,6 +285,7 @@ class ScreenOverlayManager: ObservableObject {
             let overlay = OverlayWindow(screen: screen)
             let spaceIndex = getSpaceIndex(for: screen) ?? 0
 
+            log("[DEBUG] showOverlays: screen \(index), spaceIndex=\(spaceIndex), calling overlay.update")
             overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
             overlay.updatePosition(for: screen, position: preferences.position)
             overlay.show()
@@ -236,25 +305,6 @@ class ScreenOverlayManager: ObservableObject {
         log("Hid all overlays")
     }
 
-    private func updateOverlayAppearance() {
-        let screens = NSScreen.screens
-
-        for (index, screen) in screens.enumerated() {
-            let uuid = uuidForScreen(screen)
-
-            if let overlay = overlayWindows[uuid] {
-                // 获取当前空间索引
-                let spaceIndex = getSpaceIndex(for: screen) ?? 0
-
-                // 直接更新窗口的外观属性
-                overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
-                overlay.updatePosition(for: screen, position: preferences.position)
-
-                log("[updateOverlayAppearance] Updated overlay for screen \(index)")
-            }
-        }
-    }
-
     private func updateOverlayPositions() {
         let screens = NSScreen.screens
 
@@ -268,61 +318,87 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func refreshSpaceIndices(force: Bool = false) {
-        guard preferences.isEnabled else { return }
+        guard preferences.isEnabled else {
+            log("[REFRESH] Skipped - preferences disabled")
+            return
+        }
 
         if force {
-            log("[refreshSpaceIndices] Force refresh requested, clearing screenSpaceCache")
+            log("[REFRESH] ====== FORCE REFRESH ======")
+            log("[REFRESH] Force refresh requested, clearing screenSpaceCache")
             screenSpaceCache.removeAll()
         }
 
         let screens = NSScreen.screens
+        log("[REFRESH] Checking \(screens.count) screens...")
+
         var needsRefresh = false
         var changedScreens: [String] = []
 
         for (index, screen) in screens.enumerated() {
             let uuid = uuidForScreen(screen)
 
-            let currentSpaceIndex = getSpaceIndex(for: screen) ?? 0
+            let currentSpaceIndex = getSpaceIndex(for: screen, preferStableSampling: force) ?? 0
+            log("[REFRESH] Screen \(index): currentSpaceIndex=\(currentSpaceIndex), uuid=\(uuid)")
 
             if let cached = screenSpaceCache[uuid] {
+                log("[REFRESH]   Cached: screenIndex=\(cached.screenIndex), spaceIndex=\(cached.spaceIndex)")
                 if cached.screenIndex != index || cached.spaceIndex != currentSpaceIndex {
+                    log("[REFRESH]   *** CHANGE DETECTED ***")
                     needsRefresh = true
                     changedScreens.append("Screen\(index): \(cached.spaceIndex)->\(currentSpaceIndex)")
                     screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: currentSpaceIndex)
 
                     if let overlay = overlayWindows[uuid] {
-                        log("[refreshSpaceIndices] Updating overlay for screen \(index): spaceIndex \(currentSpaceIndex)")
+                        log("[REFRESH]   Updating overlay: screen=\(index), space=\(currentSpaceIndex)")
                         overlay.update(screenIndex: index, spaceIndex: currentSpaceIndex, preferences: preferences)
                         overlay.updatePosition(for: screen, position: preferences.position)
-                        overlay.show() // 确保窗口在最前面
+                        overlay.show()
+                        log("[REFRESH]   Overlay updated and shown")
+                    } else {
+                        log("[REFRESH]   WARNING: No overlay found for uuid \(uuid)")
                     }
+                } else {
+                    log("[REFRESH]   No change (spaceIndex unchanged)")
                 }
             } else {
+                log("[REFRESH]   New screen: Screen\(index): new->\(currentSpaceIndex)")
                 needsRefresh = true
                 changedScreens.append("Screen\(index): new->\(currentSpaceIndex)")
                 screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: currentSpaceIndex)
+
+                // FIX: Also update overlay for new screens
+                if let overlay = overlayWindows[uuid] {
+                    log("[REFRESH]   Updating overlay for new screen: screen=\(index), space=\(currentSpaceIndex)")
+                    overlay.update(screenIndex: index, spaceIndex: currentSpaceIndex, preferences: preferences)
+                    overlay.updatePosition(for: screen, position: preferences.position)
+                    overlay.show()
+                    log("[REFRESH]   Overlay for new screen updated")
+                } else {
+                    log("[REFRESH]   WARNING: No overlay found for new screen uuid \(uuid)")
+                }
             }
         }
 
-        // 只有在屏幕数量变化时才需要重建窗口
-        // 工作区索引变化已经在上面直接更新了 overlay
         if overlayWindows.count != screens.count {
-            log("[refreshSpaceIndices] Screen count changed, refreshing overlays")
+            log("[REFRESH] Screen count changed (\(overlayWindows.count) -> \(screens.count)), refreshing overlays")
             refreshOverlays()
         } else if needsRefresh {
-            log("[refreshSpaceIndices] Space indices updated: \(changedScreens.joined(separator: ", "))")
-            // 工作区变化已经通过 overlay.update() 直接更新，不需要重建窗口
+            log("[REFRESH] Updated screens: \(changedScreens.joined(separator: ", "))")
         } else if force {
-            log("[refreshSpaceIndices] Force refresh but no changes detected")
+            log("[REFRESH] Force refresh but no changes detected")
         }
+
+        log("[REFRESH] ====== REFRESH COMPLETE ======")
     }
 
     // MARK: - Space Index Detection
-    private func getSpaceIndex(for screen: NSScreen) -> Int? {
+    private func getSpaceIndex(for screen: NSScreen, preferStableSampling: Bool = false) -> Int? {
         let uuid = uuidForScreen(screen)
 
-        // Check cache to prevent redundant queries within debounce interval (per screen)
-        if let lastQuery = lastQueryTimes[uuid],
+        // Check cache to prevent redundant queries within debounce interval (per screen).
+        if !preferStableSampling,
+           let lastQuery = lastQueryTimes[uuid],
            Date().timeIntervalSince(lastQuery) < queryDebounceInterval,
            let cached = cachedSpaceIndices[uuid] {
             log("Using cached space index for screen \(uuid): \(cached)")
@@ -331,8 +407,8 @@ class ScreenOverlayManager: ObservableObject {
 
         // Try to get from yabai first
         let result: Int?
-        log("Querying space index for screen \(uuid)...")
-        if let yabaiIndex = getYabaiSpaceIndex(for: screen) {
+        log("Querying space index for screen \(uuid)... preferStableSampling=\(preferStableSampling)")
+        if let yabaiIndex = getYabaiSpaceIndex(for: screen, preferStableSampling: preferStableSampling) {
             log("Got space index from yabai for screen \(uuid): \(yabaiIndex)")
             result = yabaiIndex
         } else if let cgIndex = getCGSpaceIndex(for: screen) {
@@ -467,18 +543,20 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func getYabaiDisplayIndex(for screen: NSScreen) -> Int? {
+        let screenUUID = uuidForScreen(screen)
+        if let cachedDisplayIndex = cachedDisplayIndices[screenUUID] {
+            return cachedDisplayIndex
+        }
+
         guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
             log("Could not get screenNumber from deviceDescription")
             return nil
         }
         let targetDisplayID = screenNumber.uint32Value
-        log("Looking for yabai display with ID: \(targetDisplayID)")
 
         guard let yabaiPath = getYabaiPath() else {
-            log("yabai binary not found")
             return nil
         }
-        log("Using yabai at: \(yabaiPath)")
 
         let task = Process()
         task.launchPath = yabaiPath
@@ -490,40 +568,35 @@ class ScreenOverlayManager: ObservableObject {
 
         do {
             try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let errorPipe = task.standardError as? Pipe
-            if let stderr = errorPipe?.fileHandleForReading.readDataToEndOfFile(),
-               let errStr = String(data: stderr, encoding: .utf8), !errStr.isEmpty {
-                log("yabai displays query stderr: \(errStr)")
+            // Use waitUntilExit with timeout to prevent blocking
+            let semaphore = DispatchSemaphore(value: 0)
+            task.terminationHandler = { _ in
+                semaphore.signal()
             }
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                log("Failed to parse yabai displays JSON")
-                if let str = String(data: data, encoding: .utf8) {
-                    log("Raw output: \(str)")
-                }
+            let result = semaphore.wait(timeout: .now() + yabaiCommandTimeout)
+            if result == .timedOut {
+                log("yabai displays query timed out")
+                task.terminate()
                 return nil
             }
 
-            log("yabai returned \(json.count) displays")
-            for (i, display) in json.enumerated() {
-                let id = display["id"] as? UInt32 ?? 0
-                let index = display["index"] as? Int ?? 0
-                log("Display \(i): id=\(id), index=\(index)")
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                return nil
             }
 
             // Find the display with matching CGDirectDisplayID
             if let display = json.first(where: {
-                ($0["id"] as? UInt32) == targetDisplayID
+                let id = $0["id"] as? UInt32 ?? UInt32($0["id"] as? Int ?? 0)
+                return id == targetDisplayID
             }) {
-                let idx = display["index"] as? Int
-                log("Found matching display with index: \(idx ?? -1)")
-                return idx
+                let displayIndex = display["index"] as? Int
+                if let displayIndex {
+                    cachedDisplayIndices[screenUUID] = displayIndex
+                }
+                return displayIndex
             }
-
-            log("No matching display found for ID \(targetDisplayID)")
         } catch {
             log("Failed to get yabai display index: \(error)")
         }
@@ -531,21 +604,53 @@ class ScreenOverlayManager: ObservableObject {
         return nil
     }
 
-    private func getYabaiSpaceIndex(for screen: NSScreen) -> Int? {
+    private func getYabaiSpaceIndex(for screen: NSScreen, preferStableSampling: Bool = false) -> Int? {
+        guard let yabaiPath = getYabaiPath() else {
+            return nil
+        }
+
+        let screenCount = NSScreen.screens.count
+
+        // Fast path for single-display setups: focused-space query is the lowest-latency source.
+        if screenCount <= 1 {
+            if let focusedSpaceIndex = queryFocusedSpaceIndex(yabaiPath: yabaiPath) {
+                log("[DEBUG] Selected active space with focused-only fast path: index=\(focusedSpaceIndex), stable=\(preferStableSampling)")
+                return focusedSpaceIndex
+            }
+            log("[DEBUG] focused-only fast path failed, falling back to display query")
+        }
+
         // Get the yabai display index for this screen
         guard let displayIndex = getYabaiDisplayIndex(for: screen) else {
-            log("Could not get yabai display index for screen")
             return nil
         }
 
-        log("Querying spaces for display index: \(displayIndex)")
-
-        guard let yabaiPath = getYabaiPath() else {
-            log("yabai binary not found for space query")
+        let focusedSpaceIndex = queryFocusedSpaceIndex(yabaiPath: yabaiPath)
+        guard let displaySpaces = queryYabaiSpaces(forDisplayIndex: displayIndex, yabaiPath: yabaiPath) else {
+            if screenCount <= 1, let focusedSpaceIndex {
+                log("[DEBUG] display query failed, fallback to focused=\(focusedSpaceIndex), stable=\(preferStableSampling)")
+                return focusedSpaceIndex
+            }
+            log("[DEBUG] display query failed, no fallback for multi-display")
             return nil
         }
 
-        // Get spaces for this specific display
+        let resolved = SpaceIndexResolver.chooseIndex(
+            displaySpaces: displaySpaces,
+            focusedSpaceIndex: focusedSpaceIndex,
+            screenCount: screenCount
+        )
+
+        if let resolved {
+            log("[DEBUG] Selected active space with index: \(resolved), focused=\(focusedSpaceIndex.map(String.init) ?? "nil"), stable=\(preferStableSampling)")
+        } else {
+            log("[DEBUG] Failed to resolve active space index, focused=\(focusedSpaceIndex.map(String.init) ?? "nil"), stable=\(preferStableSampling)")
+        }
+
+        return resolved
+    }
+
+    private func queryYabaiSpaces(forDisplayIndex displayIndex: Int, yabaiPath: String) -> [SpaceSnapshot]? {
         let task = Process()
         task.launchPath = yabaiPath
         task.arguments = ["-m", "query", "--spaces", "--display", "\(displayIndex)"]
@@ -556,65 +661,76 @@ class ScreenOverlayManager: ObservableObject {
 
         do {
             try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                log("Failed to parse yabai spaces JSON for display \(displayIndex)")
-                if let str = String(data: data, encoding: .utf8) {
-                    log("Raw spaces output: \(str)")
-                }
+            let semaphore = DispatchSemaphore(value: 0)
+            task.terminationHandler = { _ in
+                semaphore.signal()
+            }
+            let result = semaphore.wait(timeout: .now() + yabaiCommandTimeout)
+            if result == .timedOut {
+                log("yabai spaces query timed out")
+                task.terminate()
                 return nil
             }
 
-            log("yabai returned \(json.count) spaces for display \(displayIndex)")
-            for (i, space) in json.enumerated() {
-                let idx = space["index"] as? Int ?? 0
-                // Handle both Bool and Int types (yabai returns Bool in newer versions)
-                let visible: Bool
-                let focused: Bool
-                if let visibleBool = space["is-visible"] as? Bool {
-                    visible = visibleBool
-                } else {
-                    visible = (space["is-visible"] as? Int ?? 0) == 1
-                }
-                if let focusedBool = space["has-focus"] as? Bool {
-                    focused = focusedBool
-                } else {
-                    focused = (space["has-focus"] as? Int ?? 0) == 1
-                }
-                log("Space \(i): index=\(idx), is-visible=\(visible), has-focus=\(focused)")
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                log("[DEBUG] Failed to parse yabai spaces JSON")
+                return nil
             }
 
-            // Find the visible or focused space on this display
-            if let activeSpaceIndex = json.firstIndex(where: {
-                // Handle both Bool and Int types
-                if let visible = $0["is-visible"] as? Bool {
-                    return visible
+            log("[DEBUG] yabai --spaces --display \(displayIndex) returned \(json.count) spaces")
+            let snapshots: [SpaceSnapshot] = json.compactMap { space in
+                guard let index = space["index"] as? Int else {
+                    return nil
                 }
-                return ($0["is-visible"] as? Int ?? 0) == 1
-            }) ?? json.firstIndex(where: {
-                if let focused = $0["has-focus"] as? Bool {
-                    return focused
-                }
-                return ($0["has-focus"] as? Int ?? 0) == 1
-            }) {
-                // 返回屏幕级别的工作区索引（1-based）
-                // 比如：屏幕2的第1个工作区，显示 1 而不是全局索引 4
-                let localSpaceIndex = activeSpaceIndex + 1
-                let globalSpaceIndex = json[activeSpaceIndex]["index"] as? Int ?? 0
-
-                log("Found yabai space: local=\(localSpaceIndex), global=\(globalSpaceIndex)")
-                return localSpaceIndex
+                let visible = (space["is-visible"] as? Bool) ?? ((space["is-visible"] as? Int ?? 0) == 1)
+                let hasFocus = (space["has-focus"] as? Bool) ?? ((space["has-focus"] as? Int ?? 0) == 1)
+                return SpaceSnapshot(index: index, isVisible: visible, hasFocus: hasFocus)
             }
 
-            log("No visible/focused space found for display \(displayIndex)")
+            for (i, snapshot) in snapshots.enumerated() {
+                log("[DEBUG]   Space \(i): index=\(snapshot.index), is-visible=\(snapshot.isVisible), has-focus=\(snapshot.hasFocus)")
+            }
+
+            return snapshots
         } catch {
-            log("Failed to get yabai space index: \(error)")
+            log("Failed to query yabai spaces for display: \(error)")
+            return nil
         }
+    }
 
-        return nil
+    private func queryFocusedSpaceIndex(yabaiPath: String) -> Int? {
+        let task = Process()
+        task.launchPath = yabaiPath
+        task.arguments = ["-m", "query", "--spaces", "--space"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+
+        do {
+            try task.run()
+            let semaphore = DispatchSemaphore(value: 0)
+            task.terminationHandler = { _ in
+                semaphore.signal()
+            }
+            let result = semaphore.wait(timeout: .now() + yabaiCommandTimeout)
+            if result == .timedOut {
+                log("yabai focused space query timed out")
+                task.terminate()
+                return nil
+            }
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let index = json["index"] as? Int else {
+                return nil
+            }
+            return index
+        } catch {
+            log("Failed to query yabai focused space: \(error)")
+            return nil
+        }
     }
 
     private func getCGSpaceIndex(for screen: NSScreen) -> Int? {

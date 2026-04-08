@@ -53,13 +53,6 @@ final class SpaceController: ObservableObject {
     private var lastCheckAt: Date?
     private var cachedYabaiPath: String?
     private let checkInterval: TimeInterval = 5
-    private var isCheckingAvailability = false
-
-    // 空间索引缓存 - 减少 yabai 调用频率
-    private var cachedCurrentSpace: Int?
-    private var cachedWindowSpaces: [UInt32: Int] = [:]
-    private var cacheTimestamp: Date?
-    private let cacheValidity: TimeInterval = 0.3  // 300ms 缓存
 
     private init() {
         // Delay initial check to ensure log function is available
@@ -81,87 +74,53 @@ final class SpaceController: ObservableObject {
         }
     }
 
-    // MARK: - Cache Management
-    private func isCacheValid() -> Bool {
-        guard let timestamp = cacheTimestamp else { return false }
-        return Date().timeIntervalSince(timestamp) < cacheValidity
-    }
-
-    func invalidateCache() {
-        cachedCurrentSpace = nil
-        cachedWindowSpaces.removeAll()
-        cacheTimestamp = nil
-        log("[SpaceController] Cache invalidated")
-    }
-
     func refreshAvailabilityIfNeeded() {
         refreshAvailability(force: false)
     }
 
     func refreshAvailability(force: Bool) {
-        log("[SpaceController] refreshAvailability called, force=\(force), lastCheckAt=\(String(describing: lastCheckAt))")
+        log("refreshAvailability called, force=\(force), lastCheckAt=\(String(describing: lastCheckAt))")
 
         if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < checkInterval {
-            log("[SpaceController] Skipping refresh - within check interval")
+            log("Skipping refresh - within check interval")
             return
         }
 
-        // 如果已经在检查中，跳过
-        guard !isCheckingAvailability else {
-            log("[SpaceController] Skipping refresh - already checking")
-            return
-        }
-
-        isCheckingAvailability = true
         lastCheckAt = Date()
         lastErrorMessage = nil
-        let checkStartTime = Date()
 
-        // 异步执行 yabai 检查，避免阻塞主线程
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self else {
-                return
-            }
+        log("Looking for yabai...")
+        guard let yabaiPath = locateYabai() else {
+            log("yabai not found - setting availability to .notInstalled")
+            availability = .notInstalled
+            updateEnabledState()
+            return
+        }
 
-            log("[SpaceController] Looking for yabai...")
-            guard let yabaiPath = self.locateYabai() else {
-                DispatchQueue.main.async {
-                    log("[SpaceController] yabai not found, setting .notInstalled")
-                    self.availability = .notInstalled
-                    self.updateEnabledState()
-                    self.isCheckingAvailability = false
-                }
-                return
-            }
+        log("Found yabai at: \(yabaiPath)")
+        cachedYabaiPath = yabaiPath
 
-            log("[SpaceController] Found yabai at: \(yabaiPath)")
+        log("Running yabai query...")
+        guard let result = runYabai(arguments: ["-m", "query", "--spaces"]) else {
+            log("Failed to run yabai - setting availability to .unavailable")
+            availability = .unavailable
+            lastErrorMessage = "Unable to launch yabai"
+            updateEnabledState()
+            return
+        }
 
-            guard let result = self.runYabai(arguments: ["-m", "query", "--spaces"]) else {
-                DispatchQueue.main.async {
-                    log("[SpaceController] Failed to run yabai, setting .unavailable")
-                    self.availability = .unavailable
-                    self.lastErrorMessage = "Unable to launch yabai"
-                    self.updateEnabledState()
-                    self.isCheckingAvailability = false
-                }
-                return
-            }
+        log("yabai query result: exitCode=\(result.exitCode), stdout=\(result.stdout.prefix(100)), stderr=\(result.stderr)")
 
-            DispatchQueue.main.async {
-                let elapsed = Date().timeIntervalSince(checkStartTime)
-                if result.exitCode == 0 {
-                    log("[SpaceController] yabai available (took \(String(format: "%.3f", elapsed))s)")
-                    self.availability = .available
-                    self.lastErrorMessage = nil
-                } else {
-                    log("[SpaceController] yabai query failed (took \(String(format: "%.3f", elapsed))s): \(result.stderr)")
-                    self.availability = .unavailable
-                    self.lastErrorMessage = self.formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
-                }
-                self.cachedYabaiPath = yabaiPath
-                self.updateEnabledState()
-                self.isCheckingAvailability = false
-            }
+        if result.exitCode == 0 {
+            log("yabai available - setting availability to .available")
+            availability = .available
+            lastErrorMessage = nil
+            updateEnabledState()
+        } else {
+            log("yabai query failed - setting availability to .unavailable")
+            availability = .unavailable
+            lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+            updateEnabledState()
         }
     }
 
@@ -180,46 +139,18 @@ final class SpaceController: ObservableObject {
     }
 
     func currentSpaceIndex() -> Int? {
-        log("[SpaceController] currentSpaceIndex() called")
-        let startTime = Date()
-
         refreshAvailabilityIfNeeded()
-        guard isEnabled else {
-            log("[SpaceController] isEnabled=false, returning nil")
+        guard isEnabled, let space = queryFocusedSpace() else {
             return nil
         }
-
-        // 使用缓存避免频繁调用 yabai
-        if isCacheValid(), let cached = cachedCurrentSpace {
-            log("[SpaceController] Using cached current space: \(cached)")
-            return cached
-        }
-
-        guard let space = queryFocusedSpace() else {
-            log("[SpaceController] queryFocusedSpace() returned nil")
-            return nil
-        }
-        cachedCurrentSpace = space.index
-        cacheTimestamp = Date()
-        let elapsed = Date().timeIntervalSince(startTime)
-        log("[SpaceController] Queried current space: \(space.index ?? -1) (took \(String(format: "%.3f", elapsed))s)")
         return space.index
     }
 
     func windowSpaceIndex(windowID: UInt32) -> Int? {
         refreshAvailabilityIfNeeded()
-        guard isEnabled else { return nil }
-
-        // 使用缓存避免频繁调用 yabai
-        if isCacheValid(), let cached = cachedWindowSpaces[windowID] {
-            log("[SpaceController] Using cached window space for \(windowID): \(cached)")
-            return cached
+        guard isEnabled, let window = queryWindow(windowID: windowID) else {
+            return nil
         }
-
-        guard let window = queryWindow(windowID: windowID) else { return nil }
-        cachedWindowSpaces[windowID] = window.space
-        cacheTimestamp = Date()
-        log("[SpaceController] Queried window space for \(windowID): \(window.space ?? -1)")
         return window.space
     }
 
@@ -238,7 +169,6 @@ final class SpaceController: ObservableObject {
             return false
         }
         if result.exitCode == 0 {
-            invalidateCache()  // 窗口移动后失效缓存
             return true
         }
         availability = .unavailable
@@ -257,7 +187,6 @@ final class SpaceController: ObservableObject {
             return false
         }
         if result.exitCode == 0 {
-            invalidateCache()  // 切换空间后失效缓存
             return true
         }
         availability = .unavailable
@@ -410,7 +339,7 @@ final class SpaceController: ObservableObject {
         return runProcess(executable: yabaiPath, arguments: arguments)
     }
 
-    private func runProcess(executable: String, arguments: [String], timeout: TimeInterval = 2.0) -> ShellResult? {
+    private func runProcess(executable: String, arguments: [String]) -> ShellResult? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -427,16 +356,7 @@ final class SpaceController: ObservableObject {
             return nil
         }
 
-        // 使用超时机制替代 waitUntilExit，避免阻塞主线程
-        let startTime = Date()
-        while process.isRunning {
-            if Date().timeIntervalSince(startTime) > timeout {
-                log("Process timed out: \(executable) \(arguments.joined(separator: " "))")
-                process.terminate()
-                return nil
-            }
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
-        }
+        process.waitUntilExit()
 
         let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()

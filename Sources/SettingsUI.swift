@@ -4,6 +4,7 @@ import Carbon
 import ApplicationServices.HIServices
 import CoreFoundation
 import Foundation
+import Darwin
 
 private func bundledAppIconImage() -> NSImage? {
     if let icnsURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
@@ -1002,7 +1003,9 @@ private struct SettingsView: View {
                                         value: Binding(
                                             get: { Double(overlayManager.preferences.fontSize) },
                                             set: { newValue in
-                                                overlayManager.updateAppearance(fontSize: CGFloat(newValue))
+                                                var prefs = overlayManager.preferences
+                                                prefs.fontSize = CGFloat(newValue)
+                                                overlayManager.preferences = prefs
                                             }
                                         ),
                                         minValue: 24,
@@ -1029,7 +1032,9 @@ private struct SettingsView: View {
                                         value: Binding(
                                             get: { Double(overlayManager.preferences.opacity) },
                                             set: { newValue in
-                                                overlayManager.updateAppearance(opacity: CGFloat(newValue))
+                                                var prefs = overlayManager.preferences
+                                                prefs.opacity = CGFloat(newValue)
+                                                overlayManager.preferences = prefs
                                             }
                                         ),
                                         minValue: 0.3,
@@ -1056,7 +1061,9 @@ private struct SettingsView: View {
                                         value: Binding(
                                             get: { Double(overlayManager.preferences.panelScale) },
                                             set: { newValue in
-                                                overlayManager.updateAppearance(panelScale: CGFloat(newValue))
+                                                var prefs = overlayManager.preferences
+                                                prefs.panelScale = CGFloat(newValue)
+                                                overlayManager.preferences = prefs
                                             }
                                         ),
                                         minValue: 0.5,
@@ -1082,7 +1089,9 @@ private struct SettingsView: View {
                                     selection: Binding(
                                         get: { overlayManager.preferences.textColor.swiftUIColor },
                                         set: { newValue in
-                                            overlayManager.updateAppearance(textColor: CodableColor(newValue))
+                                            var prefs = overlayManager.preferences
+                                            prefs.textColor = CodableColor(newValue)
+                                            overlayManager.preferences = prefs
                                         }
                                     )
                                 )
@@ -1100,7 +1109,9 @@ private struct SettingsView: View {
                                     selection: Binding(
                                         get: { overlayManager.preferences.backgroundColor.swiftUIColor },
                                         set: { newValue in
-                                            overlayManager.updateAppearance(backgroundColor: CodableColor(newValue))
+                                            var prefs = overlayManager.preferences
+                                            prefs.backgroundColor = CodableColor(newValue)
+                                            overlayManager.preferences = prefs
                                         }
                                     )
                                 )
@@ -1322,6 +1333,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
         logDiagnostics("launch")
+
+        // 检查并终止已存在的旧进程（新进程优先策略）
+        if let existingInstance = findExistingInstance() {
+            log("Found existing instance at PID \(existingInstance.processIdentifier), terminating it")
+            existingInstance.terminate()
+            Thread.sleep(forTimeInterval: 0.3)
+            kill(existingInstance.processIdentifier, SIGTERM)
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+
+        // 获取锁（现在应该能成功，因为旧进程已终止）
+        if !acquireExclusiveLock() {
+            log("Failed to acquire lock after terminating old instance, retrying...")
+            Thread.sleep(forTimeInterval: 0.5)
+            if !acquireExclusiveLock() {
+                log("Still cannot acquire lock, terminating self")
+                NSApp.terminate(nil)
+                return
+            }
+        }
+
         guard enforceExpectedInstallLocation() else {
             return
         }
@@ -1416,6 +1448,89 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func handleAppBecameActive() {
         applyApplicationIcon()
         HotKeyManager.shared.refreshAccessibilityStatus()
+    }
+
+    // MARK: - Single Instance Check
+
+    // 文件锁路径，用于防止竞态条件
+    private let lockFilePath = "/tmp/VibeFocusHotkeys.lock"
+
+    private func acquireExclusiveLock() -> Bool {
+        let fd = open(lockFilePath, O_CREAT | O_RDWR, 0o644)
+        guard fd != -1 else {
+            log("Failed to open lock file")
+            return false
+        }
+
+        // 尝试获取排他锁（非阻塞）
+        let result = flock(fd, LOCK_EX | LOCK_NB)
+        if result == -1 {
+            // 锁已被占用，关闭文件描述符
+            close(fd)
+            return false
+        }
+
+        // 成功获取锁，保持文件描述符打开以维持锁
+        // 注意：文件描述符会在进程退出时自动关闭，锁会自动释放
+        log("Acquired exclusive lock, PID \(ProcessInfo.processInfo.processIdentifier)")
+        return true
+    }
+
+    private func findExistingInstance() -> NSRunningApplication? {
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let bundleID = Bundle.main.bundleIdentifier
+        let execPath = Bundle.main.executableURL?.resolvingSymlinksInPath().path
+
+        // Get all running processes with the same name
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-eo", "pid,comm", "-c"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else { return nil }
+
+            let processName = execPath?.components(separatedBy: "/").last ?? "VibeFocusHotkeys"
+
+            for line in output.components(separatedBy: .newlines) {
+                let components = line.trimmingCharacters(in: .whitespaces)
+                    .components(separatedBy: .whitespaces)
+                    .filter { !$0.isEmpty }
+
+                guard components.count >= 2,
+                      let pid = Int32(components[0]),
+                      pid != currentPID else { continue }
+
+                let comm = components[1]
+                if comm == processName || comm == "VibeFocusHotkeys" {
+                    // Found another instance with same process name
+                    // Try to get NSRunningApplication for this PID
+                    if let app = NSRunningApplication(processIdentifier: pid) {
+                        return app
+                    }
+                }
+            }
+        } catch {
+            log("Failed to check for existing instances: \(error)")
+        }
+
+        // Fallback: match by bundle ID if available
+        if let bundleID = bundleID {
+            let runningApps = NSWorkspace.shared.runningApplications
+            for app in runningApps {
+                if app.bundleIdentifier == bundleID && app.processIdentifier != currentPID {
+                    return app
+                }
+            }
+        }
+
+        return nil
     }
 
     private func applyApplicationIcon() {
