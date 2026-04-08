@@ -27,6 +27,9 @@ final class HotKeyManager: ObservableObject {
     private var localMonitor: Any?
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var cgEventTapActive = false
+    private var lastToggleTriggeredAt: Date = .distantPast
+    private let toggleDedupInterval: TimeInterval = 0.15
 
     private init() {
         currentHotKey = Self.loadStoredHotKey()
@@ -37,18 +40,17 @@ final class HotKeyManager: ObservableObject {
         refreshAccessibilityStatus()
         log("HotKey setup start: current=\(currentHotKey.displayString) keyCode=\(currentHotKey.keyCode) modifiers=\(currentHotKey.modifiers)")
 
-        // Try CGEventTap first (more reliable on modern macOS)
-        // 注意：使用弱引用避免循环引用
-        weak var weakSelf = self
-        if weakSelf?.setupCGEventTap() == true {
+        cgEventTapActive = setupCGEventTap()
+        if cgEventTapActive {
             log("CGEventTap setup successful")
+            // Avoid duplicate toggles: don't install fallback monitors when CGEventTap is active.
+            removeFallbackMonitors()
         } else {
-            log("CGEventTap failed, falling back to Carbon")
+            log("CGEventTap failed, falling back to Carbon + NSEvent monitors")
             installHandlerIfNeeded()
             registerHotKey()
+            installFallbackMonitors()
         }
-
-        installFallbackMonitors()
     }
 
     private func setupCGEventTap() -> Bool {
@@ -119,10 +121,9 @@ final class HotKeyManager: ObservableObject {
         // Check if this matches our hotkey
         if keyCode == currentHotKey.keyCode && modifiers == currentHotKey.modifiers {
             log("[CGEventTap] Hotkey \(currentHotKey.displayString) triggered")
-            // 切换到主线程执行 toggle
+            // 切换到主线程执行去重后的 toggle
             DispatchQueue.main.async { [weak self] in
-                guard self != nil else { return }
-                WindowManager.shared.toggle()
+                self?.triggerToggleIfNeeded(source: "cg_event_tap")
             }
             return nil // Consume the event
         }
@@ -147,6 +148,28 @@ final class HotKeyManager: ObservableObject {
         }
     }
 
+    private func removeFallbackMonitors() {
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
+            self.globalMonitor = nil
+        }
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+            self.localMonitor = nil
+        }
+    }
+
+    private func triggerToggleIfNeeded(source: String) {
+        let now = Date()
+        if now.timeIntervalSince(lastToggleTriggeredAt) < toggleDedupInterval {
+            log("[HotKey] Ignored duplicate trigger from \(source)")
+            return
+        }
+        lastToggleTriggeredAt = now
+        log("[HotKey] Trigger accepted from \(source), calling toggle()")
+        WindowManager.shared.toggle()
+    }
+
     private func handleFallbackEvent(_ event: NSEvent, source: String) -> Bool {
         // Debug: log ALL key events to diagnose hotkey issues
         let eventKeyCode = UInt32(event.keyCode)
@@ -163,7 +186,7 @@ final class HotKeyManager: ObservableObject {
         }
 
         log("Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
-        WindowManager.shared.toggle()
+        triggerToggleIfNeeded(source: "fallback_\(source)")
         return true
     }
 
@@ -247,9 +270,9 @@ final class HotKeyManager: ObservableObject {
             return noErr
         }
 
-        log("[HotKey] Hotkey \(currentHotKey.displayString) triggered, calling toggle()")
-        WindowManager.shared.toggle()
-        log("[HotKey] toggle() returned")
+        log("[HotKey] Hotkey \(currentHotKey.displayString) triggered")
+        triggerToggleIfNeeded(source: "carbon_hotkey")
+        log("[HotKey] handleHotKeyEvent finished")
         return noErr
     }
 
