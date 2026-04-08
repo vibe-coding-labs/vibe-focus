@@ -103,6 +103,11 @@ final class HotKeyManager: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
+        // Ignore keyboard auto-repeat to keep Ctrl+M as one toggle per physical press.
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            return Unmanaged.passUnretained(event)
+        }
+
         let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
@@ -171,6 +176,10 @@ final class HotKeyManager: ObservableObject {
     }
 
     private func handleFallbackEvent(_ event: NSEvent, source: String) -> Bool {
+        if event.isARepeat {
+            return false
+        }
+
         // Debug: log ALL key events to diagnose hotkey issues
         let eventKeyCode = UInt32(event.keyCode)
         let eventModifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
