@@ -25,6 +25,8 @@ final class HotKeyManager: ObservableObject {
     private var handlerRef: EventHandlerRef?
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
 
     private init() {
         currentHotKey = Self.loadStoredHotKey()
@@ -34,9 +36,98 @@ final class HotKeyManager: ObservableObject {
     func setup() {
         refreshAccessibilityStatus()
         log("HotKey setup start: current=\(currentHotKey.displayString) keyCode=\(currentHotKey.keyCode) modifiers=\(currentHotKey.modifiers)")
-        installHandlerIfNeeded()
-        registerHotKey()
+
+        // Try CGEventTap first (more reliable on modern macOS)
+        // 注意：使用弱引用避免循环引用
+        weak var weakSelf = self
+        if weakSelf?.setupCGEventTap() == true {
+            log("CGEventTap setup successful")
+        } else {
+            log("CGEventTap failed, falling back to Carbon")
+            installHandlerIfNeeded()
+            registerHotKey()
+        }
+
         installFallbackMonitors()
+    }
+
+    private func setupCGEventTap() -> Bool {
+        guard accessibilityStatus else {
+            log("CGEventTap requires accessibility permission")
+            return false
+        }
+
+        // Create event tap for key down events
+        let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+
+        // Try annotatedSessionEventTap for better event capture
+        let tap = CGEvent.tapCreate(
+            tap: .cgAnnotatedSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,  // Use defaultTap to intercept events
+            eventsOfInterest: eventMask,
+            callback: { proxy, type, event, refcon in
+                guard let refcon else {
+                    return Unmanaged.passUnretained(event)
+                }
+                let manager = Unmanaged<HotKeyManager>.fromOpaque(refcon).takeUnretainedValue()
+                return manager.handleCGEvent(proxy: proxy, type: type, event: event)
+            },
+            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        )
+
+        guard let tap else {
+            log("Failed to create CGEventTap")
+            return false
+        }
+
+        eventTap = tap
+        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+
+        guard let runLoopSource else {
+            log("Failed to create run loop source")
+            return false
+        }
+
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        log("CGEventTap enabled successfully")
+        return true
+    }
+
+    private func handleCGEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        guard type == .keyDown else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = event.flags
+
+        // Convert CGEvent flags to Carbon modifiers
+        var modifiers: UInt32 = 0
+        if flags.contains(.maskControl) { modifiers |= UInt32(controlKey) }
+        if flags.contains(.maskCommand) { modifiers |= UInt32(cmdKey) }
+        if flags.contains(.maskAlternate) { modifiers |= UInt32(optionKey) }
+        if flags.contains(.maskShift) { modifiers |= UInt32(shiftKey) }
+
+        // Debug: log M key and Space key events
+        if keyCode == 46 || keyCode == 49 {
+            log("[CGEventTap DEBUG] keyCode=\(keyCode) modifiers=\(modifiers) expected=\(currentHotKey.keyCode)/\(currentHotKey.modifiers)")
+        }
+
+        // Check if this matches our hotkey
+        if keyCode == currentHotKey.keyCode && modifiers == currentHotKey.modifiers {
+            log("[CGEventTap] Hotkey \(currentHotKey.displayString) triggered")
+            // 切换到主线程执行 toggle
+            DispatchQueue.main.async { [weak self] in
+                guard self != nil else { return }
+                WindowManager.shared.toggle()
+            }
+            return nil // Consume the event
+        }
+
+        return Unmanaged.passUnretained(event)
     }
 
     private func installFallbackMonitors() {
@@ -57,15 +148,22 @@ final class HotKeyManager: ObservableObject {
     }
 
     private func handleFallbackEvent(_ event: NSEvent, source: String) -> Bool {
-        guard currentHotKey.matches(event: event) else {
+        // Debug: log ALL key events to diagnose hotkey issues
+        let eventKeyCode = UInt32(event.keyCode)
+        let eventModifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
+        let matches = currentHotKey.matches(event: event)
+
+        // Log every 46 (M key) event for debugging
+        if eventKeyCode == 46 {
+            log("[FALLBACK DEBUG] source=\(source) keyCode=\(eventKeyCode) modifiers=\(eventModifiers) expected=\(currentHotKey.modifiers) matches=\(matches)")
+        }
+
+        guard matches else {
             return false
         }
 
-        log("[HotKey] Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
-        let startTime = Date()
+        log("Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
         WindowManager.shared.toggle()
-        let elapsed = Date().timeIntervalSince(startTime)
-        log("[HotKey] toggle() completed in \(String(format: "%.3f", elapsed))s")
         return true
     }
 
@@ -125,6 +223,7 @@ final class HotKeyManager: ObservableObject {
     }
 
     private func handleHotKeyEvent(_ eventRef: EventRef) -> OSStatus {
+        log("[HotKey] handleHotKeyEvent called")
         var hotKeyID = EventHotKeyID()
         let status = GetEventParameter(
             eventRef,
@@ -137,19 +236,20 @@ final class HotKeyManager: ObservableObject {
         )
 
         guard status == noErr else {
-            log("Get hotkey event parameter failed: \(status)")
+            log("[HotKey] Get event parameter failed: \(status)")
             return status
         }
 
+        log("[HotKey] Got hotKeyID: signature=\(hotKeyID.signature), id=\(hotKeyID.id), expected: signature=\(hotkeySignature), id=\(hotkeyIdentifier)")
+
         guard hotKeyID.signature == hotkeySignature, hotKeyID.id == hotkeyIdentifier else {
+            log("[HotKey] ID mismatch, ignoring")
             return noErr
         }
 
-        log("[HotKey] Carbon hotkey \(currentHotKey.displayString) triggered")
-        let startTime = Date()
+        log("[HotKey] Hotkey \(currentHotKey.displayString) triggered, calling toggle()")
         WindowManager.shared.toggle()
-        let elapsed = Date().timeIntervalSince(startTime)
-        log("[HotKey] toggle() completed in \(String(format: "%.3f", elapsed))s")
+        log("[HotKey] toggle() returned")
         return noErr
     }
 

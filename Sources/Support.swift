@@ -8,20 +8,52 @@ import Foundation
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ element: AXUIElement, _ out: UnsafeMutablePointer<CGWindowID>) -> AXError
 
+private let logFileURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
+private let logWriteQueue = DispatchQueue(label: "vibefocus.log.write", qos: .utility)
+private let verboseLoggingEnabled: Bool = {
+    let value = ProcessInfo.processInfo.environment["VIBEFOCUS_VERBOSE_LOGS"]?.lowercased() ?? ""
+    return value == "1" || value == "true" || value == "yes"
+}()
+private let noisyLogPrefixes: [String] = [
+    "[DEBUG]",
+    "[REFRESH]",
+    "[DRAW]",
+    "HotKey match failed",
+    "[CGEventTap DEBUG]",
+    "Querying space index",
+    "Got space index from yabai",
+    "Using cached space index"
+]
+
+private func shouldEmitLog(_ message: String) -> Bool {
+    if verboseLoggingEnabled {
+        return true
+    }
+    return !noisyLogPrefixes.contains(where: { message.hasPrefix($0) })
+}
+
 // 全局日志函数
 func log(_ message: String) {
+    guard shouldEmitLog(message) else {
+        return
+    }
+
     NSLog("[VibeFocus] %@", message)
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] \(message)\n"
-    let logURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logURL.path),
-           let handle = try? FileHandle(forWritingTo: logURL) {
+
+    logWriteQueue.async {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(timestamp)] \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: logFileURL.path),
+           let handle = try? FileHandle(forWritingTo: logFileURL) {
             _ = try? handle.seekToEnd()
             try? handle.write(contentsOf: data)
             try? handle.close()
         } else {
-            try? data.write(to: logURL)
+            try? data.write(to: logFileURL)
         }
     }
 }
@@ -206,8 +238,13 @@ struct HotKeyConfiguration: Codable, Equatable {
     }
 
     func matches(event: NSEvent) -> Bool {
-        UInt32(event.keyCode) == keyCode &&
-        event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers == modifiers
+        let eventKeyCode = UInt32(event.keyCode)
+        let eventModifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
+        let matches = eventKeyCode == keyCode && eventModifiers == modifiers
+        if !matches {
+            log("HotKey match failed: eventKeyCode=\(eventKeyCode) expected=\(keyCode), eventMods=\(eventModifiers) expected=\(modifiers)")
+        }
+        return matches
     }
 
     static func from(event: NSEvent) -> HotKeyConfiguration? {
