@@ -11,16 +11,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         log("applicationDidFinishLaunching")
         logDiagnostics("launch")
 
-        // 显示启动窗口
+        // 处理帮助参数
+        if ProcessInfo.processInfo.arguments.contains("--help") {
+            LaunchArguments.printUsage()
+            NSApp.terminate(nil)
+            return
+        }
+
+        let args = LaunchArguments.shared
+
+        // 快速启动模式
+        if args.quickLaunch {
+            setupMenuBar()
+            showSettingsWindowOnLaunch()
+            return
+        }
+
+        // 跳过启动窗口
+        if args.skipLaunchWindow {
+            Task {
+                await AppLauncher.shared.launch()
+                await MainActor.run {
+                    self.setupMenuBar()
+                    self.showSettingsWindowOnLaunch()
+                }
+            }
+            return
+        }
+
+        // 标准启动流程（带启动窗口）
         showLaunchWindow()
 
-        // 执行启动序列
         Task {
             await AppLauncher.shared.launch()
 
-            // 启动完成后设置 UI
-            if AppLauncher.shared.canProceed {
-                await MainActor.run {
+            await MainActor.run {
+                if AppLauncher.shared.canProceed {
                     self.setupMenuBar()
                     self.closeLaunchWindow()
                     self.showSettingsWindowOnLaunch()
