@@ -109,27 +109,27 @@ class OverlayWindow: NSWindow {
         log("[DRAW] OverlayWindow update completed for '\(text)'")
     }
 
-    func updatePosition(for screen: NSScreen, position: IndexPosition = .topRight) {
+    func updatePosition(for screen: NSScreen, position: IndexPosition = .topRight, margin: CGFloat = 20) {
         let screenFrame = screen.frame
         let windowSize = self.contentView?.bounds.size ?? CGSize(width: 100, height: 60)
-        let margin: CGFloat = 20
+        let edgeMargin = max(0, margin)
 
         log("[DRAW] updatePosition: screenFrame=\(screenFrame), windowSize=\(windowSize)")
 
         var origin: CGPoint
         switch position {
         case .topLeft:
-            origin = CGPoint(x: screenFrame.minX + margin, y: screenFrame.maxY - windowSize.height - margin)
+            origin = CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
         case .topCenter:
-            origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.maxY - windowSize.height - margin)
+            origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.maxY - windowSize.height - edgeMargin)
         case .topRight:
-            origin = CGPoint(x: screenFrame.maxX - windowSize.width - margin, y: screenFrame.maxY - windowSize.height - margin)
+            origin = CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
         case .bottomLeft:
-            origin = CGPoint(x: screenFrame.minX + margin, y: screenFrame.minY + margin)
+            origin = CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.minY + edgeMargin)
         case .bottomCenter:
-            origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.minY + margin)
+            origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.minY + edgeMargin)
         case .bottomRight:
-            origin = CGPoint(x: screenFrame.maxX - windowSize.width - margin, y: screenFrame.minY + margin)
+            origin = CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.minY + edgeMargin)
         }
 
         log("[DRAW] Setting window origin: \(origin), position: \(position)")
@@ -140,7 +140,6 @@ class OverlayWindow: NSWindow {
     func show() {
         log("[DRAW] show() called, window frame: \(self.frame), isVisible: \(self.isVisible)")
         self.orderFrontRegardless()
-        NSApp.activate(ignoringOtherApps: true)
         log("[DRAW] show() completed, isVisible: \(self.isVisible)")
     }
 

@@ -36,6 +36,7 @@ class ScreenOverlayManager: ObservableObject {
     private let minSwipeTriggerInterval: TimeInterval = 0.12
     private let singleScreenFallbackRefreshInterval: TimeInterval = 0.35
     private let multiScreenFallbackRefreshInterval: TimeInterval = 0.8
+    private var automaticRefreshSuspended = false
 
     private init() {
         self.preferences = ScreenIndexPreferences.load()
@@ -100,6 +101,10 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func triggerForceRefresh(reason: String) {
+        guard !automaticRefreshSuspended else {
+            log("[FORCE_REFRESH] Skipped while automatic refresh is suspended, reason=\(reason)")
+            return
+        }
         let now = Date()
         if now.timeIntervalSince(lastForceRefreshTriggerAt) < minForceRefreshTriggerInterval {
             log("[FORCE_REFRESH] Skip duplicated trigger reason=\(reason)")
@@ -216,6 +221,9 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func startRefreshTimer() {
+        if automaticRefreshSuspended {
+            return
+        }
         // Faster fallback on single display while keeping multi-display polling conservative.
         let interval = NSScreen.screens.count <= 1
             ? singleScreenFallbackRefreshInterval
@@ -259,6 +267,25 @@ class ScreenOverlayManager: ObservableObject {
         }
     }
 
+    func suspendAutomaticRefreshes(reason: String) {
+        guard !automaticRefreshSuspended else {
+            return
+        }
+        automaticRefreshSuspended = true
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        log("Suspended automatic overlay refreshes: \(reason)")
+    }
+
+    func resumeAutomaticRefreshes(reason: String) {
+        guard automaticRefreshSuspended else {
+            return
+        }
+        automaticRefreshSuspended = false
+        startRefreshTimer()
+        log("Resumed automatic overlay refreshes: \(reason)")
+    }
+
     // MARK: - Private Methods
     private func uuidForScreen(_ screen: NSScreen) -> UUID {
         if let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
@@ -287,7 +314,7 @@ class ScreenOverlayManager: ObservableObject {
 
             log("[DEBUG] showOverlays: screen \(index), spaceIndex=\(spaceIndex), calling overlay.update")
             overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
-            overlay.updatePosition(for: screen, position: preferences.position)
+            overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
             overlay.show()
 
             overlayWindows[uuid] = overlay
@@ -312,12 +339,15 @@ class ScreenOverlayManager: ObservableObject {
             let uuid = uuidForScreen(screen)
 
             if let overlay = overlayWindows[uuid] {
-                overlay.updatePosition(for: screen, position: preferences.position)
+                overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
             }
         }
     }
 
     private func refreshSpaceIndices(force: Bool = false) {
+        guard !automaticRefreshSuspended || force else {
+            return
+        }
         guard preferences.isEnabled else {
             log("[REFRESH] Skipped - preferences disabled")
             return
@@ -352,7 +382,7 @@ class ScreenOverlayManager: ObservableObject {
                     if let overlay = overlayWindows[uuid] {
                         log("[REFRESH]   Updating overlay: screen=\(index), space=\(currentSpaceIndex)")
                         overlay.update(screenIndex: index, spaceIndex: currentSpaceIndex, preferences: preferences)
-                        overlay.updatePosition(for: screen, position: preferences.position)
+                        overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
                         overlay.show()
                         log("[REFRESH]   Overlay updated and shown")
                     } else {
@@ -371,7 +401,7 @@ class ScreenOverlayManager: ObservableObject {
                 if let overlay = overlayWindows[uuid] {
                     log("[REFRESH]   Updating overlay for new screen: screen=\(index), space=\(currentSpaceIndex)")
                     overlay.update(screenIndex: index, spaceIndex: currentSpaceIndex, preferences: preferences)
-                    overlay.updatePosition(for: screen, position: preferences.position)
+                    overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
                     overlay.show()
                     log("[REFRESH]   Overlay for new screen updated")
                 } else {
