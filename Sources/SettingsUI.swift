@@ -1082,6 +1082,35 @@ private struct SettingsView: View {
                             Divider()
 
                             SettingsRow(
+                                title: "面板边距",
+                                detail: "调整索引面板距离屏幕边缘的间距"
+                            ) {
+                                HStack(spacing: 8) {
+                                    DraggableSlider(
+                                        value: Binding(
+                                            get: { Double(overlayManager.preferences.panelMargin) },
+                                            set: { newValue in
+                                                var prefs = overlayManager.preferences
+                                                prefs.panelMargin = CGFloat(newValue)
+                                                overlayManager.preferences = prefs
+                                            }
+                                        ),
+                                        minValue: 0,
+                                        maxValue: 120,
+                                        step: 2
+                                    )
+                                    .frame(width: 120)
+
+                                    Text("\(Int(overlayManager.preferences.panelMargin))")
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 30)
+                                }
+                            }
+
+                            Divider()
+
+                            SettingsRow(
                                 title: "文字颜色",
                                 detail: "选择序号文字的颜色"
                             ) {
@@ -1288,7 +1317,7 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
         fatalError("init(coder:) has not been implemented")
     }
 
-    func show() {
+    func show(shouldFocus: Bool = true) {
         guard let window else { return }
         NSApp.setActivationPolicy(.regular)
         if let icon = bundledAppIconImage() {
@@ -1296,17 +1325,27 @@ private final class SettingsWindowController: NSWindowController, NSWindowDelega
             window.miniwindowImage = icon
         }
         DispatchQueue.main.async {
-            NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-            NSApp.activate(ignoringOtherApps: true)
             window.center()
-            window.orderFrontRegardless()
-            window.makeMain()
-            window.makeKeyAndOrderFront(nil)
+            if shouldFocus {
+                window.makeMain()
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                window.orderFront(nil)
+            }
         }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "settings_window_key")
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_resign_key")
     }
 
     func windowWillClose(_ notification: Notification) {
         window?.orderOut(nil)
+        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_closed")
         NSApp.setActivationPolicy(.accessory)
     }
 }
@@ -1329,21 +1368,42 @@ struct VibeFocusApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var toggleMenuItem: NSMenuItem?
+    private let openSettingsDistributedNotification = Notification.Name("com.openai.vibe-focus.open-settings")
+
+    private struct ExistingInstanceInfo {
+        let app: NSRunningApplication
+        let version: String?
+        let path: String?
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
         logDiagnostics("launch")
 
-        // 检查并终止已存在的旧进程（新进程优先策略）
-        if let existingInstance = findExistingInstance() {
-            log("Found existing instance at PID \(existingInstance.processIdentifier), terminating it")
-            existingInstance.terminate()
+        // 单实例处理：同版本复用现有进程，不强制重启。
+        if let existing = findExistingInstance() {
+            let currentVersion = currentAppVersion()
+            let existingVersion = existing.version ?? "unknown"
+            log("Found existing instance pid=\(existing.app.processIdentifier) version=\(existingVersion) path=\(existing.path ?? "nil")")
+
+            if existing.version == nil || existing.version == currentVersion {
+                log("Reusing existing same-version instance; activating and opening settings")
+                requestExistingInstanceOpenSettings()
+                existing.app.activate(options: [.activateAllWindows])
+                NSApp.terminate(nil)
+                return
+            }
+
+            log("Existing instance version differs (current=\(currentVersion), existing=\(existingVersion)); terminating old instance")
+            existing.app.terminate()
             Thread.sleep(forTimeInterval: 0.3)
-            kill(existingInstance.processIdentifier, SIGTERM)
-            Thread.sleep(forTimeInterval: 0.2)
+            if !existing.app.isTerminated {
+                kill(existing.app.processIdentifier, SIGTERM)
+                Thread.sleep(forTimeInterval: 0.2)
+            }
         }
 
-        // 获取锁（现在应该能成功，因为旧进程已终止）
+        // 获取锁（不同版本替换场景下应能成功）
         if !acquireExclusiveLock() {
             log("Failed to acquire lock after terminating old instance, retrying...")
             Thread.sleep(forTimeInterval: 0.5)
@@ -1374,19 +1434,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSApplication.didBecomeActiveNotification,
             object: nil
         )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleOpenSettingsRequest(_:)),
+            name: openSettingsDistributedNotification,
+            object: nil
+        )
+        showSettingsWindowOnLaunch()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        log("applicationShouldHandleReopen hasVisibleWindows=\(flag)")
+        SettingsWindowController.shared.show()
+        return true
     }
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         log("setupMenuBar called")
-        if let button = statusItem?.button, let image = loadStatusBarImage() {
-            log("Setting image to status bar")
-            button.image = image
-            button.imagePosition = .imageOnly
-            button.title = ""
-        } else {
-            log("Failed to load image, using text fallback")
-            statusItem?.button?.title = "VibeFocus"
+        if let button = statusItem?.button {
+            if let image = loadStatusBarImage() {
+                log("Setting image to status bar")
+                button.image = image
+                button.imagePosition = .imageOnly
+                button.title = ""
+            } else if let fallbackSymbol = fallbackStatusBarSymbolImage() {
+                log("Using SF Symbol fallback for status bar")
+                button.image = fallbackSymbol
+                button.imagePosition = .imageOnly
+                button.title = ""
+            } else {
+                log("Failed to load status bar image/symbol, using text fallback")
+                button.image = nil
+                button.title = "VF"
+            }
         }
 
         let menu = NSMenu()
@@ -1410,18 +1491,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func loadStatusBarImage() -> NSImage? {
-        let bundlePath = Bundle.main.bundleURL.path
-        log("loadStatusBarImage: bundle path=\(bundlePath)")
-        guard let url = Bundle.main.url(forResource: "StatusBarIcon", withExtension: "png") else {
-            log("loadStatusBarImage: Resource URL not found")
+        log("loadStatusBarImage: bundle path=\(Bundle.main.bundleURL.path)")
+
+        var candidates: [URL] = []
+        if let bundled = Bundle.main.url(forResource: "StatusBarIcon", withExtension: "png") {
+            candidates.append(bundled)
+        }
+        if let resourceURL = Bundle.main.resourceURL {
+            candidates.append(resourceURL.appendingPathComponent("StatusBarIcon.png"))
+        }
+
+        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        candidates.append(currentDirectory.appendingPathComponent("assets/StatusBarIcon.png"))
+
+        if let executableURL = Bundle.main.executableURL {
+            let releaseDir = executableURL.deletingLastPathComponent()
+            let repoRoot = releaseDir
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            candidates.append(repoRoot.appendingPathComponent("assets/StatusBarIcon.png"))
+        }
+
+        var seenPaths: Set<String> = []
+        for candidate in candidates where seenPaths.insert(candidate.path).inserted {
+            if FileManager.default.fileExists(atPath: candidate.path),
+               let image = NSImage(contentsOf: candidate) {
+                log("loadStatusBarImage: Loaded from \(candidate.path) size=\(image.size)")
+                image.isTemplate = true
+                image.size = NSSize(width: 18, height: 18)
+                return image
+            }
+        }
+
+        log("loadStatusBarImage: no usable icon found in candidates")
+        return nil
+    }
+
+    private func fallbackStatusBarSymbolImage() -> NSImage? {
+        guard let image = NSImage(
+            systemSymbolName: "viewfinder.circle",
+            accessibilityDescription: "VibeFocus"
+        ) else {
             return nil
         }
-        log("loadStatusBarImage: Found URL \(url.path)")
-        guard let image = NSImage(contentsOf: url) else {
-            log("loadStatusBarImage: Failed to load image from URL")
-            return nil
-        }
-        log("loadStatusBarImage: Image loaded successfully \(image.size)")
         image.isTemplate = true
         image.size = NSSize(width: 18, height: 18)
         return image
@@ -1437,7 +1549,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         DispatchQueue.main.async {
-            SettingsWindowController.shared.show()
+            SettingsWindowController.shared.show(shouldFocus: true)
         }
     }
 
@@ -1448,6 +1560,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func handleAppBecameActive() {
         applyApplicationIcon()
         HotKeyManager.shared.refreshAccessibilityStatus()
+    }
+
+    @objc private func handleOpenSettingsRequest(_ notification: Notification) {
+        log("Received distributed open-settings request")
+        DispatchQueue.main.async {
+            SettingsWindowController.shared.show(shouldFocus: true)
+        }
+    }
+
+    private func showSettingsWindowOnLaunch() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            log("Showing settings window on launch")
+            SettingsWindowController.shared.show(shouldFocus: false)
+        }
+    }
+
+    private func requestExistingInstanceOpenSettings() {
+        DistributedNotificationCenter.default().post(
+            name: openSettingsDistributedNotification,
+            object: nil,
+            userInfo: nil
+        )
+    }
+
+    private func currentAppVersion() -> String {
+        let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        if let bundleVersion, !bundleVersion.isEmpty {
+            return bundleVersion
+        }
+        return AppVersion.current
+    }
+
+    private func installedVersion(for app: NSRunningApplication) -> String? {
+        guard let bundleURL = app.bundleURL,
+              let bundle = Bundle(url: bundleURL) else {
+            return nil
+        }
+        let shortVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String
+        if let shortVersion, !shortVersion.isEmpty {
+            return shortVersion
+        }
+        let buildVersion = bundle.infoDictionary?["CFBundleVersion"] as? String
+        if let buildVersion, !buildVersion.isEmpty {
+            return buildVersion
+        }
+        return nil
     }
 
     // MARK: - Single Instance Check
@@ -1476,7 +1634,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    private func findExistingInstance() -> NSRunningApplication? {
+    private func findExistingInstance() -> ExistingInstanceInfo? {
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let bundleID = Bundle.main.bundleIdentifier
         let execPath = Bundle.main.executableURL?.resolvingSymlinksInPath().path
@@ -1512,7 +1670,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     // Found another instance with same process name
                     // Try to get NSRunningApplication for this PID
                     if let app = NSRunningApplication(processIdentifier: pid) {
-                        return app
+                        return ExistingInstanceInfo(
+                            app: app,
+                            version: installedVersion(for: app),
+                            path: app.bundleURL?.path
+                        )
                     }
                 }
             }
@@ -1525,7 +1687,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let runningApps = NSWorkspace.shared.runningApplications
             for app in runningApps {
                 if app.bundleIdentifier == bundleID && app.processIdentifier != currentPID {
-                    return app
+                    return ExistingInstanceInfo(
+                        app: app,
+                        version: installedVersion(for: app),
+                        path: app.bundleURL?.path
+                    )
                 }
             }
         }
@@ -1550,12 +1716,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ]
     }
 
+    private func isAllowedDevelopmentBundlePath(_ path: String) -> Bool {
+        path.hasSuffix("/dist/VibeFocus.app") || path.hasSuffix("/dist/VibeFocusHotkeys.app")
+    }
+
     @discardableResult
     private func enforceExpectedInstallLocation() -> Bool {
         let actualURL = Bundle.main.bundleURL
         let actual = actualURL.path
         if actualURL.pathExtension != "app" {
             log("Skipping install-location enforcement for direct binary run: \(actual)")
+            return true
+        }
+
+        if isAllowedDevelopmentBundlePath(actual) {
+            log("Skipping install-location enforcement for development bundle path: \(actual)")
             return true
         }
 
@@ -1575,18 +1750,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        showWrongLocationAlert(actual: actual, expected: expectedPaths.first!)
+        showWrongLocationAlert(actual: actual, expectedPaths: expectedPaths)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             NSApp.terminate(nil)
         }
         return false
     }
 
-    private func showWrongLocationAlert(actual: String, expected: String) {
+    private func showWrongLocationAlert(actual: String, expectedPaths: [String]) {
         let alert = NSAlert()
         alert.messageText = "VibeFocus 安装位置异常"
-        alert.informativeText = "当前运行位置：\n\(actual)\n\n建议位置：\n~\(expected)" +
-            "\n或\n/Applications/VibeFocus.app"
+        let home = NSHomeDirectory()
+        let displayExpected = expectedPaths
+            .prefix(2)
+            .map { path in
+                if path.hasPrefix(home) {
+                    return path.replacingOccurrences(of: home, with: "~")
+                }
+                return path
+            }
+            .joined(separator: "\n")
+        alert.informativeText = "当前运行位置：\n\(actual)\n\n建议位置：\n\(displayExpected)\n或\n/Applications/VibeFocus.app"
         alert.addButton(withTitle: "退出")
 
         NSApp.setActivationPolicy(.regular)

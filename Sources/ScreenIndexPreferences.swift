@@ -42,6 +42,7 @@ struct ScreenIndexPreferences: Codable {
     var textColor: CodableColor
     var backgroundColor: CodableColor
     var panelScale: CGFloat  // 新增：面板缩放比例
+    var panelMargin: CGFloat  // 新增：面板到屏幕边缘的边距
     var yabaiPath: String?
 
     static let `default` = ScreenIndexPreferences(
@@ -52,6 +53,7 @@ struct ScreenIndexPreferences: Codable {
         textColor: CodableColor(.white),
         backgroundColor: CodableColor(.black.opacity(0.6)),
         panelScale: 1.0,  // 默认不缩放
+        panelMargin: 20,  // 默认边距 20pt
         yabaiPath: nil
     )
 
@@ -72,6 +74,7 @@ struct ScreenIndexPreferences: Codable {
                 // 尝试加载旧版本设置（向后兼容）
                 if let oldPrefs = loadLegacyPreferences(from: data) {
                     log("ScreenIndexPreferences: Loaded legacy preferences with migration")
+                    oldPrefs.save()
                     return oldPrefs
                 }
             }
@@ -87,6 +90,7 @@ struct ScreenIndexPreferences: Codable {
                 // 尝试加载旧版本设置（向后兼容）
                 if let oldPrefs = loadLegacyPreferences(from: data) {
                     log("ScreenIndexPreferences: Loaded legacy preferences from standard with migration")
+                    oldPrefs.save()
                     return oldPrefs
                 }
             }
@@ -104,6 +108,8 @@ struct ScreenIndexPreferences: Codable {
             var opacity: CGFloat
             var textColor: CodableColor
             var backgroundColor: CodableColor
+            var panelScale: CGFloat?
+            var panelMargin: CGFloat?
             var yabaiPath: String?
         }
 
@@ -116,7 +122,8 @@ struct ScreenIndexPreferences: Codable {
                 opacity: legacy.opacity,
                 textColor: legacy.textColor,
                 backgroundColor: legacy.backgroundColor,
-                panelScale: 1.0,  // 旧版本没有此字段，使用默认值
+                panelScale: legacy.panelScale ?? 1.0,
+                panelMargin: legacy.panelMargin ?? 20,
                 yabaiPath: legacy.yabaiPath
             )
         } catch {
