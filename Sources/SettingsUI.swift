@@ -964,6 +964,10 @@ private struct SettingsView: View {
                                     set: { newValue in
                                         hookEnabled = newValue
                                         ClaudeHookPreferences.isEnabled = newValue
+                                        if newValue {
+                                            ClaudeHookPreferences.ensureTokenGenerated()
+                                            hookToken = ClaudeHookPreferences.authToken ?? ""
+                                        }
                                         hookServer.applyPreferences()
                                     }
                                 ))
@@ -1069,29 +1073,33 @@ private struct SettingsView: View {
                             .frame(width: 80)
                         }
 
-                        SettingsRow(title: "鉴权 Token（可选）", detail: "启用后请求需携带 X-VibeFocus-Token 头") {
+                        SettingsRow(title: "鉴权 Token", detail: "自动生成，Hook 安装时同步写入 Claude 配置，确保通信安全") {
                             HStack(spacing: 8) {
-                                SecureField("", text: Binding(
-                                    get: { hookToken },
-                                    set: { newValue in
-                                        hookToken = newValue
-                                        ClaudeHookPreferences.authToken = newValue.isEmpty ? nil : newValue
-                                        if hookEnabled { hookServer.applyPreferences() }
-                                    }
-                                ))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 180)
-
                                 if hookToken.isEmpty {
-                                    Button("随机生成") {
-                                        hookToken = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24).lowercased()
-                                        ClaudeHookPreferences.authToken = hookToken
-                                        if hookEnabled { hookServer.applyPreferences() }
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .font(.system(size: 11))
+                                    Text("未生成")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text(String(hookToken.prefix(8)) + "...")
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(.secondary)
                                 }
+
+                                Button(hookToken.isEmpty ? "生成" : "重新生成") {
+                                    hookToken = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(32).lowercased()
+                                    ClaudeHookPreferences.authToken = hookToken
+                                    if hookEnabled { hookServer.applyPreferences() }
+                                }
+                                .buttonStyle(.borderless)
+                                .font(.system(size: 11))
                             }
+                        }
+
+                        if !hookToken.isEmpty {
+                            Text("重新生成后需重新安装 Hook，否则 Claude Code 会使用旧 Token 导致鉴权失败")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         Divider()
@@ -1660,6 +1668,11 @@ private struct SettingsView: View {
     private func sendTestHookEvent() {
         let port = hookPort
         let testSessionID = "test-\(UUID().uuidString.prefix(8))"
+        // 确保 token 已生成
+        if hookToken.isEmpty {
+            ClaudeHookPreferences.ensureTokenGenerated()
+            hookToken = ClaudeHookPreferences.authToken ?? ""
+        }
         let token = hookToken.isEmpty ? nil : hookToken
 
         log(

@@ -236,8 +236,20 @@ final class ClaudeHookServer: ObservableObject {
         }
 
         if let expectedToken = configuredToken, !expectedToken.isEmpty {
-            let token = request.headers["x-vibefocus-token"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard token == expectedToken else {
+            // 优先从 URL query param 取 token，兼容从 header 取
+            let queryToken = extractQueryParameter(from: request.path, name: "token")
+            let headerToken = request.headers["x-vibefocus-token"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let providedToken = queryToken ?? headerToken
+            guard providedToken == expectedToken else {
+                log(
+                    "[ClaudeHookServer] token validation failed",
+                    level: .warn,
+                    fields: [
+                        "hasQueryToken": String(queryToken != nil),
+                        "hasHeaderToken": String(!headerToken.isEmpty),
+                        "tokenPrefix": String(providedToken.prefix(8)) + "..."
+                    ]
+                )
                 return (
                     401,
                     ClaudeHookResponse(
@@ -588,5 +600,18 @@ Connection: close\r
             || raw == "0:0:0:0:0:0:0:1"
             || raw.hasPrefix("127.")
             || raw.contains("127.0.0.1")
+    }
+
+    private func extractQueryParameter(from path: String, name: String) -> String? {
+        guard let queryStart = path.firstIndex(of: "?") else {
+            return nil
+        }
+        let queryString = String(path[path.index(after: queryStart)...])
+        for pair in queryString.components(separatedBy: "&") {
+            let parts = pair.components(separatedBy: "=")
+            guard parts.count == 2, parts[0] == name else { continue }
+            return parts[1].removingPercentEncoding ?? parts[1]
+        }
+        return nil
     }
 }
