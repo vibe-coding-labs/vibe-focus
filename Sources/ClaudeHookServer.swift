@@ -396,23 +396,57 @@ final class ClaudeHookServer: ObservableObject {
             )
         }
 
-        guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
-            unmatchedSessionCount += 1
-            SessionWindowRegistry.shared.setLastEventDescription("\(triggerName) 未命中绑定：\(payload.sessionID)")
+        // 尝试从 SessionStart 绑定中找窗口
+        // 如果找不到（SessionStart HTTP hook 是 Claude Code 已知 bug，可能不触发），
+        // 回退到直接捕获当前前台窗口
+        let binding: SessionWindowBinding
+        if let existingBinding = SessionWindowRegistry.shared.binding(for: payload.sessionID) {
+            binding = existingBinding
+        } else {
+            // 回退：直接捕获当前前台窗口作为目标
             log(
-                "[ClaudeHookServer] \(triggerName) no binding found",
-                level: .warn,
+                "[ClaudeHookServer] \(triggerName) no binding found, falling back to focused window",
                 fields: ["sessionID": payload.sessionID]
             )
-            return (
-                404,
-                ClaudeHookResponse(
-                    ok: false,
-                    code: "binding_not_found",
-                    message: "No bound window for session",
-                    sessionID: payload.sessionID,
-                    handled: false
+            guard let focusedIdentity = WindowManager.shared.captureFocusedWindowIdentity() else {
+                unmatchedSessionCount += 1
+                SessionWindowRegistry.shared.setLastEventDescription("\(triggerName) 未命中绑定且无前台窗口：\(payload.sessionID)")
+                log(
+                    "[ClaudeHookServer] \(triggerName) no binding and no focused window",
+                    level: .warn,
+                    fields: ["sessionID": payload.sessionID]
                 )
+                return (
+                    404,
+                    ClaudeHookResponse(
+                        ok: false,
+                        code: "binding_not_found",
+                        message: "No bound window for session and no focused window available",
+                        sessionID: payload.sessionID,
+                        handled: false
+                    )
+                )
+            }
+
+            log(
+                "[ClaudeHookServer] \(triggerName) using focused window fallback",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "app": focusedIdentity.appName ?? "unknown",
+                    "title": focusedIdentity.title ?? "untitled",
+                    "windowID": String(focusedIdentity.windowID)
+                ]
+            )
+
+            // 创建临时绑定用于后续逻辑
+            let now = Date()
+            binding = SessionWindowBinding(
+                sessionID: payload.sessionID,
+                windowIdentity: focusedIdentity,
+                createdAt: now,
+                lastSeenAt: now,
+                isCompleted: false,
+                completedAt: nil
             )
         }
 
