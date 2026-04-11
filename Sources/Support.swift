@@ -367,6 +367,7 @@ private func logSigningCertificates() {
 
 extension Notification.Name {
     static let hotKeyConfigurationDidChange = Notification.Name("HotKeyConfigurationDidChange")
+    static let hookServerStateChanged = Notification.Name("ClaudeHookServerStateChanged")
 }
 
 struct HotKeyConflict: Equatable {

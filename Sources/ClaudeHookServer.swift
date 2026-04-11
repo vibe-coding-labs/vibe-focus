@@ -84,6 +84,7 @@ final class ClaudeHookServer: ObservableObject {
             statusDescription = "监听中 127.0.0.1:\(port)"
             lastErrorMessage = nil
             log("[ClaudeHookServer] listening on 127.0.0.1:\(port)")
+            NotificationCenter.default.post(name: .hookServerStateChanged, object: nil)
         case .failed(let error):
             isRunning = false
             statusDescription = "监听失败"
@@ -91,7 +92,7 @@ final class ClaudeHookServer: ObservableObject {
             log("[ClaudeHookServer] listener failed: \(error.localizedDescription)")
             listener?.cancel()
             listener = nil
-        case .cancelled:
+            NotificationCenter.default.post(name: .hookServerStateChanged, object: nil)
             isRunning = false
             statusDescription = "未启动"
         case .waiting(let error):
@@ -284,6 +285,17 @@ final class ClaudeHookServer: ObservableObject {
             }
             SessionWindowRegistry.shared.bind(sessionID: payload.sessionID, windowIdentity: identity)
             handledRequestCount += 1
+            log(
+                "[ClaudeHookServer] SessionStart bound",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "app": identity.appName ?? "unknown",
+                    "title": identity.title ?? "untitled",
+                    "windowID": String(identity.windowID),
+                    "cwd": payload.cwd ?? "nil",
+                    "model": payload.model ?? "nil"
+                ]
+            )
             return (
                 200,
                 ClaudeHookResponse(
@@ -295,89 +307,167 @@ final class ClaudeHookServer: ObservableObject {
                 )
             )
 
-        case .sessionEnd:
-            guard ClaudeHookPreferences.autoFocusOnSessionEnd else {
+        case .stop:
+            guard ClaudeHookPreferences.triggerOnStop else {
                 SessionWindowRegistry.shared.touch(
                     sessionID: payload.sessionID,
-                    message: "SessionEnd 收到（自动聚焦已关闭）"
+                    message: "Stop 收到（Stop 触发已关闭）"
                 )
                 handledRequestCount += 1
+                log(
+                    "[ClaudeHookServer] Stop received but trigger disabled",
+                    fields: ["sessionID": payload.sessionID]
+                )
                 return (
                     200,
                     ClaudeHookResponse(
                         ok: true,
-                        code: "auto_focus_disabled",
-                        message: "SessionEnd received, auto focus disabled",
+                        code: "stop_trigger_disabled",
+                        message: "Stop received, trigger disabled",
                         sessionID: payload.sessionID,
                         handled: false
                     )
                 )
             }
+            return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
 
-            guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
-                unmatchedSessionCount += 1
-                SessionWindowRegistry.shared.setLastEventDescription("SessionEnd 未命中绑定：\(payload.sessionID)")
-                return (
-                    404,
-                    ClaudeHookResponse(
-                        ok: false,
-                        code: "binding_not_found",
-                        message: "No bound window for session",
-                        sessionID: payload.sessionID,
-                        handled: false
-                    )
-                )
-            }
+        case .sessionEnd:
+            return handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
+        }
+    }
 
-            if binding.isCompleted {
-                handledRequestCount += 1
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true,
-                        code: "already_completed",
-                        message: "Session already completed",
-                        sessionID: payload.sessionID,
-                        handled: false
-                    )
-                )
-            }
+    /// Stop/SessionEnd 共用的窗口移动逻辑
+    private func handleWindowMoveTrigger(
+        payload: ClaudeHookPayload,
+        triggerName: String
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        log(
+            "[ClaudeHookServer] \(triggerName) triggered",
+            fields: [
+                "sessionID": payload.sessionID,
+                "autoFocusEnabled": String(ClaudeHookPreferences.autoFocusOnSessionEnd),
+                "cwd": payload.cwd ?? "nil"
+            ]
+        )
 
-            let moved = WindowManager.shared.moveWindowToMainScreen(
-                identity: binding.windowIdentity,
-                reason: .claudeSessionEnd,
-                sessionID: payload.sessionID
-            )
-            if moved {
-                SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
-                handledRequestCount += 1
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true,
-                        code: "window_focused",
-                        message: "Window moved to main screen and maximized",
-                        sessionID: payload.sessionID,
-                        handled: true
-                    )
-                )
-            }
-
+        guard ClaudeHookPreferences.autoFocusOnSessionEnd else {
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
-                message: "SessionEnd 命中绑定，但移动窗口失败"
+                message: "\(triggerName) 收到（自动聚焦已关闭）"
             )
+            handledRequestCount += 1
             return (
-                409,
+                200,
                 ClaudeHookResponse(
-                    ok: false,
-                    code: "window_move_failed",
-                    message: "Found session binding but failed to move window",
+                    ok: true,
+                    code: "auto_focus_disabled",
+                    message: "\(triggerName) received, auto focus disabled",
                     sessionID: payload.sessionID,
                     handled: false
                 )
             )
         }
+
+        guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+            unmatchedSessionCount += 1
+            SessionWindowRegistry.shared.setLastEventDescription("\(triggerName) 未命中绑定：\(payload.sessionID)")
+            log(
+                "[ClaudeHookServer] \(triggerName) no binding found",
+                level: .warn,
+                fields: ["sessionID": payload.sessionID]
+            )
+            return (
+                404,
+                ClaudeHookResponse(
+                    ok: false,
+                    code: "binding_not_found",
+                    message: "No bound window for session",
+                    sessionID: payload.sessionID,
+                    handled: false
+                )
+            )
+        }
+
+        if binding.isCompleted {
+            handledRequestCount += 1
+            log(
+                "[ClaudeHookServer] \(triggerName) already completed",
+                fields: ["sessionID": payload.sessionID]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true,
+                    code: "already_completed",
+                    message: "Session already completed",
+                    sessionID: payload.sessionID,
+                    handled: false
+                )
+            )
+        }
+
+        log(
+            "[ClaudeHookServer] \(triggerName) moving window",
+            fields: [
+                "sessionID": payload.sessionID,
+                "app": binding.windowIdentity.appName ?? "unknown",
+                "title": binding.windowIdentity.title ?? "untitled",
+                "windowID": String(binding.windowIdentity.windowID),
+                "pid": String(binding.windowIdentity.pid)
+            ]
+        )
+
+        let moved = WindowManager.shared.moveWindowToMainScreen(
+            identity: binding.windowIdentity,
+            reason: .claudeSessionEnd,
+            sessionID: payload.sessionID
+        )
+        if moved {
+            SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
+            handledRequestCount += 1
+            log(
+                "[ClaudeHookServer] \(triggerName) window moved successfully",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "app": binding.windowIdentity.appName ?? "unknown",
+                    "title": binding.windowIdentity.title ?? "untitled"
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true,
+                    code: "window_focused",
+                    message: "Window moved to main screen and maximized",
+                    sessionID: payload.sessionID,
+                    handled: true
+                )
+            )
+        }
+
+        SessionWindowRegistry.shared.touch(
+            sessionID: payload.sessionID,
+            message: "\(triggerName) 命中绑定，但移动窗口失败"
+        )
+        log(
+            "[ClaudeHookServer] \(triggerName) window move failed",
+            level: .error,
+            fields: [
+                "sessionID": payload.sessionID,
+                "app": binding.windowIdentity.appName ?? "unknown",
+                "windowID": String(binding.windowIdentity.windowID)
+            ]
+        )
+        return (
+            409,
+            ClaudeHookResponse(
+                ok: false,
+                code: "window_move_failed",
+                message: "Found session binding but failed to move window",
+                sessionID: payload.sessionID,
+                handled: false
+            )
+        )
     }
 
     private func sendResponse(on connection: NWConnection, statusCode: Int, response: ClaudeHookResponse) {
