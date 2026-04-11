@@ -28,6 +28,7 @@ Vibe Focus 的目标是：
 - **自定义快捷键**：可在设置页录制新的全局快捷键
 - **快捷诊断权限问题**：设置页内可检查辅助功能权限、安装路径与登录项状态
 - **开机启动控制**：支持登录后自动启动
+- **Claude Hooks 联动（可选）**：会话结束后自动把绑定窗口拉回主屏并最大化
 
 ## 适用场景
 
@@ -167,6 +168,25 @@ open ~/Applications/VibeFocus.app
 ```
 
 再回到系统设置里重新勾选 `VibeFocus.app`。
+
+## Claude Hooks 联动（可选）
+
+VibeFocus 支持接收 Claude Code Hooks 的 `SessionStart` 与 `SessionEnd` 事件：
+
+- `SessionStart`：记录当前前台窗口与 `session_id` 的绑定
+- `SessionEnd`：自动把绑定窗口移动到主屏并最大化
+- 之后可对该窗口按 `Ctrl+M` 恢复到原位置、原尺寸、原工作区（若 yabai 可用）
+
+### 配置步骤
+
+1. 打开 **设置 → Claude Hooks 联动**，开启并确认监听地址（默认 `127.0.0.1:39277`）
+2. 复制设置页里的 Hook 示例命令
+3. 粘贴到你的 Claude Code Hooks 配置（`SessionStart` 和 `SessionEnd`）
+
+### 零系统侵入说明
+
+- VibeFocus **不会自动修改** `~/.claude/settings.json`
+- 只提供本地监听能力与可复制命令，是否接入由你手动决定
 
 ### 某些窗口无效？
 

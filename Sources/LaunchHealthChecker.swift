@@ -43,7 +43,7 @@ final class LaunchHealthChecker {
     }
 
     nonisolated func checkAccessibilityPermission() async -> HealthCheckResult {
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: false] as CFDictionary
+        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
         let isTrusted = AXIsProcessTrustedWithOptions(options)
 
         return HealthCheckResult(

@@ -4,42 +4,6 @@ set -euo pipefail
 echo "=== VibeFocus 本地运行 ==="
 echo ""
 
-# 解析参数
-SKIP_LAUNCH=false
-DEBUG_MODE=false
-QUICK_MODE=false
-
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    -s|--skip-launch)
-      SKIP_LAUNCH=true
-      shift
-      ;;
-    -d|--debug)
-      DEBUG_MODE=true
-      shift
-      ;;
-    -q|--quick)
-      QUICK_MODE=true
-      shift
-      ;;
-    -h|--help)
-      echo "用法: ./run.sh [选项]"
-      echo ""
-      echo "选项:"
-      echo "  -s, --skip-launch    跳过启动窗口"
-      echo "  -d, --debug          启用调试日志"
-      echo "  -q, --quick          快速启动"
-      echo "  -h, --help           显示帮助"
-      exit 0
-      ;;
-    *)
-      echo "未知选项: $1"
-      exit 1
-      ;;
-  esac
-done
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXECUTABLE_PATH="$SCRIPT_DIR/.build/release/VibeFocusHotkeys"
 STDOUT_LOG="/tmp/vibefocus-run.stdout"
@@ -52,21 +16,8 @@ echo "停止旧进程..."
 pkill -x "VibeFocusHotkeys" >/dev/null 2>&1 || true
 sleep 1
 
-# 构建启动参数
-LAUNCH_ARGS=""
-if [[ "$SKIP_LAUNCH" == true ]]; then
-  LAUNCH_ARGS="$LAUNCH_ARGS --skip-launch-window"
-fi
-if [[ "$DEBUG_MODE" == true ]]; then
-  LAUNCH_ARGS="$LAUNCH_ARGS --debug"
-fi
-if [[ "$QUICK_MODE" == true ]]; then
-  LAUNCH_ARGS="$LAUNCH_ARGS --quick"
-fi
-
-echo "启动参数: $LAUNCH_ARGS"
 echo "后台启动本地二进制..."
-nohup "$EXECUTABLE_PATH" $LAUNCH_ARGS >"$STDOUT_LOG" 2>"$STDERR_LOG" &
+nohup "$EXECUTABLE_PATH" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
 APP_PID=$!
 sleep 2
 
