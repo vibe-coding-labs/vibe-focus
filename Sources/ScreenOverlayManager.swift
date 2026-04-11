@@ -11,8 +11,8 @@ class ScreenOverlayManager: ObservableObject {
 
     @Published var preferences: ScreenIndexPreferences {
         didSet {
-            preferences.save()
-            refreshOverlays()
+            schedulePreferenceSave()
+            schedulePreferenceRefresh()
         }
     }
 
@@ -20,6 +20,8 @@ class ScreenOverlayManager: ObservableObject {
     private var screenSpaceCache: [UUID: (screenIndex: Int, spaceIndex: Int)] = [:]
     private var refreshTimer: Timer?
     private var pendingSignalRefreshWorkItems: [DispatchWorkItem] = []
+    private var pendingPreferenceRefreshWorkItem: DispatchWorkItem?
+    private var pendingPreferenceSaveWorkItem: DispatchWorkItem?
     private var workspaceSpaceChangeObserver: NSObjectProtocol?
     private var swipeEventMonitor: Any?
     private var lastForceRefreshTriggerAt: Date = .distantPast
@@ -31,17 +33,20 @@ class ScreenOverlayManager: ObservableObject {
     private var lastQueryTimes: [UUID: Date] = [:]  // Per-screen query time tracking
     private let queryDebounceInterval: TimeInterval = 0.05  // 50ms debounce - 减少延迟
     private let signalFollowUpRefreshDelays: [TimeInterval] = [0.03, 0.1]
+    private let preferenceRefreshDebounceInterval: TimeInterval = 0.08
+    private let preferenceSaveDebounceInterval: TimeInterval = 0.2
     private let yabaiCommandTimeout: TimeInterval = 0.22
     private let minForceRefreshTriggerInterval: TimeInterval = 0.06
     private let minSwipeTriggerInterval: TimeInterval = 0.12
     private let singleScreenFallbackRefreshInterval: TimeInterval = 0.35
     private let multiScreenFallbackRefreshInterval: TimeInterval = 0.8
     private var automaticRefreshSuspended = false
+    private var lastLoggedPreferenceSignature: String?
 
     private init() {
         self.preferences = ScreenIndexPreferences.load()
         log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
-        setupScreenNotifications()
+        // setupScreenNotifications() - DISABLED: causing crashes
         setupSignalHandler()
         registerYabaiSignals()
         startRefreshTimer()
@@ -193,31 +198,10 @@ class ScreenOverlayManager: ObservableObject {
             }
         }
 
-        swipeEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.swipe]) { [weak self] event in
-            Task { @MainActor [weak self] in
-                guard let self else {
-                    return
-                }
-                guard self.preferences.isEnabled else {
-                    return
-                }
-
-                let horizontalDelta = abs(event.deltaX)
-                let verticalDelta = abs(event.deltaY)
-                guard horizontalDelta > verticalDelta, horizontalDelta > 0.8 else {
-                    return
-                }
-
-                let now = Date()
-                if now.timeIntervalSince(self.lastSwipeTriggerAt) < self.minSwipeTriggerInterval {
-                    return
-                }
-                self.lastSwipeTriggerAt = now
-
-                log("[SWIPE] Global swipe detected deltaX=\(event.deltaX)")
-                self.triggerForceRefresh(reason: "global_swipe")
-            }
-        }
+        // DISABLED: Swipe event monitor causing crashes
+        // swipeEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.swipe]) { [weak self] event in
+        //     ...
+        // }
     }
 
     private func startRefreshTimer() {
@@ -260,6 +244,8 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     func refreshOverlays() {
+        pendingPreferenceRefreshWorkItem?.cancel()
+        pendingPreferenceRefreshWorkItem = nil
         log("refreshOverlays called, isEnabled=\(preferences.isEnabled)")
         hideOverlays()
         if preferences.isEnabled {
@@ -286,6 +272,15 @@ class ScreenOverlayManager: ObservableObject {
         log("Resumed automatic overlay refreshes: \(reason)")
     }
 
+    func flushPendingPreferenceSave(reason: String = "manual_flush") {
+        if pendingPreferenceSaveWorkItem != nil {
+            log("Flushing pending preference save: \(reason)")
+        }
+        pendingPreferenceSaveWorkItem?.cancel()
+        pendingPreferenceSaveWorkItem = nil
+        preferences.save()
+    }
+
     // MARK: - Private Methods
     private func uuidForScreen(_ screen: NSScreen) -> UUID {
         if let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
@@ -310,9 +305,10 @@ class ScreenOverlayManager: ObservableObject {
             let uuid = uuidForScreen(screen)
 
             let overlay = OverlayWindow(screen: screen)
-            let spaceIndex = getSpaceIndex(for: screen) ?? 0
 
-            log("[DEBUG] showOverlays: screen \(index), spaceIndex=\(spaceIndex), calling overlay.update")
+            let spaceIndex = getPerScreenSpaceIndex(for: screen) ?? 1
+            log("[DEBUG] showOverlays: screen \(index), per-screen index=\(spaceIndex)")
+
             overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
             overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
             overlay.show()
@@ -322,6 +318,137 @@ class ScreenOverlayManager: ObservableObject {
         }
 
         log("Showed overlays for \(screens.count) screens")
+    }
+
+    private func schedulePreferenceSave() {
+        pendingPreferenceSaveWorkItem?.cancel()
+        let snapshot = preferences
+        let signature = preferenceSignature(snapshot)
+        if signature != lastLoggedPreferenceSignature {
+            lastLoggedPreferenceSignature = signature
+            log(
+                "[Overlay] schedule preference save",
+                fields: [
+                    "signature": signature
+                ]
+            )
+        }
+        let workItem = DispatchWorkItem { [weak self] in
+            let startedAt = Date()
+            snapshot.save()
+            self?.pendingPreferenceSaveWorkItem = nil
+            logOperationDuration(
+                "[Overlay] preference save finished",
+                startedAt: startedAt,
+                warnThresholdMs: 120,
+                fields: [
+                    "signature": signature
+                ]
+            )
+        }
+        pendingPreferenceSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + preferenceSaveDebounceInterval, execute: workItem)
+    }
+
+    private func schedulePreferenceRefresh() {
+        pendingPreferenceRefreshWorkItem?.cancel()
+        let signature = preferenceSignature(preferences)
+        log(
+            "[Overlay] schedule preference refresh",
+            fields: [
+                "signature": signature
+            ]
+        )
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+            self.pendingPreferenceRefreshWorkItem = nil
+            self.applyPreferenceRefresh(signature: signature)
+        }
+
+        pendingPreferenceRefreshWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + preferenceRefreshDebounceInterval, execute: workItem)
+    }
+
+    private func applyPreferenceRefresh(signature: String) {
+        let startedAt = Date()
+        guard preferences.isEnabled else {
+            hideOverlays()
+            logOperationDuration(
+                "[Overlay] preference refresh finished",
+                startedAt: startedAt,
+                warnThresholdMs: 120,
+                fields: [
+                    "signature": signature,
+                    "path": "hide_overlays"
+                ]
+            )
+            return
+        }
+
+        if overlayWindows.isEmpty {
+            showOverlays()
+            logOperationDuration(
+                "[Overlay] preference refresh finished",
+                startedAt: startedAt,
+                warnThresholdMs: 120,
+                fields: [
+                    "signature": signature,
+                    "path": "show_overlays"
+                ]
+            )
+            return
+        }
+
+        // Avoid closing/reopening all windows while the user drags sliders in settings.
+        // Frequent teardown/rebuild caused unstable AppKit object churn.
+        updateOverlaysInPlace()
+        logOperationDuration(
+            "[Overlay] preference refresh finished",
+            startedAt: startedAt,
+            warnThresholdMs: 120,
+            fields: [
+                "signature": signature,
+                "path": "update_in_place",
+                "overlayCount": String(overlayWindows.count)
+            ]
+        )
+    }
+
+    private func updateOverlaysInPlace() {
+        let screens = NSScreen.screens
+        var activeUUIDs: Set<UUID> = []
+
+        for (index, screen) in screens.enumerated() {
+            let uuid = uuidForScreen(screen)
+            activeUUIDs.insert(uuid)
+            let spaceIndex = screenSpaceCache[uuid]?.spaceIndex ?? (getPerScreenSpaceIndex(for: screen) ?? 1)
+
+            if let overlay = overlayWindows[uuid] {
+                overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
+                overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
+                overlay.show()
+            } else {
+                let overlay = OverlayWindow(screen: screen)
+                overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
+                overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
+                overlay.show()
+                overlayWindows[uuid] = overlay
+            }
+
+            screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: spaceIndex)
+        }
+
+        let staleUUIDs = overlayWindows.keys.filter { !activeUUIDs.contains($0) }
+        for uuid in staleUUIDs {
+            overlayWindows[uuid]?.close()
+            overlayWindows.removeValue(forKey: uuid)
+            screenSpaceCache.removeValue(forKey: uuid)
+        }
+
+        log("Updated overlays in place for \(screens.count) screens")
     }
 
     private func hideOverlays() {
@@ -342,6 +469,10 @@ class ScreenOverlayManager: ObservableObject {
                 overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
             }
         }
+    }
+
+    private func preferenceSignature(_ preferences: ScreenIndexPreferences) -> String {
+        "enabled=\(preferences.isEnabled)|pos=\(preferences.position.rawValue)|font=\(String(format: "%.1f", preferences.fontSize))|opacity=\(String(format: "%.2f", preferences.opacity))|scale=\(String(format: "%.2f", preferences.panelScale))|margin=\(String(format: "%.1f", preferences.panelMargin))"
     }
 
     private func refreshSpaceIndices(force: Bool = false) {
@@ -368,8 +499,8 @@ class ScreenOverlayManager: ObservableObject {
         for (index, screen) in screens.enumerated() {
             let uuid = uuidForScreen(screen)
 
-            let currentSpaceIndex = getSpaceIndex(for: screen, preferStableSampling: force) ?? 0
-            log("[REFRESH] Screen \(index): currentSpaceIndex=\(currentSpaceIndex), uuid=\(uuid)")
+            let currentSpaceIndex = getPerScreenSpaceIndex(for: screen) ?? 1
+            log("[REFRESH] Screen \(index): per-screen index=\(currentSpaceIndex), uuid=\(uuid)")
 
             if let cached = screenSpaceCache[uuid] {
                 log("[REFRESH]   Cached: screenIndex=\(cached.screenIndex), spaceIndex=\(cached.spaceIndex)")
@@ -454,6 +585,49 @@ class ScreenOverlayManager: ObservableObject {
         cachedSpaceIndices[uuid] = result
 
         return result
+    }
+
+    // MARK: - Per-Screen Space Indexing
+    private func getPerScreenSpaceIndex(for screen: NSScreen) -> Int? {
+        guard let yabaiPath = getYabaiPath() else {
+            return nil
+        }
+
+        guard let displayIndex = getYabaiDisplayIndex(for: screen) else {
+            return nil
+        }
+
+        // Get all spaces for this display
+        guard let displaySpaces = queryYabaiSpaces(forDisplayIndex: displayIndex, yabaiPath: yabaiPath),
+              !displaySpaces.isEmpty else {
+            return nil
+        }
+
+        // Get the currently focused space index
+        guard let focusedSpaceIndex = queryFocusedSpaceIndex(yabaiPath: yabaiPath) else {
+            return nil
+        }
+
+        // Find the position of the focused space in this display's spaces list
+        // Sort spaces by their index to ensure consistent ordering
+        let sortedSpaces = displaySpaces.sorted { $0.index < $1.index }
+
+        // Find which position the focused space is in (1-based)
+        for (position, space) in sortedSpaces.enumerated() {
+            if space.index == focusedSpaceIndex {
+                return position + 1  // 1-based index
+            }
+        }
+
+        // If focused space is not on this display, find the visible one
+        for (position, space) in sortedSpaces.enumerated() {
+            if space.isVisible {
+                return position + 1
+            }
+        }
+
+        // Fallback: return 1
+        return 1
     }
 
     private func getYabaiPath() -> String? {

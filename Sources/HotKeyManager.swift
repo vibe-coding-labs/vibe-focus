@@ -28,8 +28,11 @@ final class HotKeyManager: ObservableObject {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var cgEventTapActive = false
+    private var isToggleInFlight = false
     private var lastToggleTriggeredAt: Date = .distantPast
-    private let toggleDedupInterval: TimeInterval = 0.15
+    private var lastToggleCompletedAt: Date = .distantPast
+    private let toggleDedupInterval: TimeInterval = 0.40
+    private let toggleCooldownInterval: TimeInterval = 0.80
 
     private init() {
         currentHotKey = Self.loadStoredHotKey()
@@ -38,18 +41,28 @@ final class HotKeyManager: ObservableObject {
 
     func setup() {
         refreshAccessibilityStatus()
-        log("HotKey setup start: current=\(currentHotKey.displayString) keyCode=\(currentHotKey.keyCode) modifiers=\(currentHotKey.modifiers)")
+        log(
+            "HotKey setup start",
+            fields: [
+                "key": currentHotKey.displayString,
+                "keyCode": String(currentHotKey.keyCode),
+                "modifiers": String(currentHotKey.modifiers),
+                "axTrusted": String(accessibilityStatus)
+            ]
+        )
 
         cgEventTapActive = setupCGEventTap()
+        installHandlerIfNeeded()
+        registerHotKey()
+
         if cgEventTapActive {
-            log("CGEventTap setup successful")
-            // Avoid duplicate toggles: don't install fallback monitors when CGEventTap is active.
+            log("CGEventTap setup successful; Carbon hotkey kept as fallback")
             removeFallbackMonitors()
+            CrashContextRecorder.shared.record("hotkey_setup cg_event_tap=on carbon=on")
         } else {
             log("CGEventTap failed, falling back to Carbon + NSEvent monitors")
-            installHandlerIfNeeded()
-            registerHotKey()
             installFallbackMonitors()
+            CrashContextRecorder.shared.record("hotkey_setup cg_event_tap=off carbon=on monitors=on")
         }
     }
 
@@ -99,6 +112,13 @@ final class HotKeyManager: ObservableObject {
     }
 
     private func handleCGEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            let reason = type == .tapDisabledByTimeout ? "timeout" : "user_input"
+            log("[CGEventTap] Disabled by \(reason), attempting re-enable")
+            reenableEventTap(reason: reason)
+            return Unmanaged.passUnretained(event)
+        }
+
         guard type == .keyDown else {
             return Unmanaged.passUnretained(event)
         }
@@ -136,6 +156,30 @@ final class HotKeyManager: ObservableObject {
         return Unmanaged.passUnretained(event)
     }
 
+    private func reenableEventTap(reason: String) {
+        guard let tap = eventTap else {
+            cgEventTapActive = false
+            log("[CGEventTap] Re-enable skipped: eventTap missing")
+            CrashContextRecorder.shared.record("hotkey_event_tap_missing reason=\(reason)")
+            installFallbackMonitors()
+            return
+        }
+
+        CGEvent.tapEnable(tap: tap, enable: true)
+        let enabled = CGEvent.tapIsEnabled(tap: tap)
+        cgEventTapActive = enabled
+
+        if enabled {
+            removeFallbackMonitors()
+            log("[CGEventTap] Re-enabled successfully after \(reason)")
+            CrashContextRecorder.shared.record("hotkey_event_tap_reenabled reason=\(reason)")
+        } else {
+            installFallbackMonitors()
+            log("[CGEventTap] Re-enable failed after \(reason), fallback monitors enabled")
+            CrashContextRecorder.shared.record("hotkey_event_tap_reenable_failed reason=\(reason)")
+        }
+    }
+
     private func installFallbackMonitors() {
         if globalMonitor == nil {
             globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -166,13 +210,67 @@ final class HotKeyManager: ObservableObject {
 
     private func triggerToggleIfNeeded(source: String) {
         let now = Date()
-        if now.timeIntervalSince(lastToggleTriggeredAt) < toggleDedupInterval {
-            log("[HotKey] Ignored duplicate trigger from \(source)")
+        let hotkey = currentHotKey.displayString
+
+        if isToggleInFlight {
+            log(
+                "[HotKey] Ignored trigger: toggle already in flight",
+                level: .warn,
+                fields: [
+                    "source": source,
+                    "key": hotkey
+                ]
+            )
             return
         }
+
+        let sinceLastTrigger = now.timeIntervalSince(lastToggleTriggeredAt)
+        let sinceLastCompletion = now.timeIntervalSince(lastToggleCompletedAt)
+        if sinceLastTrigger < toggleDedupInterval || sinceLastCompletion < toggleCooldownInterval {
+            log(
+                "[HotKey] Ignored duplicate trigger",
+                level: .warn,
+                fields: [
+                    "source": source,
+                    "key": hotkey,
+                    "sinceLastTriggerMs": String(Int((sinceLastTrigger * 1000).rounded())),
+                    "sinceLastCompletionMs": String(Int((sinceLastCompletion * 1000).rounded()))
+                ]
+            )
+            return
+        }
+
+        let operationID = makeOperationID(prefix: "toggle")
+        let startedAt = Date()
+        isToggleInFlight = true
         lastToggleTriggeredAt = now
-        log("[HotKey] Trigger accepted from \(source), calling toggle()")
-        WindowManager.shared.toggle()
+        defer {
+            lastToggleCompletedAt = Date()
+            isToggleInFlight = false
+        }
+
+        log(
+            "[HotKey] Trigger accepted",
+            fields: [
+                "op": operationID,
+                "source": source,
+                "key": hotkey
+            ]
+        )
+        CrashContextRecorder.shared.record("hotkey_trigger_accepted op=\(operationID) source=\(source) key=\(hotkey)")
+
+        WindowManager.shared.toggle(operationID: operationID, triggerSource: source)
+
+        let duration = elapsedMilliseconds(since: startedAt)
+        log(
+            "[HotKey] Toggle completed",
+            fields: [
+                "op": operationID,
+                "source": source,
+                "durationMs": String(duration)
+            ]
+        )
+        CrashContextRecorder.shared.record("hotkey_toggle_completed op=\(operationID) durationMs=\(duration)")
     }
 
     private func handleFallbackEvent(_ event: NSEvent, source: String) -> Bool {
@@ -252,6 +350,7 @@ final class HotKeyManager: ObservableObject {
             : "快捷键注册失败：\(currentHotKey.displayString)"
         shortcutStatusIsError = registerStatus != noErr
         log("Register hotkey \(currentHotKey.displayString) status: \(registerStatus)")
+        CrashContextRecorder.shared.record("hotkey_register key=\(currentHotKey.displayString) status=\(registerStatus)")
     }
 
     private func handleHotKeyEvent(_ eventRef: EventRef) -> OSStatus {
@@ -286,9 +385,13 @@ final class HotKeyManager: ObservableObject {
     }
 
     func applyShortcut(_ hotKey: HotKeyConfiguration) {
+        log("[HotKey] applyShortcut requested: \(hotKey.displayString) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifiers)")
+        CrashContextRecorder.shared.record("hotkey_apply_requested key=\(hotKey.displayString)")
+
         if hotKey == currentHotKey {
             shortcutStatusMessage = "快捷键未变化：\(hotKey.displayString)"
             shortcutStatusIsError = false
+            CrashContextRecorder.shared.record("hotkey_apply_no_change key=\(hotKey.displayString)")
             return
         }
 
@@ -296,6 +399,7 @@ final class HotKeyManager: ObservableObject {
             shortcutStatusMessage = validationError
             shortcutStatusIsError = true
             NSSound.beep()
+            CrashContextRecorder.shared.record("hotkey_apply_validation_failed key=\(hotKey.displayString)")
             return
         }
 
@@ -309,6 +413,7 @@ final class HotKeyManager: ObservableObject {
             shortcutStatusMessage = "快捷键已恢复为 \(currentHotKey.displayString)"
             shortcutStatusIsError = true
             NSSound.beep()
+            CrashContextRecorder.shared.record("hotkey_apply_rollback key=\(previousHotKey.displayString)")
             return
         }
 
@@ -316,6 +421,7 @@ final class HotKeyManager: ObservableObject {
         shortcutStatusMessage = "快捷键已更新：\(hotKey.displayString)"
         shortcutStatusIsError = false
         NotificationCenter.default.post(name: .hotKeyConfigurationDidChange, object: nil)
+        CrashContextRecorder.shared.record("hotkey_apply_success key=\(hotKey.displayString)")
     }
 
     func resetToDefaultShortcut() {

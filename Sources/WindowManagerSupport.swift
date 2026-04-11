@@ -35,6 +35,272 @@ extension WindowManager {
         return applications
     }
 
+    func captureFocusedWindowIdentity() -> WindowIdentity? {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+        guard let windowAX = focusedWindow(for: frontApp.processIdentifier) else {
+            return nil
+        }
+        guard let windowID = windowHandle(for: windowAX) else {
+            return nil
+        }
+        return WindowIdentity(
+            windowID: windowID,
+            pid: frontApp.processIdentifier,
+            bundleIdentifier: frontApp.bundleIdentifier,
+            appName: frontApp.localizedName,
+            windowNumber: windowNumber(for: windowAX),
+            title: title(of: windowAX),
+            capturedAt: Date()
+        )
+    }
+
+    func resolveWindow(identity: WindowIdentity) -> AXUIElement? {
+        let pid = pid_t(identity.pid)
+        if let focused = focusedWindow(for: pid),
+           let focusedID = windowHandle(for: focused),
+           focusedID == identity.windowID {
+            return focused
+        }
+
+        let windows = allWindows(for: pid)
+        if let exactID = windows.first(where: { window in
+            guard let currentID = windowHandle(for: window) else { return false }
+            return currentID == identity.windowID
+        }) {
+            return exactID
+        }
+
+        if let number = identity.windowNumber,
+           let matched = windows.first(where: { windowNumber(for: $0) == number }) {
+            return matched
+        }
+
+        if let expectedTitle = identity.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !expectedTitle.isEmpty,
+           let matched = windows.first(where: {
+               self.title(of: $0)?.trimmingCharacters(in: .whitespacesAndNewlines) == expectedTitle
+           }) {
+            return matched
+        }
+
+        return windows.first
+    }
+
+    @discardableResult
+    func moveWindowToMainScreen(
+        identity: WindowIdentity,
+        reason: WindowMoveReason,
+        sessionID: String?,
+        operationID: String? = nil
+    ) -> Bool {
+        let op = operationID ?? makeOperationID(prefix: "move")
+        let startedAt = Date()
+        log(
+            "[WindowManager] moveWindowToMainScreen started",
+            fields: [
+                "op": op,
+                "windowID": String(identity.windowID),
+                "pid": String(identity.pid),
+                "reason": reason.rawValue,
+                "sessionID": sessionID ?? "nil"
+            ]
+        )
+
+        guard hasAccessibilityPermission() else {
+            log(
+                "moveWindowToMainScreen failed: accessibility not granted",
+                level: .error,
+                fields: [
+                    "op": op
+                ]
+            )
+            notifyAccessibilityPermissionRequired()
+            return false
+        }
+
+        guard let windowAX = resolveWindow(identity: identity) else {
+            log(
+                "moveWindowToMainScreen failed: cannot resolve window",
+                level: .error,
+                fields: [
+                    "op": op
+                ]
+            )
+            return false
+        }
+
+        guard let currentFrame = frame(of: windowAX) else {
+            log(
+                "moveWindowToMainScreen failed: cannot read current frame",
+                level: .error,
+                fields: [
+                    "op": op
+                ]
+            )
+            return false
+        }
+
+        guard let currentWindowID = windowHandle(for: windowAX) else {
+            log(
+                "moveWindowToMainScreen failed: missing stable window handle",
+                level: .error,
+                fields: [
+                    "op": op
+                ]
+            )
+            return false
+        }
+
+        guard isAttributeSettable(windowAX, attribute: kAXPositionAttribute),
+              isAttributeSettable(windowAX, attribute: kAXSizeAttribute) else {
+            log(
+                "moveWindowToMainScreen failed: window attributes not settable",
+                level: .error,
+                fields: [
+                    "op": op
+                ]
+            )
+            return false
+        }
+
+        let sourceContext = displayContext(for: currentFrame)
+        let spaceCaptureStartAt = Date()
+        let spaceContext = spaceController.captureSpaceContext(windowID: currentWindowID, operationID: op)
+        log(
+            "[WindowManager] captured source space context",
+            fields: [
+                "op": op,
+                "durationMs": String(elapsedMilliseconds(since: spaceCaptureStartAt))
+            ]
+        )
+
+        guard let mainScreen = getMainScreen() else {
+            log(
+                "moveWindowToMainScreen failed: cannot determine main screen",
+                level: .error,
+                fields: [
+                    "op": op
+                ]
+            )
+            return false
+        }
+
+        let targetFrame = axFrame(forVisibleFrameOf: mainScreen)
+        let targetDisplayID = displayID(for: mainScreen)
+        let targetDisplayIndex = displayIndex(forDisplayID: targetDisplayID)
+
+        guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame"),
+              let appliedFrame = frame(of: windowAX),
+              framesMatch(appliedFrame, targetFrame) else {
+            log(
+                "moveWindowToMainScreen failed: frame verification mismatch",
+                level: .error,
+                fields: [
+                    "op": op,
+                    "targetFrame": String(describing: targetFrame)
+                ]
+            )
+            return false
+        }
+
+        let resolvedWindowNumber = windowNumber(for: windowAX) ?? identity.windowNumber
+        let resolvedTitle = title(of: windowAX) ?? identity.title
+        log(
+            "[WindowManager] moveWindowToMainScreen captured state",
+            fields: [
+                "op": op,
+                "sourceSpace": String(describing: spaceContext.sourceSpaceIndex),
+                "targetSpace": String(describing: spaceContext.targetSpaceIndex),
+                "sourceYabaiDisplay": String(describing: spaceContext.sourceDisplayIndex),
+                "sourceDisplaySpace": String(describing: spaceContext.sourceDisplaySpaceIndex),
+                "sourceDisplayID": String(describing: sourceContext.displayID),
+                "sourceDisplayIndex": String(describing: sourceContext.index),
+                "targetDisplayIndex": String(describing: targetDisplayIndex)
+            ]
+        )
+        let savedState = SavedWindowState(
+            id: UUID().uuidString,
+            pid: identity.pid,
+            bundleIdentifier: identity.bundleIdentifier,
+            appName: identity.appName,
+            windowID: currentWindowID,
+            windowNumber: resolvedWindowNumber,
+            title: resolvedTitle,
+            originalFrame: RectPayload(currentFrame),
+            targetFrame: RectPayload(targetFrame),
+            sourceSpaceIndex: spaceContext.sourceSpaceIndex,
+            targetSpaceIndex: spaceContext.targetSpaceIndex,
+            sourceYabaiDisplayIndex: spaceContext.sourceDisplayIndex,
+            sourceDisplaySpaceIndex: spaceContext.sourceDisplaySpaceIndex,
+            sourceDisplayIndex: sourceContext.index,
+            sourceDisplayID: sourceContext.displayID,
+            targetDisplayIndex: targetDisplayIndex,
+            restoreReason: reason.rawValue,
+            sessionID: sessionID,
+            savedAt: Date()
+        )
+
+        let persistedState = saveWindowState(savedState, window: windowAX)
+        hydrateMemory(from: persistedState, window: windowAX)
+        log(
+            "[WindowManager] moveWindowToMainScreen finished",
+            fields: [
+                "op": op,
+                "savedStateID": persistedState.id,
+                "windowID": String(currentWindowID),
+                "durationMs": String(elapsedMilliseconds(since: startedAt))
+            ]
+        )
+        return true
+    }
+
+    private func allWindows(for pid: pid_t) -> [AXUIElement] {
+        let appElement = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        guard status == .success, let windowsRef else {
+            return []
+        }
+
+        return windowsRef as? [AXUIElement] ?? []
+    }
+
+    private func displayID(for screen: NSScreen) -> UInt32? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        guard let number = screen.deviceDescription[key] as? NSNumber else {
+            return nil
+        }
+        return number.uint32Value
+    }
+
+    private func displayIndex(forDisplayID displayID: UInt32?) -> Int? {
+        guard let displayID else {
+            return nil
+        }
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return NSScreen.screens.enumerated().first(where: { _, screen in
+            guard let number = screen.deviceDescription[key] as? NSNumber else {
+                return false
+            }
+            return number.uint32Value == displayID
+        })?.offset
+    }
+
+    private func displayContext(for frame: CGRect) -> (index: Int?, displayID: UInt32?) {
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        for (index, screen) in NSScreen.screens.enumerated() {
+            let displayFrame = screen.frame
+            if displayFrame.contains(center) || displayFrame.intersects(frame) {
+                let displayID = (screen.deviceDescription[key] as? NSNumber)?.uint32Value
+                return (index, displayID)
+            }
+        }
+        return (nil, nil)
+    }
+
     func moveToMainScreenViaSystemEvents() {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             log("No frontmost app for System Events fallback")
@@ -67,6 +333,13 @@ extension WindowManager {
             targetFrame: RectPayload(targetFrame),
             sourceSpaceIndex: nil,
             targetSpaceIndex: nil,
+            sourceYabaiDisplayIndex: nil,
+            sourceDisplaySpaceIndex: nil,
+            sourceDisplayIndex: nil,
+            sourceDisplayID: nil,
+            targetDisplayIndex: nil,
+            restoreReason: WindowMoveReason.manualHotkey.rawValue,
+            sessionID: nil,
             savedAt: Date()
         )
 
@@ -338,17 +611,34 @@ extension WindowManager {
         return settable.boolValue
     }
 
-    func apply(frame targetFrame: CGRect, to window: AXUIElement) -> Bool {
+    func apply(
+        frame targetFrame: CGRect,
+        to window: AXUIElement,
+        operationID: String? = nil,
+        stage: String = "apply_frame"
+    ) -> Bool {
+        let op = operationID ?? "none"
+        let startedAt = Date()
         var lastAppliedFrame: CGRect?
+        let maxAttempts = 3
+        let settleDelayMicros: useconds_t = 25_000
 
-        for attempt in 1...6 {
+        for attempt in 1...maxAttempts {
             var targetSize = CGSize(width: targetFrame.width, height: targetFrame.height)
             guard let sizeValue = AXValueCreate(.cgSize, &targetSize) else {
                 return false
             }
 
             let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
-            log("Set size result [attempt \(attempt)]: \(sizeResult.rawValue)")
+            log(
+                "[WindowManager] set size result",
+                fields: [
+                    "op": op,
+                    "stage": stage,
+                    "attempt": String(attempt),
+                    "status": String(sizeResult.rawValue)
+                ]
+            )
             guard sizeResult == .success else {
                 return false
             }
@@ -359,17 +649,42 @@ extension WindowManager {
             }
 
             let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, originValue)
-            log("Set position result [attempt \(attempt)]: \(positionResult.rawValue)")
+            log(
+                "[WindowManager] set position result",
+                fields: [
+                    "op": op,
+                    "stage": stage,
+                    "attempt": String(attempt),
+                    "status": String(positionResult.rawValue)
+                ]
+            )
             guard positionResult == .success else {
                 return false
             }
 
-            usleep(80_000)
+            usleep(settleDelayMicros)
 
             if let appliedFrame = frame(of: window) {
-                log("Applied frame after attempt \(attempt): \(appliedFrame)")
+                log(
+                    "[WindowManager] applied frame snapshot",
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "attempt": String(attempt),
+                        "frame": String(describing: appliedFrame)
+                    ]
+                )
                 lastAppliedFrame = appliedFrame
                 if framesMatch(appliedFrame, targetFrame) {
+                    log(
+                        "[WindowManager] apply frame matched target",
+                        fields: [
+                            "op": op,
+                            "stage": stage,
+                            "attempt": String(attempt),
+                            "durationMs": String(elapsedMilliseconds(since: startedAt))
+                        ]
+                    )
                     return true
                 }
             }
@@ -385,11 +700,32 @@ extension WindowManager {
                                  abs(lastFrame.height - targetFrame.height) <= 100 // 允许高度有较大偏差（最小尺寸限制）
 
             if positionMatches && sizeCloseEnough {
-                log("Applied frame within tolerance (window may have size constraints): \(lastFrame)")
+                log(
+                    "[WindowManager] apply frame within tolerance",
+                    level: .warn,
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "frame": String(describing: lastFrame),
+                        "target": String(describing: targetFrame),
+                        "durationMs": String(elapsedMilliseconds(since: startedAt))
+                    ]
+                )
                 return true
             }
         }
 
+        log(
+            "[WindowManager] apply frame failed",
+            level: .error,
+            fields: [
+                "op": op,
+                "stage": stage,
+                "target": String(describing: targetFrame),
+                "lastFrame": String(describing: lastAppliedFrame),
+                "durationMs": String(elapsedMilliseconds(since: startedAt))
+            ]
+        )
         return false
     }
 
@@ -461,6 +797,8 @@ extension WindowManager {
         lastTargetFrame = nil
         lastSourceSpaceIndex = nil
         lastTargetSpaceIndex = nil
+        lastSourceYabaiDisplayIndex = nil
+        lastSourceDisplaySpaceIndex = nil
         if removeState {
             clearSavedWindowState(id: activeStateID)
         }
@@ -481,6 +819,8 @@ extension WindowManager {
         lastTargetFrame = state.targetFrame.cgRect
         lastSourceSpaceIndex = state.sourceSpaceIndex
         lastTargetSpaceIndex = state.targetSpaceIndex
+        lastSourceYabaiDisplayIndex = state.sourceYabaiDisplayIndex
+        lastSourceDisplaySpaceIndex = state.sourceDisplaySpaceIndex
     }
 
     func shouldReplaceSavedState(

@@ -44,6 +44,7 @@ struct ScreenIndexPreferences: Codable {
     var panelScale: CGFloat  // 新增：面板缩放比例
     var panelMargin: CGFloat  // 新增：面板到屏幕边缘的边距
     var yabaiPath: String?
+    var usePerScreenSpaceIndexing: Bool  // 新增：使用屏幕级别的工作区索引
 
     static let `default` = ScreenIndexPreferences(
         isEnabled: false,
@@ -54,7 +55,8 @@ struct ScreenIndexPreferences: Codable {
         backgroundColor: CodableColor(.black.opacity(0.6)),
         panelScale: 1.0,  // 默认不缩放
         panelMargin: 20,  // 默认边距 20pt
-        yabaiPath: nil
+        yabaiPath: nil,
+        usePerScreenSpaceIndexing: true  // 默认使用屏幕级别空间索引
     )
 
     static let userDefaultsKey = "screenIndexPreferences"
@@ -67,8 +69,9 @@ struct ScreenIndexPreferences: Codable {
            let data = jsonString.data(using: .utf8) {
             do {
                 let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
+                let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
                 log("ScreenIndexPreferences loaded: isEnabled=\(prefs.isEnabled)")
-                return prefs
+                return migrated
             } catch {
                 log("ScreenIndexPreferences decode error: \(error)")
                 // 尝试加载旧版本设置（向后兼容）
@@ -83,8 +86,9 @@ struct ScreenIndexPreferences: Codable {
         if let data = UserDefaults.standard.data(forKey: userDefaultsKey) {
             do {
                 let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
+                let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
                 log("ScreenIndexPreferences loaded from standard: isEnabled=\(prefs.isEnabled)")
-                return prefs
+                return migrated
             } catch {
                 log("ScreenIndexPreferences decode error from standard: \(error)")
                 // 尝试加载旧版本设置（向后兼容）
@@ -124,12 +128,25 @@ struct ScreenIndexPreferences: Codable {
                 backgroundColor: legacy.backgroundColor,
                 panelScale: legacy.panelScale ?? 1.0,
                 panelMargin: legacy.panelMargin ?? 20,
-                yabaiPath: legacy.yabaiPath
+                yabaiPath: legacy.yabaiPath,
+                usePerScreenSpaceIndexing: true
             )
         } catch {
             log("ScreenIndexPreferences: Failed to load legacy preferences: \(error)")
             return nil
         }
+    }
+
+    private static func enforcePerScreenSpaceIndexingIfNeeded(_ preferences: ScreenIndexPreferences) -> ScreenIndexPreferences {
+        guard !preferences.usePerScreenSpaceIndexing else {
+            return preferences
+        }
+
+        var migrated = preferences
+        migrated.usePerScreenSpaceIndexing = true
+        log("ScreenIndexPreferences: Migrating global workspace index mode to per-screen mode")
+        migrated.save()
+        return migrated
     }
 
     func save() {
