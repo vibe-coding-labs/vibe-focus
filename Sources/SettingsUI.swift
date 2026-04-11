@@ -947,8 +947,34 @@ private struct SettingsView: View {
 
                     SettingsCard(
                         title: "Claude Code 集成",
-                        subtitle: "对话完成时自动将终端窗口拉回主屏幕。安装 Hook 后，Claude Code 会直接通知 VibeFocus。"
+                        subtitle: "让 VibeFocus 监听 Claude Code 的对话事件，实现对话完成后自动将终端窗口拉回主屏幕并最大化。"
                     ) {
+                        // === 功能说明 ===
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "lightbulb.fill")
+                                .foregroundStyle(.yellow.opacity(0.8))
+                                .font(.system(size: 14))
+                                .padding(.top, 2)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("工作原理")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text("开启服务并安装 Hook 后，Claude Code 会在每次对话开始和结束时通知 VibeFocus。对话结束时，VibeFocus 自动将终端窗口移动到主屏幕并最大化 — 你可以用 ⌃M 快捷键恢复原位。")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .lineSpacing(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.yellow.opacity(0.06))
+                        )
+
+                        Divider()
+
                         // === 服务开关 ===
                         SettingsRow(
                             title: "Hook 服务",
