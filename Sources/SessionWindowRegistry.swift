@@ -96,6 +96,34 @@ final class SessionWindowRegistry: ObservableObject {
         lastEventDescription = message
     }
 
+    // MARK: - UI Support
+
+    /// 活跃（未完成）的绑定列表，按创建时间倒序
+    var activeBindingsForUI: [SessionWindowBinding] {
+        bindings.values
+            .filter { !$0.isCompleted }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// 最近完成的绑定（30 分钟内），按完成时间倒序
+    var recentCompletedBindings: [SessionWindowBinding] {
+        let now = Date()
+        return bindings.values
+            .filter { binding in
+                guard binding.isCompleted else { return false }
+                let deadline = (binding.completedAt ?? binding.lastSeenAt).addingTimeInterval(30 * 60)
+                return deadline > now
+            }
+            .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+    }
+
+    /// 清除所有绑定（供 UI 调试用）
+    func clearAllBindings() {
+        bindings.removeAll()
+        lastEventDescription = "所有绑定已清除"
+        persistBindings()
+    }
+
     private func normalizeSessionID(_ sessionID: String) -> String {
         sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
     }

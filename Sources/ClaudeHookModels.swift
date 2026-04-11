@@ -2,6 +2,7 @@ import Foundation
 
 enum ClaudeHookEventType: String, Codable, CaseIterable {
     case sessionStart = "SessionStart"
+    case stop = "Stop"
     case sessionEnd = "SessionEnd"
 }
 
@@ -34,18 +35,35 @@ struct ClaudeHookPayload: Decodable {
     let sessionID: String
     let source: String?
     let timestamp: String?
+    let cwd: String?
+    let model: String?
 
     private enum CodingKeys: String, CodingKey {
         case event
+        case hookEventName = "hook_event_name"
         case sessionID = "session_id"
         case sessionId
         case source
         case timestamp
+        case cwd
+        case model
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        event = try container.decode(ClaudeHookEventType.self, forKey: .event)
+
+        // 兼容两种字段名：我们的测试用 event，Claude Code HTTP Hook 用 hook_event_name
+        if let e = try? container.decode(ClaudeHookEventType.self, forKey: .event) {
+            event = e
+        } else if let e = try? container.decode(ClaudeHookEventType.self, forKey: .hookEventName) {
+            event = e
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .event,
+                in: container,
+                debugDescription: "Neither 'event' nor 'hook_event_name' found"
+            )
+        }
 
         let sessionValue = try container.decodeIfPresent(String.self, forKey: .sessionID)
             ?? container.decodeIfPresent(String.self, forKey: .sessionId)
@@ -60,6 +78,8 @@ struct ClaudeHookPayload: Decodable {
         sessionID = trimmedSession
         source = try container.decodeIfPresent(String.self, forKey: .source)
         timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
     }
 }
 

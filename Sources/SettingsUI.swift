@@ -389,6 +389,18 @@ private struct SettingsView: View {
     @State private var duplicateAppPaths: [String] = []
     @State private var isCheckingInstallations = false
 
+    // Claude Hook 集成
+    @StateObject private var hookServer = ClaudeHookServer.shared
+    @StateObject private var sessionRegistry = SessionWindowRegistry.shared
+    @AppStorage(ClaudeHookPreferences.enabledKey) private var hookEnabled = false
+    @AppStorage(ClaudeHookPreferences.portKey) private var hookPort = ClaudeHookPreferences.defaultPort
+    @AppStorage(ClaudeHookPreferences.tokenKey) private var hookToken = ""
+    @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) private var autoFocusOnSessionEnd = true
+    @AppStorage(ClaudeHookPreferences.triggerOnStopKey) private var triggerOnStop = true
+    @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) private var triggerOnSessionEnd = false
+    @State private var hookInstallMessage: String?
+    @State private var hookInstallSucceeded = false
+
     private var appVersionDisplay: String {
         let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         let version = (bundleVersion?.isEmpty == false) ? bundleVersion! : AppVersion.current
@@ -532,6 +544,7 @@ private struct SettingsView: View {
                         SidebarInfoCard(title: "辅助功能权限", value: hotKeyManager.accessibilityGranted ? "已授权" : "未授权")
                         SidebarInfoCard(title: "开机启动", value: loginItemSidebarValue)
                         SidebarInfoCard(title: "跨工作区", value: spaceSidebarValue)
+                        SidebarInfoCard(title: "Claude Hook", value: hookServer.isRunning ? "运行中" : (hookEnabled ? "已关闭" : "未启用"))
                     }
 
                     if !hotKeyManager.accessibilityGranted {
@@ -933,6 +946,265 @@ private struct SettingsView: View {
                     }
 
                     SettingsCard(
+                        title: "Claude Code 集成",
+                        subtitle: "对话完成时自动将终端窗口拉回主屏幕。安装 Hook 后，Claude Code 会直接通知 VibeFocus。"
+                    ) {
+                        // === 服务开关 ===
+                        SettingsRow(
+                            title: "Hook 服务",
+                            detail: hookServer.isRunning ? hookServer.statusDescription : "未启动"
+                        ) {
+                            HStack(spacing: 10) {
+                                SettingsStatusPill(
+                                    title: hookServer.isRunning ? "运行中" : "未启动",
+                                    tint: hookServer.isRunning ? .green : .gray
+                                )
+                                Toggle("", isOn: Binding(
+                                    get: { hookEnabled },
+                                    set: { newValue in
+                                        hookEnabled = newValue
+                                        ClaudeHookPreferences.isEnabled = newValue
+                                        hookServer.applyPreferences()
+                                    }
+                                ))
+                                .labelsHidden()
+                            }
+                        }
+
+                        Divider()
+
+                        // === Hook 安装 ===
+                        SettingsRow(
+                            title: "Hook 安装状态",
+                            detail: ClaudeHookPreferences.isHookInstalled
+                                ? "已安装到 ~/.claude/settings.json"
+                                : "尚未安装"
+                        ) {
+                            SettingsStatusPill(
+                                title: ClaudeHookPreferences.isHookInstalled ? "已安装" : "未安装",
+                                tint: ClaudeHookPreferences.isHookInstalled ? .green : .orange
+                            )
+                        }
+
+                        HStack(spacing: 12) {
+                            Button(ClaudeHookPreferences.isHookInstalled ? "重新安装" : "一键安装 Hook") {
+                                let (ok, msg) = ClaudeHookPreferences.installHookToClaudeSettings()
+                                hookInstallSucceeded = ok
+                                hookInstallMessage = msg
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!hookEnabled)
+
+                            if ClaudeHookPreferences.isHookInstalled {
+                                Button("卸载") {
+                                    let (ok, msg) = ClaudeHookPreferences.uninstallHookFromClaudeSettings()
+                                    hookInstallSucceeded = ok
+                                    hookInstallMessage = msg
+                                }
+                                .buttonStyle(.bordered)
+                                .foregroundStyle(.red)
+                            }
+
+                            Button("复制配置 JSON") {
+                                let json = ClaudeHookPreferences.generateHooksJSON()
+                                let pb = NSPasteboard.general
+                                pb.clearContents()
+                                pb.setString(json, forType: .string)
+                                hookInstallMessage = "已复制到剪贴板"
+                                hookInstallSucceeded = true
+                            }
+                            .buttonStyle(.bordered)
+
+                            Spacer()
+                        }
+
+                        if let msg = hookInstallMessage {
+                            Text(msg)
+                                .font(.system(size: 12))
+                                .foregroundStyle(hookInstallSucceeded ? .green : .red)
+                        }
+
+                        Divider()
+
+                        // === 触发时机 ===
+                        SettingsRow(title: "触发时机", detail: "选择何时自动将终端窗口拉回主屏幕") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle("对话完成（Stop 事件，推荐）", isOn: Binding(
+                                    get: { triggerOnStop },
+                                    set: { newValue in triggerOnStop = newValue; ClaudeHookPreferences.triggerOnStop = newValue }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Toggle("会话结束（SessionEnd 事件）", isOn: Binding(
+                                    get: { triggerOnSessionEnd },
+                                    set: { newValue in triggerOnSessionEnd = newValue; ClaudeHookPreferences.triggerOnSessionEnd = newValue }
+                                ))
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+
+                        Text("Stop：每次 Claude 回复完成后触发。SessionEnd：Claude 进程退出时触发。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+
+                        Divider()
+
+                        // === 端口和 Token ===
+                        SettingsRow(
+                            title: "监听端口",
+                            detail: "默认 \(ClaudeHookPreferences.defaultPort)"
+                        ) {
+                            TextField("", value: Binding(
+                                get: { hookPort },
+                                set: { newValue in
+                                    let clamped = max(1024, min(65535, newValue == 0 ? ClaudeHookPreferences.defaultPort : newValue))
+                                    hookPort = clamped
+                                    ClaudeHookPreferences.listenPort = clamped
+                                    if hookEnabled { hookServer.applyPreferences() }
+                                }
+                            ), formatter: {
+                                let f = NumberFormatter(); f.numberStyle = .none; f.minimum = 1024; f.maximum = 65535; return f
+                            }())
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+
+                        SettingsRow(title: "鉴权 Token（可选）", detail: "启用后请求需携带 X-VibeFocus-Token 头") {
+                            HStack(spacing: 8) {
+                                SecureField("", text: Binding(
+                                    get: { hookToken },
+                                    set: { newValue in
+                                        hookToken = newValue
+                                        ClaudeHookPreferences.authToken = newValue.isEmpty ? nil : newValue
+                                        if hookEnabled { hookServer.applyPreferences() }
+                                    }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 180)
+
+                                if hookToken.isEmpty {
+                                    Button("随机生成") {
+                                        hookToken = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24).lowercased()
+                                        ClaudeHookPreferences.authToken = hookToken
+                                        if hookEnabled { hookServer.applyPreferences() }
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .font(.system(size: 11))
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        // === 运行状态 ===
+                        SettingsRow(title: "运行状态", detail: sessionRegistry.lastEventDescription) {
+                            VStack(alignment: .trailing, spacing: 4) {
+                                if let lastEvent = hookServer.lastEventAt {
+                                    Text("最近事件 \(lastEvent, style: .time)")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("已处理 \(hookServer.handledRequestCount) / 总计 \(hookServer.totalRequestCount) / 未匹配 \(hookServer.unmatchedSessionCount)")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if let error = hookServer.lastErrorMessage, !error.isEmpty {
+                            Text("错误：\(error)")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Divider()
+
+                        // === 活跃会话列表 ===
+                        if !sessionRegistry.activeBindingsForUI.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("活跃会话（\(sessionRegistry.activeBindingCount)）")
+                                    .font(.system(size: 13, weight: .medium))
+
+                                ForEach(sessionRegistry.activeBindingsForUI.prefix(5), id: \.sessionID) { binding in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "terminal")
+                                            .foregroundStyle(.secondary)
+                                            .font(.system(size: 11))
+                                        Text(binding.windowIdentity.appName ?? "Unknown")
+                                            .font(.system(size: 12, weight: .medium))
+                                        Text(binding.windowIdentity.title ?? "Untitled")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer()
+                                        Text(binding.sessionID.prefix(8))
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                }
+
+                                if sessionRegistry.activeBindingsForUI.count > 5 {
+                                    Text("还有 \(sessionRegistry.activeBindingsForUI.count - 5) 个...")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+
+                        // === 已完成会话列表 ===
+                        if !sessionRegistry.recentCompletedBindings.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("最近完成（\(sessionRegistry.completedBindingCount)）")
+                                    .font(.system(size: 13, weight: .medium))
+
+                                ForEach(sessionRegistry.recentCompletedBindings.prefix(3), id: \.sessionID) { binding in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "checkmark.circle")
+                                            .foregroundStyle(.green)
+                                            .font(.system(size: 11))
+                                        Text(binding.windowIdentity.appName ?? "Unknown")
+                                            .font(.system(size: 12, weight: .medium))
+                                        if let completedAt = binding.completedAt {
+                                            Text(completedAt, style: .time)
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        // === 操作按钮 ===
+                        HStack(spacing: 12) {
+                            Button("发送测试事件") {
+                                sendTestHookEvent()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!hookEnabled || !hookServer.isRunning)
+
+                            Button("清除绑定") {
+                                sessionRegistry.clearAllBindings()
+                            }
+                            .buttonStyle(.bordered)
+                            .foregroundStyle(.red)
+
+                            Spacer()
+                        }
+
+                        Text("测试：SessionStart 绑定当前窗口 → 1 秒后 SessionEnd 触发移动")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    SettingsCard(
                         title: "屏幕序号显示",
                         subtitle: "在每个屏幕上显示编号标签，方便识别多屏幕环境。"
                     ) {
@@ -1259,6 +1531,31 @@ private struct SettingsView: View {
                 ]
             )
         }
+        .onChange(of: hookEnabled) { newValue in
+            log(
+                "[Settings] hook enabled toggled",
+                fields: [
+                    "enabled": String(newValue),
+                    "isRunning": String(hookServer.isRunning)
+                ]
+            )
+        }
+        .onChange(of: hookPort) { newValue in
+            log(
+                "[Settings] hook port changed",
+                fields: [
+                    "port": String(newValue)
+                ]
+            )
+        }
+        .onChange(of: hookToken) { newValue in
+            log(
+                "[Settings] hook token changed",
+                fields: [
+                    "hasToken": String(!newValue.isEmpty)
+                ]
+            )
+        }
     }
 
     private func refreshInstallations() {
@@ -1356,6 +1653,162 @@ private struct SettingsView: View {
             errorAlert.addButton(withTitle: "确定")
             errorAlert.runModal()
         }
+    }
+
+    // MARK: - Claude Hook Test Helpers
+
+    private func sendTestHookEvent() {
+        let port = hookPort
+        let testSessionID = "test-\(UUID().uuidString.prefix(8))"
+        let token = hookToken.isEmpty ? nil : hookToken
+
+        log(
+            "[Settings] sending test SessionStart event",
+            fields: [
+                "sessionID": testSessionID,
+                "port": String(port),
+                "hasToken": String(token != nil)
+            ]
+        )
+
+        Self.sendHookRequest(
+            port: port,
+            endpoint: ClaudeHookPreferences.endpointPath,
+            payload: [
+                "event": "SessionStart",
+                "session_id": testSessionID,
+                "source": "test-ui"
+            ],
+            token: token
+        ) { result in
+            switch result {
+            case .success(let data):
+                log(
+                    "[Settings] test SessionStart response",
+                    fields: [
+                        "sessionID": testSessionID,
+                        "response": String(data: data, encoding: .utf8) ?? "nil"
+                    ]
+                )
+                // 1 秒后发送 SessionEnd
+                let endPort = port
+                let endToken = token
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    log(
+                        "[Settings] sending test SessionEnd event",
+                        fields: [
+                            "sessionID": testSessionID,
+                            "port": String(endPort)
+                        ]
+                    )
+                    Self.sendHookRequest(
+                        port: endPort,
+                        endpoint: ClaudeHookPreferences.endpointPath,
+                        payload: [
+                            "event": "SessionEnd",
+                            "session_id": testSessionID,
+                            "source": "test-ui"
+                        ],
+                        token: endToken
+                    ) { endResult in
+                        switch endResult {
+                        case .success(let endData):
+                            log(
+                                "[Settings] test SessionEnd response",
+                                fields: [
+                                    "sessionID": testSessionID,
+                                    "response": String(data: endData, encoding: .utf8) ?? "nil"
+                                ]
+                            )
+                        case .failure(let endError):
+                            log(
+                                "[Settings] test SessionEnd failed",
+                                level: .error,
+                                fields: [
+                                    "sessionID": testSessionID,
+                                    "error": endError.localizedDescription
+                                ]
+                            )
+                        }
+                    }
+                }
+            case .failure(let error):
+                log(
+                    "[Settings] test SessionStart failed",
+                    level: .error,
+                    fields: [
+                        "sessionID": testSessionID,
+                        "error": error.localizedDescription
+                    ]
+                )
+            }
+        }
+    }
+
+    private static func sendHookRequest(
+        port: Int,
+        endpoint: String,
+        payload: [String: String],
+        token: String?,
+        completion: @escaping (Result<Data, Error>) -> Void
+    ) {
+        guard let url = URL(string: "http://127.0.0.1:\(port)\(endpoint)") else {
+            completion(.failure(NSError(domain: "VibeFocus", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 5
+
+        if let token, !token.isEmpty {
+            request.setValue(token, forHTTPHeaderField: "X-VibeFocus-Token")
+        }
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        } catch {
+            completion(.failure(error))
+            return
+        }
+
+        log(
+            "[Settings] sending HTTP request",
+            fields: [
+                "url": url.absoluteString,
+                "payload": String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "nil"
+            ]
+        )
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(NSError(domain: "VibeFocus", code: -2, userInfo: [NSLocalizedDescriptionKey: "Not HTTP response"])))
+                return
+            }
+            log(
+                "[Settings] HTTP response received",
+                fields: [
+                    "statusCode": String(httpResponse.statusCode),
+                    "url": url.absoluteString
+                ]
+            )
+            if httpResponse.statusCode >= 400 {
+                let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "nil"
+                completion(.failure(NSError(
+                    domain: "VibeFocus",
+                    code: httpResponse.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode): \(body)"]
+                )))
+                return
+            }
+            completion(.success(data ?? Data()))
+        }
+        task.resume()
     }
 }
 
@@ -1536,6 +1989,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         applyApplicationIcon()
         setupMenuBar()
         HotKeyManager.shared.setup()
+        ClaudeHookServer.shared.applyPreferences()
         ScreenOverlayManager.shared.refreshOverlays()
         promptAccessibilityIfNeeded()
         NotificationCenter.default.addObserver(
