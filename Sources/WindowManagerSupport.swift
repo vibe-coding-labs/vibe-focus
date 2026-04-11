@@ -142,6 +142,24 @@ extension WindowManager {
             return false
         }
 
+        // 检查窗口是否已在主屏幕上
+        // 如果已经在目标位置，跳过移动，避免覆盖已有的 saved state（原来的副屏位置）
+        if let mainScreen = getMainScreen() {
+            let mainScreenFrame = mainScreen.frame
+            let windowCenter = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
+            if mainScreenFrame.contains(windowCenter) {
+                log(
+                    "[WindowManager] moveWindowToMainScreen skipped: already on main screen",
+                    fields: [
+                        "op": op,
+                        "windowID": String(identity.windowID),
+                        "reason": reason.rawValue
+                    ]
+                )
+                return true
+            }
+        }
+
         guard let currentWindowID = windowHandle(for: windowAX) else {
             log(
                 "moveWindowToMainScreen failed: missing stable window handle",
