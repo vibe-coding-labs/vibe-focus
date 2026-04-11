@@ -48,6 +48,24 @@ enum ClaudeHookPreferences {
         }
     }
 
+    /// 确保已生成 token，如果没有则自动生成一个
+    @discardableResult
+    static func ensureTokenGenerated() -> String {
+        if let existing = authToken, !existing.isEmpty {
+            return existing
+        }
+        let generated = UUID().uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .prefix(32)
+            .lowercased()
+        authToken = generated
+        log(
+            "[ClaudeHookPreferences] auto-generated auth token",
+            fields: ["tokenPrefix": String(generated.prefix(8)) + "..."]
+        )
+        return generated
+    }
+
     static var autoFocusOnSessionEnd: Bool {
         get {
             UserDefaults.standard.object(forKey: autoFocusOnSessionEndKey) as? Bool ?? true
@@ -69,7 +87,11 @@ enum ClaudeHookPreferences {
 
     static func endpointURLString(port: Int? = nil) -> String {
         let effectivePort = normalizePort(port ?? listenPort)
-        return "http://127.0.0.1:\(effectivePort)\(endpointPath)"
+        let token = authToken ?? ""
+        if token.isEmpty {
+            return "http://127.0.0.1:\(effectivePort)\(endpointPath)"
+        }
+        return "http://127.0.0.1:\(effectivePort)\(endpointPath)?token=\(token)"
     }
 
     static func hookCommandExample(port: Int? = nil, token: String? = nil) -> String {
@@ -170,6 +192,7 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
     /// 安全 merge Hook 到 Claude settings.json
     /// 只覆盖 SessionStart/Stop/SessionEnd 三个 key，保留用户其他 hooks 和配置
     static func installHookToClaudeSettings() -> (Bool, String) {
+        ensureTokenGenerated()
         let path = claudeSettingsPath
         let dir = claudeSettingsDir
 
