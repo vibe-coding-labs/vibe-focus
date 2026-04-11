@@ -107,6 +107,13 @@ final class ClaudeHookServer: ObservableObject {
 
     private func handle(connection: NWConnection) {
         connection.start(queue: .main)
+        log(
+            "[ClaudeHookServer] new connection",
+            fields: [
+                "endpoint": String(describing: connection.endpoint),
+                "isLoopback": String(isLoopbackEndpoint(connection.endpoint))
+            ]
+        )
         guard isLoopbackEndpoint(connection.endpoint) else {
             log("[ClaudeHookServer] rejected non-loopback peer: \(connection.endpoint)")
             sendResponse(
@@ -209,6 +216,15 @@ final class ClaudeHookServer: ObservableObject {
 
     private func handleRequest(_ request: ParsedHTTPRequest) -> (statusCode: Int, response: ClaudeHookResponse) {
         let path = request.path.components(separatedBy: "?").first ?? request.path
+        log(
+            "[ClaudeHookServer] request received",
+            fields: [
+                "method": request.method,
+                "path": request.path,
+                "bodySize": String(request.body.count),
+                "contentType": request.headers["content-type"] ?? "nil"
+            ]
+        )
         guard path == ClaudeHookPreferences.endpointPath else {
             return (
                 404,

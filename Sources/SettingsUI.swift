@@ -394,7 +394,7 @@ private struct SettingsView: View {
     @StateObject private var sessionRegistry = SessionWindowRegistry.shared
     @AppStorage(ClaudeHookPreferences.enabledKey) private var hookEnabled = false
     @AppStorage(ClaudeHookPreferences.portKey) private var hookPort = ClaudeHookPreferences.defaultPort
-    @AppStorage(ClaudeHookPreferences.tokenKey) private var hookToken = ""
+    @State private var hookToken: String = ""
     @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) private var autoFocusOnSessionEnd = true
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) private var triggerOnStop = true
     @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) private var triggerOnSessionEnd = false
@@ -1511,6 +1511,8 @@ private struct SettingsView: View {
             hotKeyManager.refreshAccessibilityStatus()
             loginItemManager.refresh()
             refreshInstallations()
+            // 从 ClaudeHookPreferences 加载 token 到 @State
+            hookToken = ClaudeHookPreferences.authToken ?? ""
             logOperationDuration(
                 "[Settings] view onAppear finished",
                 startedAt: startedAt,
@@ -1518,7 +1520,8 @@ private struct SettingsView: View {
                 fields: [
                     "spaceAvailability": spaceController.availability.rawValue,
                     "axTrusted": String(hotKeyManager.accessibilityGranted),
-                    "loginItemEnabled": String(loginItemManager.isEnabled)
+                    "loginItemEnabled": String(loginItemManager.isEnabled),
+                    "hookTokenLoaded": String(!hookToken.isEmpty)
                 ]
             )
         }
