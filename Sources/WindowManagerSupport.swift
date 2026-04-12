@@ -1305,7 +1305,43 @@ extension WindowManager {
     }
 
     func hydrateMemory(from state: SavedWindowState, window: AXUIElement?) {
-        lastWindowElement = window ?? windowElementsByStateID[state.id]
+        let cachedElement = windowElementsByStateID[state.id]
+        let resolvedWindow = window ?? cachedElement
+
+        // 验证缓存的 AX 元素是否仍然有效
+        var effectiveWindow: AXUIElement? = resolvedWindow
+        if let resolvedWindow {
+            let handle = windowHandle(for: resolvedWindow)
+            if handle == nil && state.windowID != nil {
+                // AX 元素已失效（返回 nil windowID），清除缓存
+                log(
+                    "hydrateMemory: cached AX element is stale, clearing",
+                    fields: [
+                        "stateID": state.id,
+                        "expectedWindowID": String(describing: state.windowID)
+                    ]
+                )
+                windowElementsByStateID.removeValue(forKey: state.id)
+                effectiveWindow = nil
+            }
+        }
+
+        // 如果没有有效 AX 元素，尝试按 PID + windowID 主动查找
+        if effectiveWindow == nil, let windowID = state.windowID {
+            effectiveWindow = findWindowByPID(state.pid, windowID: windowID)
+            if let found = effectiveWindow {
+                log(
+                    "hydrateMemory: re-resolved window by PID enumeration",
+                    fields: [
+                        "stateID": state.id,
+                        "windowID": String(windowID)
+                    ]
+                )
+                windowElementsByStateID[state.id] = found
+            }
+        }
+
+        lastWindowElement = effectiveWindow
         lastWindowToken = WindowToken(
             stateID: state.id,
             pid: state.pid,

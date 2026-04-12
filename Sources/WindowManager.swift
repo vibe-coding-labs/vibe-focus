@@ -708,6 +708,19 @@ class WindowManager {
         return (windowRef as! AXUIElement)
     }
 
+    /// 验证 windowID 对应的窗口是否仍然存在于系统中
+    /// 通过 CGWindowList 查询，避免对已销毁窗口的 AX 操作导致 crash
+    func validateWindowExists(windowID: UInt32?) -> Bool {
+        guard let windowID else { return false }
+        let options = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        return windowList.contains { window in
+            (window[kCGWindowNumber as String] as? UInt32) == windowID
+        }
+    }
+
     func restoreWindow(using token: WindowToken) -> AXUIElement? {
         // 第一级匹配：通过 windowID 匹配当前聚焦窗口
         if let focused = focusedWindow(for: token.pid),
@@ -723,6 +736,13 @@ class WindowManager {
            currentWindowID == token.windowID {
             log("Restoring using saved AX handle match")
             return lastWindowElement
+        }
+
+        // 第二级-B：主动按 PID 遍历所有窗口查找匹配 windowID
+        // 这解决了 hook 路径中 hydrateMemory(window:nil) 导致缓存元素过期的问题
+        if let resolvedByPID = findWindowByPID(token.pid, windowID: token.windowID) {
+            log("Restoring using PID-based window enumeration")
+            return resolvedByPID
         }
 
         // 第三级匹配：备用匹配（PID + 标题 + 大致位置）
@@ -746,6 +766,21 @@ class WindowManager {
         return nil
     }
 
+    /// 按 PID 遍历应用的所有窗口，查找匹配 windowID 的窗口
+    /// 用于 hook 路径中缓存 AX 元素过期时的主动查找
+    func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? {
+        guard let windowID else { return nil }
+        let appElement = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        guard status == .success, let windows = windowsRef as? [AXUIElement] else {
+            return nil
+        }
+        return windows.first { window in
+            windowHandle(for: window) == windowID
+        }
+    }
+
     func shouldRestoreAcrossSpaces() -> Bool {
         spaceController.refreshAvailabilityIfNeeded()
         guard spaceController.isEnabled else {
@@ -767,6 +802,20 @@ class WindowManager {
     func applySpaceStrategyForRestore(windowID: UInt32?, operationID: String? = nil) -> Bool {
         guard let windowID else { return true }
         let op = operationID ?? makeOperationID(prefix: "restore-space")
+
+        // 关键安全检查：验证窗口是否仍然存在
+        // 如果窗口已被关闭，跳过所有 space 操作以避免 EXC_BAD_ACCESS
+        if !validateWindowExists(windowID: windowID) {
+            log(
+                "[WindowManager] space strategy aborted: window no longer exists",
+                level: .warn,
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID)
+                ]
+            )
+            return true  // 返回 true 表示"不需要 space 操作"，让调用方继续尝试 frame restore
+        }
 
         spaceController.refreshAvailabilityIfNeeded()
         guard spaceController.isEnabled else {
