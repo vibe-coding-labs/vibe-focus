@@ -258,6 +258,21 @@ final class SpaceController: ObservableObject {
             return false
         }
 
+        // 安全检查：先验证窗口是否存在，防止对已销毁窗口执行 yabai 操作导致 crash
+        let windowCheck = queryWindow(windowID: windowID)
+        if windowCheck == nil {
+            log(
+                "[SpaceController] moveWindow aborted: window does not exist",
+                level: .warn,
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "targetSpace": String(spaceIndex)
+                ]
+            )
+            return false
+        }
+
         // 记录 moveWindow 调用上下文
         let windowBeforeMove = queryWindow(windowID: windowID)
         log(
@@ -456,6 +471,20 @@ final class SpaceController: ObservableObject {
         let op = operationID ?? "none"
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
+            return false
+        }
+
+        // 安全检查：验证窗口是否存在
+        let windowCheck = queryWindow(windowID: windowID)
+        if windowCheck == nil {
+            log(
+                "[SpaceController] focusWindow aborted: window does not exist",
+                level: .warn,
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID)
+                ]
+            )
             return false
         }
 
