@@ -376,6 +376,24 @@ class WindowManager {
             return
         }
 
+        // 预检：如果窗口已在目标（原始）位置，跳过恢复
+        // 防止对已恢复的窗口执行无意义操作，避免与手动快捷键操作冲突
+        if let currentFrame = self.frame(of: window),
+           let targetFrame = lastWindowFrame,
+           framesMatch(currentFrame, targetFrame) {
+            log(
+                "[WindowManager] restore skipped: window already at original position",
+                fields: [
+                    "op": op,
+                    "currentFrame": String(describing: currentFrame),
+                    "targetFrame": String(describing: targetFrame)
+                ]
+            )
+            resetActiveWindowContext(removeState: true)
+            CrashContextRecorder.shared.record("restore_skipped_already_at_original op=\(op)")
+            return
+        }
+
         // 诊断日志：记录找到的窗口的当前状态
         let restoredWindowFrame = self.frame(of: window)
         let restoredWindowID = windowHandle(for: window)
