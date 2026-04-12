@@ -2,6 +2,9 @@
 .DS_Store
 /tmp/
 
+# Build artifacts
+dist/VibeFocus.app/
+
 # Local logs and process files
 *.log
 *.pid
