@@ -138,8 +138,8 @@ final class HotKeyManager: ObservableObject {
         if flags.contains(.maskAlternate) { modifiers |= UInt32(optionKey) }
         if flags.contains(.maskShift) { modifiers |= UInt32(shiftKey) }
 
-        // Debug: log M key and Space key events
-        if keyCode == 46 || keyCode == 49 {
+        // Debug: log Q key and Space key events
+        if keyCode == 12 || keyCode == 49 {
             log("[CGEventTap DEBUG] keyCode=\(keyCode) modifiers=\(modifiers) expected=\(currentHotKey.keyCode)/\(currentHotKey.modifiers)")
         }
 

@@ -7,9 +7,22 @@ enum ClaudeHookPreferences {
     static let autoFocusOnSessionEndKey = "claudeHookAutoFocusOnSessionEnd"
     static let triggerOnStopKey = "claudeHookTriggerOnStop"
     static let triggerOnSessionEndKey = "claudeHookTriggerOnSessionEnd"
+    static let autoRestoreOnPromptSubmitKey = "claudeHookAutoRestoreOnPromptSubmit"
 
     static let endpointPath = "/claude/hook"
     static let defaultPort = 39277
+
+    static var helperScriptDir: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus")
+    }
+
+    static var helperScriptPath: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus/hook-forwarder.sh")
+    }
+
+    static var configFilePath: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus/hook-config.json")
+    }
 
     static var isEnabled: Bool {
         get {
@@ -85,6 +98,11 @@ enum ClaudeHookPreferences {
         set { UserDefaults.standard.set(newValue, forKey: triggerOnSessionEndKey) }
     }
 
+    static var autoRestoreOnPromptSubmit: Bool {
+        get { UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: autoRestoreOnPromptSubmitKey) }
+    }
+
     static func endpointURLString(port: Int? = nil) -> String {
         let effectivePort = normalizePort(port ?? listenPort)
         let token = authToken ?? ""
@@ -140,12 +158,19 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
               let hooks = json["hooks"] as? [String: Any] else {
             return false
         }
+        // 兼容检测 command-type hooks（新）和 HTTP-type hooks（旧）
         let targetURL = endpointURLString()
+        let scriptPath = helperScriptPath
         for (_, entries) in hooks {
             guard let entryList = entries as? [[String: Any]] else { continue }
             for entry in entryList {
                 guard let hookList = entry["hooks"] as? [[String: Any]] else { continue }
                 for hook in hookList {
+                    // 新版 command-type hook
+                    if let command = hook["command"] as? String, command.contains(scriptPath) {
+                        return true
+                    }
+                    // 旧版 HTTP-type hook（向后兼容）
                     if let url = hook["url"] as? String, url == targetURL {
                         return true
                     }
@@ -157,24 +182,124 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
 
     // MARK: - Hook Config Generation
 
-    private static func makeHookEntry(url: String) -> [String: Any] {
+    /// 写入辅助脚本配置文件（端口和 Token）
+    static func writeConfigFile() {
+        let dir = helperScriptDir
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let config: [String: Any] = [
+            "port": listenPort,
+            "token": authToken ?? ""
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: URL(fileURLWithPath: configFilePath), options: .atomic)
+    }
+
+    /// 安装辅助脚本到 ~/.vibefocus/hook-forwarder.sh
+    @discardableResult
+    static func installHelperScript() -> (Bool, String) {
+        let dir = helperScriptDir
+        do {
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        } catch {
+            return (false, "无法创建目录: \(error.localizedDescription)")
+        }
+
+        let content = generateHelperScriptContent()
+        guard let data = content.data(using: .utf8) else {
+            return (false, "无法生成辅助脚本")
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: helperScriptPath), options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helperScriptPath)
+            log("[ClaudeHookPreferences] helper script installed to \(helperScriptPath)")
+            return (true, "辅助脚本已安装")
+        } catch {
+            return (false, "安装辅助脚本失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 移除辅助脚本和配置文件
+    static func removeHelperFiles() {
+        try? FileManager.default.removeItem(atPath: helperScriptPath)
+        try? FileManager.default.removeItem(atPath: configFilePath)
+        log("[ClaudeHookPreferences] helper files removed")
+    }
+
+    /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点
+    private static func generateHelperScriptContent() -> String {
+        """
+        #!/bin/bash
+        set -euo pipefail
+
+        # VibeFocus Hook Forwarder
+        # Captures terminal context and forwards Claude Code hook events to VibeFocus
+
+        VF_CONFIG="$HOME/.vibefocus/hook-config.json"
+        VF_PORT=39277
+        VF_TOKEN=""
+
+        if [ -f "$VF_CONFIG" ]; then
+            VF_PORT=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('port',39277))" 2>/dev/null || echo "39277")
+            VF_TOKEN=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('token',''))" 2>/dev/null || echo "")
+        fi
+
+        VF_PAYLOAD=$(cat)
+
+        VF_TSID="${TERM_SESSION_ID:-}"
+        VF_ISID="${ITERM_SESSION_ID:-}"
+        VF_KWID="${KITTY_WINDOW_ID:-}"
+        VF_WP="${WEZTERM_PANE:-}"
+        VF_TTY=$(tty 2>/dev/null || echo "")
+        VF_PPID="${PPID:-}"
+        VF_CPD="${CLAUDE_PROJECT_DIR:-}"
+        VF_WID="${WINDOWID:-}"
+
+        VF_ENRICHED=$(printf '%s' "$VF_PAYLOAD" | python3 -c "
+        import sys, json
+        d = json.load(sys.stdin)
+        d['terminal_ctx'] = {
+            'term_session_id': sys.argv[1],
+            'iterm_session_id': sys.argv[2],
+            'kitty_window_id': sys.argv[3],
+            'wezterm_pane': sys.argv[4],
+            'tty': sys.argv[5],
+            'ppid': sys.argv[6],
+            'claude_project_dir': sys.argv[7],
+            'window_id': sys.argv[8]
+        }
+        print(json.dumps(d))
+        " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
+
+        VF_URL="http://127.0.0.1:$VF_PORT/claude/hook"
+        if [ -n "$VF_TOKEN" ]; then
+            VF_URL="$VF_URL?token=$VF_TOKEN"
+        fi
+        VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
+        VF_CURL_ARGS+=(--data "$VF_ENRICHED")
+        curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1 || true
+        """
+    }
+
+    private static func makeHookEntry() -> [String: Any] {
         [
             "matcher": "",
             "hooks": [
-                ["type": "http", "url": url, "timeout": 5]
+                ["type": "command", "command": "bash \"\(helperScriptPath)\"", "timeout": 10]
             ]
         ]
     }
 
     static func generateHooksDict() -> [String: Any] {
-        let url = endpointURLString()
         var hooks: [String: Any] = [:]
-        hooks["SessionStart"] = [makeHookEntry(url: url)]
+        hooks["SessionStart"] = [makeHookEntry()]
         if triggerOnStop {
-            hooks["Stop"] = [makeHookEntry(url: url)]
+            hooks["Stop"] = [makeHookEntry()]
         }
         if triggerOnSessionEnd {
-            hooks["SessionEnd"] = [makeHookEntry(url: url)]
+            hooks["SessionEnd"] = [makeHookEntry()]
+        }
+        if autoRestoreOnPromptSubmit {
+            hooks["UserPromptSubmit"] = [makeHookEntry()]
         }
         return hooks
     }
@@ -190,11 +315,21 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
     }
 
     /// 安全 merge Hook 到 Claude settings.json
-    /// 只覆盖 SessionStart/Stop/SessionEnd 三个 key，保留用户其他 hooks 和配置
+    /// 只覆盖 SessionStart/Stop/SessionEnd/UserPromptSubmit 四个 key，保留用户其他 hooks 和配置
     static func installHookToClaudeSettings() -> (Bool, String) {
         ensureTokenGenerated()
         let path = claudeSettingsPath
         let dir = claudeSettingsDir
+
+        // 安装辅助脚本
+        let (scriptOK, scriptMsg) = installHelperScript()
+        if !scriptOK {
+            log("[ClaudeHookPreferences] helper script install failed: \(scriptMsg)", level: .error)
+            return (false, scriptMsg)
+        }
+
+        // 写入配置文件（端口和 Token）
+        writeConfigFile()
 
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -211,12 +346,15 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         }
 
         var existingHooks = (settings["hooks"] as? [String: Any]) ?? [:]
+        // 先清理旧的 VibeFocus hooks（HTTP 和 command 类型）
+        cleanVibeFocusHooks(from: &existingHooks)
         let ourHooks = generateHooksDict()
         for (key, value) in ourHooks {
             existingHooks[key] = value
         }
         if !triggerOnStop { existingHooks.removeValue(forKey: "Stop") }
         if !triggerOnSessionEnd { existingHooks.removeValue(forKey: "SessionEnd") }
+        if !autoRestoreOnPromptSubmit { existingHooks.removeValue(forKey: "UserPromptSubmit") }
         settings["hooks"] = existingHooks
 
         log(
@@ -224,7 +362,8 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
             fields: [
                 "path": path,
                 "hookEvents": existingHooks.keys.sorted().joined(separator: ","),
-                "totalSettingsKeys": String(settings.count)
+                "totalSettingsKeys": String(settings.count),
+                "helperScript": helperScriptPath
             ]
         )
 
@@ -241,6 +380,25 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         }
     }
 
+    /// 从 hooks 字典中清理所有 VibeFocus 相关的 hook 条目（HTTP 和 command 类型）
+    private static func cleanVibeFocusHooks(from hooks: inout [String: Any]) {
+        let targetURL = endpointURLString()
+        let scriptPath = helperScriptPath
+        for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
+            guard var entries = hooks[key] as? [[String: Any]] else { continue }
+            entries.removeAll { entry in
+                guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
+                return hookList.contains { hook in
+                    if let url = hook["url"] as? String, url == targetURL { return true }
+                    if let command = hook["command"] as? String, command.contains(scriptPath) { return true }
+                    return false
+                }
+            }
+            if entries.isEmpty { hooks.removeValue(forKey: key) }
+            else { hooks[key] = entries }
+        }
+    }
+
     /// 从 Claude settings.json 中精确移除 VibeFocus Hook
     static func uninstallHookFromClaudeSettings() -> (Bool, String) {
         let path = claudeSettingsPath
@@ -250,17 +408,7 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
             return (false, "无法读取 Claude 配置")
         }
 
-        let targetURL = endpointURLString()
-        for key in ["SessionStart", "Stop", "SessionEnd"] {
-            guard var entries = hooks[key] as? [[String: Any]] else { continue }
-            entries.removeAll { entry in
-                guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
-                return hookList.contains { $0["url"] as? String == targetURL }
-            }
-            if entries.isEmpty { hooks.removeValue(forKey: key) }
-            else { hooks[key] = entries }
-        }
-
+        cleanVibeFocusHooks(from: &hooks)
         settings["hooks"] = hooks.isEmpty ? nil : hooks
 
         log("[ClaudeHookPreferences] uninstalling hooks from \(path)", fields: ["remainingEvents": hooks.keys.sorted().joined(separator: ",")])
@@ -270,6 +418,8 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         }
         do {
             try outputData.write(to: URL(fileURLWithPath: path), options: .atomic)
+            // 清理辅助文件
+            removeHelperFiles()
             log("[ClaudeHookPreferences] hooks uninstalled successfully")
             return (true, "已移除 Hook")
         } catch {

@@ -4,6 +4,7 @@ enum ClaudeHookEventType: String, Codable, CaseIterable {
     case sessionStart = "SessionStart"
     case stop = "Stop"
     case sessionEnd = "SessionEnd"
+    case userPromptSubmit = "UserPromptSubmit"
 }
 
 enum WindowMoveReason: String, Codable {
@@ -30,6 +31,39 @@ struct SessionWindowBinding: Codable, Equatable {
     var completedAt: Date?
 }
 
+/// Claude Code hook 辅助脚本捕获的终端上下文信息
+/// 用于精确定位 hook 事件对应的终端窗口，解决多工作区/多实例场景下的窗口匹配问题
+struct TerminalContext: Codable, Equatable {
+    let termSessionID: String?
+    let itermSessionID: String?
+    let kittyWindowID: String?
+    let weztermPane: String?
+    let tty: String?
+    let ppid: String?
+    let claudeProjectDir: String?
+    let windowID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case termSessionID = "term_session_id"
+        case itermSessionID = "iterm_session_id"
+        case kittyWindowID = "kitty_window_id"
+        case weztermPane = "wezterm_pane"
+        case tty
+        case ppid
+        case claudeProjectDir = "claude_project_dir"
+        case windowID = "window_id"
+    }
+
+    /// 是否包含可用于窗口匹配的有用上下文
+    var hasUsefulContext: Bool {
+        if let tty, !tty.isEmpty { return true }
+        if let termSessionID, !termSessionID.isEmpty { return true }
+        if let itermSessionID, !itermSessionID.isEmpty { return true }
+        if let ppid, let pid = Int32(ppid), pid > 1 { return true }
+        return false
+    }
+}
+
 struct ClaudeHookPayload: Decodable {
     let event: ClaudeHookEventType
     let sessionID: String
@@ -37,6 +71,7 @@ struct ClaudeHookPayload: Decodable {
     let timestamp: String?
     let cwd: String?
     let model: String?
+    let terminalCtx: TerminalContext?
 
     private enum CodingKeys: String, CodingKey {
         case event
@@ -47,6 +82,7 @@ struct ClaudeHookPayload: Decodable {
         case timestamp
         case cwd
         case model
+        case terminalCtx = "terminal_ctx"
     }
 
     init(from decoder: Decoder) throws {
@@ -80,6 +116,7 @@ struct ClaudeHookPayload: Decodable {
         timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp)
         cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
         model = try container.decodeIfPresent(String.self, forKey: .model)
+        terminalCtx = try container.decodeIfPresent(TerminalContext.self, forKey: .terminalCtx)
     }
 }
 
