@@ -398,15 +398,64 @@ final class SpaceController: ObservableObject {
         )
 
         if steps == 0 {
+            // steps=0 表示目标 space 在目标显示器上已经是可见的
+            // 但全局焦点可能在另一个显示器上，仍需移动光标以切换活跃显示器
+            let currentGlobalSpace = queryFocusedSpace()?.index
+            if currentGlobalSpace == spaceIndex {
+                log(
+                    "[SpaceController] CGEvent fallback skipped: global space matches target",
+                    fields: [
+                        "op": op,
+                        "targetSpace": String(spaceIndex),
+                        "currentGlobalSpace": String(describing: currentGlobalSpace)
+                    ]
+                )
+                return true // 全局焦点已在目标 space
+            }
+
+            // 全局焦点不在目标 space — 移动光标到目标显示器以切换活跃显示器
             log(
-                "[SpaceController] CGEvent fallback skipped: steps=0 (already on target space)",
+                "[SpaceController] steps=0 but global space differs, moving cursor to target display",
                 fields: [
                     "op": op,
                     "targetSpace": String(spaceIndex),
-                    "currentSpace": String(describing: preFocusSpace)
+                    "currentGlobalSpace": String(describing: currentGlobalSpace),
+                    "hasDisplayCenter": String(displayCenterCG(spaceIndex: spaceIndex) != nil)
                 ]
             )
-            return true // 已在目标空间
+
+            let savedCursor = NSEvent.mouseLocation
+            let mainScreenHeight = NSScreen.screens[0].frame.height
+            let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
+
+            if let center = displayCenterCG(spaceIndex: spaceIndex) {
+                if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                            mouseCursorPosition: center, mouseButton: .left) {
+                    moveEvent.post(tap: .cghidEventTap)
+                }
+                usleep(50_000)
+            }
+
+            // 恢复鼠标位置
+            if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                           mouseCursorPosition: savedCursorCG, mouseButton: .left) {
+                restoreEvent.post(tap: .cghidEventTap)
+            }
+
+            usleep(150_000) // 等待显示器切换
+
+            let postSwitchSpace = queryFocusedSpace()?.index
+            log(
+                "[SpaceController] cursor move completed",
+                fields: [
+                    "op": op,
+                    "targetSpace": String(spaceIndex),
+                    "preSwitchGlobalSpace": String(describing: currentGlobalSpace),
+                    "postSwitchGlobalSpace": String(describing: postSwitchSpace),
+                    "reachedTarget": String(postSwitchSpace == spaceIndex)
+                ]
+            )
+            return true
         }
 
         // 关键：Ctrl+Left/Right 只影响鼠标所在显示器的空间
