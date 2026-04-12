@@ -244,22 +244,37 @@ extension WindowManager {
             }
         }
 
-        // 策略 1.5: 通过 PPID 解析 TTY 再匹配
-        // hook-forwarder 的 tty 返回 "not a tty"，但 PPID（Claude Code node 进程）
-        // 关联了终端的 TTY，ps -o tty= -p <PPID> 可以返回有效值
-        if let ppidStr = ctx.ppid, let ppid = Int32(ppidStr), ppid > 1 {
-            if let resolvedTTY = resolveTTY(forPID: ppid) {
-                if let identity = findWindowByTTY(resolvedTTY) {
-                    log(
-                        "[WindowManager] findWindowByTerminalContext matched by resolved TTY from PPID",
-                        fields: [
-                            "ppid": ppidStr,
-                            "resolvedTTY": resolvedTTY,
-                            "app": identity.appName ?? "unknown"
-                        ]
-                    )
-                    return identity
+        // 策略 1.5: 通过 PPID 进程树向上遍历，每层尝试 TTY 解析
+        // hook-forwarder 的 tty 返回 "not a tty"，直接 PPID 可能也没有 TTY
+        // 但进程链上层的 bash/zsh 一定有关联 TTY
+        // 进程链: hook-forwarder → node (hook runner) → node (Claude Code) → bash/zsh → Terminal.app
+        if let ppidStr = ctx.ppid, let startPID = Int32(ppidStr), startPID > 1 {
+            var currentPID = startPID
+            var depth = 0
+            while depth < 10 {
+                if let resolvedTTY = resolveTTY(forPID: currentPID) {
+                    if let identity = findWindowByTTY(resolvedTTY) {
+                        log(
+                            "[WindowManager] findWindowByTerminalContext matched by resolved TTY from PPID tree",
+                            fields: [
+                                "startPID": ppidStr,
+                                "resolvedPID": String(currentPID),
+                                "depth": String(depth),
+                                "resolvedTTY": resolvedTTY,
+                                "app": identity.appName ?? "unknown"
+                            ]
+                        )
+                        return identity
+                    }
                 }
+                // 向上移动到父进程
+                let ppidOutput = runShellCommand("/bin/ps", args: ["-o", "ppid=", "-p", String(currentPID)])
+                guard let nextPIDStr = ppidOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let nextPID = Int32(nextPIDStr), nextPID > 1, nextPID != currentPID else {
+                    break
+                }
+                currentPID = nextPID
+                depth += 1
             }
         }
 
