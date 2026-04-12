@@ -182,7 +182,29 @@ final class ClaudeHookServer: ObservableObject {
     private func handleSessionStart(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        guard let identity = WindowManager.shared.captureFocusedWindowIdentity() else {
+        // 优先使用 terminal context 精确匹配终端窗口
+        var identity: WindowIdentity?
+        if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+            identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            if let identity {
+                log(
+                    "[ClaudeHookServer] SessionStart matched via terminal context",
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "app": identity.appName ?? "unknown",
+                        "title": identity.title ?? "untitled",
+                        "windowID": String(identity.windowID)
+                    ]
+                )
+            }
+        }
+
+        // 回退：捕获当前焦点窗口
+        if identity == nil {
+            identity = WindowManager.shared.captureFocusedWindowIdentity()
+        }
+
+        guard let identity else {
             SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：当前无可绑定窗口")
             return (
                 409,
@@ -613,6 +635,49 @@ final class ClaudeHookServer: ObservableObject {
                 ClaudeHookResponse(
                     ok: true, code: "already_on_main_screen",
                     message: "Window already on main screen, no action needed",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 安全检查：确保绑定的是终端/IDE 窗口
+        // SessionStart 可能绑定到非终端窗口（Chrome、飞书等），这类窗口不应被自动移动
+        let terminalAppNames: Set<String> = [
+            "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
+            "Cursor", "Code", "Visual Studio Code",
+            "com.apple.Terminal", "com.googlecode.iterm2",
+            "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"
+        ]
+        let isTerminalBinding: Bool = {
+            if let appName = binding.windowIdentity.appName, terminalAppNames.contains(appName) {
+                return true
+            }
+            if let bundleID = binding.windowIdentity.bundleIdentifier, terminalAppNames.contains(bundleID) {
+                return true
+            }
+            return false
+        }()
+
+        if !isTerminalBinding {
+            handledRequestCount += 1
+            SessionWindowRegistry.shared.setLastEventDescription(
+                "\(triggerName) 绑定窗口非终端应用：\(binding.windowIdentity.appName ?? "Unknown")"
+            )
+            log(
+                "[ClaudeHookServer] \(triggerName) bound window is non-terminal app, skipping",
+                level: .warn,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "app": binding.windowIdentity.appName ?? "unknown",
+                    "bundleID": binding.windowIdentity.bundleIdentifier ?? "nil",
+                    "windowID": String(binding.windowIdentity.windowID)
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "non_terminal_binding",
+                    message: "Bound window is not a terminal/IDE app, skipping",
                     sessionID: payload.sessionID, handled: false
                 )
             )
