@@ -244,63 +244,104 @@ final class ClaudeHookServer: ObservableObject {
             )
         }
 
-        // 按 sessionID 查找对应的 saved state
+        // 优先级 1: 按 sessionID 查找对应的 saved state
         let matchedState = WindowManager.shared.savedWindowStates.reversed().first { state in
             state.sessionID == payload.sessionID && !WindowManager.shared.isSavedStateCorrupted(state)
         }
 
-        guard let savedState = matchedState else {
+        if let savedState = matchedState {
+            // 从 saved state 恢复到内存
+            WindowManager.shared.hydrateMemory(from: savedState, window: nil)
+
             log(
-                "[ClaudeHookServer] UserPromptSubmit no matching saved state",
-                level: .warn,
+                "[ClaudeHookServer] UserPromptSubmit restoring window",
                 fields: [
                     "sessionID": payload.sessionID,
-                    "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
+                    "stateID": savedState.id,
+                    "app": savedState.appName ?? "unknown",
+                    "windowID": String(describing: savedState.windowID),
+                    "originalFrame": String(describing: savedState.originalFrame.cgRect)
                 ]
             )
+
+            // 执行恢复
+            WindowManager.shared.restore(
+                operationID: makeOperationID(prefix: "hook-restore"),
+                triggerSource: "user_prompt_submit"
+            )
+
+            // 重新激活绑定，使下一个 Stop 事件能再次触发窗口移动
+            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+
+            handledRequestCount += 1
+            SessionWindowRegistry.shared.setLastEventDescription(
+                "UserPromptSubmit 恢复窗口：\(savedState.appName ?? "Unknown")"
+            )
             return (
-                404,
+                200,
                 ClaudeHookResponse(
-                    ok: false, code: "no_saved_state",
-                    message: "No saved window state found for session",
-                    sessionID: payload.sessionID, handled: false
+                    ok: true, code: "window_restored",
+                    message: "Window restored to original position",
+                    sessionID: payload.sessionID, handled: true
                 )
             )
         }
 
-        // 从 saved state 恢复到内存
-        WindowManager.shared.hydrateMemory(from: savedState, window: nil)
-
+        // 优先级 2: sessionID 无匹配时，回退到 shouldRestoreCurrentWindow 逻辑
+        // 复用 hotkey 路径的匹配机制（windowID / PID+title+position）
         log(
-            "[ClaudeHookServer] UserPromptSubmit restoring window",
+            "[ClaudeHookServer] UserPromptSubmit no sessionID match, trying shouldRestoreCurrentWindow fallback",
+            level: .info,
             fields: [
                 "sessionID": payload.sessionID,
-                "stateID": savedState.id,
-                "app": savedState.appName ?? "unknown",
-                "windowID": String(describing: savedState.windowID),
-                "originalFrame": String(describing: savedState.originalFrame.cgRect)
+                "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
             ]
         )
 
-        // 执行恢复
-        WindowManager.shared.restore(
-            operationID: makeOperationID(prefix: "hook-restore"),
-            triggerSource: "user_prompt_submit"
-        )
+        if WindowManager.shared.shouldRestoreCurrentWindow() {
+            log(
+                "[ClaudeHookServer] UserPromptSubmit fallback: shouldRestoreCurrentWindow matched",
+                fields: [
+                    "sessionID": payload.sessionID
+                ]
+            )
 
-        // 重新激活绑定，使下一个 Stop 事件能再次触发窗口移动
-        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            WindowManager.shared.restore(
+                operationID: makeOperationID(prefix: "hook-restore-fallback"),
+                triggerSource: "user_prompt_submit_fallback"
+            )
 
-        handledRequestCount += 1
-        SessionWindowRegistry.shared.setLastEventDescription(
-            "UserPromptSubmit 恢复窗口：\(savedState.appName ?? "Unknown")"
+            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+
+            handledRequestCount += 1
+            SessionWindowRegistry.shared.setLastEventDescription(
+                "UserPromptSubmit 回退恢复窗口"
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "window_restored_fallback",
+                    message: "Window restored via fallback matching",
+                    sessionID: payload.sessionID, handled: true
+                )
+            )
+        }
+
+        // 无匹配
+        log(
+            "[ClaudeHookServer] UserPromptSubmit no matching saved state",
+            level: .warn,
+            fields: [
+                "sessionID": payload.sessionID,
+                "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
+            ]
         )
         return (
-            200,
+            404,
             ClaudeHookResponse(
-                ok: true, code: "window_restored",
-                message: "Window restored to original position",
-                sessionID: payload.sessionID, handled: true
+                ok: false, code: "no_saved_state",
+                message: "No saved window state found for session",
+                sessionID: payload.sessionID, handled: false
             )
         )
     }
@@ -453,13 +494,67 @@ final class ClaudeHookServer: ObservableObject {
             )
         }
 
+        // 安全检查：findClaudeCodeWindow 的 Strategy 4（焦点窗口回退）
+        // 可能返回非终端/IDE 窗口（Chrome、飞书等），这类窗口不应被自动移动
+        let terminalAppNames: Set<String> = [
+            "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
+            "Cursor", "Code", "Visual Studio Code",
+            "com.apple.Terminal", "com.googlecode.iterm2",
+            "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"
+        ]
+        let isTerminalApp: Bool = {
+            if let appName = focusedIdentity.appName, terminalAppNames.contains(appName) {
+                return true
+            }
+            if let bundleID = focusedIdentity.bundleIdentifier, terminalAppNames.contains(bundleID) {
+                return true
+            }
+            return false
+        }()
+
+        // 如果 cwd 匹配到了非终端窗口（如 Chrome），检查窗口标题是否包含 cwd 项目名
+        // 只有标题明确包含项目名时才认为是 Claude Code 相关窗口
+        if !isTerminalApp {
+            let projectName = payload.cwd?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                .components(separatedBy: "/")
+                .last?
+                .lowercased()
+            let titleContainsProject = projectName.map { p in
+                (focusedIdentity.title ?? "").lowercased().contains(p)
+            } ?? false
+
+            if !titleContainsProject {
+                unmatchedSessionCount += 1
+                log(
+                    "[ClaudeHookServer] \(triggerName) cwd fallback matched non-terminal app without project name in title, skipping",
+                    level: .warn,
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "app": focusedIdentity.appName ?? "unknown",
+                        "title": focusedIdentity.title ?? "untitled",
+                        "windowID": String(focusedIdentity.windowID)
+                    ]
+                )
+                return (
+                    404,
+                    ClaudeHookResponse(
+                        ok: false, code: "non_terminal_window",
+                        message: "Matched non-terminal window without project name correlation",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+        }
+
         log(
             "[ClaudeHookServer] \(triggerName) using cwd fallback",
             fields: [
                 "sessionID": payload.sessionID,
                 "app": focusedIdentity.appName ?? "unknown",
                 "title": focusedIdentity.title ?? "untitled",
-                "windowID": String(focusedIdentity.windowID)
+                "windowID": String(focusedIdentity.windowID),
+                "isTerminalApp": String(isTerminalApp)
             ]
         )
 
