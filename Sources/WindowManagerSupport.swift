@@ -233,14 +233,33 @@ extension WindowManager {
     /// 通过 hook 辅助脚本捕获的终端上下文精确定位窗口
     /// 解决多工作区/多 Claude Code 实例场景下的窗口匹配问题
     func findWindowByTerminalContext(_ ctx: TerminalContext) -> WindowIdentity? {
-        // 策略 1: 通过 TTY 匹配 Terminal.app / iTerm2 窗口
-        if let tty = ctx.tty, !tty.isEmpty {
+        // 策略 1: 通过 TTY 匹配 Terminal.app / iTerm2 窗口（原始路径）
+        if let tty = ctx.tty, !tty.isEmpty, tty != "not a tty" {
             if let identity = findWindowByTTY(tty) {
                 log(
                     "[WindowManager] findWindowByTerminalContext matched by TTY",
                     fields: ["tty": tty, "app": identity.appName ?? "unknown"]
                 )
                 return identity
+            }
+        }
+
+        // 策略 1.5: 通过 PPID 解析 TTY 再匹配
+        // hook-forwarder 的 tty 返回 "not a tty"，但 PPID（Claude Code node 进程）
+        // 关联了终端的 TTY，ps -o tty= -p <PPID> 可以返回有效值
+        if let ppidStr = ctx.ppid, let ppid = Int32(ppidStr), ppid > 1 {
+            if let resolvedTTY = resolveTTY(forPID: ppid) {
+                if let identity = findWindowByTTY(resolvedTTY) {
+                    log(
+                        "[WindowManager] findWindowByTerminalContext matched by resolved TTY from PPID",
+                        fields: [
+                            "ppid": ppidStr,
+                            "resolvedTTY": resolvedTTY,
+                            "app": identity.appName ?? "unknown"
+                        ]
+                    )
+                    return identity
+                }
             }
         }
 
@@ -266,6 +285,18 @@ extension WindowManager {
             ]
         )
         return nil
+    }
+
+    /// 通过 ps 命令解析指定 PID 进程关联的 TTY 设备
+    /// Claude Code (node) 由终端启动，ps -o tty= 可返回有效 TTY（如 ttys001）
+    /// 即使 hook-forwarder 自身 tty 命令返回 "not a tty"
+    private func resolveTTY(forPID pid: Int32) -> String? {
+        let output = runShellCommand("/bin/ps", args: ["-o", "tty=", "-p", String(pid)])
+        let tty = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if tty.isEmpty || tty == "??" || tty == "?" {
+            return nil
+        }
+        return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
     }
 
     /// 通过 TTY 查找 Terminal.app / iTerm2 窗口
