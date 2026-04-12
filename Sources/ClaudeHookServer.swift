@@ -593,6 +593,31 @@ final class ClaudeHookServer: ObservableObject {
             )
         }
 
+        // 预检：如果窗口已在主屏幕上，跳过移动
+        // 防止对已在主屏的窗口执行无意义移动，避免保存错误状态
+        if WindowManager.shared.isWindowOnMainScreen(windowID: binding.windowIdentity.windowID) {
+            handledRequestCount += 1
+            SessionWindowRegistry.shared.setLastEventDescription(
+                "\(triggerName) 窗口已在主屏幕，跳过移动"
+            )
+            log(
+                "[ClaudeHookServer] \(triggerName) window already on main screen, skipping move",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "windowID": String(binding.windowIdentity.windowID),
+                    "app": binding.windowIdentity.appName ?? "unknown"
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "already_on_main_screen",
+                    message: "Window already on main screen, no action needed",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
         log(
             "[ClaudeHookServer] \(triggerName) moving window",
             fields: [
