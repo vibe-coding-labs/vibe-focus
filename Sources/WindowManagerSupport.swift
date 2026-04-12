@@ -317,6 +317,31 @@ extension WindowManager {
         return nil
     }
 
+    /// 通过 CGWindowList 检查指定窗口是否当前在主屏幕上
+    /// 用于 hook 路径在执行窗口移动前的预检，避免对已在主屏的窗口执行无意义的移动
+    func isWindowOnMainScreen(windowID: UInt32) -> Bool {
+        let options = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        guard let mainScreen = getMainScreen() else { return false }
+        let mainScreenFrame = mainScreen.frame
+
+        for info in windowList {
+            guard let id = info[kCGWindowNumber as String] as? UInt32,
+                  id == windowID else { continue }
+            let bounds = info[kCGWindowBounds as String] as? [String: CGFloat]
+            guard let bounds else { return false }
+            let windowFrame = CGRect(
+                x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
+                width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
+            )
+            let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
+            return mainScreenFrame.contains(center)
+        }
+        return false
+    }
+
     /// 通过 TTY 在 Terminal.app 中查找窗口
     private func findTerminalAppWindowByTTY(_ fullTTY: String) -> WindowIdentity? {
         let script = """
