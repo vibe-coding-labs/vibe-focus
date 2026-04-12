@@ -199,6 +199,14 @@ final class SpaceController: ObservableObject {
         return window.space
     }
 
+    func windowDisplayIndex(windowID: UInt32) -> Int? {
+        refreshAvailabilityIfNeeded()
+        guard isEnabled, let window = queryWindow(windowID: windowID) else {
+            return nil
+        }
+        return window.display
+    }
+
     func globalSpaceIndex(displayIndex: Int, localSpaceIndex: Int) -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
