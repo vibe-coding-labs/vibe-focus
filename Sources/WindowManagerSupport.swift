@@ -7,6 +7,16 @@ import Foundation
 
 @MainActor
 extension WindowManager {
+
+    private struct WindowCandidate {
+        let windowID: UInt32
+        let pid: pid_t
+        let appName: String
+        let bundleIdentifier: String?
+        let title: String
+        let isOnMainScreen: Bool
+    }
+
     func candidateApplications(for token: WindowToken) -> [NSRunningApplication] {
         var applications: [NSRunningApplication] = []
 
@@ -54,6 +64,448 @@ extension WindowManager {
             title: title(of: windowAX),
             capturedAt: Date()
         )
+    }
+
+    /// 在所有窗口中查找最可能是 Claude Code 会话对应的窗口
+    /// 策略优先级：
+    ///   0. 通过终端上下文（TTY/SESSION_ID）精确匹配（command-type hook 提供）
+    ///   1. Terminal/Cursor 等 IDE 窗口中标题包含 cwd 项目名的窗口（在非主屏幕上）
+    ///   2. 任意窗口中标题包含 cwd 项目名（在非主屏幕上）
+    ///   3. 包含 "Claude Code" 关键词的窗口（在非主屏幕上）
+    ///   4. 当前前台窗口
+    func findClaudeCodeWindow(cwd: String?) -> WindowIdentity? {
+        let options = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        let mainScreen = getMainScreen()
+        let mainScreenFrame = mainScreen?.frame
+
+        // 从 cwd 中提取项目名（最后一段路径）
+        let projectName = cwd?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .components(separatedBy: "/")
+            .last?
+            .lowercased()
+
+        // Claude Code 常用的终端/IDE 的 bundleIdentifier
+        let claudeHostApps: Set<String> = [
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "com.microsoft.VSCode",
+            "com.todesktop.230313mzl4w4u92", // Cursor
+            "dev.warp.Warp-Stable",
+            "com.mitchellh.ghostty",
+        ]
+
+        // 构建候选窗口列表
+        var candidates: [WindowCandidate] = []
+        for info in windowList {
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            guard layer == 0 else { continue } // 只看普通窗口
+
+            guard let windowID = info[kCGWindowNumber as String] as? UInt32,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t else {
+                continue
+            }
+
+            let appName = info[kCGWindowOwnerName as String] as? String ?? ""
+            let title = info["kCGWindowName"] as? String ?? info["name"] as? String ?? ""
+            let bounds = info[kCGWindowBounds as String] as? [String: CGFloat]
+            let isOnMainScreen: Bool
+            if let bounds, let mainScreenFrame {
+                let windowFrame = CGRect(
+                    x: bounds["X"] ?? 0,
+                    y: bounds["Y"] ?? 0,
+                    width: bounds["Width"] ?? 0,
+                    height: bounds["Height"] ?? 0
+                )
+                let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
+                isOnMainScreen = mainScreenFrame.contains(center)
+            } else {
+                isOnMainScreen = false
+            }
+
+            // 获取 bundleIdentifier
+            let bundleIdentifier: String?
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                bundleIdentifier = app.bundleIdentifier
+            } else {
+                bundleIdentifier = nil
+            }
+
+            candidates.append(WindowCandidate(
+                windowID: windowID,
+                pid: pid,
+                appName: appName,
+                bundleIdentifier: bundleIdentifier,
+                title: title,
+                isOnMainScreen: isOnMainScreen
+            ))
+        }
+
+        // 策略 1：Claude Host App 窗口中标题包含 cwd 项目名且在非主屏幕
+        if let projectName, !projectName.isEmpty {
+            let match = candidates.first(where: { c in
+                let isHostApp = (c.bundleIdentifier.map { claudeHostApps.contains($0) } ?? false)
+                    || c.appName == "Terminal" || c.appName == "iTerm2" || c.appName == "Cursor"
+                    || c.appName == "Warp" || c.appName == "Ghostty" || c.appName == "Alacritty"
+                return isHostApp && !c.isOnMainScreen && c.title.lowercased().contains(projectName)
+            })
+            if let match {
+                log(
+                    "[WindowManager] findClaudeCodeWindow matched strategy 1: hostApp+cwd",
+                    fields: [
+                        "app": match.appName,
+                        "title": truncateForLog(match.title, limit: 80),
+                        "windowID": String(match.windowID),
+                        "projectName": projectName
+                    ]
+                )
+                return makeIdentity(from: match)
+            }
+        }
+
+        // 策略 2：任意窗口标题包含 cwd 项目名且在非主屏幕
+        if let projectName, !projectName.isEmpty {
+            let match = candidates.first(where: { c in
+                !c.isOnMainScreen && c.title.lowercased().contains(projectName)
+            })
+            if let match {
+                log(
+                    "[WindowManager] findClaudeCodeWindow matched strategy 2: anyApp+cwd",
+                    fields: [
+                        "app": match.appName,
+                        "title": truncateForLog(match.title, limit: 80),
+                        "windowID": String(match.windowID),
+                        "projectName": projectName
+                    ]
+                )
+                return makeIdentity(from: match)
+            }
+        }
+
+        // 策略 3：包含 "Claude Code" 关键词的窗口（在非主屏幕上）
+        let claudeMatch = candidates.first(where: { c in
+            !c.isOnMainScreen && c.title.lowercased().contains("claude code")
+        })
+        if let claudeMatch {
+            log(
+                "[WindowManager] findClaudeCodeWindow matched strategy 3: claudeCode keyword",
+                fields: [
+                    "app": claudeMatch.appName,
+                    "title": truncateForLog(claudeMatch.title, limit: 80),
+                    "windowID": String(claudeMatch.windowID)
+                ]
+            )
+            return makeIdentity(from: claudeMatch)
+        }
+
+        // 策略 4：回退到前台窗口
+        log(
+            "[WindowManager] findClaudeCodeWindow falling back to focused window",
+            fields: [
+                "cwd": cwd ?? "nil",
+                "projectName": projectName ?? "nil",
+                "candidateCount": String(candidates.count)
+            ]
+        )
+        return captureFocusedWindowIdentity()
+    }
+
+    private func makeIdentity(from candidate: WindowCandidate) -> WindowIdentity {
+        let bundleID = candidate.bundleIdentifier
+            ?? NSRunningApplication(processIdentifier: candidate.pid)?.bundleIdentifier
+        return WindowIdentity(
+            windowID: candidate.windowID,
+            pid: candidate.pid,
+            bundleIdentifier: bundleID,
+            appName: candidate.appName,
+            windowNumber: nil,
+            title: candidate.title,
+            capturedAt: Date()
+        )
+    }
+
+    // MARK: - Terminal Context Window Matching
+
+    /// 通过 hook 辅助脚本捕获的终端上下文精确定位窗口
+    /// 解决多工作区/多 Claude Code 实例场景下的窗口匹配问题
+    func findWindowByTerminalContext(_ ctx: TerminalContext) -> WindowIdentity? {
+        // 策略 1: 通过 TTY 匹配 Terminal.app / iTerm2 窗口
+        if let tty = ctx.tty, !tty.isEmpty {
+            if let identity = findWindowByTTY(tty) {
+                log(
+                    "[WindowManager] findWindowByTerminalContext matched by TTY",
+                    fields: ["tty": tty, "app": identity.appName ?? "unknown"]
+                )
+                return identity
+            }
+        }
+
+        // 策略 2: 通过 PPID 进程树匹配（适用于 IDE 集成终端等场景）
+        if let ppidStr = ctx.ppid, let shellPID = Int32(ppidStr), shellPID > 1 {
+            if let identity = findWindowByProcessAncestor(pid: shellPID) {
+                log(
+                    "[WindowManager] findWindowByTerminalContext matched by process ancestor",
+                    fields: ["ppid": ppidStr, "app": identity.appName ?? "unknown"]
+                )
+                return identity
+            }
+        }
+
+        log(
+            "[WindowManager] findWindowByTerminalContext: no match",
+            level: .warn,
+            fields: [
+                "tty": ctx.tty ?? "nil",
+                "ppid": ctx.ppid ?? "nil",
+                "termSessionID": ctx.termSessionID ?? "nil",
+                "itermSessionID": ctx.itermSessionID ?? "nil"
+            ]
+        )
+        return nil
+    }
+
+    /// 通过 TTY 查找 Terminal.app / iTerm2 窗口
+    /// 每个终端标签页有唯一的 TTY 设备，通过 JXA 查询匹配
+    private func findWindowByTTY(_ tty: String) -> WindowIdentity? {
+        let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+
+        // 尝试 Terminal.app
+        if let identity = findTerminalAppWindowByTTY(fullTTY) {
+            return identity
+        }
+
+        // 尝试 iTerm2
+        if let identity = findiTerm2WindowByTTY(fullTTY) {
+            return identity
+        }
+
+        return nil
+    }
+
+    /// 通过 TTY 在 Terminal.app 中查找窗口
+    private func findTerminalAppWindowByTTY(_ fullTTY: String) -> WindowIdentity? {
+        let script = """
+        const terminal = Application('Terminal');
+        const windows = terminal.windows();
+        for (let i = 0; i < windows.length; i++) {
+            const w = windows[i];
+            const tabs = w.tabs();
+            for (let j = 0; j < tabs.length; j++) {
+                try {
+                    if (tabs[j].tty() === '\(fullTTY)') {
+                        JSON.stringify({found: true, windowName: w.name()});
+                    }
+                } catch(e) {}
+            }
+        }
+        JSON.stringify({found: false});
+        """
+
+        guard let output = runJXAScript(script) else { return nil }
+
+        // 解析 JXA 结果
+        struct TTYMatchResult: Decodable {
+            let found: Bool
+            let windowName: String?
+        }
+
+        guard let data = output.data(using: .utf8),
+              let result = try? JSONDecoder().decode(TTYMatchResult.self, from: data),
+              result.found,
+              let windowName = result.windowName else {
+            return nil
+        }
+
+        // 在 CGWindowList 中查找 Terminal.app 窗口，匹配窗口名称
+        return findWindowInCGList(ownerName: "Terminal", windowTitle: windowName)
+    }
+
+    /// 通过 TTY 在 iTerm2 中查找窗口
+    private func findiTerm2WindowByTTY(_ fullTTY: String) -> WindowIdentity? {
+        let script = """
+        const iterm = Application('iTerm');
+        const windows = iterm.windows();
+        for (let i = 0; i < windows.length; i++) {
+            const w = windows[i];
+            const tabs = w.tabs();
+            for (let j = 0; j < tabs.length; j++) {
+                const sessions = tabs[j].sessions();
+                for (let k = 0; k < sessions.length; k++) {
+                    try {
+                        if (sessions[k].tty() === '\(fullTTY)') {
+                            JSON.stringify({found: true, windowName: w.name()});
+                        }
+                    } catch(e) {}
+                }
+            }
+        }
+        JSON.stringify({found: false});
+        """
+
+        guard let output = runJXAScript(script) else { return nil }
+
+        struct TTYMatchResult: Decodable {
+            let found: Bool
+            let windowName: String?
+        }
+
+        guard let data = output.data(using: .utf8),
+              let result = try? JSONDecoder().decode(TTYMatchResult.self, from: data),
+              result.found,
+              let windowName = result.windowName else {
+            return nil
+        }
+
+        return findWindowInCGList(ownerName: "iTerm2", windowTitle: windowName)
+    }
+
+    /// 在 CGWindowList 中按 owner + title 查找窗口
+    private func findWindowInCGList(ownerName: String, windowTitle: String) -> WindowIdentity? {
+        let options = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        for info in windowList {
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            guard layer == 0 else { continue }
+
+            let appName = info[kCGWindowOwnerName as String] as? String ?? ""
+            let title = info["kCGWindowName"] as? String ?? info["name"] as? String ?? ""
+
+            guard appName == ownerName && title == windowTitle else { continue }
+
+            guard let windowID = info[kCGWindowNumber as String] as? UInt32,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t else {
+                continue
+            }
+
+            let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+            return WindowIdentity(
+                windowID: windowID,
+                pid: pid,
+                bundleIdentifier: bundleID,
+                appName: appName,
+                windowNumber: nil,
+                title: title,
+                capturedAt: Date()
+            )
+        }
+
+        return nil
+    }
+
+    /// 通过进程 PID 向上遍历进程树，找到终端/IDE 应用对应的窗口
+    private func findWindowByProcessAncestor(pid: Int32) -> WindowIdentity? {
+        // 已知的终端和 IDE 应用名称
+        let terminalAppNames: Set<String> = [
+            "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
+            "Cursor", "Code", "Visual Studio Code",
+            "com.apple.Terminal", "com.googlecode.iterm2",
+            "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"
+        ]
+
+        // 向上遍历进程树，最多 10 层
+        var currentPID = pid
+        for _ in 0..<10 {
+            // 获取进程名
+            let nameOutput = runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(currentPID)])
+            let name = nameOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            if terminalAppNames.contains(name) {
+                // 找到终端/IDE 应用，查找其窗口
+                return findWindowByPIDForTerminal(currentPID, appName: name)
+            }
+
+            // 获取父进程 PID
+            let ppidOutput = runShellCommand("/bin/ps", args: ["-o", "ppid=", "-p", String(currentPID)])
+            guard let ppidStr = ppidOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let parentPID = Int32(ppidStr), parentPID > 1 else {
+                break
+            }
+            currentPID = parentPID
+        }
+
+        return nil
+    }
+
+    /// 通过 PID 查找终端应用的窗口（优先选非主屏幕窗口）
+    private func findWindowByPIDForTerminal(_ pid: Int32, appName: String) -> WindowIdentity? {
+        let options = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        let mainScreen = getMainScreen()
+        let mainScreenFrame = mainScreen?.frame
+
+        var bestCandidate: (windowID: UInt32, title: String, isOnMainScreen: Bool)?
+
+        for info in windowList {
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            guard layer == 0 else { continue }
+
+            guard let windowPID = info[kCGWindowOwnerPID as String] as? pid_t,
+                  windowPID == pid,
+                  let windowID = info[kCGWindowNumber as String] as? UInt32 else {
+                continue
+            }
+
+            let title = info["kCGWindowName"] as? String ?? info["name"] as? String ?? ""
+            let bounds = info[kCGWindowBounds as String] as? [String: CGFloat]
+            let isOnMainScreen: Bool
+            if let bounds, let mainScreenFrame {
+                let frame = CGRect(
+                    x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
+                    width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
+                )
+                isOnMainScreen = mainScreenFrame.contains(CGPoint(x: frame.midX, y: frame.midY))
+            } else {
+                isOnMainScreen = false
+            }
+
+            // 优先选非主屏幕窗口
+            if bestCandidate == nil || (!isOnMainScreen && bestCandidate!.isOnMainScreen) {
+                bestCandidate = (windowID, title, isOnMainScreen)
+            }
+        }
+
+        guard let match = bestCandidate else { return nil }
+
+        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        return WindowIdentity(
+            windowID: match.windowID,
+            pid: pid,
+            bundleIdentifier: bundleID,
+            appName: appName,
+            windowNumber: nil,
+            title: match.title,
+            capturedAt: Date()
+        )
+    }
+
+    /// 执行 shell 命令并返回输出
+    private func runShellCommand(_ executable: String, args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = args
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
+        }
     }
 
     func resolveWindow(identity: WindowIdentity) -> AXUIElement? {
@@ -411,9 +863,18 @@ extension WindowManager {
         // 第一级匹配：通过 windowID
         if let currentWindowID = snapshot.windowID,
            let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
-            hydrateMemory(from: matchedState, window: nil)
-            log("Detected moved window state via System Events handle: \(currentWindowID)")
-            return true
+            if isSavedStateCorrupted(matchedState) {
+                log(
+                    "System Events match found but state is corrupted, clearing",
+                    level: .warn,
+                    fields: ["stateID": matchedState.id, "windowID": String(describing: currentWindowID)]
+                )
+                clearSavedWindowState(id: matchedState.id)
+            } else {
+                hydrateMemory(from: matchedState, window: nil)
+                log("Detected moved window state via System Events handle: \(currentWindowID)")
+                return true
+            }
         }
 
         // 第二级匹配：通过 PID + 窗口标题 + 大致位置
@@ -430,9 +891,18 @@ extension WindowManager {
             let yDiff = abs(snapshot.y - targetFrame.origin.y)
             return xDiff <= positionTolerance && yDiff <= positionTolerance
         }) {
-            hydrateMemory(from: matchedState, window: nil)
-            log("Detected moved window state via System Events fallback matching (PID+title+position)")
-            return true
+            if isSavedStateCorrupted(matchedState) {
+                log(
+                    "System Events fallback match found but state is corrupted, clearing",
+                    level: .warn,
+                    fields: ["stateID": matchedState.id]
+                )
+                clearSavedWindowState(id: matchedState.id)
+            } else {
+                hydrateMemory(from: matchedState, window: nil)
+                log("Detected moved window state via System Events fallback matching (PID+title+position)")
+                return true
+            }
         }
 
         return false
@@ -768,6 +1238,15 @@ extension WindowManager {
 
     @discardableResult
     func saveWindowState(_ state: SavedWindowState, window: AXUIElement? = nil) -> SavedWindowState {
+        // 先清理过期 state
+        let maxAge: TimeInterval = 24 * 60 * 60
+        let now = Date()
+        let expiredBefore = savedWindowStates.count
+        savedWindowStates.removeAll { existing in
+            now.timeIntervalSince(existing.savedAt) > maxAge
+        }
+        let expiredRemoved = expiredBefore - savedWindowStates.count
+
         savedWindowStates.removeAll { existing in
             shouldReplaceSavedState(existing, with: state, currentWindow: window)
         }
@@ -779,7 +1258,10 @@ extension WindowManager {
         }
 
         persistSavedWindowStates()
-        log("Persisted window states to UserDefaults: \(savedWindowStates.count)")
+        log(
+            "Persisted window states to UserDefaults: \(savedWindowStates.count)",
+            fields: expiredRemoved > 0 ? ["expiredEvicted": String(expiredRemoved)] : [:]
+        )
         return state
     }
 

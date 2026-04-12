@@ -385,7 +385,7 @@ struct HotKeyConfiguration: Codable, Equatable {
         modifiers: UInt32(controlKey | optionKey | cmdKey)
     )
     static let `default` = HotKeyConfiguration(
-        keyCode: UInt32(kVK_ANSI_M),
+        keyCode: UInt32(kVK_ANSI_Q),
         modifiers: UInt32(controlKey)
     )
 

@@ -398,6 +398,7 @@ private struct SettingsView: View {
     @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) private var autoFocusOnSessionEnd = true
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) private var triggerOnStop = true
     @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) private var triggerOnSessionEnd = false
+    @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) private var autoRestoreOnPromptSubmit = true
     @State private var hookInstallMessage: String?
     @State private var hookInstallSucceeded = false
 
@@ -959,7 +960,7 @@ private struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("工作原理")
                                     .font(.system(size: 13, weight: .semibold))
-                                Text("开启服务并安装 Hook 后，Claude Code 会在每次对话开始和结束时通知 VibeFocus。对话结束时，VibeFocus 自动将终端窗口移动到主屏幕并最大化 — 你可以用 ⌃M 快捷键恢复原位。")
+                                Text("开启服务并安装 Hook 后，Claude Code 会在对话结束时自动将终端窗口移到主屏幕。开启「提交后自动恢复」后，在你提交新提示词时窗口会自动回到原来的位置 — 无需手动按快捷键。")
                                     .font(.system(size: 12))
                                     .foregroundStyle(.secondary)
                                     .lineSpacing(2)
@@ -1074,6 +1075,28 @@ private struct SettingsView: View {
                         }
 
                         Text("Stop：每次 Claude 回复完成后触发。SessionEnd：Claude 进程退出时触发。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+
+                        Divider()
+
+                        // === 自动恢复 ===
+                        SettingsRow(
+                            title: "提交后自动恢复",
+                            detail: "提交新提示词时，自动将窗口恢复到原来的屏幕、工作区和位置"
+                        ) {
+                            Toggle("", isOn: Binding(
+                                get: { autoRestoreOnPromptSubmit },
+                                set: { newValue in
+                                    autoRestoreOnPromptSubmit = newValue
+                                    ClaudeHookPreferences.autoRestoreOnPromptSubmit = newValue
+                                }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.checkbox)
+                        }
+
+                        Text("与「对话完成移到主屏幕」配合使用，实现全自动的窗口来回切换。")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
 

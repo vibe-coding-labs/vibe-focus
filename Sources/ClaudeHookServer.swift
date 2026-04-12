@@ -1,5 +1,5 @@
 import Foundation
-import Network
+@preconcurrency import GCDWebServer
 
 @MainActor
 final class ClaudeHookServer: ObservableObject {
@@ -13,11 +13,9 @@ final class ClaudeHookServer: ObservableObject {
     @Published private(set) var handledRequestCount = 0
     @Published private(set) var unmatchedSessionCount = 0
 
-    private var listener: NWListener?
+    private var server: GCDWebServer?
     private var activePort: Int?
     private var configuredToken: String?
-    private let maxRequestSize = 64 * 1024
-    private let receiveChunkSize = 8 * 1024
 
     private init() {}
 
@@ -30,8 +28,8 @@ final class ClaudeHookServer: ObservableObject {
     }
 
     func stop() {
-        listener?.cancel()
-        listener = nil
+        server?.stop()
+        server = nil
         isRunning = false
         activePort = nil
         configuredToken = nil
@@ -44,31 +42,68 @@ final class ClaudeHookServer: ObservableObject {
         }
         stop()
 
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+        guard port >= 1024, port <= 65535 else {
             isRunning = false
             statusDescription = "端口无效"
             lastErrorMessage = "Invalid port: \(port)"
             return
         }
 
+        let webServer = GCDWebServer()
+
+        webServer.addHandler(
+            forMethod: "POST",
+            path: ClaudeHookPreferences.endpointPath,
+            request: GCDWebServerDataRequest.self,
+            asyncProcessBlock: { [weak self] request, completionBlock in
+                Task { @MainActor in
+                    guard let self else {
+                        let body = Data("{\"ok\":false,\"code\":\"server_error\"}".utf8)
+                        let r = GCDWebServerDataResponse(data: body, contentType: "application/json")
+                        r.statusCode = 500
+                        completionBlock(r)
+                        return
+                    }
+
+                    guard let dataRequest = request as? GCDWebServerDataRequest else {
+                        completionBlock(
+                            self.makeJSONResponse(
+                                statusCode: 400,
+                                response: ClaudeHookResponse(
+                                    ok: false, code: "bad_request",
+                                    message: "Invalid request body",
+                                    sessionID: nil, handled: false
+                                )
+                            )
+                        )
+                        return
+                    }
+
+                    let result = self.handleHookRequest(
+                        body: dataRequest.data,
+                        query: request.query ?? [:],
+                        headers: request.headers
+                    )
+                    completionBlock(
+                        self.makeJSONResponse(statusCode: result.statusCode, response: result.response)
+                    )
+                }
+            }
+        )
+
         do {
-            let listener = try NWListener(using: .tcp, on: nwPort)
-            listener.newConnectionHandler = { [weak self] connection in
-                Task { @MainActor in
-                    self?.handle(connection: connection)
-                }
-            }
-            listener.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in
-                    self?.handleListenerState(state, port: port)
-                }
-            }
-            listener.start(queue: .main)
-            self.listener = listener
+            try webServer.start(options: [
+                GCDWebServerOption_Port: UInt(port),
+                GCDWebServerOption_BindToLocalhost: true
+            ])
+            self.server = webServer
             self.activePort = port
             self.configuredToken = token
-            self.statusDescription = "启动中..."
+            self.isRunning = true
+            self.statusDescription = "监听中 127.0.0.1:\(port)"
             self.lastErrorMessage = nil
+            log("[ClaudeHookServer] listening on 127.0.0.1:\(port)")
+            NotificationCenter.default.post(name: .hookServerStateChanged, object: nil)
         } catch {
             isRunning = false
             statusDescription = "启动失败"
@@ -77,184 +112,24 @@ final class ClaudeHookServer: ObservableObject {
         }
     }
 
-    private func handleListenerState(_ state: NWListener.State, port: Int) {
-        switch state {
-        case .ready:
-            isRunning = true
-            statusDescription = "监听中 127.0.0.1:\(port)"
-            lastErrorMessage = nil
-            log("[ClaudeHookServer] listening on 127.0.0.1:\(port)")
-            NotificationCenter.default.post(name: .hookServerStateChanged, object: nil)
-        case .failed(let error):
-            isRunning = false
-            statusDescription = "监听失败"
-            lastErrorMessage = error.localizedDescription
-            log("[ClaudeHookServer] listener failed: \(error.localizedDescription)")
-            listener?.cancel()
-            listener = nil
-            NotificationCenter.default.post(name: .hookServerStateChanged, object: nil)
-            isRunning = false
-            statusDescription = "未启动"
-        case .waiting(let error):
-            isRunning = false
-            statusDescription = "等待中"
-            lastErrorMessage = error.localizedDescription
-            log("[ClaudeHookServer] listener waiting: \(error.localizedDescription)")
-        default:
-            break
-        }
-    }
+    // MARK: - Request Handling
 
-    private func handle(connection: NWConnection) {
-        connection.start(queue: .main)
-        log(
-            "[ClaudeHookServer] new connection",
-            fields: [
-                "endpoint": String(describing: connection.endpoint),
-                "isLoopback": String(isLoopbackEndpoint(connection.endpoint))
-            ]
-        )
-        guard isLoopbackEndpoint(connection.endpoint) else {
-            log("[ClaudeHookServer] rejected non-loopback peer: \(connection.endpoint)")
-            sendResponse(
-                on: connection,
-                statusCode: 403,
-                response: ClaudeHookResponse(
-                    ok: false,
-                    code: "forbidden_remote",
-                    message: "Only loopback connections are allowed",
-                    sessionID: nil,
-                    handled: false
-                )
-            )
-            return
-        }
-        receiveRequest(on: connection, buffer: Data())
-    }
-
-    private func receiveRequest(on connection: NWConnection, buffer: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: receiveChunkSize) { [weak self] data, _, isComplete, error in
-            Task { @MainActor in
-                guard let self else {
-                    connection.cancel()
-                    return
-                }
-
-                if let error {
-                    self.sendResponse(
-                        on: connection,
-                        statusCode: 500,
-                        response: ClaudeHookResponse(
-                            ok: false,
-                            code: "connection_error",
-                            message: error.localizedDescription,
-                            sessionID: nil,
-                            handled: false
-                        )
-                    )
-                    return
-                }
-
-                var accumulated = buffer
-                if let data, !data.isEmpty {
-                    accumulated.append(data)
-                }
-
-                if accumulated.count > self.maxRequestSize {
-                    self.sendResponse(
-                        on: connection,
-                        statusCode: 413,
-                        response: ClaudeHookResponse(
-                            ok: false,
-                            code: "payload_too_large",
-                            message: "Request payload exceeds limit",
-                            sessionID: nil,
-                            handled: false
-                        )
-                    )
-                    return
-                }
-
-                switch self.parseRequest(accumulated) {
-                case .complete(let request):
-                    let result = self.handleRequest(request)
-                    self.sendResponse(on: connection, statusCode: result.statusCode, response: result.response)
-
-                case .needsMoreData:
-                    if isComplete {
-                        self.sendResponse(
-                            on: connection,
-                            statusCode: 400,
-                            response: ClaudeHookResponse(
-                                ok: false,
-                                code: "incomplete_request",
-                                message: "Incomplete HTTP request payload",
-                                sessionID: nil,
-                                handled: false
-                            )
-                        )
-                    } else {
-                        self.receiveRequest(on: connection, buffer: accumulated)
-                    }
-
-                case .invalid(let message):
-                    self.sendResponse(
-                        on: connection,
-                        statusCode: 400,
-                        response: ClaudeHookResponse(
-                            ok: false,
-                            code: "bad_request",
-                            message: message,
-                            sessionID: nil,
-                            handled: false
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    private func handleRequest(_ request: ParsedHTTPRequest) -> (statusCode: Int, response: ClaudeHookResponse) {
-        let path = request.path.components(separatedBy: "?").first ?? request.path
+    private func handleHookRequest(
+        body: Data,
+        query: [String: String],
+        headers: [String: String]
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
         log(
             "[ClaudeHookServer] request received",
             fields: [
-                "method": request.method,
-                "path": request.path,
-                "bodySize": String(request.body.count),
-                "contentType": request.headers["content-type"] ?? "nil"
+                "bodySize": String(body.count),
+                "contentType": headerValue(from: headers, forKey: "Content-Type") ?? "nil"
             ]
         )
-        guard path == ClaudeHookPreferences.endpointPath else {
-            return (
-                404,
-                ClaudeHookResponse(
-                    ok: false,
-                    code: "not_found",
-                    message: "Unknown endpoint \(path)",
-                    sessionID: nil,
-                    handled: false
-                )
-            )
-        }
-
-        guard request.method == "POST" else {
-            return (
-                405,
-                ClaudeHookResponse(
-                    ok: false,
-                    code: "method_not_allowed",
-                    message: "Only POST is supported",
-                    sessionID: nil,
-                    handled: false
-                )
-            )
-        }
 
         if let expectedToken = configuredToken, !expectedToken.isEmpty {
-            // 优先从 URL query param 取 token，兼容从 header 取
-            let queryToken = extractQueryParameter(from: request.path, name: "token")
-            let headerToken = request.headers["x-vibefocus-token"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let queryToken = query["token"]
+            let headerToken = headerValue(from: headers, forKey: "X-VibeFocus-Token")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let providedToken = queryToken ?? headerToken
             guard providedToken == expectedToken else {
                 log(
@@ -269,11 +144,9 @@ final class ClaudeHookServer: ObservableObject {
                 return (
                     401,
                     ClaudeHookResponse(
-                        ok: false,
-                        code: "unauthorized",
+                        ok: false, code: "unauthorized",
                         message: "Missing or invalid hook token",
-                        sessionID: nil,
-                        handled: false
+                        sessionID: nil, handled: false
                     )
                 )
             }
@@ -282,15 +155,13 @@ final class ClaudeHookServer: ObservableObject {
         totalRequestCount += 1
 
         let decoder = JSONDecoder()
-        guard let payload = try? decoder.decode(ClaudeHookPayload.self, from: request.body) else {
+        guard let payload = try? decoder.decode(ClaudeHookPayload.self, from: body) else {
             return (
                 400,
                 ClaudeHookResponse(
-                    ok: false,
-                    code: "invalid_payload",
+                    ok: false, code: "invalid_payload",
                     message: "JSON payload must contain event and session_id",
-                    sessionID: nil,
-                    handled: false
+                    sessionID: nil, handled: false
                 )
             )
         }
@@ -298,70 +169,165 @@ final class ClaudeHookServer: ObservableObject {
         lastEventAt = Date()
         switch payload.event {
         case .sessionStart:
-            guard let identity = WindowManager.shared.captureFocusedWindowIdentity() else {
-                SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：当前无可绑定窗口")
-                return (
-                    409,
-                    ClaudeHookResponse(
-                        ok: false,
-                        code: "window_not_found",
-                        message: "No focused window available for session binding",
-                        sessionID: payload.sessionID,
-                        handled: false
-                    )
+            return handleSessionStart(payload: payload)
+        case .stop:
+            return handleStop(payload: payload)
+        case .sessionEnd:
+            return handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
+        case .userPromptSubmit:
+            return handleUserPromptSubmit(payload: payload)
+        }
+    }
+
+    private func handleSessionStart(
+        payload: ClaudeHookPayload
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        guard let identity = WindowManager.shared.captureFocusedWindowIdentity() else {
+            SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：当前无可绑定窗口")
+            return (
+                409,
+                ClaudeHookResponse(
+                    ok: false, code: "window_not_found",
+                    message: "No focused window available for session binding",
+                    sessionID: payload.sessionID, handled: false
                 )
-            }
-            SessionWindowRegistry.shared.bind(sessionID: payload.sessionID, windowIdentity: identity)
+            )
+        }
+        SessionWindowRegistry.shared.bind(sessionID: payload.sessionID, windowIdentity: identity)
+        handledRequestCount += 1
+        log(
+            "[ClaudeHookServer] SessionStart bound",
+            fields: [
+                "sessionID": payload.sessionID,
+                "app": identity.appName ?? "unknown",
+                "title": identity.title ?? "untitled",
+                "windowID": String(identity.windowID),
+                "cwd": payload.cwd ?? "nil",
+                "model": payload.model ?? "nil"
+            ]
+        )
+        return (
+            200,
+            ClaudeHookResponse(
+                ok: true, code: "session_bound",
+                message: "Session bound to focused window",
+                sessionID: payload.sessionID, handled: true
+            )
+        )
+    }
+
+    private func handleUserPromptSubmit(
+        payload: ClaudeHookPayload
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        log(
+            "[ClaudeHookServer] UserPromptSubmit triggered",
+            fields: [
+                "sessionID": payload.sessionID,
+                "autoRestoreEnabled": String(ClaudeHookPreferences.autoRestoreOnPromptSubmit),
+                "cwd": payload.cwd ?? "nil"
+            ]
+        )
+
+        guard ClaudeHookPreferences.autoRestoreOnPromptSubmit else {
+            SessionWindowRegistry.shared.touch(
+                sessionID: payload.sessionID,
+                message: "UserPromptSubmit 收到（自动恢复已关闭）"
+            )
             handledRequestCount += 1
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "auto_restore_disabled",
+                    message: "UserPromptSubmit received, auto restore disabled",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 按 sessionID 查找对应的 saved state
+        let matchedState = WindowManager.shared.savedWindowStates.reversed().first { state in
+            state.sessionID == payload.sessionID && !WindowManager.shared.isSavedStateCorrupted(state)
+        }
+
+        guard let savedState = matchedState else {
             log(
-                "[ClaudeHookServer] SessionStart bound",
+                "[ClaudeHookServer] UserPromptSubmit no matching saved state",
+                level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
-                    "app": identity.appName ?? "unknown",
-                    "title": identity.title ?? "untitled",
-                    "windowID": String(identity.windowID),
-                    "cwd": payload.cwd ?? "nil",
-                    "model": payload.model ?? "nil"
+                    "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
                 ]
+            )
+            return (
+                404,
+                ClaudeHookResponse(
+                    ok: false, code: "no_saved_state",
+                    message: "No saved window state found for session",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 从 saved state 恢复到内存
+        WindowManager.shared.hydrateMemory(from: savedState, window: nil)
+
+        log(
+            "[ClaudeHookServer] UserPromptSubmit restoring window",
+            fields: [
+                "sessionID": payload.sessionID,
+                "stateID": savedState.id,
+                "app": savedState.appName ?? "unknown",
+                "windowID": String(describing: savedState.windowID),
+                "originalFrame": String(describing: savedState.originalFrame.cgRect)
+            ]
+        )
+
+        // 执行恢复
+        WindowManager.shared.restore(
+            operationID: makeOperationID(prefix: "hook-restore"),
+            triggerSource: "user_prompt_submit"
+        )
+
+        // 重新激活绑定，使下一个 Stop 事件能再次触发窗口移动
+        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+
+        handledRequestCount += 1
+        SessionWindowRegistry.shared.setLastEventDescription(
+            "UserPromptSubmit 恢复窗口：\(savedState.appName ?? "Unknown")"
+        )
+        return (
+            200,
+            ClaudeHookResponse(
+                ok: true, code: "window_restored",
+                message: "Window restored to original position",
+                sessionID: payload.sessionID, handled: true
+            )
+        )
+    }
+
+    private func handleStop(
+        payload: ClaudeHookPayload
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        guard ClaudeHookPreferences.triggerOnStop else {
+            SessionWindowRegistry.shared.touch(
+                sessionID: payload.sessionID,
+                message: "Stop 收到（Stop 触发已关闭）"
+            )
+            handledRequestCount += 1
+            log(
+                "[ClaudeHookServer] Stop received but trigger disabled",
+                fields: ["sessionID": payload.sessionID]
             )
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true,
-                    code: "session_bound",
-                    message: "Session bound to focused window",
-                    sessionID: payload.sessionID,
-                    handled: true
+                    ok: true, code: "stop_trigger_disabled",
+                    message: "Stop received, trigger disabled",
+                    sessionID: payload.sessionID, handled: false
                 )
             )
-
-        case .stop:
-            guard ClaudeHookPreferences.triggerOnStop else {
-                SessionWindowRegistry.shared.touch(
-                    sessionID: payload.sessionID,
-                    message: "Stop 收到（Stop 触发已关闭）"
-                )
-                handledRequestCount += 1
-                log(
-                    "[ClaudeHookServer] Stop received but trigger disabled",
-                    fields: ["sessionID": payload.sessionID]
-                )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true,
-                        code: "stop_trigger_disabled",
-                        message: "Stop received, trigger disabled",
-                        sessionID: payload.sessionID,
-                        handled: false
-                    )
-                )
-            }
-            return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
-
-        case .sessionEnd:
-            return handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
         }
+        return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
     }
 
     /// Stop/SessionEnd 共用的窗口移动逻辑
@@ -387,69 +353,135 @@ final class ClaudeHookServer: ObservableObject {
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true,
-                    code: "auto_focus_disabled",
+                    ok: true, code: "auto_focus_disabled",
                     message: "\(triggerName) received, auto focus disabled",
-                    sessionID: payload.sessionID,
-                    handled: false
+                    sessionID: payload.sessionID, handled: false
                 )
             )
         }
 
         // 尝试从 SessionStart 绑定中找窗口
         // 如果找不到（SessionStart HTTP hook 是 Claude Code 已知 bug，可能不触发），
-        // 回退到直接捕获当前前台窗口
+        // 尝试通过终端上下文精确定位，最后回退到 cwd 匹配
         let binding: SessionWindowBinding
         if let existingBinding = SessionWindowRegistry.shared.binding(for: payload.sessionID) {
             binding = existingBinding
-        } else {
-            // 回退：直接捕获当前前台窗口作为目标
+        } else if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+            // 新路径：通过 hook 辅助脚本捕获的终端上下文（TTY/PPID）精确定位窗口
             log(
-                "[ClaudeHookServer] \(triggerName) no binding found, falling back to focused window",
-                fields: ["sessionID": payload.sessionID]
+                "[ClaudeHookServer] \(triggerName) no binding, trying terminal context",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "tty": terminalCtx.tty ?? "nil",
+                    "ppid": terminalCtx.ppid ?? "nil",
+                    "termSessionID": terminalCtx.termSessionID ?? "nil"
+                ]
             )
-            guard let focusedIdentity = WindowManager.shared.captureFocusedWindowIdentity() else {
+            guard let ctxIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) else {
                 unmatchedSessionCount += 1
-                SessionWindowRegistry.shared.setLastEventDescription("\(triggerName) 未命中绑定且无前台窗口：\(payload.sessionID)")
+                SessionWindowRegistry.shared.setLastEventDescription(
+                    "\(triggerName) 终端上下文匹配失败：\(payload.sessionID)"
+                )
                 log(
-                    "[ClaudeHookServer] \(triggerName) no binding and no focused window",
+                    "[ClaudeHookServer] \(triggerName) terminal context match failed",
                     level: .warn,
                     fields: ["sessionID": payload.sessionID]
                 )
-                return (
-                    404,
-                    ClaudeHookResponse(
-                        ok: false,
-                        code: "binding_not_found",
-                        message: "No bound window for session and no focused window available",
-                        sessionID: payload.sessionID,
-                        handled: false
-                    )
-                )
+                // 回退到 cwd 匹配
+                return fallbackToCWDMatching(payload: payload, triggerName: triggerName)
             }
 
             log(
-                "[ClaudeHookServer] \(triggerName) using focused window fallback",
+                "[ClaudeHookServer] \(triggerName) matched via terminal context",
                 fields: [
                     "sessionID": payload.sessionID,
-                    "app": focusedIdentity.appName ?? "unknown",
-                    "title": focusedIdentity.title ?? "untitled",
-                    "windowID": String(focusedIdentity.windowID)
+                    "app": ctxIdentity.appName ?? "unknown",
+                    "title": ctxIdentity.title ?? "untitled",
+                    "windowID": String(ctxIdentity.windowID)
                 ]
             )
 
-            // 创建临时绑定用于后续逻辑
             let now = Date()
             binding = SessionWindowBinding(
                 sessionID: payload.sessionID,
-                windowIdentity: focusedIdentity,
+                windowIdentity: ctxIdentity,
                 createdAt: now,
                 lastSeenAt: now,
                 isCompleted: false,
                 completedAt: nil
             )
+        } else {
+            // 回退：通过 cwd 项目名匹配窗口（旧路径，保留兼容）
+            return fallbackToCWDMatching(payload: payload, triggerName: triggerName)
         }
 
+        // 有 binding（来自 SessionStart 绑定或终端上下文匹配），执行窗口移动
+        return moveBindingToMainScreen(binding: binding, payload: payload, triggerName: triggerName)
+    }
+
+    // MARK: - Response Helpers
+
+    /// cwd 匹配回退：当没有 SessionStart 绑定也没有终端上下文时，通过 cwd 项目名匹配窗口
+    private func fallbackToCWDMatching(
+        payload: ClaudeHookPayload,
+        triggerName: String
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        log(
+            "[ClaudeHookServer] \(triggerName) no binding found, falling back to cwd matching",
+            fields: [
+                "sessionID": payload.sessionID,
+                "cwd": payload.cwd ?? "nil"
+            ]
+        )
+        guard let focusedIdentity = WindowManager.shared.findClaudeCodeWindow(cwd: payload.cwd) else {
+            unmatchedSessionCount += 1
+            SessionWindowRegistry.shared.setLastEventDescription(
+                "\(triggerName) 未命中绑定且无前台窗口：\(payload.sessionID)"
+            )
+            log(
+                "[ClaudeHookServer] \(triggerName) no binding and no focused window",
+                level: .warn,
+                fields: ["sessionID": payload.sessionID]
+            )
+            return (
+                404,
+                ClaudeHookResponse(
+                    ok: false, code: "binding_not_found",
+                    message: "No bound window for session and no focused window available",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        log(
+            "[ClaudeHookServer] \(triggerName) using cwd fallback",
+            fields: [
+                "sessionID": payload.sessionID,
+                "app": focusedIdentity.appName ?? "unknown",
+                "title": focusedIdentity.title ?? "untitled",
+                "windowID": String(focusedIdentity.windowID)
+            ]
+        )
+
+        let now = Date()
+        let binding = SessionWindowBinding(
+            sessionID: payload.sessionID,
+            windowIdentity: focusedIdentity,
+            createdAt: now,
+            lastSeenAt: now,
+            isCompleted: false,
+            completedAt: nil
+        )
+
+        return moveBindingToMainScreen(binding: binding, payload: payload, triggerName: triggerName)
+    }
+
+    /// 执行窗口移动：将绑定窗口移到主屏幕并最大化
+    private func moveBindingToMainScreen(
+        binding: SessionWindowBinding,
+        payload: ClaudeHookPayload,
+        triggerName: String
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
         if binding.isCompleted {
             handledRequestCount += 1
             log(
@@ -459,11 +491,9 @@ final class ClaudeHookServer: ObservableObject {
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true,
-                    code: "already_completed",
+                    ok: true, code: "already_completed",
                     message: "Session already completed",
-                    sessionID: payload.sessionID,
-                    handled: false
+                    sessionID: payload.sessionID, handled: false
                 )
             )
         }
@@ -498,11 +528,9 @@ final class ClaudeHookServer: ObservableObject {
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true,
-                    code: "window_focused",
+                    ok: true, code: "window_focused",
                     message: "Window moved to main screen and maximized",
-                    sessionID: payload.sessionID,
-                    handled: true
+                    sessionID: payload.sessionID, handled: true
                 )
             )
         }
@@ -523,145 +551,28 @@ final class ClaudeHookServer: ObservableObject {
         return (
             409,
             ClaudeHookResponse(
-                ok: false,
-                code: "window_move_failed",
+                ok: false, code: "window_move_failed",
                 message: "Found session binding but failed to move window",
-                sessionID: payload.sessionID,
-                handled: false
+                sessionID: payload.sessionID, handled: false
             )
         )
     }
 
-    private func sendResponse(on connection: NWConnection, statusCode: Int, response: ClaudeHookResponse) {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let bodyData = (try? encoder.encode(response)) ?? Data("{\"ok\":false}".utf8)
-        let reason = statusReason(for: statusCode)
-        let header = """
-HTTP/1.1 \(statusCode) \(reason)\r
-Content-Type: application/json\r
-Content-Length: \(bodyData.count)\r
-Connection: close\r
-\r
-"""
-
-        var payload = Data(header.utf8)
-        payload.append(bodyData)
-        connection.send(content: payload, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
-    }
-
-    private func statusReason(for statusCode: Int) -> String {
-        switch statusCode {
-        case 200: return "OK"
-        case 400: return "Bad Request"
-        case 401: return "Unauthorized"
-        case 403: return "Forbidden"
-        case 404: return "Not Found"
-        case 405: return "Method Not Allowed"
-        case 409: return "Conflict"
-        case 413: return "Payload Too Large"
-        default: return "Internal Server Error"
-        }
-    }
-
-    private struct ParsedHTTPRequest {
-        let method: String
-        let path: String
-        let headers: [String: String]
-        let body: Data
-    }
-
-    private enum ParsedRequestResult {
-        case complete(ParsedHTTPRequest)
-        case needsMoreData
-        case invalid(String)
-    }
-
-    private func parseRequest(_ data: Data) -> ParsedRequestResult {
-        let separatorData = Data("\r\n\r\n".utf8)
-        guard let splitRange = data.range(of: separatorData) else {
-            return .needsMoreData
-        }
-
-        let headerData = data.subdata(in: 0..<splitRange.lowerBound)
-        guard let headerText = String(data: headerData, encoding: .utf8) else {
-            return .invalid("HTTP header is not valid UTF-8")
-        }
-
-        let headerLines = headerText.components(separatedBy: "\r\n")
-        guard let requestLine = headerLines.first else {
-            return .invalid("Missing HTTP request line")
-        }
-
-        let requestParts = requestLine.split(separator: " ")
-        guard requestParts.count >= 2 else {
-            return .invalid("Invalid HTTP request line")
-        }
-
-        var headers: [String: String] = [:]
-        for line in headerLines.dropFirst() {
-            guard let index = line.firstIndex(of: ":") else {
-                continue
-            }
-            let key = line[..<index].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let value = line[line.index(after: index)...].trimmingCharacters(in: .whitespacesAndNewlines)
-            headers[key] = value
-        }
-
-        let contentLength: Int
-        if let contentLengthRaw = headers["content-length"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !contentLengthRaw.isEmpty {
-            guard let parsedLength = Int(contentLengthRaw), parsedLength >= 0 else {
-                return .invalid("Invalid Content-Length header")
-            }
-            contentLength = parsedLength
-        } else {
-            contentLength = 0
-        }
-
-        let bodyStart = splitRange.upperBound
-        let availableBodyCount = data.count - bodyStart
-        if availableBodyCount < contentLength {
-            return .needsMoreData
-        }
-
-        let bodyEnd = bodyStart + contentLength
-        let body = data.subdata(in: bodyStart..<bodyEnd)
-
-        return .complete(ParsedHTTPRequest(
-            method: String(requestParts[0]),
-            path: String(requestParts[1]),
-            headers: headers,
-            body: body
-        ))
-    }
-
-    private func isLoopbackEndpoint(_ endpoint: NWEndpoint) -> Bool {
-        guard case let .hostPort(host, _) = endpoint else {
-            return false
-        }
-        let raw = String(describing: host)
-            .lowercased()
-            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        return raw == "localhost"
-            || raw == "::1"
-            || raw == "0:0:0:0:0:0:0:1"
-            || raw.hasPrefix("127.")
-            || raw.contains("127.0.0.1")
-    }
-
-    private func extractQueryParameter(from path: String, name: String) -> String? {
-        guard let queryStart = path.firstIndex(of: "?") else {
-            return nil
-        }
-        let queryString = String(path[path.index(after: queryStart)...])
-        for pair in queryString.components(separatedBy: "&") {
-            let parts = pair.components(separatedBy: "=")
-            guard parts.count == 2, parts[0] == name else { continue }
-            return parts[1].removingPercentEncoding ?? parts[1]
+    /// Case-insensitive header lookup — GCDWebServer preserves original HTTP header casing
+    private func headerValue(from headers: [String: String], forKey key: String) -> String? {
+        if let value = headers[key] { return value }
+        let lowerKey = key.lowercased()
+        for (k, v) in headers where k.lowercased() == lowerKey {
+            return v
         }
         return nil
+    }
+
+    private func makeJSONResponse(statusCode: Int, response: ClaudeHookResponse) -> GCDWebServerDataResponse {
+        let encoder = JSONEncoder()
+        let bodyData = (try? encoder.encode(response)) ?? Data("{\"ok\":false}".utf8)
+        let httpResponse = GCDWebServerDataResponse(data: bodyData, contentType: "application/json")
+        httpResponse.statusCode = statusCode
+        return httpResponse
     }
 }

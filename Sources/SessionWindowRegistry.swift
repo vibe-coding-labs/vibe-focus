@@ -74,6 +74,19 @@ final class SessionWindowRegistry: ObservableObject {
         persistBindings()
     }
 
+    /// 将已完成的绑定重新激活，使下一个 Stop 事件能再次触发窗口移动
+    func reactivate(sessionID: String) {
+        let normalizedSession = normalizeSessionID(sessionID)
+        guard !normalizedSession.isEmpty, var binding = bindings[normalizedSession] else {
+            return
+        }
+        binding.isCompleted = false
+        binding.completedAt = nil
+        binding.lastSeenAt = Date()
+        bindings[normalizedSession] = binding
+        persistBindings()
+    }
+
     func touch(sessionID: String, message: String? = nil) {
         let normalizedSession = normalizeSessionID(sessionID)
         guard !normalizedSession.isEmpty else {

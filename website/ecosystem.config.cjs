@@ -11,6 +11,7 @@ module.exports = {
     env: {
       NODE_ENV: 'production'
     },
+    max_size: '50M',
     log_file: '/tmp/vibefocus-website.log',
     out_file: '/tmp/vibefocus-website-out.log',
     error_file: '/tmp/vibefocus-website-error.log',

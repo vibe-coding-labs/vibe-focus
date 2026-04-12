@@ -258,12 +258,42 @@ final class SpaceController: ObservableObject {
             return false
         }
 
+        // 记录 moveWindow 调用上下文
+        let windowBeforeMove = queryWindow(windowID: windowID)
+        log(
+            "[SpaceController] moveWindow called",
+            fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "targetSpace": String(spaceIndex),
+                "windowCurrentSpace": String(describing: windowBeforeMove?.space),
+                "windowCurrentDisplay": String(describing: windowBeforeMove?.display),
+                "focus": String(focus)
+            ]
+        )
+
         let moveResult = runYabaiVariants(
             variants: [["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"]],
             operation: "moveWindow(windowID=\(windowID), space=\(spaceIndex))",
             operationID: op
         )
         if moveResult.success {
+            // 验证窗口是否真正移到了目标 space
+            let windowAfterMove = queryWindow(windowID: windowID)
+            let moveVerified = windowAfterMove?.space == spaceIndex
+            if !moveVerified {
+                log(
+                    "[SpaceController] moveWindow yabai succeeded but verification shows window not on target space",
+                    level: .warn,
+                    fields: [
+                        "op": op,
+                        "windowID": String(windowID),
+                        "targetSpace": String(spaceIndex),
+                        "actualSpace": String(describing: windowAfterMove?.space),
+                        "note": "yabai move may have async effect, AX frame positioning is authoritative"
+                    ]
+                )
+            }
             if focus {
                 _ = focusWindow(windowID, operationID: op)
             }
@@ -287,6 +317,16 @@ final class SpaceController: ObservableObject {
                 }
                 return true
             }
+        } else {
+            log(
+                "[SpaceController] native fallback skipped: could not resolve spaceID for yabaiIndex=\(spaceIndex)",
+                level: .warn,
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "targetSpace": String(spaceIndex)
+                ]
+            )
         }
 
         markOperationError(
@@ -309,6 +349,20 @@ final class SpaceController: ObservableObject {
             return false
         }
 
+        // 记录 focusSpace 调用的完整上下文
+        let preFocusSpace = queryFocusedSpace()?.index
+        let targetDisplay = querySpaces()?.first(where: { $0.index == spaceIndex })?.display
+        log(
+            "[SpaceController] focusSpace called",
+            fields: [
+                "op": op,
+                "targetSpace": String(spaceIndex),
+                "targetDisplay": String(describing: targetDisplay),
+                "currentSpace": String(describing: preFocusSpace),
+                "canControlSpaces": String(canControlSpaces)
+            ]
+        )
+
         let variants = [["-m", "space", "--focus", "\(spaceIndex)"]]
         let result = runYabaiVariants(variants: variants, operation: "focusSpace(\(spaceIndex))", operationID: op)
         if result.success {
@@ -322,11 +376,21 @@ final class SpaceController: ObservableObject {
             fields: [
                 "op": op,
                 "yabaiIndex": String(spaceIndex),
+                "targetDisplay": String(describing: targetDisplay),
                 "steps": String(steps),
+                "hasDisplayCenter": String(displayCenterCG(spaceIndex: spaceIndex) != nil)
             ]
         )
 
         if steps == 0 {
+            log(
+                "[SpaceController] CGEvent fallback skipped: steps=0 (already on target space)",
+                fields: [
+                    "op": op,
+                    "targetSpace": String(spaceIndex),
+                    "currentSpace": String(describing: preFocusSpace)
+                ]
+            )
             return true // 已在目标空间
         }
 
@@ -345,6 +409,15 @@ final class SpaceController: ObservableObject {
                 moveEvent.post(tap: .cghidEventTap)
             }
             usleep(50_000) // 50ms 等系统处理鼠标移动
+        } else {
+            log(
+                "[SpaceController] CGEvent fallback: could not determine display center",
+                level: .warn,
+                fields: [
+                    "op": op,
+                    "targetSpace": String(spaceIndex)
+                ]
+            )
         }
 
         let success = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
@@ -357,6 +430,20 @@ final class SpaceController: ObservableObject {
 
         if success {
             usleep(250_000) // 250ms 等空间切换动画
+            // 验证 space 是否真正切换成功
+            let postFallbackSpace = queryFocusedSpace()?.index
+            let spaceChanged = postFallbackSpace != preFocusSpace
+            log(
+                "[SpaceController] CGEvent fallback completed",
+                fields: [
+                    "op": op,
+                    "targetSpace": String(spaceIndex),
+                    "preFocusSpace": String(describing: preFocusSpace),
+                    "postFallbackSpace": String(describing: postFallbackSpace),
+                    "spaceChanged": String(spaceChanged),
+                    "reachedTarget": String(postFallbackSpace == spaceIndex)
+                ]
+            )
             return true
         }
 
@@ -511,12 +598,33 @@ final class SpaceController: ObservableObject {
         return decodeSingleOrFirst(YabaiSpaceInfo.self, from: result.stdout)
     }
 
-    private func querySpaces() -> [YabaiSpaceInfo]? {
+    private func querySpaces(caller: String = #function) -> [YabaiSpaceInfo]? {
+        let startedAt = Date()
         guard let result = runYabai(arguments: ["-m", "query", "--spaces"]),
               result.exitCode == 0 else {
+            log(
+                "[SpaceController] querySpaces failed",
+                level: .warn,
+                fields: [
+                    "caller": caller,
+                    "durationMs": String(elapsedMilliseconds(since: startedAt))
+                ]
+            )
             return nil
         }
-        return decodeArray(YabaiSpaceInfo.self, from: result.stdout)
+        let spaces = decodeArray(YabaiSpaceInfo.self, from: result.stdout)
+        if spaces == nil, !result.stdout.isEmpty {
+            log(
+                "[SpaceController] querySpaces decode failed",
+                level: .warn,
+                fields: [
+                    "caller": caller,
+                    "stdoutLen": String(result.stdout.count),
+                    "durationMs": String(elapsedMilliseconds(since: startedAt))
+                ]
+            )
+        }
+        return spaces
     }
 
     private func queryWindow(windowID: UInt32) -> YabaiWindowInfo? {
