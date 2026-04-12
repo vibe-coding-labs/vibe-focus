@@ -199,7 +199,24 @@ final class ClaudeHookServer: ObservableObject {
             }
         }
 
-        // 回退：捕获当前焦点窗口
+        // 回退策略 1：通过 cwd 项目名匹配窗口（多会话场景更准确）
+        if identity == nil, let cwd = payload.cwd {
+            identity = WindowManager.shared.findClaudeCodeWindow(cwd: cwd)
+            if let identity {
+                log(
+                    "[ClaudeHookServer] SessionStart matched via cwd fallback",
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "cwd": cwd,
+                        "app": identity.appName ?? "unknown",
+                        "title": identity.title ?? "untitled",
+                        "windowID": String(identity.windowID)
+                    ]
+                )
+            }
+        }
+
+        // 回退策略 2：捕获当前焦点窗口（最后手段）
         if identity == nil {
             identity = WindowManager.shared.captureFocusedWindowIdentity()
         }
