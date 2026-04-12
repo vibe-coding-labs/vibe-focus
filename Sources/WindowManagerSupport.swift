@@ -666,8 +666,21 @@ extension WindowManager {
         }
 
         // 检查窗口是否已在主屏幕上
-        // 如果已经在目标位置，跳过移动，避免覆盖已有的 saved state（原来的副屏位置）
-        if let mainScreen = getMainScreen() {
+        // 使用 yabai display 信息作为主要判断依据
+        // AX frame 对非可见工作区的窗口不可靠（macOS 会报告错误的坐标）
+        let yabaiDisplay = spaceController.windowDisplayIndex(windowID: identity.windowID)
+        if let display = yabaiDisplay, display != 1 {
+            // yabai 报告窗口在副显示器上，即使 AX frame 看起来在主屏也继续移动
+            log(
+                "[WindowManager] yabai reports window on secondary display, proceeding with move",
+                fields: [
+                    "op": op,
+                    "windowID": String(identity.windowID),
+                    "yabaiDisplay": String(display),
+                    "axFrame": "\(currentFrame)"
+                ]
+            )
+        } else if let mainScreen = getMainScreen() {
             let mainScreenFrame = mainScreen.frame
             let windowCenter = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
             if mainScreenFrame.contains(windowCenter) {
@@ -676,7 +689,8 @@ extension WindowManager {
                     fields: [
                         "op": op,
                         "windowID": String(identity.windowID),
-                        "reason": reason.rawValue
+                        "reason": reason.rawValue,
+                        "yabaiDisplay": yabaiDisplay.map(String.init) ?? "nil"
                     ]
                 )
                 return true
