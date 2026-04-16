@@ -1,12 +1,13 @@
 :root {
-  --color-bg: #0f172a;
-  --color-bg-light: #1e293b;
-  --color-text: #f1f5f9;
-  --color-text-muted: #94a3b8;
-  --color-accent: #38bdf8;
-  --color-accent-dark: #0ea5e9;
-  --color-border: #334155;
-  --color-card: #1e293b;
+  --color-bg: #ffffff;
+  --color-bg-light: #eff6ff;
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+  --color-accent: #3b82f6;
+  --color-accent-dark: #2563eb;
+  --color-border: #e2e8f0;
+  --color-card: #f8fafc;
+  --color-accent-bg: #dbeafe;
 }
 
 :root {
@@ -119,8 +120,8 @@ body {
 }
 
 .header-anchor .ant-anchor-link-active > .ant-anchor-link-title {
-  color: var(--color-accent) !important;
-  background: rgba(56, 189, 248, 0.1);
+  color: var(--color-accent-dark) !important;
+  background: var(--color-accent-bg);
 }
 
 /* GitHub Link */
@@ -138,8 +139,8 @@ body {
 }
 
 .github-link:hover {
-  color: var(--color-accent);
-  background: rgba(56, 189, 248, 0.1);
+  color: var(--color-accent-dark);
+  background: var(--color-accent-bg);
 }
 
 .hero {
@@ -173,9 +174,9 @@ body {
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 500;
-  background: transparent;
-  border: 1px solid var(--color-accent);
-  color: var(--color-accent);
+  background: var(--color-accent);
+  border: none;
+  color: #ffffff;
   border-radius: 6px;
   margin-bottom: 4px;
 }
@@ -425,12 +426,12 @@ body {
   width: 44px;
   height: 44px;
   border-radius: 8px;
-  background: transparent;
-  border: 1px solid var(--color-accent);
+  background: var(--color-accent-bg);
+  border: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-accent);
+  color: var(--color-accent-dark);
   font-size: 20px;
   flex-shrink: 0;
 }
@@ -463,12 +464,12 @@ body {
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  background: transparent;
-  border: 1px solid var(--color-accent);
+  background: var(--color-accent-bg);
+  border: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-accent);
+  color: var(--color-accent-dark);
   font-size: 18px;
   flex-shrink: 0;
 }
@@ -477,58 +478,6 @@ body {
   font-size: 14px;
   color: var(--color-text);
   line-height: 1.5;
-}
-
-.demo-media-shell {
-  position: relative;
-  margin-bottom: 60px;
-  border-radius: 16px;
-  overflow: visible;
-  background: transparent;
-  border: none;
-  padding: 8px;
-}
-
-/* Demo Card Enhanced Styling */
-.demo-card {
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  box-shadow: none;
-  transition: all 0.2s ease;
-}
-
-.demo-card:hover {
-  border-color: var(--color-accent);
-  transform: translateY(-2px);
-}
-
-.demo-card .ant-card-body {
-  padding: 20px;
-}
-
-.demo-card h4 {
-  color: #e8f3ff !important;
-  font-size: 16px;
-  margin-top: 16px !important;
-  margin-bottom: 8px !important;
-}
-
-.demo-card .ant-typography {
-  color: rgba(216, 238, 255, 0.85);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.demo-card .ant-tag {
-  border-radius: 4px;
-  font-size: 11px;
-}
-
-.demo-media {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
 }
 
 .demo-placeholder {
@@ -715,14 +664,14 @@ body {
 }
 
 .ant-tag-cyan {
-  background: transparent;
-  border-color: var(--color-accent);
-  color: var(--color-accent);
+  background: var(--color-accent-bg);
+  border-color: transparent;
+  color: var(--color-accent-dark);
 }
 
 .ant-tag-blue {
-  background: transparent;
-  border-color: var(--color-accent-dark);
+  background: var(--color-accent-bg);
+  border-color: transparent;
   color: var(--color-accent-dark);
 }
 
@@ -776,7 +725,7 @@ body {
 
 .video-loading-icon {
   font-size: 32px;
-  color: #73dff1;
+  color: var(--color-accent);
   animation: spin 1s linear infinite;
 }
 
@@ -1143,5 +1092,148 @@ video[poster] {
 
   .footer-links .ant-space {
     gap: 16px !important;
+  }
+}
+
+/* ===== Claude Code Hook Workflow Animation ===== */
+.hook-workflow-container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 0;
+}
+
+.hook-workflow-track {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+.hook-workflow-step {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px;
+  border-radius: 12px;
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  opacity: 0.45;
+  transform: scale(0.97);
+}
+
+.hook-workflow-step.active {
+  opacity: 1;
+  transform: scale(1);
+  background: var(--color-card);
+  border: 1px solid var(--color-accent);
+  box-shadow: none;
+}
+
+.hook-workflow-step-number {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  background: transparent;
+  border: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  transition: all 0.5s ease;
+}
+
+.hook-workflow-step.active .hook-workflow-step-number {
+  border-color: var(--color-accent);
+  color: var(--color-accent-dark);
+  background: var(--color-accent-bg);
+  box-shadow: none;
+}
+
+.hook-workflow-step-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.hook-workflow-step-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 4px;
+  transition: color 0.3s ease;
+}
+
+.hook-workflow-step.active .hook-workflow-step-title {
+  color: var(--color-accent);
+}
+
+.hook-workflow-step-desc {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.hook-workflow-connector {
+  position: absolute;
+  left: 45px;
+  bottom: -20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 1;
+}
+
+.hook-workflow-connector-line {
+  width: 2px;
+  height: 18px;
+  background: var(--color-border);
+  transition: background 0.5s ease;
+}
+
+.hook-workflow-connector.active .hook-workflow-connector-line {
+  background: var(--color-accent);
+}
+
+.hook-workflow-loop-hint {
+  text-align: center;
+  margin-top: 32px;
+  font-size: 14px;
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.hook-workflow-loop-icon {
+  animation: spin-slow 3s linear infinite;
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Hook Workflow Mobile Responsive */
+@media (max-width: 640px) {
+  .hook-workflow-step {
+    padding: 16px;
+    gap: 14px;
+  }
+
+  .hook-workflow-step-number {
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+
+  .hook-workflow-step-title {
+    font-size: 14px;
+  }
+
+  .hook-workflow-step-desc {
+    font-size: 12px;
   }
 }

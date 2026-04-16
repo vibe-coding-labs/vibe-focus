@@ -741,7 +741,7 @@ const ShortcutDisplay: React.FC = () => (
       fontWeight: 'bold',
       fontFamily: 'monospace',
       letterSpacing: 2,
-    }}>⌃M</span>
+    }}>⌃Q</span>
   </div>
 );
 
