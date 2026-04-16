@@ -30,7 +30,7 @@ const TEXT_OVERLAYS = [
   {
     startFrame: 150,
     endFrame: 400,
-    text: '按下 ⌃M，窗口瞬间移动到主屏',
+    text: '按下 ⌃Q，窗口瞬间移动到主屏',
     subText: '自动铺满可见区域',
     position: 'bottom',
   },
@@ -44,7 +44,7 @@ const TEXT_OVERLAYS = [
   {
     startFrame: 750,
     endFrame: 870,
-    text: '再次按下 ⌃M，窗口恢复原位',
+    text: '再次按下 ⌃Q，窗口恢复原位',
     subText: '精准回到原来的位置和大小',
     position: 'bottom',
   },

@@ -388,7 +388,7 @@ const ContentArea: React.FC<{
       >
         {/* Shortcut Card */}
         <Card title="快捷键设置">
-          <ShortcutDisplay shortcut="⌃M" />
+          <ShortcutDisplay shortcut="⌃Q" />
           <div
             style={{
               marginTop: 12,

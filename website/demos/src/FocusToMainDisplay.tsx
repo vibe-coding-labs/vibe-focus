@@ -178,7 +178,7 @@ const ShortcutIndicator: React.FC<{
           fontFamily: 'monospace',
         }}
       >
-        ⌃M
+        ⌃Q
       </span>
     </div>
   );
