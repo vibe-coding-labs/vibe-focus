@@ -9,6 +9,7 @@ class OverlayWindow: NSWindow {
     private var spaceIndex: Int = 0
 
     init(screen: NSScreen) {
+        log("OverlayWindow.init entry", level: .debug, fields: ["screenFrame": String(describing: screen.frame), "screenName": screen.localizedName])
         let initialFrame = NSRect(x: 0, y: 0, width: 200, height: 100)
         super.init(
             contentRect: initialFrame,
@@ -32,6 +33,7 @@ class OverlayWindow: NSWindow {
     }
 
     private func setupTextLayer() {
+        log("OverlayWindow.setupTextLayer entry", level: .debug)
         let layer = CATextLayer()
         layer.alignmentMode = .center
         layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
@@ -41,9 +43,11 @@ class OverlayWindow: NSWindow {
         self.textLayer = layer
 
         log("[DRAW] CATextLayer setup complete, contentsScale: \(layer.contentsScale)")
+        log("OverlayWindow.setupTextLayer exit", level: .debug, fields: ["contentsScale": "\(layer.contentsScale)"])
     }
 
     func update(screenIndex: Int, spaceIndex: Int, preferences: ScreenIndexPreferences) {
+        log("OverlayWindow.update entry", level: .debug, fields: ["screenIndex": String(screenIndex), "spaceIndex": String(spaceIndex), "fontSize": "\(preferences.fontSize)", "panelScale": "\(preferences.panelScale)"])
         self.screenIndex = screenIndex
         self.spaceIndex = spaceIndex
 
@@ -107,9 +111,11 @@ class OverlayWindow: NSWindow {
         textLayer?.setNeedsDisplay()
 
         log("[DRAW] OverlayWindow update completed for '\(text)'")
+        log("OverlayWindow.update exit", level: .debug, fields: ["text": text, "width": "\(width)", "height": "\(height)"])
     }
 
     func updatePosition(for screen: NSScreen, position: IndexPosition = .topRight, margin: CGFloat = 20) {
+        log("OverlayWindow.updatePosition entry", level: .debug, fields: ["screenFrame": String(describing: screen.frame), "position": position.rawValue, "margin": "\(margin)"])
         let screenFrame = screen.frame
         let windowSize = self.contentView?.bounds.size ?? CGSize(width: 100, height: 60)
         let edgeMargin = max(0, margin)
@@ -119,31 +125,42 @@ class OverlayWindow: NSWindow {
         var origin: CGPoint
         switch position {
         case .topLeft:
+            log("OverlayWindow.updatePosition branch: topLeft", level: .debug)
             origin = CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
         case .topCenter:
+            log("OverlayWindow.updatePosition branch: topCenter", level: .debug)
             origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.maxY - windowSize.height - edgeMargin)
         case .topRight:
+            log("OverlayWindow.updatePosition branch: topRight", level: .debug)
             origin = CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
         case .bottomLeft:
+            log("OverlayWindow.updatePosition branch: bottomLeft", level: .debug)
             origin = CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.minY + edgeMargin)
         case .bottomCenter:
+            log("OverlayWindow.updatePosition branch: bottomCenter", level: .debug)
             origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.minY + edgeMargin)
         case .bottomRight:
+            log("OverlayWindow.updatePosition branch: bottomRight", level: .debug)
             origin = CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.minY + edgeMargin)
         }
 
         log("[DRAW] Setting window origin: \(origin), position: \(position)")
         self.setFrameOrigin(origin)
         log("[DRAW] Window frame after setFrameOrigin: \(self.frame)")
+        log("OverlayWindow.updatePosition exit", level: .debug, fields: ["origin": String(describing: origin)])
     }
 
     func show() {
+        log("OverlayWindow.show entry", level: .debug, fields: ["frame": String(describing: self.frame), "isVisible": String(self.isVisible)])
         log("[DRAW] show() called, window frame: \(self.frame), isVisible: \(self.isVisible)")
         self.orderFrontRegardless()
         log("[DRAW] show() completed, isVisible: \(self.isVisible)")
+        log("OverlayWindow.show exit", level: .debug, fields: ["isVisible": String(self.isVisible)])
     }
 
     func hide() {
+        log("OverlayWindow.hide entry", level: .debug, fields: ["frame": String(describing: self.frame), "isVisible": String(self.isVisible)])
         self.orderOut(nil)
+        log("OverlayWindow.hide exit", level: .debug, fields: ["isVisible": String(self.isVisible)])
     }
 }

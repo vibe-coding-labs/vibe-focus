@@ -68,7 +68,10 @@ final class HotKeyManager: ObservableObject {
 
     private func setupCGEventTap() -> Bool {
         guard accessibilityStatus else {
-            log("CGEventTap requires accessibility permission")
+            log(
+                "[HotKey] setupCGEventTap: accessibility not granted",
+                level: .debug
+            )
             return false
         }
 
@@ -92,7 +95,10 @@ final class HotKeyManager: ObservableObject {
         )
 
         guard let tap else {
-            log("Failed to create CGEventTap")
+            log(
+                "[HotKey] setupCGEventTap: CGEvent.tapCreate returned nil",
+                level: .debug
+            )
             return false
         }
 
@@ -100,7 +106,10 @@ final class HotKeyManager: ObservableObject {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
 
         guard let runLoopSource else {
-            log("Failed to create run loop source")
+            log(
+                "[HotKey] setupCGEventTap: CFMachPortCreateRunLoopSource returned nil",
+                level: .debug
+            )
             return false
         }
 
@@ -145,7 +154,15 @@ final class HotKeyManager: ObservableObject {
 
         // Check if this matches our hotkey
         if keyCode == currentHotKey.keyCode && modifiers == currentHotKey.modifiers {
-            log("[CGEventTap] Hotkey \(currentHotKey.displayString) triggered")
+            log(
+                "[HotKey] CGEventTap hotkey match",
+                level: .debug,
+                fields: [
+                    "keyCode": String(keyCode),
+                    "modifiers": String(modifiers),
+                    "displayString": currentHotKey.displayString
+                ]
+            )
             // 切换到主线程执行去重后的 toggle
             DispatchQueue.main.async { [weak self] in
                 self?.triggerToggleIfNeeded(source: "cg_event_tap")
@@ -157,6 +174,11 @@ final class HotKeyManager: ObservableObject {
     }
 
     private func reenableEventTap(reason: String) {
+        log(
+            "[HotKey] reenableEventTap called",
+            level: .debug,
+            fields: ["reason": reason]
+        )
         guard let tap = eventTap else {
             cgEventTapActive = false
             log("[CGEventTap] Re-enable skipped: eventTap missing")
@@ -181,6 +203,14 @@ final class HotKeyManager: ObservableObject {
     }
 
     private func installFallbackMonitors() {
+        log(
+            "[HotKey] installFallbackMonitors called",
+            level: .debug,
+            fields: [
+                "hasGlobalMonitor": String(globalMonitor != nil),
+                "hasLocalMonitor": String(localMonitor != nil)
+            ]
+        )
         if globalMonitor == nil {
             globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 _ = self?.handleFallbackEvent(event, source: "global")
@@ -283,6 +313,19 @@ final class HotKeyManager: ObservableObject {
         let eventModifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
         let matches = currentHotKey.matches(event: event)
 
+        log(
+            "[HotKey] handleFallbackEvent",
+            level: .debug,
+            fields: [
+                "source": source,
+                "keyCode": String(eventKeyCode),
+                "modifiers": String(eventModifiers),
+                "expectedKeyCode": String(currentHotKey.keyCode),
+                "expectedModifiers": String(currentHotKey.modifiers),
+                "matches": String(matches)
+            ]
+        )
+
         // Log every 46 (M key) event for debugging
         if eventKeyCode == 46 {
             log("[FALLBACK DEBUG] source=\(source) keyCode=\(eventKeyCode) modifiers=\(eventModifiers) expected=\(currentHotKey.modifiers) matches=\(matches)")
@@ -299,8 +342,16 @@ final class HotKeyManager: ObservableObject {
 
     private func installHandlerIfNeeded() {
         guard handlerRef == nil else {
+            log(
+                "[HotKey] installHandlerIfNeeded: handler already installed",
+                level: .debug
+            )
             return
         }
+        log(
+            "[HotKey] installHandlerIfNeeded: installing new handler",
+            level: .debug
+        )
 
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -435,7 +486,16 @@ final class HotKeyManager: ObservableObject {
     }
 
     func refreshAccessibilityStatus() {
+        let previous = accessibilityStatus
         accessibilityStatus = Self.checkAccessibility()
+        log(
+            "[HotKey] refreshAccessibilityStatus",
+            level: .debug,
+            fields: [
+                "previous": String(previous),
+                "current": String(accessibilityStatus)
+            ]
+        )
     }
 
     private static func checkAccessibility() -> Bool {
@@ -445,13 +505,28 @@ final class HotKeyManager: ObservableObject {
 
     private func validate(_ hotKey: HotKeyConfiguration) -> String? {
         if hotKey.modifiers & (UInt32(cmdKey) | UInt32(optionKey) | UInt32(controlKey)) == 0 {
+            log(
+                "[HotKey] validate: no modifier key",
+                level: .debug,
+                fields: ["keyCode": String(hotKey.keyCode), "modifiers": String(hotKey.modifiers)]
+            )
             return "快捷键至少需要包含 ⌘ / ⌥ / ⌃ 之一"
         }
 
         if let conflict = HotKeyConfiguration.knownConflicts.first(where: { $0.configuration == hotKey }) {
+            log(
+                "[HotKey] validate: conflict found",
+                level: .debug,
+                fields: ["conflictReason": conflict.reason]
+            )
             return "快捷键冲突：\(conflict.reason)"
         }
 
+        log(
+            "[HotKey] validate: passed",
+            level: .debug,
+            fields: ["keyCode": String(hotKey.keyCode), "modifiers": String(hotKey.modifiers)]
+        )
         return nil
     }
 

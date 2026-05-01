@@ -207,6 +207,7 @@ struct DraggableSlider: NSViewRepresentable {
 
         @objc func sliderValueChanged(_ sender: NSSlider) {
             let newValue = sender.doubleValue
+            log("DraggableSlider.sliderValueChanged", level: .debug, fields: ["rawValue": String(newValue), "min": String(parent.minValue), "max": String(parent.maxValue), "step": String(parent.step)])
 
             var finalValue = newValue
             // 应用步进
@@ -216,6 +217,7 @@ struct DraggableSlider: NSViewRepresentable {
             // 限制范围
             finalValue = max(self.parent.minValue, min(self.parent.maxValue, finalValue))
             self.parent.value = finalValue
+            log("DraggableSlider.sliderValueChanged exit", level: .debug, fields: ["finalValue": String(finalValue)])
         }
     }
 }
@@ -307,6 +309,7 @@ private struct CodeBlockView: View {
     }
 
     private func copyToClipboard() {
+        log("CodeBlockView.copyToClipboard entry", level: .debug, fields: ["language": language, "codeLength": String(code.count)])
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(code, forType: .string)
@@ -1648,11 +1651,13 @@ private struct SettingsView: View {
     }
 
     private func showDuplicateInFinder(path: String) {
+        log("SettingsView.showDuplicateInFinder entry", level: .debug, fields: ["path": path])
         let url = URL(fileURLWithPath: path)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private func moveDuplicateToTrash(path: String) {
+        log("SettingsView.moveDuplicateToTrash entry", level: .debug, fields: ["path": path])
         let alert = NSAlert()
         alert.messageText = "确认删除"
         alert.informativeText = "确定要将以下应用移到废纸篓吗？\n\n\(path)\n\n此操作不可撤销。"
@@ -1661,12 +1666,16 @@ private struct SettingsView: View {
         alert.addButton(withTitle: "取消")
 
         let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return }
+        guard response == .alertFirstButtonReturn else {
+            log("SettingsView.moveDuplicateToTrash user cancelled", level: .debug)
+            return
+        }
 
         do {
             let url = URL(fileURLWithPath: path)
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
             log("Moved duplicate to trash: \(path)")
+            log("SettingsView.moveDuplicateToTrash success", level: .debug, fields: ["path": path])
             refreshInstallations()
         } catch {
             let errorAlert = NSAlert()
@@ -1679,6 +1688,7 @@ private struct SettingsView: View {
     }
 
     private func moveAllDuplicatesToTrash() {
+        log("SettingsView.moveAllDuplicatesToTrash entry", level: .debug, fields: ["count": String(otherInstallations.count)])
         let pathsToDelete = otherInstallations
         guard !pathsToDelete.isEmpty else { return }
 
@@ -1690,7 +1700,10 @@ private struct SettingsView: View {
         alert.addButton(withTitle: "取消")
 
         let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return }
+        guard response == .alertFirstButtonReturn else {
+            log("SettingsView.moveAllDuplicatesToTrash user cancelled", level: .debug)
+            return
+        }
 
         var failedPaths: [String] = []
         for path in pathsToDelete {
@@ -1817,6 +1830,7 @@ private struct SettingsView: View {
         token: String?,
         completion: @escaping (Result<Data, Error>) -> Void
     ) {
+        log("SettingsView.sendHookRequest entry", level: .debug, fields: ["port": String(port), "endpoint": endpoint, "hasToken": String(token != nil)])
         guard let url = URL(string: "http://127.0.0.1:\(port)\(endpoint)") else {
             completion(.failure(NSError(domain: "VibeFocus", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
@@ -1834,6 +1848,7 @@ private struct SettingsView: View {
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         } catch {
+            log("SettingsView.sendHookRequest JSON serialization failed", level: .debug, fields: ["error": error.localizedDescription])
             completion(.failure(error))
             return
         }
@@ -1888,6 +1903,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
     private init() {
+        log("SettingsWindowController.init entry", level: .debug)
         let hostingController = NSHostingController(
             rootView: SettingsView()
                 .environmentObject(HotKeyManager.shared)
@@ -1914,6 +1930,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.contentViewController = hostingController
         super.init(window: window)
         window.delegate = self
+        log("SettingsWindowController.init exit", level: .debug)
     }
 
     @available(*, unavailable)
@@ -2278,6 +2295,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let lockFilePath = "/tmp/VibeFocusHotkeys.lock"
 
     private func acquireExclusiveLock() -> Bool {
+        log("AppDelegate.acquireExclusiveLock entry", level: .debug, fields: ["lockFilePath": lockFilePath])
         let fd = open(lockFilePath, O_CREAT | O_RDWR, 0o644)
         guard fd != -1 else {
             log("Failed to open lock file")
@@ -2288,6 +2306,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let result = flock(fd, LOCK_EX | LOCK_NB)
         if result == -1 {
             // 锁已被占用，关闭文件描述符
+            log("AppDelegate.acquireExclusiveLock failed, lock held by another process", level: .debug)
             close(fd)
             return false
         }
@@ -2299,6 +2318,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func findExistingInstance() -> ExistingInstanceInfo? {
+        log("AppDelegate.findExistingInstance entry", level: .debug)
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let bundleID = Bundle.main.bundleIdentifier
         let execPath = Bundle.main.executableURL?.resolvingSymlinksInPath().path
@@ -2331,6 +2351,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 let comm = components[1]
                 if comm == processName || comm == "VibeFocusHotkeys" {
+                    log("AppDelegate.findExistingInstance found matching process", level: .debug, fields: ["pid": String(pid), "comm": comm])
                     // Found another instance with same process name
                     // Try to get NSRunningApplication for this PID
                     if let app = NSRunningApplication(processIdentifier: pid) {
@@ -2348,9 +2369,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Fallback: match by bundle ID if available
         if let bundleID = bundleID {
+            log("AppDelegate.findExistingInstance fallback to bundle ID match", level: .debug, fields: ["bundleID": bundleID])
             let runningApps = NSWorkspace.shared.runningApplications
             for app in runningApps {
                 if app.bundleIdentifier == bundleID && app.processIdentifier != currentPID {
+                    log("AppDelegate.findExistingInstance found via bundle ID", level: .debug, fields: ["pid": String(app.processIdentifier)])
                     return ExistingInstanceInfo(
                         app: app,
                         version: installedVersion(for: app),
@@ -2364,6 +2387,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyApplicationIcon() {
+        log("AppDelegate.applyApplicationIcon entry", level: .debug)
         guard let icon = bundledAppIconImage() else {
             return
         }
@@ -2386,20 +2410,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @discardableResult
     private func enforceExpectedInstallLocation() -> Bool {
+        log("AppDelegate.enforceExpectedInstallLocation entry", level: .debug)
         let actualURL = Bundle.main.bundleURL
         let actual = actualURL.path
         if actualURL.pathExtension != "app" {
             log("Skipping install-location enforcement for direct binary run: \(actual)")
+            log("AppDelegate.enforceExpectedInstallLocation binary run, returning true", level: .debug)
             return true
         }
 
         if isAllowedDevelopmentBundlePath(actual) {
             log("Skipping install-location enforcement for development bundle path: \(actual)")
+            log("AppDelegate.enforceExpectedInstallLocation dev path, returning true", level: .debug)
             return true
         }
 
         let expectedPaths = expectedAppBundlePaths()
         guard !expectedPaths.contains(actual) else {
+            log("AppDelegate.enforceExpectedInstallLocation at expected path, returning true", level: .debug, fields: ["actual": actual])
             return true
         }
 
@@ -2445,6 +2473,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func promptAccessibilityIfNeeded() {
         guard HotKeyManager.shared.accessibilityGranted == false else {
+            log("AppDelegate.promptAccessibilityIfNeeded already granted, skipping", level: .debug)
             return
         }
         log("Accessibility not granted; opening System Settings.")

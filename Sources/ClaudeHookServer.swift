@@ -20,6 +20,15 @@ final class ClaudeHookServer: ObservableObject {
     private init() {}
 
     func applyPreferences() {
+        log(
+            "[ClaudeHookServer] applyPreferences called",
+            level: .debug,
+            fields: [
+                "isEnabled": String(ClaudeHookPreferences.isEnabled),
+                "port": String(ClaudeHookPreferences.listenPort),
+                "hasToken": String(ClaudeHookPreferences.authToken != nil && !ClaudeHookPreferences.authToken!.isEmpty)
+            ]
+        )
         if ClaudeHookPreferences.isEnabled {
             startIfNeeded(port: ClaudeHookPreferences.listenPort, token: ClaudeHookPreferences.authToken)
         } else {
@@ -28,6 +37,14 @@ final class ClaudeHookServer: ObservableObject {
     }
 
     func stop() {
+        log(
+            "[ClaudeHookServer] stop called",
+            level: .debug,
+            fields: [
+                "wasRunning": String(isRunning),
+                "port": String(describing: activePort)
+            ]
+        )
         server?.stop()
         server = nil
         isRunning = false
@@ -37,12 +54,31 @@ final class ClaudeHookServer: ObservableObject {
     }
 
     private func startIfNeeded(port: Int, token: String?) {
+        log(
+            "[ClaudeHookServer] startIfNeeded called",
+            level: .debug,
+            fields: [
+                "requestedPort": String(port),
+                "isRunning": String(isRunning),
+                "currentPort": String(describing: activePort),
+                "tokenChanged": String(configuredToken != token)
+            ]
+        )
         if isRunning, activePort == port, configuredToken == token {
+            log(
+                "[ClaudeHookServer] startIfNeeded: already running with same config",
+                level: .debug
+            )
             return
         }
         stop()
 
         guard port >= 1024, port <= 65535 else {
+            log(
+                "[ClaudeHookServer] startIfNeeded: invalid port",
+                level: .debug,
+                fields: ["port": String(port)]
+            )
             isRunning = false
             statusDescription = "端口无效"
             lastErrorMessage = "Invalid port: \(port)"
@@ -119,11 +155,14 @@ final class ClaudeHookServer: ObservableObject {
         query: [String: String],
         headers: [String: String]
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        let bodyString = String(data: body, encoding: .utf8) ?? "non-utf8"
         log(
             "[ClaudeHookServer] request received",
+            level: .debug,
             fields: [
                 "bodySize": String(body.count),
-                "contentType": headerValue(from: headers, forKey: "Content-Type") ?? "nil"
+                "contentType": headerValue(from: headers, forKey: "Content-Type") ?? "nil",
+                "body": truncateForLog(bodyString, limit: 500)
             ]
         )
 
@@ -156,6 +195,11 @@ final class ClaudeHookServer: ObservableObject {
 
         let decoder = JSONDecoder()
         guard let payload = try? decoder.decode(ClaudeHookPayload.self, from: body) else {
+            log(
+                "[ClaudeHookServer] payload decode failed",
+                level: .debug,
+                fields: ["body": truncateForLog(bodyString, limit: 200)]
+            )
             return (
                 400,
                 ClaudeHookResponse(
@@ -167,6 +211,15 @@ final class ClaudeHookServer: ObservableObject {
         }
 
         lastEventAt = Date()
+        log(
+            "[ClaudeHookServer] routing event",
+            level: .debug,
+            fields: [
+                "event": payload.event.rawValue,
+                "sessionID": payload.sessionID,
+                "cwd": payload.cwd ?? "nil"
+            ]
+        )
         switch payload.event {
         case .sessionStart:
             return handleSessionStart(payload: payload)
@@ -771,6 +824,17 @@ final class ClaudeHookServer: ObservableObject {
     }
 
     private func makeJSONResponse(statusCode: Int, response: ClaudeHookResponse) -> GCDWebServerDataResponse {
+        log(
+            "[ClaudeHookServer] makeJSONResponse",
+            level: .debug,
+            fields: [
+                "statusCode": String(statusCode),
+                "code": response.code,
+                "ok": String(response.ok),
+                "sessionID": response.sessionID ?? "nil",
+                "handled": String(response.handled)
+            ]
+        )
         let encoder = JSONEncoder()
         let bodyData = (try? encoder.encode(response)) ?? Data("{\"ok\":false}".utf8)
         let httpResponse = GCDWebServerDataResponse(data: bodyData, contentType: "application/json")

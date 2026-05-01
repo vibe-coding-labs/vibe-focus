@@ -25,6 +25,7 @@ final class LaunchHealthChecker {
     private init() {}
 
     func performFullCheck() async -> [HealthCheckResult] {
+        log("LaunchHealthChecker.performFullCheck() entered", level: .debug)
         var results: [HealthCheckResult] = []
 
         await withTaskGroup(of: HealthCheckResult.self) { group in
@@ -39,13 +40,23 @@ final class LaunchHealthChecker {
             }
         }
 
-        return results.sorted { $0.severity > $1.severity }
+        let sorted = results.sorted { $0.severity > $1.severity }
+        log("LaunchHealthChecker.performFullCheck() completed", level: .debug, fields: [
+            "totalChecks": String(sorted.count),
+            "healthy": String(sorted.filter(\.isHealthy).count),
+            "hasCritical": String(hasCriticalIssues(sorted))
+        ])
+        return sorted
     }
 
     nonisolated func checkAccessibilityPermission() async -> HealthCheckResult {
+        log("LaunchHealthChecker.checkAccessibilityPermission() entered", level: .debug)
         let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
         let isTrusted = AXIsProcessTrustedWithOptions(options)
 
+        log("LaunchHealthChecker.checkAccessibilityPermission() result", level: .debug, fields: [
+            "isTrusted": String(isTrusted)
+        ])
         return HealthCheckResult(
             component: "辅助功能权限",
             isHealthy: isTrusted,
@@ -55,6 +66,7 @@ final class LaunchHealthChecker {
     }
 
     func checkInstallLocation() async -> HealthCheckResult {
+        log("LaunchHealthChecker.checkInstallLocation() entered", level: .debug)
         let expectedPaths = [
             NSHomeDirectory() + "/Applications/VibeFocus.app",
             "/Applications/VibeFocus.app"
@@ -64,6 +76,10 @@ final class LaunchHealthChecker {
         let isValid = expectedPaths.contains(actualPath) ||
                       actualPath.hasSuffix("/dist/VibeFocus.app")
 
+        log("LaunchHealthChecker.checkInstallLocation() result", level: .debug, fields: [
+            "actualPath": actualPath,
+            "isValid": String(isValid)
+        ])
         return HealthCheckResult(
             component: "安装位置",
             isHealthy: isValid,
@@ -73,8 +89,12 @@ final class LaunchHealthChecker {
     }
 
     func checkScreenAccess() async -> HealthCheckResult {
+        log("LaunchHealthChecker.checkScreenAccess() entered", level: .debug)
         let hasAccess = CGPreflightScreenCaptureAccess()
 
+        log("LaunchHealthChecker.checkScreenAccess() result", level: .debug, fields: [
+            "hasAccess": String(hasAccess)
+        ])
         return HealthCheckResult(
             component: "屏幕录制权限",
             isHealthy: hasAccess,
@@ -84,12 +104,17 @@ final class LaunchHealthChecker {
     }
 
     func checkDiskSpace() async -> HealthCheckResult {
+        log("LaunchHealthChecker.checkDiskSpace() entered", level: .debug)
         let fileURL = URL(fileURLWithPath: NSHomeDirectory())
         do {
             let values = try fileURL.resourceValues(forKeys: [.volumeAvailableCapacityKey])
             if let capacity = values.volumeAvailableCapacity {
                 let mb = capacity / 1_048_576
                 let isHealthy = mb > 100
+                log("LaunchHealthChecker.checkDiskSpace() result", level: .debug, fields: [
+                    "availableMB": String(mb),
+                    "isHealthy": String(isHealthy)
+                ])
                 return HealthCheckResult(
                     component: "磁盘空间",
                     isHealthy: isHealthy,
@@ -98,6 +123,9 @@ final class LaunchHealthChecker {
                 )
             }
         } catch {
+            log("LaunchHealthChecker.checkDiskSpace() error", level: .debug, fields: [
+                "error": error.localizedDescription
+            ])
             return HealthCheckResult(
                 component: "磁盘空间",
                 isHealthy: false,
@@ -106,6 +134,7 @@ final class LaunchHealthChecker {
             )
         }
 
+        log("LaunchHealthChecker.checkDiskSpace() capacity unavailable", level: .debug)
         return HealthCheckResult(
             component: "磁盘空间",
             isHealthy: true,
@@ -115,9 +144,14 @@ final class LaunchHealthChecker {
     }
 
     func checkSystemVersion() async -> HealthCheckResult {
+        log("LaunchHealthChecker.checkSystemVersion() entered", level: .debug)
         let version = ProcessInfo.processInfo.operatingSystemVersion
         let isSupported = version.majorVersion >= 13
 
+        log("LaunchHealthChecker.checkSystemVersion() result", level: .debug, fields: [
+            "version": "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
+            "isSupported": String(isSupported)
+        ])
         return HealthCheckResult(
             component: "系统版本",
             isHealthy: isSupported,
@@ -127,10 +161,14 @@ final class LaunchHealthChecker {
     }
 
     func hasCriticalIssues(_ results: [HealthCheckResult]) -> Bool {
-        results.contains { $0.severity == .critical && !$0.isHealthy }
+        let has = results.contains { $0.severity == .critical && !$0.isHealthy }
+        log("LaunchHealthChecker.hasCriticalIssues() evaluated", level: .debug, fields: ["result": String(has)])
+        return has
     }
 
     func hasWarnings(_ results: [HealthCheckResult]) -> Bool {
-        results.contains { $0.severity == .warning && !$0.isHealthy }
+        let has = results.contains { $0.severity == .warning && !$0.isHealthy }
+        log("LaunchHealthChecker.hasWarnings() evaluated", level: .debug, fields: ["result": String(has)])
+        return has
     }
 }

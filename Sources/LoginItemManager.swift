@@ -16,7 +16,9 @@ final class LoginItemManager: ObservableObject {
     }
 
     func refresh() {
+        log("LoginItemManager.refresh() entered", level: .debug)
         let status = SMAppService.mainApp.status
+        log("LoginItemManager.refresh() SMAppService status", level: .debug, fields: ["rawStatus": String(describing: status)])
         switch status {
         case .enabled:
             isEnabled = true
@@ -95,20 +97,25 @@ final class LoginItemManager: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool) {
+        log("LoginItemManager.setEnabled() entered", level: .debug, fields: ["enabled": String(enabled)])
         do {
             if enabled {
+                log("LoginItemManager.setEnabled() registering login item", level: .debug)
                 try SMAppService.mainApp.register()
             } else {
+                log("LoginItemManager.setEnabled() unregistering login item", level: .debug)
                 try SMAppService.mainApp.unregister()
             }
             lastErrorMessage = nil
         } catch {
+            log("LoginItemManager.setEnabled() error", level: .debug, fields: ["error": error.localizedDescription])
             lastErrorMessage = error.localizedDescription
         }
         refresh()
     }
 
     func openLoginItemsSettings() {
+        log("LoginItemManager.openLoginItemsSettings() opening system settings", level: .debug)
         SMAppService.openSystemSettingsLoginItems()
     }
 }

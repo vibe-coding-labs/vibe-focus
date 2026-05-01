@@ -46,10 +46,12 @@ class ScreenOverlayManager: ObservableObject {
     private init() {
         self.preferences = ScreenIndexPreferences.load()
         log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
+        log("ScreenOverlayManager.init entry", level: .debug, fields: ["isEnabled": String(preferences.isEnabled), "position": preferences.position.rawValue])
         // setupScreenNotifications() - DISABLED: causing crashes
         setupSignalHandler()
         registerYabaiSignals()
         startRefreshTimer()
+        log("ScreenOverlayManager.init exit", level: .debug)
     }
 
     // MARK: - Signal Handling
@@ -73,6 +75,7 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func clearSpaceIndexCache() {
+        log("ScreenOverlayManager.clearSpaceIndexCache entry", level: .debug, fields: ["cachedSpaceCount": String(cachedSpaceIndices.count), "lastQueryCount": String(lastQueryTimes.count), "screenSpaceCacheCount": String(screenSpaceCache.count)])
         cachedSpaceIndices.removeAll()
         lastQueryTimes.removeAll()
         // 关键修复：同时清除 screenSpaceCache，确保信号触发时强制刷新
@@ -81,10 +84,12 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func cancelPendingSignalRefreshes() {
+        log("ScreenOverlayManager.cancelPendingSignalRefreshes entry", level: .debug, fields: ["pendingCount": String(pendingSignalRefreshWorkItems.count)])
         for workItem in pendingSignalRefreshWorkItems {
             workItem.cancel()
         }
         pendingSignalRefreshWorkItems.removeAll()
+        log("ScreenOverlayManager.cancelPendingSignalRefreshes exit", level: .debug)
     }
 
     private func scheduleSignalFollowUpRefreshes() {
@@ -230,17 +235,23 @@ class ScreenOverlayManager: ObservableObject {
 
     // MARK: - Public Methods
     func setEnabled(_ enabled: Bool) {
+        log("ScreenOverlayManager.setEnabled entry", level: .debug, fields: ["enabled": String(enabled), "wasEnabled": String(preferences.isEnabled)])
         preferences.isEnabled = enabled
         if enabled {
+            log("ScreenOverlayManager.setEnabled branch: showing overlays", level: .debug)
             showOverlays()
         } else {
+            log("ScreenOverlayManager.setEnabled branch: hiding overlays", level: .debug)
             hideOverlays()
         }
+        log("ScreenOverlayManager.setEnabled exit", level: .debug, fields: ["enabled": String(enabled)])
     }
 
     func updatePosition(_ position: IndexPosition) {
+        log("ScreenOverlayManager.updatePosition entry", level: .debug, fields: ["position": position.rawValue, "previousPosition": preferences.position.rawValue])
         preferences.position = position
         updateOverlayPositions()
+        log("ScreenOverlayManager.updatePosition exit", level: .debug, fields: ["position": position.rawValue])
     }
 
     func refreshOverlays() {
@@ -255,21 +266,25 @@ class ScreenOverlayManager: ObservableObject {
 
     func suspendAutomaticRefreshes(reason: String) {
         guard !automaticRefreshSuspended else {
+            log("ScreenOverlayManager.suspendAutomaticRefreshes already suspended", level: .debug, fields: ["reason": reason])
             return
         }
         automaticRefreshSuspended = true
         refreshTimer?.invalidate()
         refreshTimer = nil
         log("Suspended automatic overlay refreshes: \(reason)")
+        log("ScreenOverlayManager.suspendAutomaticRefreshes exit", level: .debug, fields: ["reason": reason])
     }
 
     func resumeAutomaticRefreshes(reason: String) {
         guard automaticRefreshSuspended else {
+            log("ScreenOverlayManager.resumeAutomaticRefreshes not suspended", level: .debug, fields: ["reason": reason])
             return
         }
         automaticRefreshSuspended = false
         startRefreshTimer()
         log("Resumed automatic overlay refreshes: \(reason)")
+        log("ScreenOverlayManager.resumeAutomaticRefreshes exit", level: .debug, fields: ["reason": reason])
     }
 
     func flushPendingPreferenceSave(reason: String = "manual_flush") {
@@ -283,6 +298,7 @@ class ScreenOverlayManager: ObservableObject {
 
     // MARK: - Private Methods
     private func uuidForScreen(_ screen: NSScreen) -> UUID {
+        log("ScreenOverlayManager.uuidForScreen entry", level: .debug, fields: ["screenFrame": String(describing: screen.frame)])
         if let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
             // Use the uint32 value as UUID's uuid_t bytes
             var uuidBytes = uuid_t(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -295,6 +311,7 @@ class ScreenOverlayManager: ObservableObject {
             return UUID(uuid: uuidBytes)
         }
         // Fallback: use the screen's hash
+        log("ScreenOverlayManager.uuidForScreen fallback to hash", level: .debug, fields: ["screenHash": String(screen.hashValue)])
         return UUID(uuid: uuid_t(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, UInt8(abs(screen.hashValue % 256))))
     }
 
@@ -418,6 +435,7 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func updateOverlaysInPlace() {
+        log("ScreenOverlayManager.updateOverlaysInPlace entry", level: .debug, fields: ["overlayCount": String(overlayWindows.count), "screenCount": String(NSScreen.screens.count)])
         let screens = NSScreen.screens
         var activeUUIDs: Set<UUID> = []
 
@@ -431,6 +449,7 @@ class ScreenOverlayManager: ObservableObject {
                 overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
                 overlay.show()
             } else {
+                log("ScreenOverlayManager.updateOverlaysInPlace creating new overlay for screen", level: .debug, fields: ["index": String(index), "uuid": uuid.uuidString])
                 let overlay = OverlayWindow(screen: screen)
                 overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
                 overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
@@ -443,6 +462,7 @@ class ScreenOverlayManager: ObservableObject {
 
         let staleUUIDs = overlayWindows.keys.filter { !activeUUIDs.contains($0) }
         for uuid in staleUUIDs {
+            log("ScreenOverlayManager.updateOverlaysInPlace removing stale overlay", level: .debug, fields: ["uuid": uuid.uuidString])
             overlayWindows[uuid]?.close()
             overlayWindows.removeValue(forKey: uuid)
             screenSpaceCache.removeValue(forKey: uuid)
@@ -452,14 +472,17 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func hideOverlays() {
+        log("ScreenOverlayManager.hideOverlays entry", level: .debug, fields: ["overlayCount": String(overlayWindows.count)])
         for (_, overlay) in overlayWindows {
             overlay.close()  // 使用 close() 完全关闭窗口，而不是仅隐藏
         }
         overlayWindows.removeAll()
         log("Hid all overlays")
+        log("ScreenOverlayManager.hideOverlays exit", level: .debug)
     }
 
     private func updateOverlayPositions() {
+        log("ScreenOverlayManager.updateOverlayPositions entry", level: .debug, fields: ["screenCount": String(NSScreen.screens.count), "position": preferences.position.rawValue])
         let screens = NSScreen.screens
 
         for screen in screens {
@@ -467,8 +490,11 @@ class ScreenOverlayManager: ObservableObject {
 
             if let overlay = overlayWindows[uuid] {
                 overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
+            } else {
+                log("ScreenOverlayManager.updateOverlayPositions no overlay for screen", level: .debug, fields: ["uuid": uuid.uuidString])
             }
         }
+        log("ScreenOverlayManager.updateOverlayPositions exit", level: .debug)
     }
 
     private func preferenceSignature(_ preferences: ScreenIndexPreferences) -> String {
@@ -589,22 +615,27 @@ class ScreenOverlayManager: ObservableObject {
 
     // MARK: - Per-Screen Space Indexing
     private func getPerScreenSpaceIndex(for screen: NSScreen) -> Int? {
+        log("ScreenOverlayManager.getPerScreenSpaceIndex entry", level: .debug, fields: ["screenFrame": String(describing: screen.frame)])
         guard let yabaiPath = getYabaiPath() else {
+            log("ScreenOverlayManager.getPerScreenSpaceIndex yabai not found", level: .debug)
             return nil
         }
 
         guard let displayIndex = getYabaiDisplayIndex(for: screen) else {
+            log("ScreenOverlayManager.getPerScreenSpaceIndex display index not found", level: .debug)
             return nil
         }
 
         // Get all spaces for this display
         guard let displaySpaces = queryYabaiSpaces(forDisplayIndex: displayIndex, yabaiPath: yabaiPath),
               !displaySpaces.isEmpty else {
+            log("ScreenOverlayManager.getPerScreenSpaceIndex no display spaces", level: .debug, fields: ["displayIndex": String(displayIndex)])
             return nil
         }
 
         // Get the currently focused space index
         guard let focusedSpaceIndex = queryFocusedSpaceIndex(yabaiPath: yabaiPath) else {
+            log("ScreenOverlayManager.getPerScreenSpaceIndex focused space not found", level: .debug)
             return nil
         }
 
@@ -615,18 +646,22 @@ class ScreenOverlayManager: ObservableObject {
         // Find which position the focused space is in (1-based)
         for (position, space) in sortedSpaces.enumerated() {
             if space.index == focusedSpaceIndex {
+                log("ScreenOverlayManager.getPerScreenSpaceIndex found focused space", level: .debug, fields: ["focusedSpaceIndex": String(focusedSpaceIndex), "position": String(position + 1)])
                 return position + 1  // 1-based index
             }
         }
 
         // If focused space is not on this display, find the visible one
+        log("ScreenOverlayManager.getPerScreenSpaceIndex focused space not on this display, looking for visible", level: .debug, fields: ["focusedSpaceIndex": String(focusedSpaceIndex)])
         for (position, space) in sortedSpaces.enumerated() {
             if space.isVisible {
+                log("ScreenOverlayManager.getPerScreenSpaceIndex found visible space", level: .debug, fields: ["spaceIndex": String(space.index), "position": String(position + 1)])
                 return position + 1
             }
         }
 
         // Fallback: return 1
+        log("ScreenOverlayManager.getPerScreenSpaceIndex fallback to 1", level: .debug)
         return 1
     }
 
@@ -938,8 +973,10 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     private func getCGSpaceIndex(for screen: NSScreen) -> Int? {
+        log("ScreenOverlayManager.getCGSpaceIndex entry", level: .debug, fields: ["screenFrame": String(describing: screen.frame)])
         // Try to get space info from Core Graphics
         guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            log("ScreenOverlayManager.getCGSpaceIndex no screen number", level: .debug)
             return nil
         }
 
@@ -947,10 +984,12 @@ class ScreenOverlayManager: ObservableObject {
 
         // This is a simplified approach - full implementation would need more complex CG API usage
         // For now, return nil to indicate we couldn't get system index
+        log("ScreenOverlayManager.getCGSpaceIndex returning nil (not implemented)", level: .debug)
         return nil
     }
 
     deinit {
+        log("ScreenOverlayManager.deinit called", level: .debug)
         // Timer invalidation must be done on MainActor
         // Since this is a singleton, deinit is rarely called
         // The timer will be cleaned up when the app exits

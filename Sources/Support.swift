@@ -20,7 +20,7 @@ private let logFileURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
 private let structuredLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl")
 private let logFileBackupURL = URL(fileURLWithPath: "/tmp/vibefocus.log.1")
 private let structuredLogBackupURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl.1")
-private let logMaxSizeBytes: UInt64 = 8 * 1024 * 1024
+private let logMaxSizeBytes: UInt64 = 25 * 1024 * 1024
 private let logWriteQueue = DispatchQueue(label: "vibefocus.log.write", qos: .utility)
 private let logSessionID = UUID().uuidString
 private final class LogTimestampFormatter: @unchecked Sendable {

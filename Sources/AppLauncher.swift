@@ -23,7 +23,11 @@ final class AppLauncher: ObservableObject {
     private init() {}
 
     func launch() async {
-        guard !isLaunching else { return }
+        log("AppLauncher.launch() entered", level: .debug, fields: ["isLaunching": String(isLaunching)])
+        guard !isLaunching else {
+            log("AppLauncher.launch() early return: already launching", level: .debug)
+            return
+        }
         isLaunching = true
         launchError = nil
         phaseResults.removeAll()
@@ -108,6 +112,11 @@ final class AppLauncher: ObservableObject {
             log("=== VibeFocus 启动失败 ===")
         }
 
+        log("AppLauncher.launch() completed", level: .debug, fields: [
+            "currentPhase": currentPhase.rawValue,
+            "hasError": String(launchError != nil),
+            "phaseResults": String(phaseResults.count)
+        ])
         isLaunching = false
     }
 
@@ -115,6 +124,7 @@ final class AppLauncher: ObservableObject {
         _ phase: LaunchPhase,
         action: () async -> (success: Bool, message: String, error: LaunchError?)
     ) async {
+        log("AppLauncher.executePhase() entered", level: .debug, fields: ["phase": phase.rawValue])
         currentPhase = phase
         let startTime = Date()
 
@@ -139,27 +149,40 @@ final class AppLauncher: ObservableObject {
     }
 
     func reset() {
+        log("AppLauncher.reset() entered", level: .debug, fields: [
+            "currentPhase": currentPhase.rawValue,
+            "phaseResults": String(phaseResults.count),
+            "isLaunching": String(isLaunching)
+        ])
         currentPhase = .initializing
         phaseResults.removeAll()
         isLaunching = false
         launchError = nil
         healthResults.removeAll()
+        log("AppLauncher.reset() completed", level: .debug)
     }
 
     // MARK: - Helpers
 
     private func findExistingInstance() -> (app: NSRunningApplication, version: String?)? {
+        log("AppLauncher.findExistingInstance() entered", level: .debug)
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let bundleID = Bundle.main.bundleIdentifier
 
         if let bundleID = bundleID {
             for app in NSWorkspace.shared.runningApplications {
                 if app.bundleIdentifier == bundleID && app.processIdentifier != currentPID {
-                    return (app, installedVersion(for: app))
+                    let version = installedVersion(for: app)
+                    log("AppLauncher.findExistingInstance() found existing instance", level: .debug, fields: [
+                        "pid": String(app.processIdentifier),
+                        "version": version ?? "unknown"
+                    ])
+                    return (app, version)
                 }
             }
         }
 
+        log("AppLauncher.findExistingInstance() no existing instance found", level: .debug)
         return nil
     }
 
@@ -178,14 +201,23 @@ final class AppLauncher: ObservableObject {
     private let lockFilePath = "/tmp/VibeFocusHotkeys.lock"
 
     private func acquireExclusiveLock() -> Bool {
+        log("AppLauncher.acquireExclusiveLock() entered", level: .debug, fields: ["lockFilePath": lockFilePath])
         let fd = open(lockFilePath, O_CREAT | O_RDWR, 0o644)
-        guard fd != -1 else { return false }
-        return flock(fd, LOCK_EX | LOCK_NB) != -1
+        guard fd != -1 else {
+            log("AppLauncher.acquireExclusiveLock() failed to open lock file", level: .debug, fields: ["fd": "-1"])
+            return false
+        }
+        let result = flock(fd, LOCK_EX | LOCK_NB) != -1
+        log("AppLauncher.acquireExclusiveLock() result", level: .debug, fields: ["acquired": String(result)])
+        return result
     }
 
     private let openSettingsNotification = Notification.Name("com.openai.vibe-focus.open-settings")
 
     private func requestExistingInstanceOpenSettings() {
+        log("AppLauncher.requestExistingInstanceOpenSettings() posting notification", level: .debug, fields: [
+            "notification": openSettingsNotification.rawValue
+        ])
         DistributedNotificationCenter.default().post(
             name: openSettingsNotification,
             object: nil
