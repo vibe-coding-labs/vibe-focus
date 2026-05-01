@@ -44,6 +44,7 @@ enum LaunchError: Error {
     case serviceStartupFailed
 
     var localizedDescription: String {
+        log("LaunchError.localizedDescription accessed", level: .debug, fields: ["error": String(describing: self)])
         switch self {
         case .anotherInstanceRunning:
             return "检测到另一个 VibeFocus 实例正在运行"
@@ -59,6 +60,7 @@ enum LaunchError: Error {
     }
 
     var recoverySuggestion: String {
+        log("LaunchError.recoverySuggestion accessed", level: .debug, fields: ["error": String(describing: self)])
         switch self {
         case .anotherInstanceRunning:
             return "请退出其他实例后重试，或切换到已运行的实例"

@@ -36,13 +36,17 @@ final class CrashContextRecorder {
     private init() {}
 
     func bootstrap() {
+        log("CrashContextRecorder.bootstrap entry", level: .debug)
         let previous = loadState()
         if let previous, !previous.cleanExit {
             log("[CRASH_CONTEXT] Detected unclean previous exit (pid=\(previous.pid), launchedAt=\(previous.launchedAt))")
+            log("CrashContextRecorder.bootstrap unclean exit detected", level: .debug, fields: ["previousPid": String(previous.pid), "launchedAt": previous.launchedAt, "eventCount": String(previous.events.count)])
             if let lastEvent = previous.events.last {
                 log("[CRASH_CONTEXT] Last event before exit: \(lastEvent)")
             }
             captureRecentLogTail(context: "unclean_exit")
+        } else {
+            log("CrashContextRecorder.bootstrap no previous state or clean exit", level: .debug)
         }
 
         var newState = SessionState(
@@ -84,26 +88,33 @@ final class CrashContextRecorder {
     }
 
     func markCleanExit() {
+        log("CrashContextRecorder.markCleanExit entry", level: .debug, fields: ["hasState": String(state != nil)])
         guard state != nil else {
+            log("CrashContextRecorder.markCleanExit no state, skipping", level: .debug)
             return
         }
         appendEvent("clean_exit")
         state?.cleanExit = true
         persistState()
         log("[CRASH_CONTEXT] Marked clean exit")
+        log("CrashContextRecorder.markCleanExit exit", level: .debug)
     }
 
     private func ingestLatestCrashReportIfNeeded() {
+        log("CrashContextRecorder.ingestLatestCrashReportIfNeeded entry", level: .debug)
         guard let latestReport = latestCrashReportURL() else {
+            log("CrashContextRecorder.ingestLatestCrashReportIfNeeded no crash report found", level: .debug)
             return
         }
         let reportName = latestReport.lastPathComponent
         if state?.lastIngestedCrashReport == reportName {
+            log("CrashContextRecorder.ingestLatestCrashReportIfNeeded already ingested", level: .debug, fields: ["reportName": reportName])
             return
         }
 
         guard let reportText = try? String(contentsOf: latestReport, encoding: .utf8),
               let payload = parseIPSJSONPayload(from: reportText) else {
+            log("CrashContextRecorder.ingestLatestCrashReportIfNeeded parse failed", level: .debug, fields: ["reportName": reportName])
             appendEvent("crash_report_parse_failed file=\(reportName)")
             state?.lastIngestedCrashReport = reportName
             persistState()
@@ -145,25 +156,31 @@ final class CrashContextRecorder {
     }
 
     private func parseIPSJSONPayload(from reportText: String) -> [String: Any]? {
+        log("CrashContextRecorder.parseIPSJSONPayload entry", level: .debug, fields: ["textLength": String(reportText.count)])
         let lines = reportText.split(separator: "\n", omittingEmptySubsequences: false)
         guard lines.count >= 2 else {
+            log("CrashContextRecorder.parseIPSJSONPayload too few lines", level: .debug, fields: ["lineCount": String(lines.count)])
             return nil
         }
         let payloadText = lines.dropFirst().joined(separator: "\n")
         guard let data = payloadText.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
               let payload = object as? [String: Any] else {
+            log("CrashContextRecorder.parseIPSJSONPayload JSON parse failed", level: .debug)
             return nil
         }
+        log("CrashContextRecorder.parseIPSJSONPayload exit", level: .debug, fields: ["keyCount": String(payload.count)])
         return payload
     }
 
     private func latestCrashReportURL() -> URL? {
+        log("CrashContextRecorder.latestCrashReportURL entry", level: .debug, fields: ["directory": diagnosticReportsDirectory.path])
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: diagnosticReportsDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
+            log("CrashContextRecorder.latestCrashReportURL cannot read directory", level: .debug)
             return nil
         }
 
@@ -172,6 +189,7 @@ final class CrashContextRecorder {
             return name.hasPrefix("VibeFocusHotkeys-") && name.hasSuffix(".ips")
         }
         guard !reports.isEmpty else {
+            log("CrashContextRecorder.latestCrashReportURL no reports found", level: .debug)
             return nil
         }
 
@@ -183,17 +201,22 @@ final class CrashContextRecorder {
     }
 
     private func loadState() -> SessionState? {
+        log("CrashContextRecorder.loadState entry", level: .debug, fields: ["path": stateFileURL.path])
         guard let data = try? Data(contentsOf: stateFileURL),
               let loaded = try? JSONDecoder().decode(SessionState.self, from: data) else {
+            log("CrashContextRecorder.loadState no state file or decode failed", level: .debug)
             return nil
         }
+        log("CrashContextRecorder.loadState exit", level: .debug, fields: ["pid": String(loaded.pid), "cleanExit": String(loaded.cleanExit), "eventCount": String(loaded.events.count)])
         return loaded
     }
 
     private func persistState() {
         guard let state else {
+            log("CrashContextRecorder.persistState no state to persist", level: .debug)
             return
         }
+        log("CrashContextRecorder.persistState entry", level: .debug, fields: ["eventCount": String(state.events.count), "cleanExit": String(state.cleanExit)])
         guard let data = try? JSONEncoder().encode(state) else {
             log("[CRASH_CONTEXT] Failed to encode state", level: .error)
             return
@@ -214,12 +237,14 @@ final class CrashContextRecorder {
 
     private func appendEvent(_ event: String) {
         guard state != nil else {
+            log("CrashContextRecorder.appendEvent no state, skipping", level: .debug)
             return
         }
         let line = "\(nowString()) \(event)"
         state?.events.append(line)
         if let count = state?.events.count, count > maxEvents {
             state?.events.removeFirst(count - maxEvents)
+            log("CrashContextRecorder.appendEvent trimmed events", level: .debug, fields: ["removedCount": String(count - maxEvents)])
         }
     }
 
@@ -228,6 +253,7 @@ final class CrashContextRecorder {
     }
 
     private func captureRecentLogTail(context: String) {
+        log("CrashContextRecorder.captureRecentLogTail entry", level: .debug, fields: ["context": context])
         captureTail(
             sourceURL: plainLogFileURL,
             outputURL: plainCrashSnapshotURL,
@@ -251,6 +277,7 @@ final class CrashContextRecorder {
         context: String,
         label: String
     ) {
+        log("CrashContextRecorder.captureTail entry", level: .debug, fields: ["source": sourceURL.path, "output": outputURL.path, "label": label, "lineLimit": String(lineLimit)])
         guard let data = try? Data(contentsOf: sourceURL),
               let content = String(data: data, encoding: .utf8) else {
             log(

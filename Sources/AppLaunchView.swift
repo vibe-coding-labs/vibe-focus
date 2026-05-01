@@ -5,6 +5,12 @@ struct AppLaunchView: View {
     @State private var showDetails = false
 
     var body: some View {
+        let _ = log("AppLaunchView.body evaluated", level: .debug, fields: [
+            "currentPhase": launcher.currentPhase.rawValue,
+            "isLaunching": String(launcher.isLaunching),
+            "hasError": String(launcher.launchError != nil),
+            "phaseResults": String(launcher.phaseResults.count)
+        ])
         VStack(spacing: 24) {
             // 图标
             Image(systemName: "viewfinder.circle")
@@ -37,6 +43,7 @@ struct AppLaunchView: View {
             // 详情开关
             if !launcher.phaseResults.isEmpty {
                 Button(showDetails ? "隐藏详情" : "显示详情") {
+                    log("AppLaunchView: toggling details", level: .debug, fields: ["showDetails": String(!showDetails)])
                     withAnimation {
                         showDetails.toggle()
                     }
@@ -81,11 +88,13 @@ struct LaunchErrorView: View {
 
             HStack(spacing: 12) {
                 Button("打开系统设置") {
+                    log("LaunchErrorView: openSettings button tapped", level: .debug, fields: ["error": String(describing: error)])
                     error.openSettings()
                 }
                 .buttonStyle(.borderedProminent)
 
                 Button("重试") {
+                    log("LaunchErrorView: retry button tapped", level: .debug)
                     Task {
                         await AppLauncher.shared.launch()
                     }
@@ -203,16 +212,20 @@ extension LaunchPhaseResult: Identifiable {
 
 extension LaunchError {
     func openSettings() {
+        log("LaunchError.openSettings() entered", level: .debug, fields: ["error": String(describing: self)])
         switch self {
         case .accessibilityPermissionDenied:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                log("LaunchError.openSettings() opening accessibility settings", level: .debug)
                 NSWorkspace.shared.open(url)
             }
         case .invalidInstallationLocation:
             if let url = URL(string: "file:///Applications") {
+                log("LaunchError.openSettings() opening Applications folder", level: .debug)
                 NSWorkspace.shared.open(url)
             }
         default:
+            log("LaunchError.openSettings() no settings URL for this error", level: .debug)
             break
         }
     }

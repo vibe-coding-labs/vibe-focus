@@ -10,6 +10,7 @@ struct LaunchArguments {
 
     private init() {
         let arguments = ProcessInfo.processInfo.arguments
+        log("LaunchArguments.init() parsing arguments", level: .debug, fields: ["count": String(arguments.count)])
 
         skipLaunchWindow = arguments.contains("--skip-launch-window") ||
                           arguments.contains("-s")
@@ -19,6 +20,13 @@ struct LaunchArguments {
                    arguments.contains("-d")
         quickLaunch = arguments.contains("--quick") ||
                      arguments.contains("-q")
+
+        log("LaunchArguments.init() parsed flags", level: .debug, fields: [
+            "skipLaunchWindow": String(skipLaunchWindow),
+            "showHealthCheck": String(showHealthCheck),
+            "debugMode": String(debugMode),
+            "quickLaunch": String(quickLaunch)
+        ])
     }
 
     static func printUsage() {

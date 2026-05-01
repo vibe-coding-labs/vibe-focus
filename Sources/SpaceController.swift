@@ -186,35 +186,82 @@ final class SpaceController: ObservableObject {
     func currentSpaceIndex() -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let space = queryFocusedSpace() else {
+            log(
+                "[SpaceController] currentSpaceIndex: unavailable",
+                level: .debug,
+                fields: ["isEnabled": String(isEnabled)]
+            )
             return nil
         }
+        log(
+            "[SpaceController] currentSpaceIndex result",
+            level: .debug,
+            fields: ["spaceIndex": String(describing: space.index)]
+        )
         return space.index
     }
 
     func windowSpaceIndex(windowID: UInt32) -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let window = queryWindow(windowID: windowID) else {
+            log(
+                "[SpaceController] windowSpaceIndex: unavailable",
+                level: .debug,
+                fields: ["windowID": String(windowID), "isEnabled": String(isEnabled)]
+            )
             return nil
         }
+        log(
+            "[SpaceController] windowSpaceIndex result",
+            level: .debug,
+            fields: ["windowID": String(windowID), "space": String(describing: window.space)]
+        )
         return window.space
     }
 
     func windowDisplayIndex(windowID: UInt32) -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let window = queryWindow(windowID: windowID) else {
+            log(
+                "[SpaceController] windowDisplayIndex: unavailable",
+                level: .debug,
+                fields: ["windowID": String(windowID), "isEnabled": String(isEnabled)]
+            )
             return nil
         }
+        log(
+            "[SpaceController] windowDisplayIndex result",
+            level: .debug,
+            fields: ["windowID": String(windowID), "display": String(describing: window.display)]
+        )
         return window.display
     }
 
     func globalSpaceIndex(displayIndex: Int, localSpaceIndex: Int) -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
+            log(
+                "[SpaceController] globalSpaceIndex: not enabled",
+                level: .debug
+            )
             return nil
         }
         guard let spaces = querySpaces() else {
+            log(
+                "[SpaceController] globalSpaceIndex: querySpaces failed",
+                level: .debug
+            )
             return nil
         }
+
+        log(
+            "[SpaceController] globalSpaceIndex called",
+            level: .debug,
+            fields: [
+                "displayIndex": String(displayIndex),
+                "localSpaceIndex": String(localSpaceIndex)
+            ]
+        )
 
         let spacesOnDisplay = spaces
             .filter { $0.display == displayIndex }
@@ -228,7 +275,20 @@ final class SpaceController: ObservableObject {
     }
 
     func displayLocalSpaceIndex(forGlobalSpaceIndex spaceIndex: Int?, displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> Int? {
+        log(
+            "[SpaceController] displayLocalSpaceIndex called",
+            level: .debug,
+            fields: [
+                "spaceIndex": String(describing: spaceIndex),
+                "displayIndex": String(describing: displayIndex),
+                "hasSpaces": String(spaces != nil)
+            ]
+        )
         guard let spaceIndex, let displayIndex else {
+            log(
+                "[SpaceController] displayLocalSpaceIndex: nil input",
+                level: .debug
+            )
             return nil
         }
         let resolvedSpaces: [YabaiSpaceInfo]
@@ -784,9 +844,23 @@ final class SpaceController: ObservableObject {
     private func queryFocusedSpace() -> YabaiSpaceInfo? {
         guard let result = runYabai(arguments: ["-m", "query", "--spaces", "--space"]),
               result.exitCode == 0 else {
+            log(
+                "[SpaceController] queryFocusedSpace: yabai query failed",
+                level: .debug
+            )
             return nil
         }
-        return decodeSingleOrFirst(YabaiSpaceInfo.self, from: result.stdout)
+        let space = decodeSingleOrFirst(YabaiSpaceInfo.self, from: result.stdout)
+        log(
+            "[SpaceController] queryFocusedSpace result",
+            level: .debug,
+            fields: [
+                "spaceIndex": String(describing: space?.index),
+                "spaceID": String(describing: space?.id),
+                "display": String(describing: space?.display)
+            ]
+        )
+        return space
     }
 
     private func querySpaces(caller: String = #function) -> [YabaiSpaceInfo]? {
@@ -821,17 +895,46 @@ final class SpaceController: ObservableObject {
     private func queryWindow(windowID: UInt32) -> YabaiWindowInfo? {
         guard let result = runYabai(arguments: ["-m", "query", "--windows", "--window", "\(windowID)"]),
               result.exitCode == 0 else {
+            log(
+                "[SpaceController] queryWindow: yabai query failed",
+                level: .debug,
+                fields: ["windowID": String(windowID)]
+            )
             return nil
         }
-        return decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
+        let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
+        log(
+            "[SpaceController] queryWindow result",
+            level: .debug,
+            fields: [
+                "windowID": String(windowID),
+                "space": String(describing: info?.space),
+                "display": String(describing: info?.display),
+                "app": info?.app ?? "nil"
+            ]
+        )
+        return info
     }
 
     private func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> Int? {
         guard let displayIndex else {
+            log(
+                "[SpaceController] visibleSpaceIndex: nil displayIndex",
+                level: .debug
+            )
             return nil
         }
         let resolvedSpaces = spaces ?? querySpaces()
-        return resolvedSpaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index
+        let visible = resolvedSpaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index
+        log(
+            "[SpaceController] visibleSpaceIndex result",
+            level: .debug,
+            fields: [
+                "displayIndex": String(displayIndex),
+                "visibleSpaceIndex": String(describing: visible)
+            ]
+        )
+        return visible
     }
 
     private func preferredSourceSpace(windowSpace: Int?, visibleSpace: Int?, fallbackSpace: Int?) -> Int? {
@@ -1210,9 +1313,28 @@ final class SpaceController: ObservableObject {
     /// 通过 yabai query 获取 yabai 空间索引对应的 macOS 原生空间 ID
     /// yabai query 不依赖 scripting-addition，始终可用
     private func nativeSpaceID(forYabaiIndex index: Int) -> Int64? {
-        guard let spaces = querySpaces() else { return nil }
+        guard let spaces = querySpaces() else {
+            log(
+                "[SpaceController] nativeSpaceID: querySpaces failed",
+                level: .debug,
+                fields: ["yabaiIndex": String(index)]
+            )
+            return nil
+        }
         let matched = spaces.first { $0.index == index }
-        guard let id = matched?.id else { return nil }
+        guard let id = matched?.id else {
+            log(
+                "[SpaceController] nativeSpaceID: no matching space",
+                level: .debug,
+                fields: ["yabaiIndex": String(index)]
+            )
+            return nil
+        }
+        log(
+            "[SpaceController] nativeSpaceID resolved",
+            level: .debug,
+            fields: ["yabaiIndex": String(index), "nativeSpaceID": String(id)]
+        )
         return Int64(id)
     }
 

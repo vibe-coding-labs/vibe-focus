@@ -515,26 +515,58 @@ class WindowManager {
 
     func getMainScreen() -> NSScreen? {
         let mainDisplayID = CGMainDisplayID()
+        log(
+            "[WindowManager] getMainScreen called",
+            level: .debug,
+            fields: [
+                "mainDisplayID": String(mainDisplayID),
+                "screenCount": String(NSScreen.screens.count)
+            ]
+        )
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         for screen in NSScreen.screens {
             if let value = screen.deviceDescription[key] as? NSNumber,
                CGDirectDisplayID(value.uint32Value) == mainDisplayID {
+                log(
+                    "[WindowManager] getMainScreen found match",
+                    level: .debug,
+                    fields: ["screenNumber": String(value.uint32Value)]
+                )
                 return screen
             }
         }
+        log(
+            "[WindowManager] getMainScreen no exact match, using first or main",
+            level: .debug,
+            fields: ["fallback": NSScreen.screens.first != nil ? "first" : "main"]
+        )
         return NSScreen.screens.first ?? NSScreen.main
     }
 
     func hasAccessibilityPermission() -> Bool {
         let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+        let trusted = AXIsProcessTrustedWithOptions(options)
+        log(
+            "[WindowManager] hasAccessibilityPermission checked",
+            level: .debug,
+            fields: ["trusted": String(trusted)]
+        )
+        return trusted
     }
 
     func notifyAccessibilityPermissionRequired() {
         guard !didPromptForAccessibility else {
+            log(
+                "[WindowManager] notifyAccessibilityPermissionRequired skipped: already prompted",
+                level: .debug
+            )
             return
         }
 
+        log(
+            "[WindowManager] notifyAccessibilityPermissionRequired: showing prompt",
+            level: .debug
+        )
         didPromptForAccessibility = true
         NSSound.beep()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
@@ -543,13 +575,30 @@ class WindowManager {
     }
 
     func shouldRestoreCurrentWindow() -> Bool {
+        log(
+            "[WindowManager] shouldRestoreCurrentWindow called",
+            level: .debug,
+            fields: ["savedStatesCount": String(savedWindowStates.count)]
+        )
         if !hasAccessibilityPermission() {
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: no AX permission, using System Events",
+                level: .debug
+            )
             return shouldRestoreCurrentWindowViaSystemEvents()
         }
 
         guard !savedWindowStates.isEmpty,
               let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier) else {
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: guard failed",
+                level: .debug,
+                fields: [
+                    "savedStatesEmpty": String(savedWindowStates.isEmpty),
+                    "hasFrontApp": String(NSWorkspace.shared.frontmostApplication != nil)
+                ]
+            )
             return false
         }
 
@@ -670,6 +719,11 @@ class WindowManager {
     /// 使用这样的 state 做 restore 会让窗口从主屏"恢复"到主屏，毫无意义。
     func isSavedStateCorrupted(_ state: SavedWindowState) -> Bool {
         guard let mainScreen = getMainScreen() else {
+            log(
+                "[WindowManager] isSavedStateCorrupted: no main screen, returning false",
+                level: .debug,
+                fields: ["stateID": state.id]
+            )
             return false
         }
         let mainScreenFrame = mainScreen.frame
@@ -681,7 +735,18 @@ class WindowManager {
         // originalFrame 和 targetFrame 的中心都在主屏幕上 → 被污染
         let originalOnMain = mainScreenFrame.contains(originalCenter)
         let targetOnMain = mainScreenFrame.contains(targetCenter)
-        return originalOnMain && targetOnMain
+        let corrupted = originalOnMain && targetOnMain
+        log(
+            "[WindowManager] isSavedStateCorrupted checked",
+            level: .debug,
+            fields: [
+                "stateID": state.id,
+                "originalOnMain": String(originalOnMain),
+                "targetOnMain": String(targetOnMain),
+                "corrupted": String(corrupted)
+            ]
+        )
+        return corrupted
     }
 
     /// 备用匹配机制：当 windowID 匹配失败时使用
@@ -696,9 +761,20 @@ class WindowManager {
         // 2. 窗口标题相同（或都为空）
         // 3. 当前位置接近保存的 targetFrame（因为窗口已经被移动过）
 
+        log(
+            "[WindowManager] findStateByFallbackMatching called",
+            level: .debug,
+            fields: [
+                "pid": String(pid),
+                "title": truncateForLog(title, limit: 60),
+                "frame": String(describing: frame),
+                "savedStatesCount": String(savedWindowStates.count)
+            ]
+        )
+
         let positionTolerance: CGFloat = 50.0  // 位置容差 50 像素
 
-        return savedWindowStates.reversed().first { state in
+        let result = savedWindowStates.reversed().first { state in
             // PID 必须匹配
             guard state.pid == pid else { return false }
 
@@ -714,6 +790,22 @@ class WindowManager {
 
             return xDiff <= positionTolerance && yDiff <= positionTolerance
         }
+        if let result {
+            log(
+                "[WindowManager] findStateByFallbackMatching matched",
+                level: .debug,
+                fields: [
+                    "stateID": result.id,
+                    "matchedWindowID": String(describing: result.windowID)
+                ]
+            )
+        } else {
+            log(
+                "[WindowManager] findStateByFallbackMatching: no match found",
+                level: .debug
+            )
+        }
+        return result
     }
 
     func focusedWindow(for pid: pid_t) -> AXUIElement? {
@@ -721,6 +813,14 @@ class WindowManager {
         var windowRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef)
         guard status == .success, let windowRef else {
+            log(
+                "[WindowManager] focusedWindow: AX query failed",
+                level: .debug,
+                fields: [
+                    "pid": String(pid),
+                    "axStatus": String(status.rawValue)
+                ]
+            )
             return nil
         }
         return (windowRef as! AXUIElement)
@@ -730,16 +830,43 @@ class WindowManager {
     /// 通过 CGWindowList 查询，避免对已销毁窗口的 AX 操作导致 crash
     func validateWindowExists(windowID: UInt32?) -> Bool {
         guard let windowID else { return false }
+        log(
+            "[WindowManager] validateWindowExists called",
+            level: .debug,
+            fields: ["windowID": String(windowID)]
+        )
         let options = CGWindowListOption(arrayLiteral: .optionAll)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            log(
+                "[WindowManager] validateWindowExists: CGWindowList returned nil",
+                level: .debug,
+                fields: ["windowID": String(windowID)]
+            )
             return false
         }
-        return windowList.contains { window in
+        let exists = windowList.contains { window in
             (window[kCGWindowNumber as String] as? UInt32) == windowID
         }
+        log(
+            "[WindowManager] validateWindowExists result",
+            level: .debug,
+            fields: ["windowID": String(windowID), "exists": String(exists)]
+        )
+        return exists
     }
 
     func restoreWindow(using token: WindowToken) -> AXUIElement? {
+        log(
+            "[WindowManager] restoreWindow called",
+            level: .debug,
+            fields: [
+                "stateID": token.stateID,
+                "pid": String(token.pid),
+                "bundleID": token.bundleIdentifier ?? "nil",
+                "windowID": String(describing: token.windowID),
+                "title": truncateForLog(token.title ?? "", limit: 60)
+            ]
+        )
         // 第一级匹配：通过 windowID 匹配当前聚焦窗口
         if let focused = focusedWindow(for: token.pid),
            let currentWindowID = windowHandle(for: focused),
@@ -792,6 +919,14 @@ class WindowManager {
             }
         }
 
+        log(
+            "[WindowManager] restoreWindow: no match found at any level",
+            level: .debug,
+            fields: [
+                "stateID": token.stateID,
+                "windowID": String(describing: token.windowID)
+            ]
+        )
         return nil
     }
 
@@ -799,32 +934,74 @@ class WindowManager {
     /// 用于 hook 路径中缓存 AX 元素过期时的主动查找
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? {
         guard let windowID else { return nil }
+        log(
+            "[WindowManager] findWindowByPID called",
+            level: .debug,
+            fields: ["pid": String(pid), "windowID": String(windowID)]
+        )
         let appElement = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
         guard status == .success, let windows = windowsRef as? [AXUIElement] else {
+            log(
+                "[WindowManager] findWindowByPID: AX windows query failed",
+                level: .debug,
+                fields: ["pid": String(pid), "axStatus": String(status.rawValue)]
+            )
             return nil
         }
-        return windows.first { window in
+        let found = windows.first { window in
             windowHandle(for: window) == windowID
         }
+        log(
+            "[WindowManager] findWindowByPID result",
+            level: .debug,
+            fields: [
+                "pid": String(pid),
+                "windowID": String(windowID),
+                "windowsChecked": String(windows.count),
+                "found": String(found != nil)
+            ]
+        )
+        return found
     }
 
     func shouldRestoreAcrossSpaces() -> Bool {
         spaceController.refreshAvailabilityIfNeeded()
         guard spaceController.isEnabled else {
+            log(
+                "[WindowManager] shouldRestoreAcrossSpaces: space integration disabled",
+                level: .debug
+            )
             return false
         }
 
-        guard let currentSpace = spaceController.currentSpaceIndex(),
-              let candidate = savedWindowStates.last,
+        let currentSpace = spaceController.currentSpaceIndex()
+        guard let candidate = savedWindowStates.last,
               let sourceSpace = candidate.sourceSpaceIndex,
-              sourceSpace != currentSpace else {
+              let current = currentSpace,
+              sourceSpace != current else {
+            log(
+                "[WindowManager] shouldRestoreAcrossSpaces: no cross-space condition met",
+                level: .debug,
+                fields: [
+                    "currentSpace": String(describing: currentSpace),
+                    "sourceSpace": String(describing: savedWindowStates.last?.sourceSpaceIndex)
+                ]
+            )
             return false
         }
 
         hydrateMemory(from: candidate, window: nil)
-        log("Detected moved window state across spaces: source=\(sourceSpace) current=\(currentSpace)")
+        log(
+            "[WindowManager] shouldRestoreAcrossSpaces: matched across spaces",
+            level: .debug,
+            fields: [
+                "sourceSpace": String(sourceSpace),
+                "currentSpace": String(current)
+            ]
+        )
+        log("Detected moved window state across spaces: source=\(sourceSpace) current=\(current)")
         return true
     }
 
@@ -1097,6 +1274,15 @@ class WindowManager {
     }
 
     private func resolveSourceSpaceIndexForRestore() -> Int? {
+        log(
+            "[WindowManager] resolveSourceSpaceIndexForRestore called",
+            level: .debug,
+            fields: [
+                "lastSourceYabaiDisplayIndex": String(describing: lastSourceYabaiDisplayIndex),
+                "lastSourceDisplaySpaceIndex": String(describing: lastSourceDisplaySpaceIndex),
+                "lastSourceSpaceIndex": String(describing: lastSourceSpaceIndex)
+            ]
+        )
         guard let displayIndex = lastSourceYabaiDisplayIndex,
               let displaySpaceIndex = lastSourceDisplaySpaceIndex else {
             return lastSourceSpaceIndex

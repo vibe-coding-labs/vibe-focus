@@ -46,16 +46,34 @@ extension WindowManager {
     }
 
     func captureFocusedWindowIdentity() -> WindowIdentity? {
+        log(
+            "[WindowManager] captureFocusedWindowIdentity called",
+            level: .debug
+        )
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+            log(
+                "[WindowManager] captureFocusedWindowIdentity: no frontmost app",
+                level: .debug
+            )
             return nil
         }
         guard let windowAX = focusedWindow(for: frontApp.processIdentifier) else {
+            log(
+                "[WindowManager] captureFocusedWindowIdentity: no focused window for pid",
+                level: .debug,
+                fields: ["pid": String(frontApp.processIdentifier)]
+            )
             return nil
         }
         guard let windowID = windowHandle(for: windowAX) else {
+            log(
+                "[WindowManager] captureFocusedWindowIdentity: no window handle",
+                level: .debug,
+                fields: ["pid": String(frontApp.processIdentifier)]
+            )
             return nil
         }
-        return WindowIdentity(
+        let identity = WindowIdentity(
             windowID: windowID,
             pid: frontApp.processIdentifier,
             bundleIdentifier: frontApp.bundleIdentifier,
@@ -64,6 +82,17 @@ extension WindowManager {
             title: title(of: windowAX),
             capturedAt: Date()
         )
+        log(
+            "[WindowManager] captureFocusedWindowIdentity result",
+            level: .debug,
+            fields: [
+                "windowID": String(identity.windowID),
+                "pid": String(identity.pid),
+                "bundleID": identity.bundleIdentifier ?? "nil",
+                "title": truncateForLog(identity.title ?? "", limit: 60)
+            ]
+        )
+        return identity
     }
 
     /// 在所有窗口中查找最可能是 Claude Code 会话对应的窗口
@@ -74,8 +103,17 @@ extension WindowManager {
     ///   3. 包含 "Claude Code" 关键词的窗口（在非主屏幕上）
     ///   4. 当前前台窗口
     func findClaudeCodeWindow(cwd: String?) -> WindowIdentity? {
+        log(
+            "[WindowManager] findClaudeCodeWindow called",
+            level: .debug,
+            fields: ["cwd": cwd ?? "nil"]
+        )
         let options = CGWindowListOption(arrayLiteral: .optionAll)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            log(
+                "[WindowManager] findClaudeCodeWindow: CGWindowList returned nil",
+                level: .debug
+            )
             return nil
         }
 
@@ -233,6 +271,16 @@ extension WindowManager {
     /// 通过 hook 辅助脚本捕获的终端上下文精确定位窗口
     /// 解决多工作区/多 Claude Code 实例场景下的窗口匹配问题
     func findWindowByTerminalContext(_ ctx: TerminalContext) -> WindowIdentity? {
+        log(
+            "[WindowManager] findWindowByTerminalContext called",
+            level: .debug,
+            fields: [
+                "tty": ctx.tty ?? "nil",
+                "ppid": ctx.ppid ?? "nil",
+                "termSessionID": ctx.termSessionID ?? "nil",
+                "itermSessionID": ctx.itermSessionID ?? "nil"
+            ]
+        )
         // 策略 1: 通过 TTY 匹配 Terminal.app / iTerm2 窗口（原始路径）
         if let tty = ctx.tty, !tty.isEmpty, tty != "not a tty" {
             if let identity = findWindowByTTY(tty) {
@@ -306,18 +354,39 @@ extension WindowManager {
     /// Claude Code (node) 由终端启动，ps -o tty= 可返回有效 TTY（如 ttys001）
     /// 即使 hook-forwarder 自身 tty 命令返回 "not a tty"
     private func resolveTTY(forPID pid: Int32) -> String? {
+        log(
+            "[WindowManager] resolveTTY called",
+            level: .debug,
+            fields: ["pid": String(pid)]
+        )
         let output = runShellCommand("/bin/ps", args: ["-o", "tty=", "-p", String(pid)])
         let tty = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if tty.isEmpty || tty == "??" || tty == "?" {
+            log(
+                "[WindowManager] resolveTTY: no TTY for pid",
+                level: .debug,
+                fields: ["pid": String(pid), "rawTTY": tty]
+            )
             return nil
         }
-        return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+        let resolved = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+        log(
+            "[WindowManager] resolveTTY resolved",
+            level: .debug,
+            fields: ["pid": String(pid), "tty": resolved]
+        )
+        return resolved
     }
 
     /// 通过 TTY 查找 Terminal.app / iTerm2 窗口
     /// 使用 CGWindowList + 进程信息匹配（避免 JXA 的 macOS Automation TCC 限制）
     private func findWindowByTTY(_ tty: String) -> WindowIdentity? {
         let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+        log(
+            "[WindowManager] findWindowByTTY called",
+            level: .debug,
+            fields: ["tty": fullTTY]
+        )
 
         // 1. 获取该 TTY 上的前台进程
         guard let foregroundPID = getForegroundProcessOnTTY(fullTTY) else {
@@ -473,30 +542,73 @@ extension WindowManager {
     /// 通过 CGWindowList 检查指定窗口是否当前在主屏幕上
     /// 用于 hook 路径在执行窗口移动前的预检，避免对已在主屏的窗口执行无意义的移动
     func isWindowOnMainScreen(windowID: UInt32) -> Bool {
+        log(
+            "[WindowManager] isWindowOnMainScreen called",
+            level: .debug,
+            fields: ["windowID": String(windowID)]
+        )
         let options = CGWindowListOption(arrayLiteral: .optionAll)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            log(
+                "[WindowManager] isWindowOnMainScreen: CGWindowList returned nil",
+                level: .debug
+            )
             return false
         }
-        guard let mainScreen = getMainScreen() else { return false }
+        guard let mainScreen = getMainScreen() else {
+            log(
+                "[WindowManager] isWindowOnMainScreen: no main screen",
+                level: .debug
+            )
+            return false
+        }
         let mainScreenFrame = mainScreen.frame
 
         for info in windowList {
             guard let id = info[kCGWindowNumber as String] as? UInt32,
                   id == windowID else { continue }
             let bounds = info[kCGWindowBounds as String] as? [String: CGFloat]
-            guard let bounds else { return false }
+            guard let bounds else {
+                log(
+                    "[WindowManager] isWindowOnMainScreen: no bounds for window",
+                    level: .debug,
+                    fields: ["windowID": String(windowID)]
+                )
+                return false
+            }
             let windowFrame = CGRect(
                 x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
                 width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
             )
             let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
-            return mainScreenFrame.contains(center)
+            let onMainScreen = mainScreenFrame.contains(center)
+            log(
+                "[WindowManager] isWindowOnMainScreen result",
+                level: .debug,
+                fields: [
+                    "windowID": String(windowID),
+                    "onMainScreen": String(onMainScreen),
+                    "windowCenterX": "\(center.x)",
+                    "windowCenterY": "\(center.y)"
+                ]
+            )
+            return onMainScreen
         }
+        log(
+            "[WindowManager] isWindowOnMainScreen: window not found in list",
+            level: .debug,
+            fields: ["windowID": String(windowID)]
+        )
         return false
     }
 
     /// 在 CGWindowList 中按 owner + title 查找窗口
     private func findWindowInCGList(ownerName: String, windowTitle: String) -> WindowIdentity? {
+        log(
+            "[WindowManager] findWindowInCGList called",
+            level: .debug,
+            fields: ["ownerName": ownerName, "windowTitle": truncateForLog(windowTitle, limit: 60)]
+        )
         let options = CGWindowListOption(arrayLiteral: .optionAll)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return nil
@@ -533,6 +645,11 @@ extension WindowManager {
 
     /// 通过进程 PID 向上遍历进程树，找到终端/IDE 应用对应的窗口
     private func findWindowByProcessAncestor(pid: Int32) -> WindowIdentity? {
+        log(
+            "[WindowManager] findWindowByProcessAncestor called",
+            level: .debug,
+            fields: ["pid": String(pid)]
+        )
         // 已知的终端和 IDE 应用名称
         let terminalAppNames: Set<String> = [
             "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
@@ -567,6 +684,11 @@ extension WindowManager {
 
     /// 通过 PID 查找终端应用的窗口（优先选非主屏幕窗口）
     private func findWindowByPIDForTerminal(_ pid: Int32, appName: String) -> WindowIdentity? {
+        log(
+            "[WindowManager] findWindowByPIDForTerminal called",
+            level: .debug,
+            fields: ["pid": String(pid), "appName": appName]
+        )
         let options = CGWindowListOption(arrayLiteral: .optionAll)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return nil
@@ -641,10 +763,25 @@ extension WindowManager {
     }
 
     func resolveWindow(identity: WindowIdentity) -> AXUIElement? {
+        log(
+            "[WindowManager] resolveWindow called",
+            level: .debug,
+            fields: [
+                "windowID": String(identity.windowID),
+                "pid": String(identity.pid),
+                "bundleID": identity.bundleIdentifier ?? "nil",
+                "title": truncateForLog(identity.title ?? "", limit: 60)
+            ]
+        )
         let pid = pid_t(identity.pid)
         if let focused = focusedWindow(for: pid),
            let focusedID = windowHandle(for: focused),
            focusedID == identity.windowID {
+            log(
+                "[WindowManager] resolveWindow: matched focused window",
+                level: .debug,
+                fields: ["windowID": String(identity.windowID)]
+            )
             return focused
         }
 
@@ -966,10 +1103,20 @@ extension WindowManager {
         var windowsRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
         guard status == .success, let windowsRef else {
+            log(
+                "[WindowManager] allWindows: AX query failed",
+                level: .debug,
+                fields: ["pid": String(pid), "axStatus": String(status.rawValue)]
+            )
             return []
         }
-
-        return windowsRef as? [AXUIElement] ?? []
+        let windows = windowsRef as? [AXUIElement] ?? []
+        log(
+            "[WindowManager] allWindows result",
+            level: .debug,
+            fields: ["pid": String(pid), "count": String(windows.count)]
+        )
+        return windows
     }
 
     private func displayID(for screen: NSScreen) -> UInt32? {
@@ -994,15 +1141,37 @@ extension WindowManager {
     }
 
     private func displayContext(for frame: CGRect) -> (index: Int?, displayID: UInt32?) {
+        log(
+            "[WindowManager] displayContext called",
+            level: .debug,
+            fields: [
+                "frame": String(describing: frame),
+                "centerX": "\(frame.midX)",
+                "centerY": "\(frame.midY)",
+                "screenCount": String(NSScreen.screens.count)
+            ]
+        )
         let center = CGPoint(x: frame.midX, y: frame.midY)
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         for (index, screen) in NSScreen.screens.enumerated() {
             let displayFrame = screen.frame
             if displayFrame.contains(center) || displayFrame.intersects(frame) {
                 let displayID = (screen.deviceDescription[key] as? NSNumber)?.uint32Value
+                log(
+                    "[WindowManager] displayContext matched screen",
+                    level: .debug,
+                    fields: [
+                        "index": String(index),
+                        "displayID": String(describing: displayID)
+                    ]
+                )
                 return (index, displayID)
             }
         }
+        log(
+            "[WindowManager] displayContext: no screen matched frame",
+            level: .debug
+        )
         return (nil, nil)
     }
 
@@ -1239,7 +1408,11 @@ extension WindowManager {
         var windowID: CGWindowID = 0
         let status = _AXUIElementGetWindow(window, &windowID)
         guard status == .success, windowID != 0 else {
-            log("Cannot get stable window handle from AXUIElement: \(status.rawValue)")
+            log(
+                "[WindowManager] windowHandle: _AXUIElementGetWindow failed",
+                level: .debug,
+                fields: ["axStatus": String(status.rawValue)]
+            )
             return nil
         }
         return windowID
@@ -1250,9 +1423,20 @@ extension WindowManager {
         var windowID: CGWindowID = 0
         let status = _AXUIElementGetWindow(element, &windowID)
         guard status == .success, windowID != 0 else {
+            log(
+                "[WindowManager] isValidAXElement: _AXUIElementGetWindow failed",
+                level: .debug,
+                fields: ["axStatus": String(status.rawValue)]
+            )
             return false
         }
-        return validateWindowExists(windowID: windowID)
+        let valid = validateWindowExists(windowID: windowID)
+        log(
+            "[WindowManager] isValidAXElement result",
+            level: .debug,
+            fields: ["windowID": String(windowID), "valid": String(valid)]
+        )
+        return valid
     }
 
     struct CGWindowSnapshot {
@@ -1323,12 +1507,21 @@ extension WindowManager {
         var frameRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(window, axFrameAttribute as CFString, &frameRef)
         guard status == .success, let frameRef else {
+            log(
+                "[WindowManager] frame: AX read failed",
+                level: .debug,
+                fields: ["axStatus": String(status.rawValue)]
+            )
             return nil
         }
 
         let axValue = frameRef as! AXValue
         var frame = CGRect.zero
         guard AXValueGetValue(axValue, .cgRect, &frame) else {
+            log(
+                "[WindowManager] frame: AXValueGetValue failed",
+                level: .debug
+            )
             return nil
         }
         return frame

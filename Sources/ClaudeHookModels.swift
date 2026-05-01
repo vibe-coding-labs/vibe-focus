@@ -56,6 +56,16 @@ struct TerminalContext: Codable, Equatable {
 
     /// 是否包含可用于窗口匹配的有用上下文
     var hasUsefulContext: Bool {
+        let result = tty?.isEmpty == false || termSessionID?.isEmpty == false || itermSessionID?.isEmpty == false || (ppid.flatMap { Int32($0) }).map { $0 > 1 } ?? false
+        log("TerminalContext.hasUsefulContext evaluated", level: .debug, fields: [
+            "result": String(result),
+            "hasTTY": String(tty?.isEmpty == false),
+            "hasTermSessionID": String(termSessionID?.isEmpty == false),
+            "hasItermSessionID": String(itermSessionID?.isEmpty == false),
+            "hasKittyWindowID": String(kittyWindowID?.isEmpty == false),
+            "hasWeztermPane": String(weztermPane?.isEmpty == false),
+            "hasClaudeProjectDir": String(claudeProjectDir?.isEmpty == false)
+        ])
         if let tty, !tty.isEmpty { return true }
         if let termSessionID, !termSessionID.isEmpty { return true }
         if let itermSessionID, !itermSessionID.isEmpty { return true }
@@ -88,12 +98,17 @@ struct ClaudeHookPayload: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
+        log("ClaudeHookPayload.init(from:) decoding started", level: .debug)
+
         // 兼容两种字段名：我们的测试用 event，Claude Code HTTP Hook 用 hook_event_name
         if let e = try? container.decode(ClaudeHookEventType.self, forKey: .event) {
+            log("ClaudeHookPayload: decoded event from 'event' key", level: .debug, fields: ["eventType": e.rawValue])
             event = e
         } else if let e = try? container.decode(ClaudeHookEventType.self, forKey: .hookEventName) {
+            log("ClaudeHookPayload: decoded event from 'hook_event_name' key", level: .debug, fields: ["eventType": e.rawValue])
             event = e
         } else {
+            log("ClaudeHookPayload: failed to decode event field", level: .debug)
             throw DecodingError.dataCorruptedError(
                 forKey: .event,
                 in: container,
@@ -105,6 +120,7 @@ struct ClaudeHookPayload: Decodable {
             ?? container.decodeIfPresent(String.self, forKey: .sessionId)
         let trimmedSession = sessionValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmedSession.isEmpty else {
+            log("ClaudeHookPayload: session_id is empty or missing", level: .debug)
             throw DecodingError.dataCorruptedError(
                 forKey: .sessionID,
                 in: container,
@@ -117,6 +133,15 @@ struct ClaudeHookPayload: Decodable {
         cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
         model = try container.decodeIfPresent(String.self, forKey: .model)
         terminalCtx = try container.decodeIfPresent(TerminalContext.self, forKey: .terminalCtx)
+
+        log("ClaudeHookPayload decoded successfully", level: .debug, fields: [
+            "event": event.rawValue,
+            "sessionID": sessionID,
+            "source": source ?? "nil",
+            "cwd": cwd ?? "nil",
+            "model": model ?? "nil",
+            "hasTerminalCtx": String(terminalCtx != nil)
+        ])
     }
 }
 

@@ -30,9 +30,12 @@ enum ClaudeHookPreferences {
 
     static var isEnabled: Bool {
         get {
-            UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
+            let value = UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
+            log("ClaudeHookPreferences.isEnabled read", level: .debug, fields: ["value": String(value)])
+            return value
         }
         set {
+            log("ClaudeHookPreferences.isEnabled set", level: .debug, fields: ["value": String(newValue)])
             UserDefaults.standard.set(newValue, forKey: enabledKey)
         }
     }
@@ -41,12 +44,17 @@ enum ClaudeHookPreferences {
         get {
             let stored = UserDefaults.standard.integer(forKey: portKey)
             if stored == 0 {
+                log("ClaudeHookPreferences.listenPort read: using default", level: .debug, fields: ["defaultPort": String(defaultPort)])
                 return defaultPort
             }
-            return normalizePort(stored)
+            let normalized = normalizePort(stored)
+            log("ClaudeHookPreferences.listenPort read", level: .debug, fields: ["stored": String(stored), "normalized": String(normalized)])
+            return normalized
         }
         set {
-            UserDefaults.standard.set(normalizePort(newValue), forKey: portKey)
+            let normalized = normalizePort(newValue)
+            log("ClaudeHookPreferences.listenPort set", level: .debug, fields: ["raw": String(newValue), "normalized": String(normalized)])
+            UserDefaults.standard.set(normalized, forKey: portKey)
         }
     }
 
@@ -55,12 +63,15 @@ enum ClaudeHookPreferences {
             guard let raw = UserDefaults.standard.string(forKey: tokenKey)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                   !raw.isEmpty else {
+                log("ClaudeHookPreferences.authToken read: nil or empty", level: .debug)
                 return nil
             }
+            log("ClaudeHookPreferences.authToken read", level: .debug, fields: ["tokenPrefix": String(raw.prefix(8)) + "..."])
             return raw
         }
         set {
             let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            log("ClaudeHookPreferences.authToken set", level: .debug, fields: ["hasValue": String(!trimmed.isEmpty)])
             UserDefaults.standard.set(trimmed, forKey: tokenKey)
         }
     }
@@ -110,6 +121,10 @@ enum ClaudeHookPreferences {
     static func endpointURLString(port: Int? = nil) -> String {
         let effectivePort = normalizePort(port ?? listenPort)
         let token = authToken ?? ""
+        log("ClaudeHookPreferences.endpointURLString()", level: .debug, fields: [
+            "port": String(effectivePort),
+            "hasToken": String(!token.isEmpty)
+        ])
         if token.isEmpty {
             return "http://127.0.0.1:\(effectivePort)\(endpointPath)"
         }
@@ -157,30 +172,35 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
     }
 
     static var isHookInstalled: Bool {
+        log("ClaudeHookPreferences.isHookInstalled checking", level: .debug)
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: claudeSettingsPath)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hooks = json["hooks"] as? [String: Any] else {
+            log("ClaudeHookPreferences.isHookInstalled: no hooks found in settings", level: .debug)
             return false
         }
         // 兼容检测 command-type hooks（新）和 HTTP-type hooks（旧）
         let targetURL = endpointURLString()
         let scriptPath = helperScriptPath
-        for (_, entries) in hooks {
+        for (key, entries) in hooks {
             guard let entryList = entries as? [[String: Any]] else { continue }
             for entry in entryList {
                 guard let hookList = entry["hooks"] as? [[String: Any]] else { continue }
                 for hook in hookList {
                     // 新版 command-type hook
                     if let command = hook["command"] as? String, command.contains(scriptPath) {
+                        log("ClaudeHookPreferences.isHookInstalled: found command hook", level: .debug, fields: ["event": key])
                         return true
                     }
                     // 旧版 HTTP-type hook（向后兼容）
                     if let url = hook["url"] as? String, url == targetURL {
+                        log("ClaudeHookPreferences.isHookInstalled: found HTTP hook", level: .debug, fields: ["event": key])
                         return true
                     }
                 }
             }
         }
+        log("ClaudeHookPreferences.isHookInstalled: no matching hooks found", level: .debug)
         return false
     }
 
@@ -188,28 +208,39 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
 
     /// 写入辅助脚本配置文件（端口和 Token）
     static func writeConfigFile() {
+        log("ClaudeHookPreferences.writeConfigFile() entered", level: .debug, fields: [
+            "dir": helperScriptDir,
+            "path": configFilePath
+        ])
         let dir = helperScriptDir
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let config: [String: Any] = [
             "port": listenPort,
             "token": authToken ?? ""
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) else { return }
+        guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) else {
+            log("ClaudeHookPreferences.writeConfigFile() failed to serialize config", level: .debug)
+            return
+        }
         try? data.write(to: URL(fileURLWithPath: configFilePath), options: .atomic)
+        log("ClaudeHookPreferences.writeConfigFile() completed", level: .debug)
     }
 
     /// 安装辅助脚本到 ~/.vibefocus/hook-forwarder.sh
     @discardableResult
     static func installHelperScript() -> (Bool, String) {
+        log("ClaudeHookPreferences.installHelperScript() entered", level: .debug)
         let dir = helperScriptDir
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         } catch {
+            log("ClaudeHookPreferences.installHelperScript() failed to create dir", level: .debug, fields: ["error": error.localizedDescription])
             return (false, "无法创建目录: \(error.localizedDescription)")
         }
 
         let content = generateHelperScriptContent()
         guard let data = content.data(using: .utf8) else {
+            log("ClaudeHookPreferences.installHelperScript() failed to encode script", level: .debug)
             return (false, "无法生成辅助脚本")
         }
         do {
@@ -218,12 +249,17 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
             log("[ClaudeHookPreferences] helper script installed to \(helperScriptPath)")
             return (true, "辅助脚本已安装")
         } catch {
+            log("ClaudeHookPreferences.installHelperScript() write failed", level: .debug, fields: ["error": error.localizedDescription])
             return (false, "安装辅助脚本失败: \(error.localizedDescription)")
         }
     }
 
     /// 移除辅助脚本和配置文件
     static func removeHelperFiles() {
+        log("ClaudeHookPreferences.removeHelperFiles() entered", level: .debug, fields: [
+            "scriptPath": helperScriptPath,
+            "configPath": configFilePath
+        ])
         try? FileManager.default.removeItem(atPath: helperScriptPath)
         try? FileManager.default.removeItem(atPath: configFilePath)
         log("[ClaudeHookPreferences] helper files removed")
@@ -294,6 +330,11 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
     }
 
     static func generateHooksDict() -> [String: Any] {
+        log("ClaudeHookPreferences.generateHooksDict() entered", level: .debug, fields: [
+            "triggerOnStop": String(triggerOnStop),
+            "triggerOnSessionEnd": String(triggerOnSessionEnd),
+            "autoRestoreOnPromptSubmit": String(autoRestoreOnPromptSubmit)
+        ])
         var hooks: [String: Any] = [:]
         hooks["SessionStart"] = [makeHookEntry()]
         if triggerOnStop {
@@ -305,16 +346,22 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         if autoRestoreOnPromptSubmit {
             hooks["UserPromptSubmit"] = [makeHookEntry()]
         }
+        log("ClaudeHookPreferences.generateHooksDict() returning", level: .debug, fields: [
+            "hookEvents": hooks.keys.sorted().joined(separator: ",")
+        ])
         return hooks
     }
 
     static func generateHooksJSON() -> String {
+        log("ClaudeHookPreferences.generateHooksJSON() entered", level: .debug)
         let hooks = generateHooksDict()
         let settings: [String: Any] = ["hooks": hooks]
         guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]),
               let json = String(data: data, encoding: .utf8) else {
+            log("ClaudeHookPreferences.generateHooksJSON() failed to serialize", level: .debug)
             return "{\n  \"hooks\": {}\n}"
         }
+        log("ClaudeHookPreferences.generateHooksJSON() completed", level: .debug, fields: ["length": String(json.count)])
         return json
     }
 
@@ -394,10 +441,14 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
 
     /// 从 hooks 字典中清理所有 VibeFocus 相关的 hook 条目（HTTP 和 command 类型）
     private static func cleanVibeFocusHooks(from hooks: inout [String: Any]) {
+        log("ClaudeHookPreferences.cleanVibeFocusHooks() entered", level: .debug, fields: [
+            "keysBefore": hooks.keys.sorted().joined(separator: ",")
+        ])
         let targetURL = endpointURLString()
         let scriptPath = helperScriptPath
         for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
             guard var entries = hooks[key] as? [[String: Any]] else { continue }
+            let countBefore = entries.count
             entries.removeAll { entry in
                 guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
                 return hookList.contains { hook in
@@ -408,6 +459,9 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
             }
             if entries.isEmpty { hooks.removeValue(forKey: key) }
             else { hooks[key] = entries }
+            log("ClaudeHookPreferences.cleanVibeFocusHooks() cleaned \(key)", level: .debug, fields: [
+                "removed": String(countBefore - entries.count)
+            ])
         }
     }
 
