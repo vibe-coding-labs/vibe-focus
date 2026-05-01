@@ -841,6 +841,16 @@ extension WindowManager {
             return false
         }
 
+        log(
+            "[moveWindowToMainScreen] AX permission OK, resolving window",
+            level: .debug,
+            fields: [
+                "op": op,
+                "windowID": String(identity.windowID),
+                "pid": String(identity.pid)
+            ]
+        )
+
         guard let windowAX = resolveWindow(identity: identity) else {
             log(
                 "moveWindowToMainScreen failed: cannot resolve window",
@@ -851,6 +861,15 @@ extension WindowManager {
             )
             return false
         }
+
+        log(
+            "[moveWindowToMainScreen] resolved window AX element",
+            level: .debug,
+            fields: [
+                "op": op,
+                "windowID": String(identity.windowID)
+            ]
+        )
 
         guard let currentFrame = frame(of: windowAX) else {
             log(
@@ -863,9 +882,23 @@ extension WindowManager {
             return false
         }
 
+        log(
+            "[moveWindowToMainScreen] read current frame",
+            level: .debug,
+            fields: [
+                "op": op,
+                "currentFrame": String(describing: currentFrame)
+            ]
+        )
+
         // 检查窗口是否已在主屏幕上
         // 使用 yabai display 信息作为主要判断依据
         // AX frame 对非可见工作区的窗口不可靠（macOS 会报告错误的坐标）
+        log(
+            "[moveWindowToMainScreen] checking if window already on main screen",
+            level: .debug,
+            fields: ["op": op]
+        )
         let yabaiDisplay = spaceController.windowDisplayIndex(windowID: identity.windowID)
         if let display = yabaiDisplay, display != 1 {
             // yabai 报告窗口在副显示器上，即使 AX frame 看起来在主屏也继续移动
@@ -895,6 +928,12 @@ extension WindowManager {
             }
         }
 
+        log(
+            "[moveWindowToMainScreen] window not on main screen, getting window handle",
+            level: .debug,
+            fields: ["op": op]
+        )
+
         guard let currentWindowID = windowHandle(for: windowAX) else {
             log(
                 "moveWindowToMainScreen failed: missing stable window handle",
@@ -917,6 +956,15 @@ extension WindowManager {
             )
             return false
         }
+
+        log(
+            "[moveWindowToMainScreen] got window handle, checking settable attributes",
+            level: .debug,
+            fields: [
+                "op": op,
+                "currentWindowID": String(currentWindowID)
+            ]
+        )
 
         let sourceContext = displayContext(for: currentFrame)
         let spaceCaptureStartAt = Date()
@@ -944,9 +992,36 @@ extension WindowManager {
         let targetDisplayID = displayID(for: mainScreen)
         let targetDisplayIndex = displayIndex(forDisplayID: targetDisplayID)
 
+        log(
+            "[moveWindowToMainScreen] computed target frame and display",
+            level: .debug,
+            fields: [
+                "op": op,
+                "targetFrame": String(describing: targetFrame),
+                "targetDisplayID": String(describing: targetDisplayID),
+                "targetDisplayIndex": String(describing: targetDisplayIndex)
+            ]
+        )
+
         // 尝试通过 AX 设置窗口位置
         // apply() 内部已含容差检查（高度 100px），返回 true 表示窗口已在目标位置附近
+        log(
+            "[moveWindowToMainScreen] calling apply() to set frame",
+            level: .debug,
+            fields: [
+                "op": op,
+                "targetFrame": String(describing: targetFrame)
+            ]
+        )
         let axApplySucceeded = apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame")
+        log(
+            "[moveWindowToMainScreen] apply() returned",
+            level: .debug,
+            fields: [
+                "op": op,
+                "axApplySucceeded": String(axApplySucceeded)
+            ]
+        )
 
         if !axApplySucceeded {
             // apply 本身失败 — 尝试 CGWindowList 验证后重试
@@ -986,6 +1061,16 @@ extension WindowManager {
 
         // 使用实际应用的 frame（可能因 macOS 菜单栏调整而与理想 targetFrame 不同）
         let actualTargetFrame = frame(of: windowAX) ?? targetFrame
+
+        log(
+            "[moveWindowToMainScreen] move succeeded, capturing state for persistence",
+            level: .debug,
+            fields: [
+                "op": op,
+                "actualTargetFrame": String(describing: actualTargetFrame),
+                "requestedTargetFrame": String(describing: targetFrame)
+            ]
+        )
 
         let resolvedWindowNumber = windowNumber(for: windowAX) ?? identity.windowNumber
         let resolvedTitle = title(of: windowAX) ?? identity.title
@@ -1027,7 +1112,23 @@ extension WindowManager {
         )
 
         let persistedState = saveWindowState(savedState, window: windowAX)
+        log(
+            "[moveWindowToMainScreen] saved window state",
+            level: .debug,
+            fields: [
+                "op": op,
+                "stateID": persistedState.id
+            ]
+        )
         hydrateMemory(from: persistedState, window: windowAX)
+        log(
+            "[moveWindowToMainScreen] hydrated memory from persisted state",
+            level: .debug,
+            fields: [
+                "op": op,
+                "stateID": persistedState.id
+            ]
+        )
         log(
             "[WindowManager] moveWindowToMainScreen finished",
             fields: [
@@ -1231,11 +1332,28 @@ extension WindowManager {
     }
 
     func restoreViaSystemEvents() {
+        log(
+            "[restoreViaSystemEvents] called",
+            level: .debug,
+            fields: [
+                "hasToken": String(lastWindowToken != nil),
+                "hasFrame": String(lastWindowFrame != nil),
+                "hasTarget": String(lastTargetFrame != nil)
+            ]
+        )
         if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
+            log(
+                "[restoreViaSystemEvents] some state nil, calling shouldRestoreCurrentWindowViaSystemEvents",
+                level: .debug
+            )
             if shouldRestoreCurrentWindowViaSystemEvents() == false {
                 log("No saved window to restore via System Events")
                 return
             }
+            log(
+                "[restoreViaSystemEvents] shouldRestoreCurrentWindowViaSystemEvents succeeded",
+                level: .debug
+            )
         }
 
         guard let token = lastWindowToken,
@@ -1243,16 +1361,41 @@ extension WindowManager {
               let frontApp = NSWorkspace.shared.frontmostApplication,
               let snapshot = systemEventsSnapshot(forPID: frontApp.processIdentifier),
               snapshot.windowID == token.windowID else {
+            log(
+                "[restoreViaSystemEvents] guard failed: missing token/frame/app/snapshot",
+                level: .warn,
+                fields: [
+                    "hasToken": String(lastWindowToken != nil),
+                    "hasFrame": String(lastWindowFrame != nil),
+                    "hasFrontApp": String(NSWorkspace.shared.frontmostApplication != nil)
+                ]
+            )
             log("No active window state to restore via System Events")
             return
         }
 
+        log(
+            "[restoreViaSystemEvents] matched window, applying frame",
+            level: .debug,
+            fields: [
+                "windowID": String(describing: token.windowID),
+                "frame": String(describing: frame)
+            ]
+        )
         log("Restoring with System Events using window handle match")
         guard systemEventsApply(frame: frame, toPID: frontApp.processIdentifier) else {
+            log(
+                "[restoreViaSystemEvents] systemEventsApply failed",
+                level: .error
+            )
             log("System Events fallback failed to restore window")
             return
         }
 
+        log(
+            "[restoreViaSystemEvents] systemEventsApply succeeded, resetting context",
+            level: .debug
+        )
         resetActiveWindowContext(removeState: true)
         log("✅ RESTORED WITH SYSTEM EVENTS FALLBACK")
     }
@@ -1549,9 +1692,40 @@ extension WindowManager {
         let maxAttempts = 3
         let settleDelayMicros: useconds_t = 25_000
 
+        log(
+            "[apply] starting frame application",
+            level: .debug,
+            fields: [
+                "op": op,
+                "stage": stage,
+                "targetFrame": String(describing: targetFrame),
+                "maxAttempts": String(maxAttempts)
+            ]
+        )
+
         for attempt in 1...maxAttempts {
+            log(
+                "[apply] attempt started",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "stage": stage,
+                    "attempt": String(attempt)
+                ]
+            )
             var targetSize = CGSize(width: targetFrame.width, height: targetFrame.height)
             guard let sizeValue = AXValueCreate(.cgSize, &targetSize) else {
+                log(
+                    "[apply] AXValueCreate for size returned nil",
+                    level: .error,
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "attempt": String(attempt),
+                        "targetWidth": "\(targetFrame.width)",
+                        "targetHeight": "\(targetFrame.height)"
+                    ]
+                )
                 return false
             }
 
@@ -1566,11 +1740,42 @@ extension WindowManager {
                 ]
             )
             guard sizeResult == .success else {
+                log(
+                    "[apply] AXUIElementSetAttributeValue for size failed",
+                    level: .error,
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "attempt": String(attempt),
+                        "sizeResult": String(sizeResult.rawValue)
+                    ]
+                )
                 return false
             }
 
+            log(
+                "[apply] size set OK, setting position",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "stage": stage,
+                    "attempt": String(attempt)
+                ]
+            )
+
             var targetOrigin = CGPoint(x: targetFrame.origin.x, y: targetFrame.origin.y)
             guard let originValue = AXValueCreate(.cgPoint, &targetOrigin) else {
+                log(
+                    "[apply] AXValueCreate for position returned nil",
+                    level: .error,
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "attempt": String(attempt),
+                        "targetX": "\(targetFrame.origin.x)",
+                        "targetY": "\(targetFrame.origin.y)"
+                    ]
+                )
                 return false
             }
 
@@ -1585,11 +1790,37 @@ extension WindowManager {
                 ]
             )
             guard positionResult == .success else {
+                log(
+                    "[apply] AXUIElementSetAttributeValue for position failed",
+                    level: .error,
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "attempt": String(attempt),
+                        "positionResult": String(positionResult.rawValue)
+                    ]
+                )
                 return false
             }
 
+            log(
+                "[apply] position set OK, waiting settle delay",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "stage": stage,
+                    "attempt": String(attempt),
+                    "settleDelayMs": String(settleDelayMicros / 1000)
+                ]
+            )
+
             usleep(settleDelayMicros)
 
+            log(
+                "[apply] reading back frame after settle",
+                level: .debug,
+                fields: ["op": op, "stage": stage, "attempt": String(attempt)]
+            )
             if let appliedFrame = frame(of: window) {
                 log(
                     "[WindowManager] applied frame snapshot",
@@ -1603,18 +1834,49 @@ extension WindowManager {
                 lastAppliedFrame = appliedFrame
                 if framesMatch(appliedFrame, targetFrame) {
                     log(
-                        "[WindowManager] apply frame matched target",
+                        "[apply] frame matched on attempt, returning true",
+                        level: .debug,
                         fields: [
                             "op": op,
                             "stage": stage,
-                            "attempt": String(attempt),
-                            "durationMs": String(elapsedMilliseconds(since: startedAt))
+                            "attempt": String(attempt)
                         ]
                     )
                     return true
                 }
+                log(
+                    "[apply] frame did not match on attempt, checking tolerance",
+                    level: .debug,
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "attempt": String(attempt),
+                        "appliedFrame": String(describing: appliedFrame),
+                        "targetFrame": String(describing: targetFrame)
+                    ]
+                )
+            } else {
+                log(
+                    "[apply] could not read back frame on attempt",
+                    level: .warn,
+                    fields: [
+                        "op": op,
+                        "stage": stage,
+                        "attempt": String(attempt)
+                    ]
+                )
             }
         }
+
+        log(
+            "[apply] all attempts exhausted, checking tolerance as final fallback",
+            level: .debug,
+            fields: [
+                "op": op,
+                "stage": stage,
+                "hasLastAppliedFrame": String(lastAppliedFrame != nil)
+            ]
+        )
 
         // 如果精确匹配失败，但窗口已成功应用了接近的尺寸（可能是窗口有最小尺寸限制）
         // 我们也认为是成功的
