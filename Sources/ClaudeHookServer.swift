@@ -166,10 +166,26 @@ final class ClaudeHookServer: ObservableObject {
             ]
         )
 
+        log(
+            "[ClaudeHookServer] checking token authentication",
+            level: .debug,
+            fields: [
+                "hasConfiguredToken": String(configuredToken != nil && !configuredToken!.isEmpty)
+            ]
+        )
+
         if let expectedToken = configuredToken, !expectedToken.isEmpty {
             let queryToken = query["token"]
             let headerToken = headerValue(from: headers, forKey: "X-VibeFocus-Token")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let providedToken = queryToken ?? headerToken
+            log(
+                "[ClaudeHookServer] token validation",
+                level: .debug,
+                fields: [
+                    "hasQueryToken": String(queryToken != nil),
+                    "hasHeaderToken": String(!headerToken.isEmpty)
+                ]
+            )
             guard providedToken == expectedToken else {
                 log(
                     "[ClaudeHookServer] token validation failed",
@@ -192,6 +208,12 @@ final class ClaudeHookServer: ObservableObject {
         }
 
         totalRequestCount += 1
+
+        log(
+            "[ClaudeHookServer] token OK, decoding JSON payload",
+            level: .debug,
+            fields: ["bodySize": String(body.count)]
+        )
 
         let decoder = JSONDecoder()
         guard let payload = try? decoder.decode(ClaudeHookPayload.self, from: body) else {
@@ -220,14 +242,42 @@ final class ClaudeHookServer: ObservableObject {
                 "cwd": payload.cwd ?? "nil"
             ]
         )
+        log(
+            "[ClaudeHookServer] entering event switch",
+            level: .debug,
+            fields: [
+                "event": payload.event.rawValue,
+                "sessionID": payload.sessionID
+            ]
+        )
         switch payload.event {
         case .sessionStart:
+            log(
+                "[ClaudeHookServer] routing to handleSessionStart",
+                level: .debug,
+                fields: ["sessionID": payload.sessionID]
+            )
             return handleSessionStart(payload: payload)
         case .stop:
+            log(
+                "[ClaudeHookServer] routing to handleStop",
+                level: .debug,
+                fields: ["sessionID": payload.sessionID]
+            )
             return handleStop(payload: payload)
         case .sessionEnd:
+            log(
+                "[ClaudeHookServer] routing to handleWindowMoveTrigger (SessionEnd)",
+                level: .debug,
+                fields: ["sessionID": payload.sessionID]
+            )
             return handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
         case .userPromptSubmit:
+            log(
+                "[ClaudeHookServer] routing to handleUserPromptSubmit",
+                level: .debug,
+                fields: ["sessionID": payload.sessionID]
+            )
             return handleUserPromptSubmit(payload: payload)
         }
     }
@@ -235,9 +285,28 @@ final class ClaudeHookServer: ObservableObject {
     private func handleSessionStart(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        log(
+            "[handleSessionStart] called",
+            level: .debug,
+            fields: [
+                "sessionID": payload.sessionID,
+                "cwd": payload.cwd ?? "nil",
+                "hasTerminalCtx": String(payload.terminalCtx != nil),
+                "terminalCtxUseful": String(payload.terminalCtx?.hasUsefulContext ?? false)
+            ]
+        )
         // 优先使用 terminal context 精确匹配终端窗口
         var identity: WindowIdentity?
         if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+            log(
+                "[handleSessionStart] trying terminal context matching",
+                level: .debug,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "tty": terminalCtx.tty ?? "nil",
+                    "ppid": terminalCtx.ppid ?? "nil"
+                ]
+            )
             identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
             if let identity {
                 log(
@@ -249,11 +318,25 @@ final class ClaudeHookServer: ObservableObject {
                         "windowID": String(identity.windowID)
                     ]
                 )
+            } else {
+                log(
+                    "[handleSessionStart] terminal context match returned nil",
+                    level: .debug,
+                    fields: ["sessionID": payload.sessionID]
+                )
             }
         }
 
         // 回退策略 1：通过 cwd 项目名匹配窗口（多会话场景更准确）
         if identity == nil, let cwd = payload.cwd {
+            log(
+                "[handleSessionStart] trying cwd fallback matching",
+                level: .debug,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "cwd": cwd
+                ]
+            )
             identity = WindowManager.shared.findClaudeCodeWindow(cwd: cwd)
             if let identity {
                 log(
@@ -271,10 +354,31 @@ final class ClaudeHookServer: ObservableObject {
 
         // 回退策略 2：捕获当前焦点窗口（最后手段）
         if identity == nil {
+            log(
+                "[handleSessionStart] falling back to captureFocusedWindowIdentity",
+                level: .debug,
+                fields: ["sessionID": payload.sessionID]
+            )
             identity = WindowManager.shared.captureFocusedWindowIdentity()
+            if let identity {
+                log(
+                    "[handleSessionStart] captureFocusedWindowIdentity succeeded",
+                    level: .debug,
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "windowID": String(identity.windowID),
+                        "app": identity.appName ?? "unknown"
+                    ]
+                )
+            }
         }
 
         guard let identity else {
+            log(
+                "[handleSessionStart] all window finding strategies failed",
+                level: .warn,
+                fields: ["sessionID": payload.sessionID]
+            )
             SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：当前无可绑定窗口")
             return (
                 409,
@@ -287,6 +391,15 @@ final class ClaudeHookServer: ObservableObject {
         }
         SessionWindowRegistry.shared.bind(sessionID: payload.sessionID, windowIdentity: identity)
         handledRequestCount += 1
+        log(
+            "[handleSessionStart] bind succeeded",
+            level: .debug,
+            fields: [
+                "sessionID": payload.sessionID,
+                "windowID": String(identity.windowID),
+                "app": identity.appName ?? "unknown"
+            ]
+        )
         log(
             "[ClaudeHookServer] SessionStart bound",
             fields: [

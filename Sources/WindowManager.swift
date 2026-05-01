@@ -155,6 +155,14 @@ class WindowManager {
         )
 
         let shouldRestore = shouldRestoreCurrentWindow()
+        log(
+            "[WindowManager] toggle shouldRestoreCurrentWindow returned",
+            level: .debug,
+            fields: [
+                "op": op,
+                "shouldRestore": String(shouldRestore)
+            ]
+        )
         let mode = shouldRestore ? "restore" : "move_to_main"
         log(
             "[WindowManager] toggle decision",
@@ -166,11 +174,26 @@ class WindowManager {
         )
 
         if shouldRestore {
+            log(
+                "[WindowManager] toggle branching to restore",
+                level: .debug,
+                fields: ["op": op]
+            )
             restore(operationID: op, triggerSource: triggerSource)
         } else {
+            log(
+                "[WindowManager] toggle branching to moveToMainScreen",
+                level: .debug,
+                fields: ["op": op]
+            )
             moveToMainScreen(operationID: op, triggerSource: triggerSource)
         }
 
+        log(
+            "[WindowManager] toggle branch completed, checking frontmost app",
+            level: .debug,
+            fields: ["op": op]
+        )
         let frontAfter = frontmostAppDescriptor()
         let durationMs = logOperationDuration(
             "[WindowManager] toggle finished",
@@ -197,6 +220,15 @@ class WindowManager {
                 ]
             )
         }
+        log(
+            "[WindowManager] toggle checking slow threshold",
+            level: .debug,
+            fields: [
+                "op": op,
+                "durationMs": String(durationMs),
+                "threshold": "650"
+            ]
+        )
         if durationMs >= 650 {
             CrashContextRecorder.shared.record("toggle_slow op=\(op) durationMs=\(durationMs) mode=\(mode)")
         }
@@ -235,6 +267,11 @@ class WindowManager {
             moveToMainScreenViaSystemEvents()
             return
         }
+        log(
+            "[WindowManager] move_to_main AX OK, capturing focused window identity",
+            level: .debug,
+            fields: ["op": op]
+        )
         guard let identity = captureFocusedWindowIdentity() else {
             log(
                 "[WindowManager] move_to_main failed: focused window identity missing",
@@ -246,11 +283,28 @@ class WindowManager {
             CrashContextRecorder.shared.record("move_to_main_failed_identity_missing op=\(op)")
             return
         }
+        log(
+            "[WindowManager] move_to_main captured identity",
+            level: .debug,
+            fields: [
+                "op": op,
+                "windowID": String(identity.windowID),
+                "pid": String(identity.pid)
+            ]
+        )
         let moved = moveWindowToMainScreen(
             identity: identity,
             reason: .manualHotkey,
             sessionID: nil,
             operationID: op
+        )
+        log(
+            "[WindowManager] move_to_main moveWindowToMainScreen returned",
+            level: .debug,
+            fields: [
+                "op": op,
+                "moved": String(moved)
+            ]
         )
         if moved {
             log(
@@ -327,7 +381,23 @@ class WindowManager {
             return
         }
 
+        log(
+            "[WindowManager] restore AX permission OK, checking active state",
+            level: .debug,
+            fields: [
+                "op": op,
+                "hasToken": String(lastWindowToken != nil),
+                "hasFrame": String(lastWindowFrame != nil),
+                "hasTarget": String(lastTargetFrame != nil)
+            ]
+        )
+
         if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
+            log(
+                "[WindowManager] restore some active state nil, calling shouldRestoreCurrentWindow",
+                level: .debug,
+                fields: ["op": op]
+            )
             if shouldRestoreCurrentWindow() == false {
                 log(
                     "[WindowManager] restore skipped: no saved state",
@@ -338,6 +408,15 @@ class WindowManager {
                 )
                 return
             }
+            log(
+                "[WindowManager] restore shouldRestoreCurrentWindow succeeded after nil check",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "hasToken": String(lastWindowToken != nil),
+                    "hasFrame": String(lastWindowFrame != nil)
+                ]
+            )
         }
 
         guard let token = lastWindowToken, let frame = lastWindowFrame else {
@@ -352,7 +431,27 @@ class WindowManager {
             return
         }
 
+        log(
+            "[WindowManager] restore resolved token and frame",
+            level: .debug,
+            fields: [
+                "op": op,
+                "tokenStateID": token.stateID,
+                "tokenPID": String(token.pid),
+                "tokenWindowID": String(describing: token.windowID),
+                "targetFrame": String(describing: frame)
+            ]
+        )
+
         let spacePrepared = applySpaceStrategyForRestore(windowID: token.windowID, operationID: op)
+        log(
+            "[WindowManager] restore applySpaceStrategyForRestore returned",
+            level: .debug,
+            fields: [
+                "op": op,
+                "spacePrepared": String(spacePrepared)
+            ]
+        )
         if !spacePrepared {
             log(
                 "[WindowManager] space restore preparation failed, fallback to frame-only restore",
@@ -376,8 +475,22 @@ class WindowManager {
             return
         }
 
+        log(
+            "[WindowManager] restore resolved window AX element",
+            level: .debug,
+            fields: [
+                "op": op,
+                "tokenWindowID": String(describing: token.windowID)
+            ]
+        )
+
         // 预检：如果窗口已在目标（原始）位置，跳过恢复
         // 防止对已恢复的窗口执行无意义操作，避免与手动快捷键操作冲突
+        log(
+            "[WindowManager] restore checking if window already at original position",
+            level: .debug,
+            fields: ["op": op]
+        )
         if let currentFrame = self.frame(of: window),
            let targetFrame = lastWindowFrame,
            framesMatch(currentFrame, targetFrame) {
@@ -421,6 +534,12 @@ class WindowManager {
             return
         }
 
+        log(
+            "[WindowManager] restore position attribute is settable",
+            level: .debug,
+            fields: ["op": op]
+        )
+
         guard isAttributeSettable(window, attribute: kAXSizeAttribute) else {
             log(
                 "[WindowManager] restore failed: size attribute not settable",
@@ -432,6 +551,12 @@ class WindowManager {
             CrashContextRecorder.shared.record("restore_failed_size_not_settable op=\(op)")
             return
         }
+
+        log(
+            "[WindowManager] restore size attribute is settable, proceeding to apply",
+            level: .debug,
+            fields: ["op": op]
+        )
 
         let preApplyFrame = self.frame(of: window)
         let preApplyWindowID = windowHandle(for: window)
@@ -458,6 +583,12 @@ class WindowManager {
             CrashContextRecorder.shared.record("restore_failed_apply_frame op=\(op)")
             return
         }
+
+        log(
+            "[WindowManager] restore apply() succeeded, reading back frame",
+            level: .debug,
+            fields: ["op": op]
+        )
 
         guard let restoredFrame = self.frame(of: window) else {
             log(
@@ -498,6 +629,11 @@ class WindowManager {
             return
         }
 
+        log(
+            "[WindowManager] restore frame matched, resetting active context",
+            level: .debug,
+            fields: ["op": op]
+        )
         resetActiveWindowContext(removeState: true)
         let outcome = spacePrepared ? "restored" : "restored_frame_only"
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
@@ -1006,11 +1142,32 @@ class WindowManager {
     }
 
     func applySpaceStrategyForRestore(windowID: UInt32?, operationID: String? = nil) -> Bool {
-        guard let windowID else { return true }
+        guard let windowID else {
+            log(
+                "[WindowManager] applySpaceStrategyForRestore: nil windowID, returning true",
+                level: .debug
+            )
+            return true
+        }
         let op = operationID ?? makeOperationID(prefix: "restore-space")
+
+        log(
+            "[WindowManager] applySpaceStrategyForRestore called",
+            level: .debug,
+            fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "strategy": SpacePreferences.restoreStrategy.rawValue
+            ]
+        )
 
         // 关键安全检查：验证窗口是否仍然存在
         // 如果窗口已被关闭，跳过所有 space 操作以避免 EXC_BAD_ACCESS
+        log(
+            "[WindowManager] applySpaceStrategyForRestore validating window exists",
+            level: .debug,
+            fields: ["op": op, "windowID": String(windowID)]
+        )
         if !validateWindowExists(windowID: windowID) {
             log(
                 "[WindowManager] space strategy aborted: window no longer exists",
@@ -1034,6 +1191,12 @@ class WindowManager {
             return true
         }
 
+        log(
+            "[WindowManager] applySpaceStrategyForRestore space integration enabled",
+            level: .debug,
+            fields: ["op": op, "canControlSpaces": String(spaceController.canControlSpaces)]
+        )
+
         guard let currentSpace = spaceController.currentSpaceIndex() else {
             log(
                 "[WindowManager] space strategy skipped: current space unavailable",
@@ -1045,7 +1208,22 @@ class WindowManager {
             return true
         }
 
+        log(
+            "[WindowManager] applySpaceStrategyForRestore resolved currentSpace",
+            level: .debug,
+            fields: ["op": op, "currentSpace": String(currentSpace)]
+        )
+
         let resolvedSourceSpace = resolveSourceSpaceIndexForRestore()
+        log(
+            "[WindowManager] applySpaceStrategyForRestore resolvedSourceSpace",
+            level: .debug,
+            fields: [
+                "op": op,
+                "resolvedSourceSpace": String(describing: resolvedSourceSpace),
+                "lastSourceSpaceIndex": String(describing: lastSourceSpaceIndex)
+            ]
+        )
         log(
             "[WindowManager] applying space strategy",
             fields: [
@@ -1063,6 +1241,11 @@ class WindowManager {
 
         switch SpacePreferences.restoreStrategy {
         case .switchToOriginal:
+            log(
+                "[WindowManager] applySpaceStrategy using switchToOriginal strategy",
+                level: .debug,
+                fields: ["op": op]
+            )
             guard let sourceSpace = resolvedSourceSpace ?? lastSourceSpaceIndex else {
                 log(
                     "[WindowManager] no source space recorded for restore",
@@ -1085,6 +1268,16 @@ class WindowManager {
                 )
                 return true
             }
+
+            log(
+                "[WindowManager] switchToOriginal: sourceSpace != currentSpace, proceeding",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "sourceSpace": String(sourceSpace),
+                    "currentSpace": String(currentSpace)
+                ]
+            )
 
             guard spaceController.canControlSpaces else {
                 log(
@@ -1120,6 +1313,15 @@ class WindowManager {
             let focusStartedAt = Date()
             let focusSucceeded = spaceController.focusSpace(sourceSpace, operationID: op)
             let focusDurationMs = elapsedMilliseconds(since: focusStartedAt)
+            log(
+                "[WindowManager] switchToOriginal focusSpace returned",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "focusSucceeded": String(focusSucceeded),
+                    "focusDurationMs": String(focusDurationMs)
+                ]
+            )
             let postFocusSpace = spaceController.currentSpaceIndex()
 
             log(
@@ -1174,6 +1376,15 @@ class WindowManager {
             }
 
             // === Phase 2: moveWindow ===
+            log(
+                "[WindowManager] switchToOriginal Phase 2: calling moveWindow",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "targetSpace": String(sourceSpace)
+                ]
+            )
             if spaceController.moveWindow(windowID, toSpaceIndex: sourceSpace, focus: false, operationID: op) {
                 let windowSpaceAfterMove = spaceController.windowSpaceIndex(windowID: windowID)
                 log(
@@ -1195,6 +1406,12 @@ class WindowManager {
                             "windowID": String(windowID),
                             "space": String(sourceSpace)
                         ]
+                    )
+                } else {
+                    log(
+                        "[WindowManager] switchToOriginal focusWindow succeeded on source space",
+                        level: .debug,
+                        fields: ["op": op, "windowID": String(windowID)]
                     )
                 }
             } else {
@@ -1222,7 +1439,25 @@ class WindowManager {
             )
             return true
         case .pullToCurrent:
+            log(
+                "[WindowManager] applySpaceStrategy using pullToCurrent strategy",
+                level: .debug,
+                fields: [
+                    "op": op,
+                    "currentSpace": String(currentSpace),
+                    "lastSourceSpaceIndex": String(describing: lastSourceSpaceIndex)
+                ]
+            )
             if let sourceSpace = lastSourceSpaceIndex, sourceSpace != currentSpace {
+                log(
+                    "[WindowManager] pullToCurrent: sourceSpace != currentSpace, need to move",
+                    level: .debug,
+                    fields: [
+                        "op": op,
+                        "sourceSpace": String(sourceSpace),
+                        "currentSpace": String(currentSpace)
+                    ]
+                )
                 guard spaceController.canControlSpaces else {
                     log(
                         "[WindowManager] cannot pull window: cross-space control unavailable",
@@ -1246,6 +1481,11 @@ class WindowManager {
                         ]
                     )
                     if !spaceController.focusWindow(windowID, operationID: op) {
+                        log(
+                            "[WindowManager] pullToCurrent focusWindow failed",
+                            level: .debug,
+                            fields: ["op": op, "windowID": String(windowID)]
+                        )
                         log(
                             "[WindowManager] failed to focus restored window on current space",
                             level: .warn,

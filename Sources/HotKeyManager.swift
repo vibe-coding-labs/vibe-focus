@@ -51,8 +51,28 @@ final class HotKeyManager: ObservableObject {
             ]
         )
 
+        log(
+            "[HotKey] setup: calling setupCGEventTap",
+            level: .debug,
+            fields: ["axTrusted": String(accessibilityStatus)]
+        )
         cgEventTapActive = setupCGEventTap()
+        log(
+            "[HotKey] setup: setupCGEventTap returned",
+            level: .debug,
+            fields: ["cgEventTapActive": String(cgEventTapActive)]
+        )
+
+        log(
+            "[HotKey] setup: calling installHandlerIfNeeded",
+            level: .debug
+        )
         installHandlerIfNeeded()
+
+        log(
+            "[HotKey] setup: calling registerHotKey",
+            level: .debug
+        )
         registerHotKey()
 
         if cgEventTapActive {
@@ -134,11 +154,27 @@ final class HotKeyManager: ObservableObject {
 
         // Ignore keyboard auto-repeat to keep Ctrl+M as one toggle per physical press.
         if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            log(
+                "[handleCGEvent] ignoring auto-repeat key event",
+                level: .debug
+            )
             return Unmanaged.passUnretained(event)
         }
 
         let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
+
+        log(
+            "[handleCGEvent] keyDown event received",
+            level: .debug,
+            fields: [
+                "keyCode": String(keyCode),
+                "hasControl": String(flags.contains(.maskControl)),
+                "hasCommand": String(flags.contains(.maskCommand)),
+                "hasAlt": String(flags.contains(.maskAlternate)),
+                "hasShift": String(flags.contains(.maskShift))
+            ]
+        )
 
         // Convert CGEvent flags to Carbon modifiers
         var modifiers: UInt32 = 0
@@ -146,6 +182,17 @@ final class HotKeyManager: ObservableObject {
         if flags.contains(.maskCommand) { modifiers |= UInt32(cmdKey) }
         if flags.contains(.maskAlternate) { modifiers |= UInt32(optionKey) }
         if flags.contains(.maskShift) { modifiers |= UInt32(shiftKey) }
+
+        log(
+            "[handleCGEvent] converted modifiers",
+            level: .debug,
+            fields: [
+                "keyCode": String(keyCode),
+                "modifiers": String(modifiers),
+                "expectedKeyCode": String(currentHotKey.keyCode),
+                "expectedModifiers": String(currentHotKey.modifiers)
+            ]
+        )
 
         // Debug: log Q key and Space key events
         if keyCode == 12 || keyCode == 49 {
@@ -242,6 +289,15 @@ final class HotKeyManager: ObservableObject {
         let now = Date()
         let hotkey = currentHotKey.displayString
 
+        log(
+            "[triggerToggleIfNeeded] called",
+            level: .debug,
+            fields: [
+                "source": source,
+                "isToggleInFlight": String(isToggleInFlight)
+            ]
+        )
+
         if isToggleInFlight {
             log(
                 "[HotKey] Ignored trigger: toggle already in flight",
@@ -256,6 +312,17 @@ final class HotKeyManager: ObservableObject {
 
         let sinceLastTrigger = now.timeIntervalSince(lastToggleTriggeredAt)
         let sinceLastCompletion = now.timeIntervalSince(lastToggleCompletedAt)
+        log(
+            "[triggerToggleIfNeeded] debounce check",
+            level: .debug,
+            fields: [
+                "source": source,
+                "sinceLastTriggerMs": String(Int((sinceLastTrigger * 1000).rounded())),
+                "sinceLastCompletionMs": String(Int((sinceLastCompletion * 1000).rounded())),
+                "dedupIntervalMs": String(Int(toggleDedupInterval * 1000)),
+                "cooldownIntervalMs": String(Int(toggleCooldownInterval * 1000))
+            ]
+        )
         if sinceLastTrigger < toggleDedupInterval || sinceLastCompletion < toggleCooldownInterval {
             log(
                 "[HotKey] Ignored duplicate trigger",
@@ -274,9 +341,25 @@ final class HotKeyManager: ObservableObject {
         let startedAt = Date()
         isToggleInFlight = true
         lastToggleTriggeredAt = now
+        log(
+            "[triggerToggleIfNeeded] toggle accepted, dispatching to WindowManager",
+            level: .debug,
+            fields: [
+                "op": operationID,
+                "source": source
+            ]
+        )
         defer {
             lastToggleCompletedAt = Date()
             isToggleInFlight = false
+            log(
+                "[triggerToggleIfNeeded] toggle defer completed",
+                level: .debug,
+                fields: [
+                    "op": operationID,
+                    "source": source
+                ]
+            )
         }
 
         log(
@@ -417,6 +500,12 @@ final class HotKeyManager: ObservableObject {
             &hotKeyID
         )
 
+        log(
+            "[handleHotKeyEvent] GetEventParameter returned",
+            level: .debug,
+            fields: ["status": String(status)]
+        )
+
         guard status == noErr else {
             log("[HotKey] Get event parameter failed: \(status)")
             return status
@@ -425,6 +514,16 @@ final class HotKeyManager: ObservableObject {
         log("[HotKey] Got hotKeyID: signature=\(hotKeyID.signature), id=\(hotKeyID.id), expected: signature=\(hotkeySignature), id=\(hotkeyIdentifier)")
 
         guard hotKeyID.signature == hotkeySignature, hotKeyID.id == hotkeyIdentifier else {
+            log(
+                "[handleHotKeyEvent] hotKeyID mismatch",
+                level: .debug,
+                fields: [
+                    "gotSignature": String(hotKeyID.signature),
+                    "gotID": String(hotKeyID.id),
+                    "expectedSignature": String(hotkeySignature),
+                    "expectedID": String(hotkeyIdentifier)
+                ]
+            )
             log("[HotKey] ID mismatch, ignoring")
             return noErr
         }

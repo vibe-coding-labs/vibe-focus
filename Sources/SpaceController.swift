@@ -184,6 +184,11 @@ final class SpaceController: ObservableObject {
     }
 
     func currentSpaceIndex() -> Int? {
+        log(
+            "[currentSpaceIndex] called",
+            level: .debug,
+            fields: ["isEnabled": String(isEnabled)]
+        )
         refreshAvailabilityIfNeeded()
         guard isEnabled, let space = queryFocusedSpace() else {
             log(
@@ -317,8 +322,23 @@ final class SpaceController: ObservableObject {
     @discardableResult
     func moveWindow(_ windowID: UInt32, toSpaceIndex spaceIndex: Int, focus: Bool, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
+        log(
+            "[moveWindow] called",
+            level: .debug,
+            fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "targetSpace": String(spaceIndex),
+                "focus": String(focus)
+            ]
+        )
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
+            log(
+                "[moveWindow] aborted: space integration not enabled",
+                level: .debug,
+                fields: ["op": op]
+            )
             return false
         }
         guard canControlSpaces else {
@@ -327,6 +347,11 @@ final class SpaceController: ObservableObject {
         }
 
         // 安全检查 + 上下文记录合并为一次 queryWindow 调用
+        log(
+            "[moveWindow] querying window info for safety check",
+            level: .debug,
+            fields: ["op": op, "windowID": String(windowID)]
+        )
         let windowInfo = queryWindow(windowID: windowID)
         if windowInfo == nil {
             log(
@@ -355,6 +380,15 @@ final class SpaceController: ObservableObject {
 
         let nativeAvailable = NativeSpaceBridge.isAvailable
 
+        log(
+            "[moveWindow] checking NativeSpaceBridge availability",
+            level: .debug,
+            fields: [
+                "op": op,
+                "nativeAvailable": String(nativeAvailable)
+            ]
+        )
+
         // 策略 1：使用 NativeSpaceBridge (CGS API) 直接移动
         // 这比 yabai 更可靠，不依赖 scripting-addition
         if nativeAvailable, let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
@@ -368,6 +402,11 @@ final class SpaceController: ObservableObject {
                 ]
             )
             if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
+                log(
+                    "[moveWindow] NativeSpaceBridge moveWindow returned true, waiting 200ms",
+                    level: .debug,
+                    fields: ["op": op, "spaceID": String(spaceID)]
+                )
                 usleep(200_000) // 200ms 等待移动生效
                 if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
                     log(
@@ -396,10 +435,27 @@ final class SpaceController: ObservableObject {
         }
 
         // 策略 2：yabai 命令（带后置验证重试）
+        log(
+            "[moveWindow] strategy 2: trying yabai command",
+            level: .debug,
+            fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "targetSpace": String(spaceIndex)
+            ]
+        )
         let moveResult = runYabaiVariants(
             variants: [["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"]],
             operation: "moveWindow(windowID=\(windowID), space=\(spaceIndex))",
             operationID: op
+        )
+        log(
+            "[moveWindow] yabai runYabaiVariants returned",
+            level: .debug,
+            fields: [
+                "op": op,
+                "success": String(moveResult.success)
+            ]
         )
         if moveResult.success {
             if verifyWindowMovedToSpaceWithRetry(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
@@ -528,8 +584,21 @@ final class SpaceController: ObservableObject {
     @discardableResult
     func focusSpace(_ spaceIndex: Int, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
+        log(
+            "[focusSpace] called",
+            level: .debug,
+            fields: [
+                "op": op,
+                "targetSpace": String(spaceIndex)
+            ]
+        )
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
+            log(
+                "[focusSpace] aborted: not enabled",
+                level: .debug,
+                fields: ["op": op]
+            )
             return false
         }
         guard canControlSpaces else {
@@ -539,6 +608,15 @@ final class SpaceController: ObservableObject {
 
         // 记录 focusSpace 调用的完整上下文
         let preFocusSpace = queryFocusedSpace()?.index
+        log(
+            "[focusSpace] current space resolved",
+            level: .debug,
+            fields: [
+                "op": op,
+                "preFocusSpace": String(describing: preFocusSpace),
+                "targetSpace": String(spaceIndex)
+            ]
+        )
         let targetDisplay = querySpaces()?.first(where: { $0.index == spaceIndex })?.display
         log(
             "[SpaceController] focusSpace called",
@@ -553,12 +631,40 @@ final class SpaceController: ObservableObject {
 
         let variants = [["-m", "space", "--focus", "\(spaceIndex)"]]
         let result = runYabaiVariants(variants: variants, operation: "focusSpace(\(spaceIndex))", operationID: op)
+        log(
+            "[focusSpace] yabai runYabaiVariants returned",
+            level: .debug,
+            fields: [
+                "op": op,
+                "success": String(result.success),
+                "targetSpace": String(spaceIndex)
+            ]
+        )
         if result.success {
+            log(
+                "[focusSpace] yabai succeeded",
+                level: .debug,
+                fields: ["op": op, "targetSpace": String(spaceIndex)]
+            )
             return true
         }
 
         // yabai 失败，使用 CGEvent 键盘事件 fallback
+        log(
+            "[focusSpace] yabai failed, calculating CGEvent fallback steps",
+            level: .debug,
+            fields: ["op": op, "targetSpace": String(spaceIndex)]
+        )
         let steps = calculateFocusSteps(targetSpaceIndex: spaceIndex)
+        log(
+            "[focusSpace] calculateFocusSteps returned",
+            level: .debug,
+            fields: [
+                "op": op,
+                "steps": String(steps),
+                "targetSpace": String(spaceIndex)
+            ]
+        )
         log(
             "[SpaceController] yabai focusSpace failed, trying CGEvent fallback",
             fields: [
@@ -893,6 +999,11 @@ final class SpaceController: ObservableObject {
     }
 
     private func queryWindow(windowID: UInt32) -> YabaiWindowInfo? {
+        log(
+            "[queryWindow] called",
+            level: .debug,
+            fields: ["windowID": String(windowID)]
+        )
         guard let result = runYabai(arguments: ["-m", "query", "--windows", "--window", "\(windowID)"]),
               result.exitCode == 0 else {
             log(
@@ -902,6 +1013,14 @@ final class SpaceController: ObservableObject {
             )
             return nil
         }
+        log(
+            "[queryWindow] yabai query succeeded, decoding JSON",
+            level: .debug,
+            fields: [
+                "windowID": String(windowID),
+                "stdoutLen": String(result.stdout.count)
+            ]
+        )
         let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
         log(
             "[SpaceController] queryWindow result",
@@ -1363,6 +1482,11 @@ final class SpaceController: ObservableObject {
     /// 计算从当前可见空间切换到目标空间需要的 Ctrl+Left/Right 步数
     /// 正数 = 向右（Ctrl+Right），负数 = 向左（Ctrl+Left），0 = 已在目标空间
     private func calculateFocusSteps(targetSpaceIndex: Int) -> Int {
+        log(
+            "[calculateFocusSteps] called",
+            level: .debug,
+            fields: ["targetSpaceIndex": String(targetSpaceIndex)]
+        )
         guard let spaces = querySpaces() else {
             log("[SpaceController] calculateFocusSteps: querySpaces returned nil", level: .warn, fields: ["target": String(targetSpaceIndex)])
             return 0
@@ -1373,6 +1497,14 @@ final class SpaceController: ObservableObject {
             log("[SpaceController] calculateFocusSteps: target space not found", level: .warn, fields: ["target": String(targetSpaceIndex)])
             return 0
         }
+        log(
+            "[calculateFocusSteps] found target space",
+            level: .debug,
+            fields: [
+                "targetSpaceIndex": String(targetSpaceIndex),
+                "targetDisplay": String(describing: targetSpace.display)
+            ]
+        )
         guard let displayIndex = targetSpace.display else {
             log("[SpaceController] calculateFocusSteps: target space has no display", level: .warn, fields: ["target": String(targetSpaceIndex)])
             return 0
