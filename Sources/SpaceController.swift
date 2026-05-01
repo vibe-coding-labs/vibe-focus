@@ -266,9 +266,9 @@ final class SpaceController: ObservableObject {
             return false
         }
 
-        // 安全检查：先验证窗口是否存在，防止对已销毁窗口执行 yabai 操作导致 crash
-        let windowCheck = queryWindow(windowID: windowID)
-        if windowCheck == nil {
+        // 安全检查 + 上下文记录合并为一次 queryWindow 调用
+        let windowInfo = queryWindow(windowID: windowID)
+        if windowInfo == nil {
             log(
                 "[SpaceController] moveWindow aborted: window does not exist",
                 level: .warn,
@@ -281,81 +281,186 @@ final class SpaceController: ObservableObject {
             return false
         }
 
-        // 记录 moveWindow 调用上下文
-        let windowBeforeMove = queryWindow(windowID: windowID)
         log(
             "[SpaceController] moveWindow called",
             fields: [
                 "op": op,
                 "windowID": String(windowID),
                 "targetSpace": String(spaceIndex),
-                "windowCurrentSpace": String(describing: windowBeforeMove?.space),
-                "windowCurrentDisplay": String(describing: windowBeforeMove?.display),
+                "windowCurrentSpace": String(describing: windowInfo?.space),
+                "windowCurrentDisplay": String(describing: windowInfo?.display),
                 "focus": String(focus)
             ]
         )
 
+        let nativeAvailable = NativeSpaceBridge.isAvailable
+
+        // 策略 1：使用 NativeSpaceBridge (CGS API) 直接移动
+        // 这比 yabai 更可靠，不依赖 scripting-addition
+        if nativeAvailable, let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
+            log(
+                "[SpaceController] trying NativeSpaceBridge first",
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "yabaiIndex": String(spaceIndex),
+                    "nativeSpaceID": String(spaceID)
+                ]
+            )
+            if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
+                usleep(200_000) // 200ms 等待移动生效
+                if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
+                    log(
+                        "[SpaceController] NativeSpaceBridge move succeeded and verified",
+                        fields: [
+                            "op": op,
+                            "windowID": String(windowID),
+                            "targetSpace": String(spaceIndex)
+                        ]
+                    )
+                    if focus {
+                        _ = focusWindow(windowID, operationID: op)
+                    }
+                    return true
+                }
+                log(
+                    "[SpaceController] NativeSpaceBridge move executed but verification failed, trying yabai",
+                    level: .warn,
+                    fields: [
+                        "op": op,
+                        "windowID": String(windowID),
+                        "targetSpace": String(spaceIndex)
+                    ]
+                )
+            }
+        }
+
+        // 策略 2：yabai 命令（带后置验证重试）
         let moveResult = runYabaiVariants(
             variants: [["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"]],
             operation: "moveWindow(windowID=\(windowID), space=\(spaceIndex))",
             operationID: op
         )
         if moveResult.success {
-            // 验证窗口是否真正移到了目标 space
-            let windowAfterMove = queryWindow(windowID: windowID)
-            let moveVerified = windowAfterMove?.space == spaceIndex
-            if !moveVerified {
+            if verifyWindowMovedToSpaceWithRetry(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
+                if focus {
+                    _ = focusWindow(windowID, operationID: op)
+                }
+                return true
+            }
+            // yabai 报成功但窗口实际未移动 — 尝试 NativeSpaceBridge fallback
+            if nativeAvailable, let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
                 log(
-                    "[SpaceController] moveWindow yabai succeeded but verification shows window not on target space",
-                    level: .warn,
+                    "[SpaceController] yabai move unverified, trying NativeSpaceBridge fallback",
                     fields: [
                         "op": op,
                         "windowID": String(windowID),
-                        "targetSpace": String(spaceIndex),
-                        "actualSpace": String(describing: windowAfterMove?.space),
-                        "note": "yabai move may have async effect, AX frame positioning is authoritative"
+                        "targetSpace": String(spaceIndex)
                     ]
                 )
+                if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
+                    usleep(200_000)
+                    if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
+                        if focus {
+                            _ = focusWindow(windowID, operationID: op)
+                        }
+                        return true
+                    }
+                }
             }
+            log(
+                "[SpaceController] moveWindow yabai succeeded but verification shows window not on target space",
+                level: .warn,
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "targetSpace": String(spaceIndex),
+                    "note": "yabai move may have async effect, AX frame positioning is authoritative"
+                ]
+            )
             if focus {
                 _ = focusWindow(windowID, operationID: op)
             }
             return true
         }
 
-        // yabai 失败，尝试原生 CGS API fallback
-        if let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
-            log(
-                "[SpaceController] yabai moveWindow failed, trying native fallback",
-                fields: [
-                    "op": op,
-                    "windowID": String(windowID),
-                    "yabaiIndex": String(spaceIndex),
-                    "nativeSpaceID": String(spaceID),
-                ]
+        // 策略 3：yabai 失败时尝试 NativeSpaceBridge
+        if !nativeAvailable {
+            markOperationError(
+                from: moveResult.failure,
+                fallback: "Failed to move window \(windowID) to space \(spaceIndex)",
+                operationID: op
             )
-            if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                if focus {
-                    _ = focusWindow(windowID, operationID: op)
-                }
-                return true
+            return false
+        }
+
+        guard let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) else {
+            markOperationError(
+                from: moveResult.failure,
+                fallback: "Failed to move window \(windowID) to space \(spaceIndex)",
+                operationID: op
+            )
+            return false
+        }
+
+        log(
+            "[SpaceController] yabai moveWindow failed, trying native fallback",
+            fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "yabaiIndex": String(spaceIndex),
+                "nativeSpaceID": String(spaceID),
+            ]
+        )
+        if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
+            if focus {
+                _ = focusWindow(windowID, operationID: op)
             }
-        } else {
-            log(
-                "[SpaceController] native fallback skipped: could not resolve spaceID for yabaiIndex=\(spaceIndex)",
-                level: .warn,
-                fields: [
-                    "op": op,
-                    "windowID": String(windowID),
-                    "targetSpace": String(spaceIndex)
-                ]
-            )
+            return true
         }
 
         markOperationError(
             from: moveResult.failure,
             fallback: "Failed to move window \(windowID) to space \(spaceIndex)",
             operationID: op
+        )
+        return false
+    }
+
+    /// 验证窗口是否已移动到目标 space
+    private func verifyWindowMovedToSpace(windowID: UInt32, targetSpace: Int, operationID: String) -> Bool {
+        let windowAfter = queryWindow(windowID: windowID)
+        let verified = windowAfter?.space == targetSpace
+        if !verified {
+            log(
+                "[SpaceController] verifyWindowMovedToSpace: not on target",
+                level: .warn,
+                fields: [
+                    "op": operationID,
+                    "windowID": String(windowID),
+                    "targetSpace": String(targetSpace),
+                    "actualSpace": String(describing: windowAfter?.space)
+                ]
+            )
+        }
+        return verified
+    }
+
+    /// 带单次重试的窗口移动验证（yabai move 可能异步生效）
+    private func verifyWindowMovedToSpaceWithRetry(windowID: UInt32, targetSpace: Int, operationID: String) -> Bool {
+        // 单次 100ms 延迟验证，避免过长的 exponential backoff
+        usleep(100_000)
+        if verifyWindowMovedToSpace(windowID: windowID, targetSpace: targetSpace, operationID: operationID) {
+            return true
+        }
+        log(
+            "[SpaceController] moveWindow verification failed after 100ms",
+            level: .warn,
+            fields: [
+                "op": operationID,
+                "windowID": String(windowID),
+                "targetSpace": String(targetSpace)
+            ]
         )
         return false
     }
@@ -924,6 +1029,29 @@ final class SpaceController: ObservableObject {
         if didAttemptScriptingAdditionRecovery {
             return scriptingAdditionRecoverySucceeded
         }
+
+        // 检查上次进程是否已持久化记录 recovery 失败（避免每次重启都弹管理员权限窗口）
+        let lastFailedAt = UserDefaults.standard.double(forKey: "scriptingAdditionRecoveryFailedAt")
+        if lastFailedAt > 0 {
+            let hoursSinceFailure = Date().timeIntervalSince1970 - lastFailedAt
+            if hoursSinceFailure < 24 * 3600 {
+                log(
+                    "[SpaceController] scripting-addition recovery skipped: previously failed (cached)",
+                    level: .warn,
+                    fields: [
+                        "op": op,
+                        "hoursAgo": String(format: "%.1f", hoursSinceFailure / 3600),
+                        "trigger": trigger
+                    ]
+                )
+                didAttemptScriptingAdditionRecovery = true
+                scriptingAdditionRecoverySucceeded = false
+                return false
+            }
+            // 超过 24 小时，允许重试（用户可能已修复 yabai/SIP）
+            UserDefaults.standard.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
+        }
+
         didAttemptScriptingAdditionRecovery = true
 
         guard let yabaiPath = locateYabai() else {
@@ -987,6 +1115,8 @@ final class SpaceController: ObservableObject {
                 "detail": truncateForLog(privOutput, limit: 220)
             ]
         )
+        // 持久化记录失败，避免每次重启都弹管理员权限窗口（24 小时后过期重试）
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "scriptingAdditionRecoveryFailedAt")
         lastErrorMessage = "跨工作区恢复需要管理员权限来加载 yabai scripting-addition。可以在设置中点击\"加载\"按钮手动触发。"
         return false
     }

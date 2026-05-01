@@ -807,19 +807,48 @@ extension WindowManager {
         let targetDisplayID = displayID(for: mainScreen)
         let targetDisplayIndex = displayIndex(forDisplayID: targetDisplayID)
 
-        guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame"),
-              let appliedFrame = frame(of: windowAX),
-              framesMatch(appliedFrame, targetFrame) else {
+        // 尝试通过 AX 设置窗口位置
+        // apply() 内部已含容差检查（高度 100px），返回 true 表示窗口已在目标位置附近
+        let axApplySucceeded = apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame")
+
+        if !axApplySucceeded {
+            // apply 本身失败 — 尝试 CGWindowList 验证后重试
             log(
-                "moveWindowToMainScreen failed: frame verification mismatch",
-                level: .error,
+                "[WindowManager] AX apply failed, trying CGWindowList fallback + retry",
+                level: .warn,
                 fields: [
                     "op": op,
-                    "targetFrame": String(describing: targetFrame)
+                    "windowID": String(identity.windowID)
                 ]
             )
-            return false
+
+            usleep(100_000)
+
+            let cgVerified = verifyWindowFrameViaCGWindowList(
+                windowID: identity.windowID,
+                targetFrame: targetFrame,
+                operationID: op
+            )
+
+            if !cgVerified {
+                usleep(150_000)
+                let retrySucceeded = apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame_retry")
+                if !retrySucceeded {
+                    log(
+                        "moveWindowToMainScreen failed: all attempts exhausted",
+                        level: .error,
+                        fields: [
+                            "op": op,
+                            "targetFrame": String(describing: targetFrame)
+                        ]
+                    )
+                    return false
+                }
+            }
         }
+
+        // 使用实际应用的 frame（可能因 macOS 菜单栏调整而与理想 targetFrame 不同）
+        let actualTargetFrame = frame(of: windowAX) ?? targetFrame
 
         let resolvedWindowNumber = windowNumber(for: windowAX) ?? identity.windowNumber
         let resolvedTitle = title(of: windowAX) ?? identity.title
@@ -833,7 +862,9 @@ extension WindowManager {
                 "sourceDisplaySpace": String(describing: spaceContext.sourceDisplaySpaceIndex),
                 "sourceDisplayID": String(describing: sourceContext.displayID),
                 "sourceDisplayIndex": String(describing: sourceContext.index),
-                "targetDisplayIndex": String(describing: targetDisplayIndex)
+                "targetDisplayIndex": String(describing: targetDisplayIndex),
+                "targetFrame": String(describing: targetFrame),
+                "actualTargetFrame": String(describing: actualTargetFrame)
             ]
         )
         let savedState = SavedWindowState(
@@ -845,7 +876,7 @@ extension WindowManager {
             windowNumber: resolvedWindowNumber,
             title: resolvedTitle,
             originalFrame: RectPayload(currentFrame),
-            targetFrame: RectPayload(targetFrame),
+            targetFrame: RectPayload(actualTargetFrame),
             sourceSpaceIndex: spaceContext.sourceSpaceIndex,
             targetSpaceIndex: spaceContext.targetSpaceIndex,
             sourceYabaiDisplayIndex: spaceContext.sourceDisplayIndex,
@@ -870,6 +901,64 @@ extension WindowManager {
             ]
         )
         return true
+    }
+
+    /// 通过 CGWindowList 验证窗口是否已移动到目标 frame
+    /// CGWindowList 使用 WindowServer 的数据，不依赖 AX，对跨 space 窗口更可靠
+    private func verifyWindowFrameViaCGWindowList(
+        windowID: UInt32,
+        targetFrame: CGRect,
+        operationID: String
+    ) -> Bool {
+        let options = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+
+        for info in windowList {
+            guard let id = info[kCGWindowNumber as String] as? UInt32,
+                  id == windowID else { continue }
+
+            guard let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else {
+                return false
+            }
+
+            let actualFrame = CGRect(
+                x: bounds["X"] ?? 0,
+                y: bounds["Y"] ?? 0,
+                width: bounds["Width"] ?? 0,
+                height: bounds["Height"] ?? 0
+            )
+
+            let positionMatches = abs(actualFrame.origin.x - targetFrame.origin.x) <= frameTolerance &&
+                                 abs(actualFrame.origin.y - targetFrame.origin.y) <= frameTolerance
+            let sizeClose = abs(actualFrame.width - targetFrame.width) <= frameTolerance * 2 &&
+                           abs(actualFrame.height - targetFrame.height) <= 100
+
+            log(
+                "[WindowManager] CGWindowList frame verification",
+                fields: [
+                    "op": operationID,
+                    "windowID": String(windowID),
+                    "actualFrame": String(describing: actualFrame),
+                    "targetFrame": String(describing: targetFrame),
+                    "positionMatches": String(positionMatches),
+                    "sizeClose": String(sizeClose)
+                ]
+            )
+
+            return positionMatches && sizeClose
+        }
+
+        log(
+            "[WindowManager] CGWindowList verification: window not found in list",
+            level: .warn,
+            fields: [
+                "op": operationID,
+                "windowID": String(windowID)
+            ]
+        )
+        return false
     }
 
     private func allWindows(for pid: pid_t) -> [AXUIElement] {
@@ -1154,6 +1243,16 @@ extension WindowManager {
             return nil
         }
         return windowID
+    }
+
+    /// 验证 AXUIElement 是否仍然有效（底层窗口未被销毁）
+    func isValidAXElement(_ element: AXUIElement) -> Bool {
+        var windowID: CGWindowID = 0
+        let status = _AXUIElementGetWindow(element, &windowID)
+        guard status == .success, windowID != 0 else {
+            return false
+        }
+        return validateWindowExists(windowID: windowID)
     }
 
     struct CGWindowSnapshot {
@@ -1457,11 +1556,10 @@ extension WindowManager {
         // 验证缓存的 AX 元素是否仍然有效
         var effectiveWindow: AXUIElement? = resolvedWindow
         if let resolvedWindow {
-            let handle = windowHandle(for: resolvedWindow)
-            if handle == nil && state.windowID != nil {
-                // AX 元素已失效（返回 nil windowID），清除缓存
+            if !isValidAXElement(resolvedWindow) {
                 log(
                     "hydrateMemory: cached AX element is stale, clearing",
+                    level: .warn,
                     fields: [
                         "stateID": state.id,
                         "expectedWindowID": String(describing: state.windowID)
