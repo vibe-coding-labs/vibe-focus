@@ -40,16 +40,6 @@ private let verboseLoggingEnabled: Bool = {
     let value = ProcessInfo.processInfo.environment["VIBEFOCUS_VERBOSE_LOGS"]?.lowercased() ?? ""
     return value == "1" || value == "true" || value == "yes"
 }()
-private let noisyLogPrefixes: [String] = [
-    "[DEBUG]",
-    "[REFRESH]",
-    "[DRAW]",
-    "HotKey match failed",
-    "[CGEventTap DEBUG]",
-    "Querying space index",
-    "Got space index from yabai",
-    "Using cached space index"
-]
 
 private final class LogSequenceGenerator: @unchecked Sendable {
     private let queue = DispatchQueue(label: "vibefocus.log.sequence", qos: .userInitiated)
@@ -103,13 +93,8 @@ private func serializeFields(_ fields: [String: String]) -> String {
 }
 
 private func shouldEmitLog(_ message: String, level: LogLevel) -> Bool {
-    if verboseLoggingEnabled {
-        return true
-    }
-    if level == .debug {
-        return false
-    }
-    return !noisyLogPrefixes.contains(where: { message.hasPrefix($0) })
+    // 默认输出所有级别日志（包括 debug），方便排查问题
+    return true
 }
 
 private func rotateLogIfNeeded(fileURL: URL, backupURL: URL, maxBytes: UInt64) {
