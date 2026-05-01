@@ -748,12 +748,23 @@ class WindowManager {
             return focused
         }
 
-        // 第二级匹配：通过 windowID 匹配缓存的窗口引用
-        if let lastWindowElement,
-           let currentWindowID = windowHandle(for: lastWindowElement),
-           currentWindowID == token.windowID {
-            log("Restoring using saved AX handle match")
-            return lastWindowElement
+        // 第二级匹配：通过 windowID 匹配缓存的窗口引用（先验证有效性）
+        if let lastWindowElement {
+            if isValidAXElement(lastWindowElement),
+               let currentWindowID = windowHandle(for: lastWindowElement),
+               currentWindowID == token.windowID {
+                log("Restoring using saved AX handle match")
+                return lastWindowElement
+            } else {
+                // 缓存的 AX 元素已失效，立即清除
+                log("Cached AX element is stale, clearing", level: .warn, fields: [
+                    "tokenWindowID": String(describing: token.windowID)
+                ])
+                self.lastWindowElement = nil
+                if let stateID = lastWindowToken?.stateID {
+                    windowElementsByStateID.removeValue(forKey: stateID)
+                }
+            }
         }
 
         // 第二级-B：主动按 PID 遍历所有窗口查找匹配 windowID
@@ -947,8 +958,10 @@ class WindowManager {
             )
 
             if focusSucceeded {
-                // 等待 space 切换动画完成（动画通常需要 100-200ms）
-                usleep(150_000)
+                // 仅在 space 实际切换时等待动画完成
+                if postFocusSpace != preFocusCurrentSpace {
+                    usleep(150_000)
+                }
 
                 let postSettleSpace = spaceController.currentSpaceIndex()
                 log(
@@ -957,7 +970,8 @@ class WindowManager {
                         "op": op,
                         "targetSpace": String(sourceSpace),
                         "actualCurrentSpace": String(describing: postSettleSpace),
-                        "settleOk": String(postSettleSpace == sourceSpace)
+                        "settleOk": String(postSettleSpace == sourceSpace),
+                        "spaceChanged": String(postFocusSpace != preFocusCurrentSpace)
                     ]
                 )
             } else {

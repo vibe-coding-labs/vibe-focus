@@ -9,7 +9,9 @@ enum NativeSpaceBridge {
     // MARK: - SLS Private API Types (only for moveWindow)
 
     private typealias FnMainConnectionID = @convention(c) () -> Int32
-    private typealias FnMoveWindowsToManagedSpace = @convention(c) (Int32, UnsafePointer<CGWindowID>, Int32, Int64) -> Int32
+    // SLSMoveWindowsToManagedSpace 的第二个参数是 NSArray（包含 NSNumber 包装的 CGWindowID）
+    // 而非 C 数组指针 — 传 C 数组会导致 SkyLight 内部 objc_msgSend("count") 崩溃
+    private typealias FnMoveWindowsToManagedSpace = @convention(c) (Int32, AnyObject, Int32, Int64) -> Int32
 
     private static let skyLightHandle: UnsafeMutableRawPointer? = {
         dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
@@ -46,12 +48,30 @@ enum NativeSpaceBridge {
 
     // MARK: - Window Moving (SLS Private API)
 
+    // 缓存 moveWindow 是否曾失败 — 避免反复调用无效 API
+    private static var moveWindowFailed: Bool = false
+
+    static func resetFailureCache() {
+        moveWindowFailed = false
+    }
+
     static func moveWindow(_ windowID: CGWindowID, toSpaceID spaceID: Int64) -> Bool {
+        if moveWindowFailed {
+            return false
+        }
         guard let cid = connectionID, let fn = fnMoveWindowsToManagedSpace else {
             log("[NativeSpaceBridge] moveWindow: API not available", level: .error, fields: [:])
             return false
         }
-        let result = fn(cid, [windowID], 1, spaceID)
+        guard windowID != 0 else {
+            log("[NativeSpaceBridge] moveWindow: invalid windowID=0", level: .error, fields: [:])
+            return false
+        }
+        let windowArray: NSArray = [NSNumber(value: UInt32(windowID))]
+        let result = fn(cid, windowArray, 1, spaceID)
+        if result != 0 {
+            moveWindowFailed = true
+        }
         log(
             "[NativeSpaceBridge] moveWindow",
             level: result == 0 ? .info : .warn,
@@ -59,6 +79,7 @@ enum NativeSpaceBridge {
                 "windowID": String(windowID),
                 "spaceID": String(spaceID),
                 "result": String(result),
+                "cached": String(moveWindowFailed),
             ]
         )
         return result == 0
