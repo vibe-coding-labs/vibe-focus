@@ -125,6 +125,8 @@ class WindowManager {
         let op = operationID ?? makeOperationID(prefix: "toggle")
         let startedAt = Date()
         let frontBefore = frontmostAppDescriptor()
+        updateCrashSnapshotFromRuntime()
+        logRuntimeStateSnapshot(context: "toggle_start")
 
         // 采集当前窗口上下文
         var toggleContext: [String: String] = [
@@ -330,6 +332,8 @@ class WindowManager {
     func restore(operationID: String? = nil, triggerSource: String = "unknown") {
         let op = operationID ?? makeOperationID(prefix: "restore")
         let startedAt = Date()
+        updateCrashSnapshotFromRuntime()
+        logRuntimeStateSnapshot(context: "restore_start")
 
         // 采集恢复操作的完整上下文
         var restoreContext: [String: String] = [

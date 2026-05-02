@@ -45,6 +45,19 @@ final class CrashContextRecorder {
                 log("[CRASH_CONTEXT] Last event before exit: \(lastEvent)")
             }
             captureRecentLogTail(context: "unclean_exit")
+
+            // 读取信号处理器写入的崩溃快照
+            let crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
+            if let snapshotData = try? Data(contentsOf: crashSnapshotURL),
+               let snapshotText = String(data: snapshotData, encoding: .utf8),
+               !snapshotText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                log("[CRASH_CONTEXT] === CRASH SIGNAL SNAPSHOT ===")
+                for line in snapshotText.split(separator: "\n").prefix(50) {
+                    log("[CRASH_CONTEXT] \(line)")
+                }
+                log("[CRASH_CONTEXT] === END CRASH SIGNAL SNAPSHOT ===")
+                appendEvent("crash_signal_snapshot_found length=\(snapshotText.count)")
+            }
         } else {
             log("CrashContextRecorder.bootstrap no previous state or clean exit", level: .debug)
         }
@@ -95,6 +108,8 @@ final class CrashContextRecorder {
         }
         appendEvent("clean_exit")
         state?.cleanExit = true
+        let crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
+        try? FileManager.default.removeItem(at: crashSnapshotURL)
         persistState()
         log("[CRASH_CONTEXT] Marked clean exit")
         log("CrashContextRecorder.markCleanExit exit", level: .debug)
