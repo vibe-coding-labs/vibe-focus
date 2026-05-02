@@ -156,6 +156,8 @@ final class ClaudeHookServer: ObservableObject {
         headers: [String: String]
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         let bodyString = String(data: body, encoding: .utf8) ?? "non-utf8"
+        updateCrashSnapshotFromRuntime()
+        logRuntimeStateSnapshot(context: "hook_request")
         log(
             "[ClaudeHookServer] request received",
             level: .debug,

@@ -2021,6 +2021,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installCrashSignalHandlers()
+        installAtExitHandler()
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
         logDiagnostics("launch")
         CrashContextRecorder.shared.bootstrap()
