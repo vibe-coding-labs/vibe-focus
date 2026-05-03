@@ -30,7 +30,12 @@ final class ClaudeHookServer: ObservableObject {
             ]
         )
         if ClaudeHookPreferences.isEnabled {
+            ClaudeHookPreferences.ensureTokenGenerated()
             startIfNeeded(port: ClaudeHookPreferences.listenPort, token: ClaudeHookPreferences.authToken)
+            // 确保辅助脚本的配置文件（端口 + token）与当前 UserDefaults 同步
+            // 防止 app 重启后 token 重新生成导致 hook-config.json 中的旧 token 失效
+            ClaudeHookPreferences.writeConfigFile()
+            ClaudeHookPreferences.installHelperScript()
         } else {
             stop()
         }
