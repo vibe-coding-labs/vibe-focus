@@ -354,24 +354,41 @@ final class ClaudeHookServer: ObservableObject {
             }
         }
 
-        // 回退策略 2：捕获当前焦点窗口（最后手段）
+        // 回退策略 2：捕获当前焦点窗口（最后手段，仅限终端/IDE App）
         if identity == nil {
             log(
                 "[handleSessionStart] falling back to captureFocusedWindowIdentity",
                 level: .debug,
                 fields: ["sessionID": payload.sessionID]
             )
-            identity = WindowManager.shared.captureFocusedWindowIdentity()
-            if let identity {
-                log(
-                    "[handleSessionStart] captureFocusedWindowIdentity succeeded",
-                    level: .debug,
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "windowID": String(identity.windowID),
-                        "app": identity.appName ?? "unknown"
-                    ]
+            let focusedIdentity = WindowManager.shared.captureFocusedWindowIdentity()
+            if let focusedIdentity {
+                let isTerminalApp = Self.isTerminalOrIDEApp(
+                    appName: focusedIdentity.appName,
+                    bundleIdentifier: focusedIdentity.bundleIdentifier
                 )
+                if isTerminalApp {
+                    identity = focusedIdentity
+                    log(
+                        "[handleSessionStart] captureFocusedWindowIdentity succeeded",
+                        level: .debug,
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "windowID": String(focusedIdentity.windowID),
+                            "app": focusedIdentity.appName ?? "unknown"
+                        ]
+                    )
+                } else {
+                    log(
+                        "[handleSessionStart] captureFocusedWindowIdentity skipped: non-terminal app",
+                        level: .warn,
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "app": focusedIdentity.appName ?? "unknown",
+                            "bundleID": focusedIdentity.bundleIdentifier ?? "nil"
+                        ]
+                    )
+                }
             }
         }
 
@@ -669,6 +686,19 @@ final class ClaudeHookServer: ObservableObject {
 
     // MARK: - Response Helpers
 
+    private static let terminalAppNames: Set<String> = [
+        "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
+        "Cursor", "Code", "Visual Studio Code",
+        "com.apple.Terminal", "com.googlecode.iterm2",
+        "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"
+    ]
+
+    static func isTerminalOrIDEApp(appName: String?, bundleIdentifier: String?) -> Bool {
+        if let appName, terminalAppNames.contains(appName) { return true }
+        if let bundleIdentifier, terminalAppNames.contains(bundleIdentifier) { return true }
+        return false
+    }
+
     /// cwd 匹配回退：当没有 SessionStart 绑定也没有终端上下文时，通过 cwd 项目名匹配窗口
     private func fallbackToCWDMatching(
         payload: ClaudeHookPayload,
@@ -703,21 +733,10 @@ final class ClaudeHookServer: ObservableObject {
 
         // 安全检查：findClaudeCodeWindow 的 Strategy 4（焦点窗口回退）
         // 可能返回非终端/IDE 窗口（Chrome、飞书等），这类窗口不应被自动移动
-        let terminalAppNames: Set<String> = [
-            "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
-            "Cursor", "Code", "Visual Studio Code",
-            "com.apple.Terminal", "com.googlecode.iterm2",
-            "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"
-        ]
-        let isTerminalApp: Bool = {
-            if let appName = focusedIdentity.appName, terminalAppNames.contains(appName) {
-                return true
-            }
-            if let bundleID = focusedIdentity.bundleIdentifier, terminalAppNames.contains(bundleID) {
-                return true
-            }
-            return false
-        }()
+        let isTerminalApp = Self.isTerminalOrIDEApp(
+            appName: focusedIdentity.appName,
+            bundleIdentifier: focusedIdentity.bundleIdentifier
+        )
 
         // 如果 cwd 匹配到了非终端窗口（如 Chrome），检查窗口标题是否包含 cwd 项目名
         // 只有标题明确包含项目名时才认为是 Claude Code 相关窗口
