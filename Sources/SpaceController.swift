@@ -122,10 +122,22 @@ final class SpaceController: ObservableObject {
         log("yabai query result: exitCode=\(result.exitCode), stdout=\(result.stdout.prefix(100)), stderr=\(result.stderr)")
 
         if result.exitCode == 0 {
-            log("yabai available - setting availability to .available")
+            log("yabai available - checking scripting-addition status")
             availability = .available
-            canControlSpaces = true
-            lastErrorMessage = nil
+            // yabai query --spaces 不需要 scripting-addition，但窗口操作需要
+            // 检测 SA 是否已加载：尝试一个需要 SA 的操作
+            let saLoaded = checkScriptingAdditionLoaded(yabaiPath: yabaiPath)
+            if saLoaded {
+                canControlSpaces = true
+                lastErrorMessage = nil
+                log("yabai available with scripting-addition loaded")
+            } else {
+                canControlSpaces = false
+                lastErrorMessage = "yabai scripting-addition 未加载，跨工作区恢复功能受限。请在设置中加载 scripting-addition。"
+                log("yabai available but scripting-addition NOT loaded - auto-attempting recovery")
+                // 自动尝试无密码方式加载（不弹管理员权限窗口）
+                attemptSilentSARecovery(yabaiPath: yabaiPath)
+            }
             updateEnabledState()
         } else {
             log("yabai query failed - setting availability to .unavailable")
@@ -845,6 +857,52 @@ final class SpaceController: ObservableObject {
         // 加载成功后刷新可用性
         if scriptingAdditionRecoverySucceeded {
             refreshAvailability(force: true)
+        }
+    }
+
+    /// 检测 scripting-addition 是否已加载
+    /// yabai query --spaces 不需要 SA，但 window --space 等操作需要
+    /// 通过尝试一个 SA 依赖的操作来检测
+    private func checkScriptingAdditionLoaded(yabaiPath: String) -> Bool {
+        // 方法：获取当前焦点窗口并尝试 query --window（含 display 字段需要 SA）
+        // 更简单的方法：直接尝试 yabai -m window --focus <id>，如果失败且错误包含
+        // scripting-addition，则 SA 未加载
+        // 最可靠的方法：检查 yabai query --windows 返回的窗口是否包含 display 字段
+        // 但更简单：尝试一个轻量 SA 操作
+        guard let result = runProcess(executable: yabaiPath, arguments: ["-m", "query", "--windows", "--window"]) else {
+            log("checkScriptingAdditionLoaded: failed to run yabai query")
+            return false
+        }
+        if result.exitCode == 0, !result.stdout.isEmpty {
+            // query --window 成功且返回数据，检查是否包含 display 字段
+            // 没有 SA 时，display 字段不存在或值为 0
+            let hasDisplay = result.stdout.contains("\"display\"")
+            log("checkScriptingAdditionLoaded: query succeeded, hasDisplay=\(hasDisplay)")
+            return hasDisplay
+        }
+        // query --window 失败（可能没有焦点窗口），回退到检查错误信息
+        let stderr = result.stderr.lowercased()
+        let hasSAError = stderr.contains("scripting-addition")
+        log("checkScriptingAdditionLoaded: query failed, hasSAError=\(hasSAError), stderr=\(result.stderr.prefix(100))")
+        return !hasSAError
+    }
+
+    /// 静默尝试加载 scripting-addition（不弹管理员权限窗口）
+    /// 仅尝试 yabai --load-sa 直接加载（如果 yabai 有 sudoers 配置则可无密码加载）
+    /// 如果直接加载失败，不清除缓存也不弹窗，让用户手动操作
+    private func attemptSilentSARecovery(yabaiPath: String) {
+        log("attemptSilentSARecovery: trying yabai --load-sa without admin prompt")
+        if let direct = runProcess(executable: yabaiPath, arguments: ["--load-sa"]), direct.exitCode == 0 {
+            scriptingAdditionRecoverySucceeded = true
+            canControlSpaces = true
+            lastErrorMessage = nil
+            log("attemptSilentSARecovery: scripting-addition loaded successfully via direct --load-sa")
+            updateEnabledState()
+        } else {
+            log("attemptSilentSARecovery: direct --load-sa failed, user needs to load manually")
+            // 清除 24 小时失败缓存，允许用户手动点击"加载"按钮时不会被阻断
+            UserDefaults.standard.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
+            didAttemptScriptingAdditionRecovery = false
         }
     }
 
