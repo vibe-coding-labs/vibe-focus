@@ -451,86 +451,86 @@ final class ClaudeHookServer: ObservableObject {
             )
         }
 
-        // 优先级 1: 按 sessionID 查找对应的 saved state
-        let matchedState = WindowManager.shared.savedWindowStates.reversed().first { state in
-            state.sessionID == payload.sessionID && !WindowManager.shared.isSavedStateCorrupted(state)
-        }
+        // 通过 SessionWindowRegistry 的绑定信息精确匹配窗口
+        // 流程: sessionID → binding(windowID+pid) → savedWindowStates(windowID) → restore
+        let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID)
 
-        if let savedState = matchedState {
-            // 从 saved state 恢复到内存
-            WindowManager.shared.hydrateMemory(from: savedState, window: nil)
+        // 优先级 1: 用 binding 的 windowID 精确匹配 savedWindowStates
+        if let binding {
+            let targetWindowID = binding.windowIdentity.windowID
+            let targetPID = binding.windowIdentity.pid
 
             log(
-                "[ClaudeHookServer] UserPromptSubmit restoring window",
+                "[ClaudeHookServer] UserPromptSubmit searching saved state by binding",
                 fields: [
                     "sessionID": payload.sessionID,
-                    "stateID": savedState.id,
-                    "app": savedState.appName ?? "unknown",
-                    "windowID": String(describing: savedState.windowID),
-                    "originalFrame": String(describing: savedState.originalFrame.cgRect)
+                    "bindingWindowID": String(targetWindowID),
+                    "bindingPID": String(targetPID),
+                    "bindingApp": binding.windowIdentity.appName ?? "unknown",
+                    "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
                 ]
             )
 
-            // 执行恢复
-            WindowManager.shared.restore(
-                operationID: makeOperationID(prefix: "hook-restore"),
-                triggerSource: "user_prompt_submit"
-            )
+            // 用 windowID + pid 精确匹配，跳过 corrupted state
+            if let matchedState = WindowManager.shared.savedWindowStates.reversed().first(where: { state in
+                state.windowID == targetWindowID
+                    && state.pid == targetPID
+                    && !WindowManager.shared.isSavedStateCorrupted(state)
+            }) {
+                // 从 saved state 恢复到内存
+                WindowManager.shared.hydrateMemory(from: matchedState, window: nil)
 
-            // 重新激活绑定，使下一个 Stop 事件能再次触发窗口移动
-            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-
-            handledRequestCount += 1
-            SessionWindowRegistry.shared.setLastEventDescription(
-                "UserPromptSubmit 恢复窗口：\(savedState.appName ?? "Unknown")"
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "window_restored",
-                    message: "Window restored to original position",
-                    sessionID: payload.sessionID, handled: true
+                log(
+                    "[ClaudeHookServer] UserPromptSubmit restoring window by binding match",
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "stateID": matchedState.id,
+                        "app": matchedState.appName ?? "unknown",
+                        "windowID": String(describing: matchedState.windowID),
+                        "originalFrame": String(describing: matchedState.originalFrame.cgRect),
+                        "targetFrame": String(describing: matchedState.targetFrame.cgRect)
+                    ]
                 )
-            )
-        }
 
-        // 优先级 2: sessionID 无匹配时，回退到 shouldRestoreCurrentWindow 逻辑
-        // 复用 hotkey 路径的匹配机制（windowID / PID+title+position）
-        log(
-            "[ClaudeHookServer] UserPromptSubmit no sessionID match, trying shouldRestoreCurrentWindow fallback",
-            level: .info,
-            fields: [
-                "sessionID": payload.sessionID,
-                "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
-            ]
-        )
+                // 执行恢复
+                WindowManager.shared.restore(
+                    operationID: makeOperationID(prefix: "hook-restore"),
+                    triggerSource: "user_prompt_submit"
+                )
 
-        if WindowManager.shared.shouldRestoreCurrentWindow(requireSessionID: true) {
+                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+
+                handledRequestCount += 1
+                SessionWindowRegistry.shared.setLastEventDescription(
+                    "UserPromptSubmit 恢复窗口：\(matchedState.appName ?? "Unknown")"
+                )
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "window_restored",
+                        message: "Window restored to original position",
+                        sessionID: payload.sessionID, handled: true
+                    )
+                )
+            }
+
             log(
-                "[ClaudeHookServer] UserPromptSubmit fallback: shouldRestoreCurrentWindow matched",
+                "[ClaudeHookServer] UserPromptSubmit binding found but no matching saved state",
+                level: .warn,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "bindingWindowID": String(targetWindowID),
+                    "bindingPID": String(targetPID),
+                    "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
+                ]
+            )
+        } else {
+            log(
+                "[ClaudeHookServer] UserPromptSubmit no SessionWindowRegistry binding for session",
+                level: .warn,
                 fields: [
                     "sessionID": payload.sessionID
                 ]
-            )
-
-            WindowManager.shared.restore(
-                operationID: makeOperationID(prefix: "hook-restore-fallback"),
-                triggerSource: "user_prompt_submit_fallback"
-            )
-
-            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-
-            handledRequestCount += 1
-            SessionWindowRegistry.shared.setLastEventDescription(
-                "UserPromptSubmit 回退恢复窗口"
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "window_restored_fallback",
-                    message: "Window restored via fallback matching",
-                    sessionID: payload.sessionID, handled: true
-                )
             )
         }
 
