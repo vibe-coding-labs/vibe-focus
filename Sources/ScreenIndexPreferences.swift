@@ -64,7 +64,7 @@ struct ScreenIndexPreferences: Codable {
     static func load() -> ScreenIndexPreferences {
         log("ScreenIndexPreferences.load() entered", level: .debug)
         // 使用 CFPreferences API 读取设置
-        let bundleId = Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
         log("ScreenIndexPreferences.load() reading from CFPreferences", level: .debug, fields: ["bundleId": bundleId])
         if let value = CFPreferencesCopyAppValue(userDefaultsKey as CFString, bundleId as CFString),
            let jsonString = value as? String,
@@ -185,7 +185,7 @@ struct ScreenIndexPreferences: Codable {
             log("ScreenIndexPreferences: Failed to encode")
             return
         }
-        let bundleId = Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
         CFPreferencesSetAppValue(Self.userDefaultsKey as CFString, jsonString as CFString, bundleId as CFString)
         CFPreferencesAppSynchronize(bundleId as CFString)
         UserDefaults.standard.set(jsonString, forKey: Self.userDefaultsKey)

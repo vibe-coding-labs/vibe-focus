@@ -33,7 +33,7 @@ struct LaunchArguments {
         print("""
         VibeFocus - 窗口聚焦工具
 
-        用法: VibeFocusHotkeys [选项]
+        用法: VibeFocus [选项]
 
         选项:
           -s, --skip-launch-window    跳过启动窗口
@@ -43,8 +43,8 @@ struct LaunchArguments {
           --help                      显示此帮助信息
 
         示例:
-          VibeFocusHotkeys --debug
-          VibeFocusHotkeys -s -q
+          VibeFocus --debug
+          VibeFocus -s -q
         """)
     }
 }

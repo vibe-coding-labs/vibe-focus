@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="VibeFocus"
 EXECUTABLE_NAME="VibeFocusHotkeys"
+BUNDLE_EXECUTABLE="VibeFocus"
+BUNDLE_ID="com.vibefocus.app"
 VERSION="$(awk -F'\"' '/static let current/ {print $2}' "$ROOT_DIR/Sources/AppVersion.swift")"
 VERSION="${VERSION:-0.0.0}"
 OUTPUT_DIR="${1:-$ROOT_DIR/dist}"
@@ -20,8 +22,8 @@ swift build -c release
 echo "== Preparing app bundle =="
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$ROOT_DIR/.build/release/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
-chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
+cp "$ROOT_DIR/.build/release/$EXECUTABLE_NAME" "$MACOS_DIR/$BUNDLE_EXECUTABLE"
+chmod +x "$MACOS_DIR/$BUNDLE_EXECUTABLE"
 
 # Copy icon resources
 if [ -f "$ROOT_DIR/assets/AppIcon.icns" ]; then
@@ -40,9 +42,9 @@ cat > "$PLIST_PATH" <<PLIST
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>VibeFocusHotkeys</string>
+  <string>VibeFocus</string>
   <key>CFBundleIdentifier</key>
-  <string>com.openai.vibe-focus</string>
+  <string>com.vibefocus.app</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -63,6 +65,8 @@ cat > "$PLIST_PATH" <<PLIST
   <true/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>VibeFocus needs accessibility permissions to manage windows</string>
 </dict>
 </plist>
 PLIST

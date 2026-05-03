@@ -198,7 +198,7 @@ final class AppLauncher: ObservableObject {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? AppVersion.current
     }
 
-    private let lockFilePath = "/tmp/VibeFocusHotkeys.lock"
+    private let lockFilePath = "/tmp/VibeFocus.lock"
 
     private func acquireExclusiveLock() -> Bool {
         log("AppLauncher.acquireExclusiveLock() entered", level: .debug, fields: ["lockFilePath": lockFilePath])
@@ -212,7 +212,7 @@ final class AppLauncher: ObservableObject {
         return result
     }
 
-    private let openSettingsNotification = Notification.Name("com.openai.vibe-focus.open-settings")
+    private let openSettingsNotification = Notification.Name("com.vibefocus.app.open-settings")
 
     private func requestExistingInstanceOpenSettings() {
         log("AppLauncher.requestExistingInstanceOpenSettings() posting notification", level: .debug, fields: [
