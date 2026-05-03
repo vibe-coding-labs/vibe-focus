@@ -719,7 +719,9 @@ class WindowManager {
             "[WindowManager] shouldRestoreCurrentWindow called",
             level: .debug,
             fields: [
-                "savedStatesCount": String(savedWindowStates.count)
+                "savedStatesCount": String(savedWindowStates.count),
+                "hasActiveToken": String(lastWindowToken != nil),
+                "hasActiveFrame": String(lastWindowFrame != nil)
             ]
         )
         if !hasAccessibilityPermission() {
@@ -728,6 +730,40 @@ class WindowManager {
                 level: .debug
             )
             return shouldRestoreCurrentWindowViaSystemEvents()
+        }
+
+        // 优先检查活跃上下文：如果上次移动的窗口仍在主屏，直接恢复它
+        // 这解决了用户移动窗口后切换到其他窗口再按热键无法恢复的问题
+        if let activeToken = lastWindowToken,
+           let activeWindowID = activeToken.windowID,
+           let activeFrame = lastWindowFrame,
+           !savedWindowStates.isEmpty {
+            let activeOnMain = isWindowOnMainScreen(windowID: activeWindowID)
+            let hasMatchingState = savedWindowStates.contains { $0.windowID == activeWindowID && !isSavedStateCorrupted($0) }
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: checking active context",
+                level: .debug,
+                fields: [
+                    "activeWindowID": String(activeWindowID),
+                    "activeOnMainScreen": String(activeOnMain),
+                    "hasMatchingState": String(hasMatchingState)
+                ]
+            )
+            if activeOnMain && hasMatchingState {
+                // 活跃窗口在主屏且有有效保存状态 → 恢复它
+                // 重新 hydrate 以确保最新状态
+                if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == activeWindowID && !isSavedStateCorrupted($0) }) {
+                    hydrateMemory(from: matchedState, window: nil)
+                    log(
+                        "[WindowManager] shouldRestoreCurrentWindow: active context window on main screen, will restore",
+                        fields: [
+                            "windowID": String(activeWindowID),
+                            "originalFrame": String(describing: activeFrame)
+                        ]
+                    )
+                    return true
+                }
+            }
         }
 
         guard !savedWindowStates.isEmpty,
