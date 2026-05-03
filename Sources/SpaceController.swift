@@ -839,6 +839,8 @@ final class SpaceController: ObservableObject {
         // 重置恢复标记，允许重新尝试
         didAttemptScriptingAdditionRecovery = false
         scriptingAdditionRecoverySucceeded = false
+        // 清除持久化失败缓存，否则 24 小时内手动按钮也会被阻断
+        UserDefaults.standard.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
         _ = attemptScriptingAdditionRecovery(trigger: "manual", operationID: op)
         // 加载成功后刷新可用性
         if scriptingAdditionRecoverySucceeded {
