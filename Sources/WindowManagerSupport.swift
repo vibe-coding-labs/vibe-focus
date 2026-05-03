@@ -205,32 +205,16 @@ extension WindowManager {
             }
         }
 
-        // 策略 2：任意窗口标题包含 cwd 项目名且在非主屏幕
-        if let projectName, !projectName.isEmpty {
-            let match = candidates.first(where: { c in
-                !c.isOnMainScreen && c.title.lowercased().contains(projectName)
-            })
-            if let match {
-                log(
-                    "[WindowManager] findClaudeCodeWindow matched strategy 2: anyApp+cwd",
-                    fields: [
-                        "app": match.appName,
-                        "title": truncateForLog(match.title, limit: 80),
-                        "windowID": String(match.windowID),
-                        "projectName": projectName
-                    ]
-                )
-                return makeIdentity(from: match)
-            }
-        }
-
-        // 策略 3：包含 "Claude Code" 关键词的窗口（在非主屏幕上）
+        // 策略 2：Claude Host App 窗口中标题包含 "Claude Code" 且在非主屏幕
         let claudeMatch = candidates.first(where: { c in
-            !c.isOnMainScreen && c.title.lowercased().contains("claude code")
+            let isHostApp = (c.bundleIdentifier.map { claudeHostApps.contains($0) } ?? false)
+                || c.appName == "Terminal" || c.appName == "iTerm2" || c.appName == "Cursor"
+                || c.appName == "Warp" || c.appName == "Ghostty" || c.appName == "Alacritty"
+            return isHostApp && !c.isOnMainScreen && c.title.lowercased().contains("claude code")
         })
         if let claudeMatch {
             log(
-                "[WindowManager] findClaudeCodeWindow matched strategy 3: claudeCode keyword",
+                "[WindowManager] findClaudeCodeWindow matched strategy 2: hostApp+claudeCode",
                 fields: [
                     "app": claudeMatch.appName,
                     "title": truncateForLog(claudeMatch.title, limit: 80),
