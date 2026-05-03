@@ -44,6 +44,13 @@ cp ".build/${BUILD_CONFIG}/VibeFocusHotkeys" "$APP_BUNDLE/Contents/MacOS/${APP_N
 # Copy resources
 cp -R "Resources/" "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
 
+# Ensure Sounds directory exists in app bundle
+if [ -d "Resources/Sounds" ]; then
+    mkdir -p "$APP_BUNDLE/Contents/Resources/Sounds"
+    cp -R "Resources/Sounds/" "$APP_BUNDLE/Contents/Resources/Sounds/" 2>/dev/null || true
+    echo "   ✓ 音频资源已复制"
+fi
+
 # Create Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

@@ -22,7 +22,8 @@ let package = Package(
             exclude: [],
             resources: [
                 .copy("../Resources/yabai-space-changed.sh"),
-                .copy("../Resources/claude-session-hook-example.sh")
+                .copy("../Resources/claude-session-hook-example.sh"),
+                .copy("../Resources/Sounds")
             ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")

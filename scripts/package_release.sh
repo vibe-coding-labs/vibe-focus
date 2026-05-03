@@ -34,6 +34,13 @@ if [ -f "$ROOT_DIR/assets/StatusBarIcon.png" ]; then
   cp "$ROOT_DIR/assets/StatusBarIcon.png" "$RESOURCES_DIR/StatusBarIcon.png"
 fi
 
+# Copy sound resources
+if [ -d "$ROOT_DIR/Resources/Sounds" ]; then
+  mkdir -p "$RESOURCES_DIR/Sounds"
+  cp -R "$ROOT_DIR/Resources/Sounds/" "$RESOURCES_DIR/Sounds/"
+  echo "   ✓ Sound resources copied"
+fi
+
 cat > "$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

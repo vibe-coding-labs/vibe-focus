@@ -940,6 +940,9 @@ final class ClaudeHookServer: ObservableObject {
                     "title": binding.windowIdentity.title ?? "untitled"
                 ]
             )
+            Task { @MainActor in
+                SoundManager.shared.playCompletionSound()
+            }
             return (
                 200,
                 ClaudeHookResponse(
