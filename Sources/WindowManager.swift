@@ -714,13 +714,12 @@ class WindowManager {
         }
     }
 
-    func shouldRestoreCurrentWindow(requireSessionID: Bool = false) -> Bool {
+    func shouldRestoreCurrentWindow() -> Bool {
         log(
             "[WindowManager] shouldRestoreCurrentWindow called",
             level: .debug,
             fields: [
-                "savedStatesCount": String(savedWindowStates.count),
-                "requireSessionID": String(requireSessionID)
+                "savedStatesCount": String(savedWindowStates.count)
             ]
         )
         if !hasAccessibilityPermission() {
@@ -784,11 +783,7 @@ class WindowManager {
                 "savedCount": String(savedWindowStates.count)
             ]
         )
-        if let matchedState = savedWindowStates.reversed().first(where: { state in
-            guard state.windowID == currentWindowID else { return false }
-            if requireSessionID && state.sessionID == nil { return false }
-            return true
-        }) {
+        if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
             if isSavedStateCorrupted(matchedState) {
                 log(
                     "[WindowManager] Corrupted state detected (originalFrame on main screen), clearing",
@@ -829,16 +824,7 @@ class WindowManager {
                title: currentTitle,
                frame: currentFrame
            ) {
-            if requireSessionID && matchedState.sessionID == nil {
-                log(
-                    "[WindowManager] fallback match skipped: requireSessionID=true but state has no sessionID",
-                    level: .info,
-                    fields: [
-                        "stateID": matchedState.id,
-                        "windowID": String(describing: matchedState.windowID)
-                    ]
-                )
-            } else if isSavedStateCorrupted(matchedState) {
+            if isSavedStateCorrupted(matchedState) {
                 log(
                     "[WindowManager] fallback match found but state is corrupted, clearing",
                     level: .warn,
