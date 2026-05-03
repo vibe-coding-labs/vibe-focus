@@ -5,6 +5,7 @@ import ApplicationServices.HIServices
 import CoreFoundation
 import Foundation
 import Darwin
+import UniformTypeIdentifiers
 
 func bundledAppIconImage() -> NSImage? {
     if let icnsURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
@@ -405,6 +406,11 @@ private struct SettingsView: View {
     @State private var hookInstallMessage: String?
     @State private var hookInstallSucceeded = false
 
+    // 提示音设置
+    @StateObject private var soundManager = SoundManager.shared
+    @State private var isPreviewPlaying = false
+    @State private var showFileImporter = false
+
     private var appVersionDisplay: String {
         let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         let version = (bundleVersion?.isEmpty == false) ? bundleVersion! : AppVersion.current
@@ -549,6 +555,7 @@ private struct SettingsView: View {
                         SidebarInfoCard(title: "开机启动", value: loginItemSidebarValue)
                         SidebarInfoCard(title: "跨工作区", value: spaceSidebarValue)
                         SidebarInfoCard(title: "Claude Hook", value: hookServer.isRunning ? "运行中" : (hookEnabled ? "已关闭" : "未启用"))
+                        SidebarInfoCard(title: "提示音", value: soundManager.preferences.soundType == .none ? "未启用" : soundManager.preferences.soundType.displayName)
                     }
 
                     if !hotKeyManager.accessibilityGranted {
@@ -1544,6 +1551,164 @@ private struct SettingsView: View {
                             .padding(.vertical, 8)
                         }
                     }
+
+                    SettingsCard(
+                        title: "提示音",
+                        subtitle: "对话完成时播放提示音，支持内置音效或自定义音频文件。"
+                    ) {
+                        SettingsRow(
+                            title: "提示音类型",
+                            detail: "Claude 对话完成（窗口移动成功）后播放的提示音"
+                        ) {
+                            Picker("", selection: Binding(
+                                get: { soundManager.preferences.soundType },
+                                set: { soundManager.updateSoundType($0) }
+                            )) {
+                                ForEach(CompletionSoundType.allCases, id: \.self) { type in
+                                    Text(type.displayName).tag(type)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(width: 160)
+                        }
+
+                        if soundManager.preferences.soundType != .none {
+                            Divider()
+
+                            SettingsRow(
+                                title: "音量",
+                                detail: "调整提示音的音量大小"
+                            ) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "speaker.fill")
+                                        .foregroundStyle(.secondary)
+                                        .font(.system(size: 11))
+
+                                    DraggableSlider(
+                                        value: Binding(
+                                            get: { Double(soundManager.preferences.volume) },
+                                            set: { soundManager.updateVolume(Float($0)) }
+                                        ),
+                                        minValue: 0.0,
+                                        maxValue: 1.0,
+                                        step: 0.1
+                                    )
+                                    .frame(width: 120)
+
+                                    Text("\(Int(soundManager.preferences.volume * 100))%")
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 40)
+
+                                    Image(systemName: "speaker.wave.3.fill")
+                                        .foregroundStyle(.secondary)
+                                        .font(.system(size: 11))
+                                }
+                            }
+
+                            Divider()
+
+                            HStack(spacing: 12) {
+                                Button(isPreviewPlaying ? "停止" : "试听") {
+                                    if isPreviewPlaying {
+                                        soundManager.stopPlayback()
+                                        isPreviewPlaying = false
+                                    } else {
+                                        soundManager.previewSound(
+                                            soundManager.preferences.soundType,
+                                            customPath: soundManager.preferences.customSoundPath,
+                                            volume: soundManager.preferences.volume
+                                        )
+                                        isPreviewPlaying = true
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                                            isPreviewPlaying = false
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+
+                                Spacer()
+                            }
+
+                            Text("点击试听当前选择的提示音效果")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if soundManager.preferences.soundType == .custom {
+                            Divider()
+
+                            SettingsRow(
+                                title: "自定义音频文件",
+                                detail: soundManager.preferences.customSoundPath ?? "未选择文件"
+                            ) {
+                                HStack(spacing: 10) {
+                                    Button("选择文件") {
+                                        showFileImporter = true
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    if soundManager.preferences.customSoundPath != nil {
+                                        Button("清除") {
+                                            soundManager.updateCustomSoundPath(nil)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .foregroundStyle(.red)
+                                        .font(.system(size: 11))
+                                    }
+                                }
+                            }
+
+                            Text("支持 WAV、MP3、M4A、AIFF 格式。选择后可点击「试听」验证效果。")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("内置音效说明：")
+                                .font(.system(size: 13, weight: .medium))
+
+                            HStack(spacing: 6) {
+                                Image(systemName: "music.note")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 11))
+                                Text("Ding — 短促清脆的提示音")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            HStack(spacing: 6) {
+                                Image(systemName: "music.note")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 11))
+                                Text("Ping — 柔和的中频提示音")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            HStack(spacing: 6) {
+                                Image(systemName: "music.note")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 11))
+                                Text("Complete — 完成感较强的上升音")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            HStack(spacing: 6) {
+                                Image(systemName: "person.wave.2")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 11))
+                                Text("Are You OK — 雷军经典语音提示")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                    }
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(.vertical, 2)
@@ -1618,6 +1783,24 @@ private struct SettingsView: View {
                     "hasToken": String(!newValue.isEmpty)
                 ]
             )
+        }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.audio, .wav, .mp3, .aiff],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    let path = url.path
+                    log("[Settings] selected custom sound file", fields: ["path": path])
+                    soundManager.updateCustomSoundPath(path)
+                }
+            case .failure(let error):
+                log("[Settings] file importer failed", level: .error, fields: [
+                    "error": error.localizedDescription
+                ])
+            }
         }
     }
 
