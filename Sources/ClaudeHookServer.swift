@@ -505,7 +505,7 @@ final class ClaudeHookServer: ObservableObject {
             ]
         )
 
-        if WindowManager.shared.shouldRestoreCurrentWindow() {
+        if WindowManager.shared.shouldRestoreCurrentWindow(requireSessionID: true) {
             log(
                 "[ClaudeHookServer] UserPromptSubmit fallback: shouldRestoreCurrentWindow matched",
                 fields: [

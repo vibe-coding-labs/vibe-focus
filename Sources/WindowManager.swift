@@ -714,11 +714,14 @@ class WindowManager {
         }
     }
 
-    func shouldRestoreCurrentWindow() -> Bool {
+    func shouldRestoreCurrentWindow(requireSessionID: Bool = false) -> Bool {
         log(
             "[WindowManager] shouldRestoreCurrentWindow called",
             level: .debug,
-            fields: ["savedStatesCount": String(savedWindowStates.count)]
+            fields: [
+                "savedStatesCount": String(savedWindowStates.count),
+                "requireSessionID": String(requireSessionID)
+            ]
         )
         if !hasAccessibilityPermission() {
             log(
@@ -781,7 +784,11 @@ class WindowManager {
                 "savedCount": String(savedWindowStates.count)
             ]
         )
-        if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
+        if let matchedState = savedWindowStates.reversed().first(where: { state in
+            guard state.windowID == currentWindowID else { return false }
+            if requireSessionID && state.sessionID == nil { return false }
+            return true
+        }) {
             if isSavedStateCorrupted(matchedState) {
                 log(
                     "[WindowManager] Corrupted state detected (originalFrame on main screen), clearing",
@@ -822,7 +829,16 @@ class WindowManager {
                title: currentTitle,
                frame: currentFrame
            ) {
-            if isSavedStateCorrupted(matchedState) {
+            if requireSessionID && matchedState.sessionID == nil {
+                log(
+                    "[WindowManager] fallback match skipped: requireSessionID=true but state has no sessionID",
+                    level: .info,
+                    fields: [
+                        "stateID": matchedState.id,
+                        "windowID": String(describing: matchedState.windowID)
+                    ]
+                )
+            } else if isSavedStateCorrupted(matchedState) {
                 log(
                     "[WindowManager] fallback match found but state is corrupted, clearing",
                     level: .warn,
