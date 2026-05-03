@@ -201,7 +201,7 @@ final class CrashContextRecorder {
 
         let reports = urls.filter { url in
             let name = url.lastPathComponent
-            return name.hasPrefix("VibeFocusHotkeys-") && name.hasSuffix(".ips")
+            return name.hasPrefix("VibeFocus-") && name.hasSuffix(".ips")
         }
         guard !reports.isEmpty else {
             log("CrashContextRecorder.latestCrashReportURL no reports found", level: .debug)

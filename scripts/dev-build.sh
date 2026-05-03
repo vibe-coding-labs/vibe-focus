@@ -9,7 +9,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 APP_NAME="VibeFocus"
-BUILD_CONFIG="debug"
+BUILD_CONFIG="release"
 INSTALL_PATH="/Applications"
 
 echo -e "${BLUE}🔨 VibeFocus 开发构建脚本${NC}"

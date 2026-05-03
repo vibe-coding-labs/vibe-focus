@@ -412,7 +412,7 @@ private struct SettingsView: View {
     }
 
     private var bundleIdentifier: String {
-        Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
+        Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
     }
 
     private var loginItemSidebarValue: String {
@@ -2012,7 +2012,7 @@ struct VibeFocusApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var toggleMenuItem: NSMenuItem?
-    private let openSettingsDistributedNotification = Notification.Name("com.openai.vibe-focus.open-settings")
+    private let openSettingsDistributedNotification = Notification.Name("com.vibefocus.app.open-settings")
 
     private struct ExistingInstanceInfo {
         let app: NSRunningApplication
@@ -2297,7 +2297,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Single Instance Check
 
     // 文件锁路径，用于防止竞态条件
-    private let lockFilePath = "/tmp/VibeFocusHotkeys.lock"
+    private let lockFilePath = "/tmp/VibeFocus.lock"
 
     private func acquireExclusiveLock() -> Bool {
         log("AppDelegate.acquireExclusiveLock entry", level: .debug, fields: ["lockFilePath": lockFilePath])
@@ -2343,7 +2343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             guard let output = String(data: data, encoding: .utf8) else { return nil }
 
-            let processName = execPath?.components(separatedBy: "/").last ?? "VibeFocusHotkeys"
+            let processName = execPath?.components(separatedBy: "/").last ?? "VibeFocus"
 
             for line in output.components(separatedBy: .newlines) {
                 let components = line.trimmingCharacters(in: .whitespaces)
@@ -2355,7 +2355,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                       pid != currentPID else { continue }
 
                 let comm = components[1]
-                if comm == processName || comm == "VibeFocusHotkeys" {
+                if comm == processName || comm == "VibeFocus" {
                     log("AppDelegate.findExistingInstance found matching process", level: .debug, fields: ["pid": String(pid), "comm": comm])
                     // Found another instance with same process name
                     // Try to get NSRunningApplication for this PID
@@ -2403,14 +2403,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let home = NSHomeDirectory()
         return [
             (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
-            (home as NSString).appendingPathComponent("Applications/VibeFocusHotkeys.app"),
+            (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
             "/Applications/VibeFocus.app",
-            "/Applications/VibeFocusHotkeys.app"
+            "/Applications/VibeFocus.app"
         ]
     }
 
     private func isAllowedDevelopmentBundlePath(_ path: String) -> Bool {
-        path.hasSuffix("/dist/VibeFocus.app") || path.hasSuffix("/dist/VibeFocusHotkeys.app")
+        path.hasSuffix("/dist/VibeFocus.app") || path.hasSuffix("/dist/VibeFocus.app")
     }
 
     @discardableResult
