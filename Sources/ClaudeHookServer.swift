@@ -494,6 +494,32 @@ final class ClaudeHookServer: ObservableObject {
                     && state.pid == targetPID
                     && !WindowManager.shared.isSavedStateCorrupted(state)
             }) {
+                // 防护：如果窗口已在主屏幕上，跳过恢复
+                // 这防止 Stop/hotkey 把窗口移到主屏后，UserPromptSubmit 又把它移回副屏
+                if WindowManager.shared.isWindowOnMainScreen(windowID: targetWindowID) {
+                    handledRequestCount += 1
+                    SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+                    SessionWindowRegistry.shared.setLastEventDescription(
+                        "UserPromptSubmit 窗口已在主屏，跳过恢复"
+                    )
+                    log(
+                        "[ClaudeHookServer] UserPromptSubmit window already on main screen, skipping restore",
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "windowID": String(targetWindowID),
+                            "app": binding.windowIdentity.appName ?? "unknown"
+                        ]
+                    )
+                    return (
+                        200,
+                        ClaudeHookResponse(
+                            ok: true, code: "already_on_main_screen",
+                            message: "Window already on main screen, skipping restore",
+                            sessionID: payload.sessionID, handled: false
+                        )
+                    )
+                }
+
                 // 从 saved state 恢复到内存
                 WindowManager.shared.hydrateMemory(from: matchedState, window: nil)
 
