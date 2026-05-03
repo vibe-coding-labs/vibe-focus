@@ -24,6 +24,7 @@ struct SpacePreferences {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: integrationEnabledKey)
+            PreferencesSync.persistToDisk()
         }
     }
 
@@ -34,6 +35,7 @@ struct SpacePreferences {
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: restoreStrategyKey)
+            PreferencesSync.persistToDisk()
         }
     }
 }

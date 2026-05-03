@@ -2027,6 +2027,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         logDiagnostics("launch")
         CrashContextRecorder.shared.bootstrap()
         NativeSpaceBridge.logAvailability()
+        PreferencesSync.restoreFromDisk()
 
         // 单实例处理：同版本复用现有进程，不强制重启。
         if let existing = findExistingInstance() {
@@ -2073,6 +2074,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         applyApplicationIcon()
         setupMenuBar()
         HotKeyManager.shared.setup()
+        PreferencesSync.persistToDisk()
         ClaudeHookServer.shared.applyPreferences()
         ScreenOverlayManager.shared.refreshOverlays()
         promptAccessibilityIfNeeded()
@@ -2105,6 +2107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         ScreenOverlayManager.shared.flushPendingPreferenceSave(reason: "application_will_terminate")
+        PreferencesSync.persistToDiskAndWait()
         CrashContextRecorder.shared.markCleanExit()
     }
 
