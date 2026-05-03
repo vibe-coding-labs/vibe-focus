@@ -48,16 +48,21 @@ enum NativeSpaceBridge {
 
     // MARK: - Window Moving (SLS Private API)
 
-    // 缓存 moveWindow 是否曾失败 — 避免反复调用无效 API
-    private static var moveWindowFailed: Bool = false
+    // 缓存 moveWindow 失败时间 — 避免反复调用无效 API，5分钟后自动重试
+    private static var _moveWindowFailedAt: TimeInterval = 0
+    private static let moveWindowFailureRetryInterval: TimeInterval = 300
 
     static func resetFailureCache() {
-        moveWindowFailed = false
+        _moveWindowFailedAt = 0
     }
 
     static func moveWindow(_ windowID: CGWindowID, toSpaceID spaceID: Int64) -> Bool {
-        if moveWindowFailed {
-            return false
+        if _moveWindowFailedAt > 0 {
+            let elapsed = Date().timeIntervalSince1970 - _moveWindowFailedAt
+            if elapsed < moveWindowFailureRetryInterval {
+                return false
+            }
+            _moveWindowFailedAt = 0
         }
         guard let cid = connectionID, let fn = fnMoveWindowsToManagedSpace else {
             log("[NativeSpaceBridge] moveWindow: API not available", level: .error, fields: [:])
@@ -70,7 +75,7 @@ enum NativeSpaceBridge {
         let windowArray: NSArray = [NSNumber(value: UInt32(windowID))]
         let result = fn(cid, windowArray, 1, spaceID)
         if result != 0 {
-            moveWindowFailed = true
+            _moveWindowFailedAt = Date().timeIntervalSince1970
         }
         log(
             "[NativeSpaceBridge] moveWindow",
@@ -79,7 +84,7 @@ enum NativeSpaceBridge {
                 "windowID": String(windowID),
                 "spaceID": String(spaceID),
                 "result": String(result),
-                "cached": String(moveWindowFailed),
+                "cached": String(_moveWindowFailedAt > 0),
             ]
         )
         return result == 0

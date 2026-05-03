@@ -66,7 +66,6 @@ final class SessionWindowRegistry: ObservableObject {
             log("SessionWindowRegistry.binding empty sessionID", level: .debug)
             return nil
         }
-        pruneExpiredBindings(shouldPersist: false)
         let result = bindings[normalizedSession]
         log("SessionWindowRegistry.binding lookup exit", level: .debug, fields: ["normalizedSession": normalizedSession, "found": String(result != nil)])
         return result
