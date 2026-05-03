@@ -1771,7 +1771,7 @@ extension WindowManager {
             return nil
         }
 
-        let axValue = frameRef as! AXValue
+        let axValue = unsafeBitCast(frameRef, to: AXValue.self)
         var frame = CGRect.zero
         guard AXValueGetValue(axValue, .cgRect, &frame) else {
             log(

@@ -965,7 +965,7 @@ class WindowManager {
             )
             return nil
         }
-        return (windowRef as! AXUIElement)
+        return unsafeBitCast(windowRef, to: AXUIElement.self)
     }
 
     /// 验证 windowID 对应的窗口是否仍然存在于系统中
