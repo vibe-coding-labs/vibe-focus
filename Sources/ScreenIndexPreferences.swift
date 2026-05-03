@@ -188,6 +188,8 @@ struct ScreenIndexPreferences: Codable {
         let bundleId = Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
         CFPreferencesSetAppValue(Self.userDefaultsKey as CFString, jsonString as CFString, bundleId as CFString)
         CFPreferencesAppSynchronize(bundleId as CFString)
+        UserDefaults.standard.set(jsonString, forKey: Self.userDefaultsKey)
+        PreferencesSync.persistToDisk()
         log("ScreenIndexPreferences: Saved successfully")
     }
 }

@@ -37,6 +37,7 @@ enum ClaudeHookPreferences {
         set {
             log("ClaudeHookPreferences.isEnabled set", level: .debug, fields: ["value": String(newValue)])
             UserDefaults.standard.set(newValue, forKey: enabledKey)
+            PreferencesSync.persistToDisk()
         }
     }
 
@@ -55,6 +56,7 @@ enum ClaudeHookPreferences {
             let normalized = normalizePort(newValue)
             log("ClaudeHookPreferences.listenPort set", level: .debug, fields: ["raw": String(newValue), "normalized": String(normalized)])
             UserDefaults.standard.set(normalized, forKey: portKey)
+            PreferencesSync.persistToDisk()
         }
     }
 
@@ -73,6 +75,7 @@ enum ClaudeHookPreferences {
             let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             log("ClaudeHookPreferences.authToken set", level: .debug, fields: ["hasValue": String(!trimmed.isEmpty)])
             UserDefaults.standard.set(trimmed, forKey: tokenKey)
+            PreferencesSync.persistToDisk()
         }
     }
 
@@ -100,22 +103,32 @@ enum ClaudeHookPreferences {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: autoFocusOnSessionEndKey)
+            PreferencesSync.persistToDisk()
         }
     }
 
     static var triggerOnStop: Bool {
         get { UserDefaults.standard.object(forKey: triggerOnStopKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: triggerOnStopKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: triggerOnStopKey)
+            PreferencesSync.persistToDisk()
+        }
     }
 
     static var triggerOnSessionEnd: Bool {
         get { UserDefaults.standard.object(forKey: triggerOnSessionEndKey) as? Bool ?? false }
-        set { UserDefaults.standard.set(newValue, forKey: triggerOnSessionEndKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: triggerOnSessionEndKey)
+            PreferencesSync.persistToDisk()
+        }
     }
 
     static var autoRestoreOnPromptSubmit: Bool {
         get { UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? false }
-        set { UserDefaults.standard.set(newValue, forKey: autoRestoreOnPromptSubmitKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: autoRestoreOnPromptSubmitKey)
+            PreferencesSync.persistToDisk()
+        }
     }
 
     static func endpointURLString(port: Int? = nil) -> String {
