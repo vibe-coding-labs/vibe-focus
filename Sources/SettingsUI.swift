@@ -2266,6 +2266,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ClaudeHookServer.shared.applyPreferences()
         ScreenOverlayManager.shared.refreshOverlays()
         promptAccessibilityIfNeeded()
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            Task { @MainActor in
+                SessionWindowRegistry.shared.purgeClosedWindows()
+            }
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(refreshMenuLabels),

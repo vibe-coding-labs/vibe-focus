@@ -77,7 +77,9 @@ final class HookEventHandler {
             sessionID: payload.sessionID,
             windowIdentity: identity,
             terminalTTY: payload.terminalCtx?.tty,
-            terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID
+            terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID,
+            cwd: payload.cwd,
+            model: payload.model
         )
         return (
             200,
