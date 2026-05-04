@@ -398,6 +398,66 @@ private struct SettingsView: View {
     @StateObject private var sessionRegistry = SessionWindowRegistry.shared
     @AppStorage(ClaudeHookPreferences.enabledKey) private var hookEnabled = false
     @AppStorage(ClaudeHookPreferences.portKey) private var hookPort = ClaudeHookPreferences.defaultPort
+
+    private var activeSessionList: some View {
+        let bindings = sessionRegistry.activeBindingsForUI
+        if bindings.isEmpty { return AnyView(EmptyView()) }
+        return AnyView(VStack(alignment: .leading, spacing: 8) {
+            Text("活跃会话（\(sessionRegistry.activeBindingCount)）")
+                .font(.system(size: 13, weight: .medium))
+            ForEach(Array(bindings.prefix(5).enumerated()), id: \.offset) { _, binding in
+                HStack(spacing: 8) {
+                    Image(systemName: "terminal")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                    Text(binding.appName ?? "Unknown")
+                        .font(.system(size: 12, weight: .medium))
+                    Text(binding.title ?? "Untitled")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Text((binding.sessionID ?? "").prefix(8))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+            }
+            if bindings.count > 5 {
+                Text("还有 \(bindings.count - 5) 个...")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+        })
+    }
+
+    private var completedSessionList: some View {
+        let bindings = sessionRegistry.recentCompletedBindings
+        if bindings.isEmpty { return AnyView(EmptyView()) }
+        return AnyView(VStack(alignment: .leading, spacing: 8) {
+            Text("最近完成（\(sessionRegistry.completedBindingCount)）")
+                .font(.system(size: 13, weight: .medium))
+            ForEach(Array(bindings.prefix(3).enumerated()), id: \.offset) { _, binding in
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.green)
+                        .font(.system(size: 11))
+                    Text(binding.appName ?? "Unknown")
+                        .font(.system(size: 12, weight: .medium))
+                    if let completedAt = binding.completedAt {
+                        Text(completedAt, style: .time)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+            }
+        })
+    }
     @State private var hookToken: String = ""
     @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) private var autoFocusOnSessionEnd = true
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) private var triggerOnStop = true
@@ -1187,65 +1247,10 @@ private struct SettingsView: View {
                         Divider()
 
                         // === 活跃会话列表 ===
-                        if !sessionRegistry.activeBindingsForUI.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("活跃会话（\(sessionRegistry.activeBindingCount)）")
-                                    .font(.system(size: 13, weight: .medium))
-
-                                ForEach(sessionRegistry.activeBindingsForUI.prefix(5), id: \.sessionID) { binding in
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "terminal")
-                                            .foregroundStyle(.secondary)
-                                            .font(.system(size: 11))
-                                        Text(binding.windowIdentity.appName ?? "Unknown")
-                                            .font(.system(size: 12, weight: .medium))
-                                        Text(binding.windowIdentity.title ?? "Untitled")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                        Spacer()
-                                        Text(binding.sessionID.prefix(8))
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                }
-
-                                if sessionRegistry.activeBindingsForUI.count > 5 {
-                                    Text("还有 \(sessionRegistry.activeBindingsForUI.count - 5) 个...")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-                        }
+                        activeSessionList
 
                         // === 已完成会话列表 ===
-                        if !sessionRegistry.recentCompletedBindings.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("最近完成（\(sessionRegistry.completedBindingCount)）")
-                                    .font(.system(size: 13, weight: .medium))
-
-                                ForEach(sessionRegistry.recentCompletedBindings.prefix(3), id: \.sessionID) { binding in
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "checkmark.circle")
-                                            .foregroundStyle(.green)
-                                            .font(.system(size: 11))
-                                        Text(binding.windowIdentity.appName ?? "Unknown")
-                                            .font(.system(size: 12, weight: .medium))
-                                        if let completedAt = binding.completedAt {
-                                            Text(completedAt, style: .time)
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(.tertiary)
-                                        }
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                }
-                            }
-                        }
+                        completedSessionList
 
                         Divider()
 

@@ -5,9 +5,7 @@ import Cocoa
 final class HookEventHandler {
     static let shared = HookEventHandler()
 
-    /// 记录每个 session 最后收到 UserPromptSubmit 的时间，用于 Stop 防抖
     private var lastActivityBySession: [String: Date] = [:]
-    /// Stop 防抖阈值：超过此时间无活动才视为真正结束
     private let stopDebounceInterval: TimeInterval = 30.0
 
     private init() {}
@@ -28,7 +26,6 @@ final class HookEventHandler {
             ]
         )
 
-        // 唯一绑定路径：通过 terminal context (TTY/PPID 进程树) 精确匹配
         guard let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext else {
             log(
                 "[handleSessionStart] no terminal context, cannot bind",
@@ -123,19 +120,19 @@ final class HookEventHandler {
             )
         }
 
-        // 优先使用 binding，无 binding 时通过 terminal context 动态查找窗口
-        let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID)
+        // 通过 sessionID 找到窗口状态
+        let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
         let identity: WindowIdentity?
 
-        if let binding {
-            guard SessionWindowRegistry.shared.verifyBinding(binding) else {
+        if let state {
+            guard SessionWindowRegistry.shared.verifyBinding(state) else {
                 log(
-                    "[HookEventHandler] UserPromptSubmit binding verification failed, skipping",
+                    "[HookEventHandler] UserPromptSubmit binding verification failed",
                     level: .warn,
                     fields: [
                         "sessionID": payload.sessionID,
-                        "windowID": String(binding.windowIdentity.windowID),
-                        "pid": String(binding.windowIdentity.pid)
+                        "pid": String(state.pid),
+                        "tty": state.tty ?? "nil"
                     ]
                 )
                 return (
@@ -147,13 +144,20 @@ final class HookEventHandler {
                     )
                 )
             }
-            identity = binding.windowIdentity
+            identity = WindowIdentity(
+                windowID: state.windowID ?? 0,
+                pid: state.pid,
+                bundleIdentifier: state.bundleIdentifier,
+                appName: state.appName,
+                windowNumber: state.axWindowNumber,
+                title: state.title,
+                capturedAt: state.createdAt
+            )
         } else if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
-            // 无 binding（SessionStart 可能失败过），通过 terminal context 动态查找
             identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
             if let identity {
                 log(
-                    "[HookEventHandler] UserPromptSubmit no binding, resolved window via terminal context",
+                    "[HookEventHandler] UserPromptSubmit no binding, resolved via terminal context",
                     fields: [
                         "sessionID": payload.sessionID,
                         "resolvedWindowID": String(identity.windowID),
@@ -163,12 +167,9 @@ final class HookEventHandler {
             }
         } else {
             log(
-                "[HookEventHandler] UserPromptSubmit no binding and no terminal context, skipping",
+                "[HookEventHandler] UserPromptSubmit no binding and no terminal context",
                 level: .warn,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "sqliteStatesCount": String(WindowStateStore.shared.statesCount)
-                ]
+                fields: ["sessionID": payload.sessionID]
             )
             return (
                 200,
@@ -181,11 +182,6 @@ final class HookEventHandler {
         }
 
         guard let identity else {
-            log(
-                "[HookEventHandler] UserPromptSubmit could not resolve window identity",
-                level: .warn,
-                fields: ["sessionID": payload.sessionID]
-            )
             return (
                 200,
                 ClaudeHookResponse(
@@ -196,152 +192,76 @@ final class HookEventHandler {
             )
         }
 
-        let targetWindowID = identity.windowID
-        let targetPID = identity.pid
-        let store = WindowStateStore.shared
         let wm = WindowManager.shared
+        let isOnMain = wm.isWindowOnMainScreen(windowID: identity.windowID)
 
-        log(
-            "[HookEventHandler] UserPromptSubmit searching saved state via SQLite",
-            fields: [
-                "sessionID": payload.sessionID,
-                "bindingWindowID": String(targetWindowID),
-                "bindingPID": String(targetPID),
-                "sqliteStatesCount": String(store.statesCount)
-            ]
-        )
+        guard isOnMain else {
+            log(
+                "[HookEventHandler] UserPromptSubmit window not on main screen",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "windowID": String(identity.windowID)
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "no_action_needed",
+                    message: "Window not on main screen",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
 
-        // === 多级匹配策略 ===
-        // 问题：toggle 保存的 saved state 的 windowID 可能与 session binding 的 windowID 不同
-        // （toggle 移动的是焦点窗口，binding 绑定的是 SessionStart 时的窗口）
-        // 解决：从精确匹配逐步降级到模糊匹配
-
-        let isOnMain = wm.isWindowOnMainScreen(windowID: targetWindowID)
-
-        // 优先级 1: windowID 精确匹配（同 session）
-        if isOnMain {
-            if let matchedState = store.findState(windowID: targetWindowID, sessionID: payload.sessionID) {
-                if !wm.isSavedStateCorrupted(matchedState) {
-                    return performRestore(
-                        payload: payload, matchedState: matchedState,
-                        matchLevel: "exact_windowid_session_scoped"
+        // 通过 (pid, tty) 在同一行查找 toggle state — 无需跨表匹配
+        let tty = state?.tty ?? payload.terminalCtx?.tty
+        if let toggleState = SessionWindowRegistry.shared.findState(pid: identity.pid, tty: tty) {
+            if toggleState.hasToggleState {
+                guard let mainScreen = wm.getMainScreen() else {
+                    return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
+                }
+                if !toggleState.isCorrupted(mainScreenFrame: mainScreen.frame) {
+                    return performRestoreFromState(
+                        payload: payload, toggleState: toggleState,
+                        matchLevel: "pid_tty_direct"
                     )
                 } else {
-                    wm.clearSavedWindowState(id: matchedState.id)
+                    SessionWindowRegistry.shared.clearToggleState(pid: identity.pid, tty: tty)
                 }
             }
         }
 
-        // 优先级 2: windowID 精确匹配（任意 session）
-        if isOnMain {
-            if let matchedState = store.findState(windowID: targetWindowID, sessionID: nil) {
-                if !wm.isSavedStateCorrupted(matchedState) {
-                    return performRestore(
-                        payload: payload, matchedState: matchedState,
-                        matchLevel: "exact_windowid_any_session"
+        // Fallback: 按 windowID 查找
+        if let windowState = SessionWindowRegistry.shared.findStateByWindowID(identity.windowID) {
+            if windowState.hasToggleState {
+                guard let mainScreen = wm.getMainScreen() else {
+                    return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
+                }
+                if !windowState.isCorrupted(mainScreenFrame: mainScreen.frame) {
+                    return performRestoreFromState(
+                        payload: payload, toggleState: windowState,
+                        matchLevel: "windowid_fallback"
                     )
                 } else {
-                    wm.clearSavedWindowState(id: matchedState.id)
-                }
-            }
-        }
-
-        // 优先级 3: PID 匹配（同 session）
-        // toggle 保存的窗口可能和 binding 的窗口不同（同 app 不同窗口 ID）
-        if isOnMain {
-            if let matchedState = store.findStateByPID(
-                pid: targetPID,
-                sessionID: payload.sessionID
-            ) {
-                if !wm.isSavedStateCorrupted(matchedState) {
-                    return performRestore(
-                        payload: payload, matchedState: matchedState,
-                        matchLevel: "pid_session_scoped"
-                    )
-                } else {
-                    wm.clearSavedWindowState(id: matchedState.id)
-                }
-            }
-        }
-
-        // 优先级 4: PID 匹配（任意 session）
-        if isOnMain {
-            if let matchedState = store.findStateByPID(
-                pid: targetPID,
-                sessionID: nil
-            ) {
-                if !wm.isSavedStateCorrupted(matchedState) {
-                    return performRestore(
-                        payload: payload, matchedState: matchedState,
-                        matchLevel: "pid_any_session"
-                    )
-                } else {
-                    wm.clearSavedWindowState(id: matchedState.id)
-                }
-            }
-        }
-
-        // 优先级 5: appName 匹配（同 session）
-        if isOnMain {
-            if let appState = store.findStateByApp(
-                appName: identity.appName ?? "",
-                sessionID: payload.sessionID
-            ) {
-                if !wm.isSavedStateCorrupted(appState) {
-                    log(
-                        "[HookEventHandler] UserPromptSubmit app-name fallback (SQLite)",
-                        fields: [
-                            "sessionID": payload.sessionID,
-                            "stateApp": appState.appName ?? "unknown",
-                            "bindingWindowID": String(targetWindowID)
-                        ]
-                    )
-                    return performRestore(
-                        payload: payload, matchedState: appState,
-                        matchLevel: "appname_session_scoped"
-                    )
-                }
-            }
-        }
-
-        // 优先级 6: appName 匹配（任意 session）
-        if isOnMain {
-            if let appState = store.findStateByApp(
-                appName: identity.appName ?? "",
-                sessionID: nil
-            ) {
-                if !wm.isSavedStateCorrupted(appState) {
-                    log(
-                        "[HookEventHandler] UserPromptSubmit app-name fallback any session (SQLite)",
-                        fields: [
-                            "sessionID": payload.sessionID,
-                            "stateApp": appState.appName ?? "unknown",
-                            "bindingWindowID": String(targetWindowID)
-                        ]
-                    )
-                    return performRestore(
-                        payload: payload, matchedState: appState,
-                        matchLevel: "appname_any_session"
-                    )
+                    SessionWindowRegistry.shared.clearToggleState(pid: windowState.pid, tty: windowState.tty)
                 }
             }
         }
 
         log(
-            "[HookEventHandler] UserPromptSubmit no matching state in SQLite",
+            "[HookEventHandler] UserPromptSubmit no toggle state found",
             fields: [
                 "sessionID": payload.sessionID,
-                "windowOnMainScreen": String(isOnMain),
-                "bindingWindowID": String(targetWindowID),
-                "bindingPID": String(targetPID),
-                "bindingAppName": identity.appName ?? "nil"
+                "pid": String(identity.pid),
+                "tty": tty ?? "nil",
+                "windowOnMainScreen": String(isOnMain)
             ]
         )
         return (
             200,
             ClaudeHookResponse(
                 ok: true, code: "no_action_needed",
-                message: "No matching saved state in SQLite",
+                message: "No toggle state found for window",
                 sessionID: payload.sessionID, handled: false
             )
         )
@@ -349,35 +269,66 @@ final class HookEventHandler {
 
     // MARK: - Perform Restore
 
-    private func performRestore(
+    private func performRestoreFromState(
         payload: ClaudeHookPayload,
-        matchedState: WindowManager.SavedWindowState,
+        toggleState: WindowState,
         matchLevel: String
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        WindowManager.shared.hydrateMemory(from: matchedState, window: nil)
+        let wm = WindowManager.shared
+
+        guard let origFrame = toggleState.originalFrame,
+              let tgtFrame = toggleState.targetFrame else {
+            return (200, ClaudeHookResponse(ok: true, code: "no_frame_data", message: "No frame data", sessionID: payload.sessionID, handled: false))
+        }
+
+        let savedState = WindowManager.SavedWindowState(
+            id: "\(toggleState.pid)_\(toggleState.tty ?? "none")",
+            pid: toggleState.pid,
+            bundleIdentifier: toggleState.bundleIdentifier,
+            appName: toggleState.appName,
+            windowID: toggleState.windowID,
+            windowNumber: toggleState.axWindowNumber,
+            title: toggleState.title,
+            originalFrame: WindowManager.RectPayload(origFrame),
+            targetFrame: WindowManager.RectPayload(tgtFrame),
+            sourceSpaceIndex: toggleState.sourceSpace,
+            targetSpaceIndex: nil,
+            sourceYabaiDisplayIndex: toggleState.sourceYabaiDisp,
+            sourceDisplaySpaceIndex: toggleState.sourceDispSpace,
+            sourceDisplayIndex: toggleState.sourceDisplay,
+            sourceDisplayID: nil,
+            targetDisplayIndex: toggleState.targetDisplay,
+            restoreReason: toggleState.toggleReason,
+            sessionID: toggleState.sessionID,
+            savedAt: toggleState.toggledAt ?? Date()
+        )
+
+        wm.hydrateMemory(from: savedState, window: nil)
 
         log(
             "[HookEventHandler] UserPromptSubmit restoring window",
             fields: [
                 "sessionID": payload.sessionID,
                 "matchLevel": matchLevel,
-                "stateID": matchedState.id,
-                "app": matchedState.appName ?? "unknown",
-                "windowID": String(describing: matchedState.windowID),
-                "originalFrame": String(describing: matchedState.originalFrame.cgRect),
-                "targetFrame": String(describing: matchedState.targetFrame.cgRect)
+                "pid": String(toggleState.pid),
+                "tty": toggleState.tty ?? "nil",
+                "app": toggleState.appName ?? "unknown",
+                "windowID": String(describing: toggleState.windowID),
+                "originalFrame": String(describing: origFrame),
+                "targetFrame": String(describing: tgtFrame)
             ]
         )
 
-        WindowManager.shared.restore(
+        wm.restore(
             operationID: makeOperationID(prefix: "hook-restore"),
             triggerSource: "user_prompt_submit"
         )
 
         SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+        SessionWindowRegistry.shared.clearToggleState(pid: toggleState.pid, tty: toggleState.tty)
 
         SessionWindowRegistry.shared.setLastEventDescription(
-            "UserPromptSubmit 恢复窗口（\(matchLevel)）：\(matchedState.appName ?? "Unknown")"
+            "UserPromptSubmit 恢复窗口（\(matchLevel)）：\(toggleState.appName ?? "Unknown")"
         )
         return (
             200,
@@ -394,12 +345,11 @@ final class HookEventHandler {
     func handleStop(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        // 防抖：如果 session 最近有 UserPromptSubmit，Stop 是中间态不是真正结束
         if let lastActivity = lastActivityBySession[payload.sessionID] {
             let elapsed = Date().timeIntervalSince(lastActivity)
             if elapsed < stopDebounceInterval {
                 log(
-                    "[HookEventHandler] Stop debounced — session was active \(String(format: "%.1f", elapsed))s ago (threshold: \(String(format: "%.0f", stopDebounceInterval))s)",
+                    "[HookEventHandler] Stop debounced — session was active \(String(format: "%.1f", elapsed))s ago",
                     fields: [
                         "sessionID": payload.sessionID,
                         "elapsedSinceActivity": String(format: "%.1f", elapsed),
@@ -440,7 +390,6 @@ final class HookEventHandler {
             )
         }
 
-        // 防抖通过 + trigger 已启用 → 清理活动记录
         lastActivityBySession.removeValue(forKey: payload.sessionID)
         return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
     }
@@ -475,7 +424,6 @@ final class HookEventHandler {
             )
         }
 
-        // 严格检查：必须有 binding 且通过验证
         guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
             log(
                 "[HookEventHandler] \(triggerName) no binding found, skipping",
@@ -494,12 +442,12 @@ final class HookEventHandler {
 
         guard SessionWindowRegistry.shared.verifyBinding(binding) else {
             log(
-                "[HookEventHandler] \(triggerName) binding verification failed, skipping",
+                "[HookEventHandler] \(triggerName) binding verification failed",
                 level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
-                    "windowID": String(binding.windowIdentity.windowID),
-                    "pid": String(binding.windowIdentity.pid)
+                    "windowID": String(describing: binding.windowID),
+                    "pid": String(binding.pid)
                 ]
             )
             return (
@@ -533,7 +481,7 @@ final class HookEventHandler {
     // MARK: - Move Binding to Main Screen
 
     private func moveBindingToMainScreen(
-        binding: SessionWindowBinding,
+        binding: WindowState,
         payload: ClaudeHookPayload,
         triggerName: String
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
@@ -552,9 +500,24 @@ final class HookEventHandler {
             )
         }
 
+        guard let windowID = binding.windowID else {
+            log(
+                "[HookEventHandler] \(triggerName) binding has no windowID",
+                level: .warn,
+                fields: ["sessionID": payload.sessionID]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "no_window_id",
+                    message: "Binding has no windowID",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
         // 预检：如果窗口已在主屏幕上，跳过移动
-        // 防止对已在主屏的窗口执行无意义移动，避免保存错误状态
-        if WindowManager.shared.isWindowOnMainScreen(windowID: binding.windowIdentity.windowID) {
+        if WindowManager.shared.isWindowOnMainScreen(windowID: windowID) {
             SessionWindowRegistry.shared.setLastEventDescription(
                 "\(triggerName) 窗口已在主屏幕，跳过移动"
             )
@@ -562,8 +525,8 @@ final class HookEventHandler {
                 "[HookEventHandler] \(triggerName) window already on main screen, skipping move",
                 fields: [
                     "sessionID": payload.sessionID,
-                    "windowID": String(binding.windowIdentity.windowID),
-                    "app": binding.windowIdentity.appName ?? "unknown"
+                    "windowID": String(windowID),
+                    "app": binding.appName ?? "unknown"
                 ]
             )
             return (
@@ -577,35 +540,23 @@ final class HookEventHandler {
         }
 
         // 安全检查：确保绑定的是终端/IDE 窗口
-        // SessionStart 可能绑定到非终端窗口（Chrome、飞书等），这类窗口不应被自动移动
-        let terminalAppNames: Set<String> = [
-            "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
-            "Cursor", "Code", "Visual Studio Code",
-            "com.apple.Terminal", "com.googlecode.iterm2",
-            "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"
-        ]
-        let isTerminalBinding: Bool = {
-            if let appName = binding.windowIdentity.appName, terminalAppNames.contains(appName) {
-                return true
-            }
-            if let bundleID = binding.windowIdentity.bundleIdentifier, terminalAppNames.contains(bundleID) {
-                return true
-            }
-            return false
-        }()
+        let isTerminalBinding = Self.isTerminalOrIDEApp(
+            appName: binding.appName,
+            bundleIdentifier: binding.bundleIdentifier
+        )
 
         if !isTerminalBinding {
             SessionWindowRegistry.shared.setLastEventDescription(
-                "\(triggerName) 绑定窗口非终端应用：\(binding.windowIdentity.appName ?? "Unknown")"
+                "\(triggerName) 绑定窗口非终端应用：\(binding.appName ?? "Unknown")"
             )
             log(
                 "[HookEventHandler] \(triggerName) bound window is non-terminal app, skipping",
                 level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
-                    "app": binding.windowIdentity.appName ?? "unknown",
-                    "bundleID": binding.windowIdentity.bundleIdentifier ?? "nil",
-                    "windowID": String(binding.windowIdentity.windowID)
+                    "app": binding.appName ?? "unknown",
+                    "bundleID": binding.bundleIdentifier ?? "nil",
+                    "windowID": String(windowID)
                 ]
             )
             return (
@@ -622,15 +573,25 @@ final class HookEventHandler {
             "[HookEventHandler] \(triggerName) moving window",
             fields: [
                 "sessionID": payload.sessionID,
-                "app": binding.windowIdentity.appName ?? "unknown",
-                "title": binding.windowIdentity.title ?? "untitled",
-                "windowID": String(binding.windowIdentity.windowID),
-                "pid": String(binding.windowIdentity.pid)
+                "app": binding.appName ?? "unknown",
+                "title": binding.title ?? "untitled",
+                "windowID": String(windowID),
+                "pid": String(binding.pid)
             ]
         )
 
+        let identity = WindowIdentity(
+            windowID: windowID,
+            pid: binding.pid,
+            bundleIdentifier: binding.bundleIdentifier,
+            appName: binding.appName,
+            windowNumber: binding.axWindowNumber,
+            title: binding.title,
+            capturedAt: binding.createdAt
+        )
+
         let moved = WindowManager.shared.moveWindowToMainScreen(
-            identity: binding.windowIdentity,
+            identity: identity,
             reason: .claudeSessionEnd,
             sessionID: payload.sessionID
         )
@@ -640,8 +601,8 @@ final class HookEventHandler {
                 "[HookEventHandler] \(triggerName) window moved successfully",
                 fields: [
                     "sessionID": payload.sessionID,
-                    "app": binding.windowIdentity.appName ?? "unknown",
-                    "title": binding.windowIdentity.title ?? "untitled"
+                    "app": binding.appName ?? "unknown",
+                    "title": binding.title ?? "untitled"
                 ]
             )
             Task { @MainActor in
@@ -666,8 +627,8 @@ final class HookEventHandler {
             level: .error,
             fields: [
                 "sessionID": payload.sessionID,
-                "app": binding.windowIdentity.appName ?? "unknown",
-                "windowID": String(binding.windowIdentity.windowID)
+                "app": binding.appName ?? "unknown",
+                "windowID": String(windowID)
             ]
         )
         return (

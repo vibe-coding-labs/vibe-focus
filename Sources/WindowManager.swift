@@ -22,6 +22,8 @@ class WindowManager {
     var lastSourceYabaiDisplayIndex: Int?
     var lastSourceDisplaySpaceIndex: Int?
     var savedWindowStates: [SavedWindowState] = []
+    /// 标记 focusSpace 是否在本次 app 生命周期内无效（yabai SA 不可用导致）
+    var focusSpaceKnownBroken: Bool = false
     var didPromptForAccessibility = false
     let frameTolerance: CGFloat = 10
     let axWindowNumberAttribute = "AXWindowNumber"
@@ -323,6 +325,8 @@ class WindowManager {
             ]
         )
         if moved {
+            // 移动窗口后 macOS 可能丢失焦点，重新 focus 被移动的窗口
+            _ = spaceController.focusWindow(identity.windowID, operationID: op)
             log(
                 "MOVED AND MAXIMIZED ON TARGET SCREEN",
                 fields: [
@@ -461,24 +465,8 @@ class WindowManager {
             ]
         )
 
-        let spacePrepared = applySpaceStrategyForRestore(windowID: token.windowID, operationID: op)
-        log(
-            "[WindowManager] restore applySpaceStrategyForRestore returned",
-            level: .debug,
-            fields: [
-                "op": op,
-                "spacePrepared": String(spacePrepared)
-            ]
-        )
-        if !spacePrepared {
-            log(
-                "[WindowManager] space restore preparation failed, fallback to frame-only restore",
-                level: .warn,
-                fields: [
-                    "op": op
-                ]
-            )
-        }
+        // === 两阶段恢复：先移窗口到副屏，再切到正确 Space ===
+        let spacePrepared = true
 
         guard let window = restoreWindow(using: token) else {
             log(
@@ -652,6 +640,88 @@ class WindowManager {
             level: .debug,
             fields: ["op": op]
         )
+
+        // === Space 修正：确保窗口在正确的目标 Space ===
+        // AX frame 设置了副屏坐标，macOS 把窗口移到副屏的当前活跃 Space（可能不是目标 Space）
+        // 修正流程：focusWindow 让副屏获得焦点 → 切副屏到目标 Space → 重新设 frame
+        let targetSpace = lastSourceSpaceIndex
+        if let windowID = windowHandle(for: window), let targetSpace {
+            usleep(150_000) // 等 macOS settle
+
+            let currentWindowSpace = spaceController.windowSpaceIndex(windowID: windowID)
+            log(
+                "[WindowManager] restore: space check after AX frame",
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "targetSpace": String(targetSpace),
+                    "currentWindowSpace": String(describing: currentWindowSpace)
+                ]
+            )
+
+            if let currentSpace = currentWindowSpace, currentSpace != targetSpace {
+                log(
+                    "[WindowManager] restore: window on wrong Space \(currentSpace), need Space \(targetSpace)",
+                    level: .warn,
+                    fields: ["op": op, "windowID": String(windowID)]
+                )
+
+                if triggerSource == "carbon_hotkey" {
+                    // toggle: focusWindow + Ctrl+Left/Right 切副屏 Space，然后 reapply frame
+                    _ = spaceController.focusWindow(windowID, operationID: op)
+                    usleep(150_000)
+
+                    let steps = targetSpace - currentSpace
+                    if steps != 0 {
+                        log(
+                            "[WindowManager] restore: switching secondary display Space by \(steps) steps",
+                            fields: ["op": op, "from": String(currentSpace), "to": String(targetSpace)]
+                        )
+                        _ = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
+                        usleep(400_000)
+                    }
+
+                    if let targetFrame = lastWindowFrame {
+                        _ = apply(frame: targetFrame, to: window, operationID: op, stage: "restore_reapply_frame")
+                        usleep(100_000)
+                    }
+                } else {
+                    // hook-restore: 只设 AX frame，不干预焦点和 Space
+                    // macOS 会自动把窗口放到 frame 坐标对应的 Space
+                    if let targetFrame = lastWindowFrame {
+                        _ = apply(frame: targetFrame, to: window, operationID: op, stage: "restore_apply_frame_no_space_switch")
+                        usleep(100_000)
+                    }
+                }
+
+                let recheckSpace = spaceController.windowSpaceIndex(windowID: windowID)
+                log(
+                    "[WindowManager] restore: after Space handling",
+                    fields: [
+                        "op": op,
+                        "windowID": String(windowID),
+                        "targetSpace": String(targetSpace),
+                        "recheckSpace": String(describing: recheckSpace),
+                        "triggerSource": triggerSource
+                    ]
+                )
+            }
+
+            // 只在 toggle 热键恢复时跟随窗口焦点
+            // hook-restore（UserPromptSubmit）时不碰焦点，让 macOS 自然保持当前焦点
+            if triggerSource == "carbon_hotkey" {
+                let finalWindowSpace = spaceController.windowSpaceIndex(windowID: windowID)
+                let currentSpace = spaceController.currentSpaceIndex()
+                if let ws = finalWindowSpace, let cs = currentSpace, ws != cs {
+                    log(
+                        "[WindowManager] restore: toggle restore, following window to Space \(ws)",
+                        fields: ["op": op, "windowID": String(windowID), "currentSpace": String(cs)]
+                    )
+                    _ = spaceController.focusWindow(windowID, operationID: op)
+                }
+            }
+        }
+
         resetActiveWindowContext(removeState: true)
         let outcome = spacePrepared ? "restored" : "restored_frame_only"
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
@@ -784,44 +854,52 @@ class WindowManager {
             return false
         }
 
-        // 聚焦窗口在主屏 → 检查是否有对应的 saved state 可以恢复
-        if savedWindowStates.isEmpty {
-            log(
-                "[WindowManager] shouldRestoreCurrentWindow: focused on main but no saved states",
-                level: .debug
-            )
-            return false
-        }
-
-        if let matchedState = WindowStateStore.shared.findState(windowID: currentWindowID, sessionID: nil) ?? savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
-            if isSavedStateCorrupted(matchedState) {
-                log(
-                    "[WindowManager] Corrupted state detected, clearing",
-                    level: .warn,
-                    fields: [
-                        "stateID": matchedState.id,
-                        "windowID": String(describing: matchedState.windowID),
-                        "originalFrame": String(describing: matchedState.originalFrame.cgRect),
-                        "targetFrame": String(describing: matchedState.targetFrame.cgRect)
-                    ]
-                )
-                clearSavedWindowState(id: matchedState.id)
-                return false
+        // 聚焦窗口在主屏 → 检查 WindowState 中是否有 toggle state 可以恢复
+        if let wsState = SessionWindowRegistry.shared.findStateByWindowID(currentWindowID) {
+            if wsState.hasToggleState {
+                guard let mainScreen = getMainScreen() else { return false }
+                if wsState.isCorrupted(mainScreenFrame: mainScreen.frame) {
+                    SessionWindowRegistry.shared.clearToggleState(pid: wsState.pid, tty: wsState.tty)
+                    return false
+                }
+                if let origFrame = wsState.originalFrame, let tgtFrame = wsState.targetFrame {
+                    let savedState = SavedWindowState(
+                        id: "\(wsState.pid)_\(wsState.tty ?? "none")",
+                        pid: wsState.pid,
+                        bundleIdentifier: wsState.bundleIdentifier,
+                        appName: wsState.appName,
+                        windowID: wsState.windowID,
+                        windowNumber: wsState.axWindowNumber,
+                        title: wsState.title,
+                        originalFrame: RectPayload(origFrame),
+                        targetFrame: RectPayload(tgtFrame),
+                        sourceSpaceIndex: wsState.sourceSpace,
+                        targetSpaceIndex: nil,
+                        sourceYabaiDisplayIndex: wsState.sourceYabaiDisp,
+                        sourceDisplaySpaceIndex: wsState.sourceDispSpace,
+                        sourceDisplayIndex: wsState.sourceDisplay,
+                        sourceDisplayID: nil,
+                        targetDisplayIndex: wsState.targetDisplay,
+                        restoreReason: wsState.toggleReason,
+                        sessionID: wsState.sessionID,
+                        savedAt: wsState.toggledAt ?? Date()
+                    )
+                    hydrateMemory(from: savedState, window: focusedWindow)
+                    log(
+                        "[WindowManager] shouldRestoreCurrentWindow: focused window on main, has toggle state → restore",
+                        fields: [
+                            "windowID": String(currentWindowID),
+                            "pid": String(wsState.pid),
+                            "tty": wsState.tty ?? "nil"
+                        ]
+                    )
+                    return true
+                }
             }
-            hydrateMemory(from: matchedState, window: focusedWindow)
-            log(
-                "[WindowManager] shouldRestoreCurrentWindow: focused window on main, has saved state → restore",
-                fields: [
-                    "windowID": String(currentWindowID),
-                    "stateID": matchedState.id,
-                    "originalFrame": String(describing: matchedState.originalFrame.cgRect)
-                ]
-            )
-            return true
         }
 
         log(
-            "[WindowManager] shouldRestoreCurrentWindow: focused window on main but no matching saved state",
+            "[WindowManager] shouldRestoreCurrentWindow: focused window on main but no matching toggle state",
             level: .debug,
             fields: ["windowID": String(currentWindowID)]
         )
@@ -1061,7 +1139,7 @@ class WindowManager {
         return true
     }
 
-    func applySpaceStrategyForRestore(windowID: UInt32?, operationID: String? = nil) -> Bool {
+    func applySpaceStrategyForRestore(windowID: UInt32?, operationID: String? = nil, triggerSource: String = "unknown") -> Bool {
         guard let windowID else {
             log(
                 "[WindowManager] applySpaceStrategyForRestore: nil windowID, returning true",
@@ -1070,6 +1148,10 @@ class WindowManager {
             return true
         }
         let op = operationID ?? makeOperationID(prefix: "restore-space")
+
+        // 注意：focusSpaceKnownBroken 时不能跳过整个 Space 策略！
+        // 只跳过 yabai focusSpace（已知失败），但 NativeSpaceBridge.moveWindow + focusWindow 仍需执行
+        // 否则用户活跃 Space 不会切换，窗口虽然在正确坐标但用户看不到
 
         log(
             "[WindowManager] applySpaceStrategyForRestore called",
@@ -1231,7 +1313,18 @@ class WindowManager {
             )
 
             let focusStartedAt = Date()
-            let focusSucceeded = spaceController.focusSpace(sourceSpace, operationID: op)
+            // 如果上次 focusSpace 已确认无效（yabai SA 不可用），直接跳过
+            let focusSucceeded: Bool
+            if focusSpaceKnownBroken {
+                log(
+                    "[WindowManager] switchToOriginal skipping focusSpace (known broken)",
+                    level: .debug,
+                    fields: ["op": op]
+                )
+                focusSucceeded = false
+            } else {
+                focusSucceeded = spaceController.focusSpace(sourceSpace, operationID: op)
+            }
             let focusDurationMs = elapsedMilliseconds(since: focusStartedAt)
             log(
                 "[WindowManager] switchToOriginal focusSpace returned",
@@ -1243,6 +1336,16 @@ class WindowManager {
                 ]
             )
             let postFocusSpace = spaceController.currentSpaceIndex()
+
+            // 如果 focusSpace "成功"但 Space 没变，标记为 broken 避免下次浪费时间
+            if focusSucceeded && postFocusSpace == preFocusCurrentSpace {
+                focusSpaceKnownBroken = true
+                log(
+                    "[WindowManager] focusSpace reported success but space unchanged, marking as broken",
+                    level: .warn,
+                    fields: ["op": op, "focusDurationMs": String(focusDurationMs)]
+                )
+            }
 
             log(
                 "[WindowManager] restore_space_post_focus",
@@ -1257,9 +1360,9 @@ class WindowManager {
             )
 
             if focusSucceeded {
-                // 仅在 space 实际切换时等待动画完成
-                if postFocusSpace != preFocusCurrentSpace {
-                    usleep(150_000)
+                // 仅在 space 实际切换且到达目标时等待动画完成
+                if postFocusSpace != preFocusCurrentSpace && postFocusSpace == sourceSpace {
+                    usleep(80_000)
                 }
 
                 let postSettleSpace = spaceController.currentSpaceIndex()
@@ -1284,8 +1387,7 @@ class WindowManager {
                     ]
                 )
                 // focusSpace 失败可能把 canControlSpaces 污染为 false（scripting-addition 错误）
-                // 刷新可用性状态，让 moveWindow 仍有机会执行
-                spaceController.refreshAvailability(force: true)
+                // 不强制刷新（太慢），直接让 moveWindow 尝试执行
                 log(
                     "[WindowManager] restore_space_post_focus_recovery",
                     fields: [
@@ -1296,6 +1398,7 @@ class WindowManager {
             }
 
             // === Phase 2: moveWindow ===
+            // 即使 focusSpace 失败，moveWindow 仍需执行（NativeSpaceBridge 不需要 SA）
             log(
                 "[WindowManager] switchToOriginal Phase 2: calling moveWindow",
                 level: .debug,
@@ -1317,21 +1420,29 @@ class WindowManager {
                         "moveVerified": String(windowSpaceAfterMove == sourceSpace)
                     ]
                 )
-                if !spaceController.focusWindow(windowID, operationID: op) {
-                    log(
-                        "[WindowManager] failed to focus restored window on source space",
-                        level: .warn,
-                        fields: [
-                            "op": op,
-                            "windowID": String(windowID),
-                            "space": String(sourceSpace)
-                        ]
-                    )
+                if triggerSource == "carbon_hotkey" {
+                    if !spaceController.focusWindow(windowID, operationID: op) {
+                        log(
+                            "[WindowManager] failed to focus restored window on source space",
+                            level: .warn,
+                            fields: [
+                                "op": op,
+                                "windowID": String(windowID),
+                                "space": String(sourceSpace)
+                            ]
+                        )
+                    } else {
+                        log(
+                            "[WindowManager] switchToOriginal focusWindow succeeded on source space",
+                            level: .debug,
+                            fields: ["op": op, "windowID": String(windowID)]
+                        )
+                    }
                 } else {
                     log(
-                        "[WindowManager] switchToOriginal focusWindow succeeded on source space",
+                        "[WindowManager] switchToOriginal skipping focusWindow (hook-restore)",
                         level: .debug,
-                        fields: ["op": op, "windowID": String(windowID)]
+                        fields: ["op": op, "windowID": String(windowID), "triggerSource": triggerSource]
                     )
                 }
             } else {
@@ -1344,6 +1455,8 @@ class WindowManager {
                         "targetSpace": String(sourceSpace)
                     ]
                 )
+                // moveWindow 失败也标记 focusSpace broken，下次优化路径
+                focusSpaceKnownBroken = true
                 return false
             }
 
@@ -1400,20 +1513,28 @@ class WindowManager {
                             "space": String(currentSpace)
                         ]
                     )
-                    if !spaceController.focusWindow(windowID, operationID: op) {
+                    if triggerSource == "carbon_hotkey" {
+                        if !spaceController.focusWindow(windowID, operationID: op) {
+                            log(
+                                "[WindowManager] pullToCurrent focusWindow failed",
+                                level: .debug,
+                                fields: ["op": op, "windowID": String(windowID)]
+                            )
+                            log(
+                                "[WindowManager] failed to focus restored window on current space",
+                                level: .warn,
+                                fields: [
+                                    "op": op,
+                                    "windowID": String(windowID),
+                                    "space": String(currentSpace)
+                                ]
+                            )
+                        }
+                    } else {
                         log(
-                            "[WindowManager] pullToCurrent focusWindow failed",
+                            "[WindowManager] pullToCurrent skipping focusWindow (hook-restore)",
                             level: .debug,
-                            fields: ["op": op, "windowID": String(windowID)]
-                        )
-                        log(
-                            "[WindowManager] failed to focus restored window on current space",
-                            level: .warn,
-                            fields: [
-                                "op": op,
-                                "windowID": String(windowID),
-                                "space": String(currentSpace)
-                            ]
+                            fields: ["op": op, "windowID": String(windowID), "triggerSource": triggerSource]
                         )
                     }
                 } else {

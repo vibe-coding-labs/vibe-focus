@@ -302,7 +302,7 @@ extension WindowManager {
                 ]
             )
 
-            usleep(100_000)
+            usleep(50_000)
 
             let cgVerified = verifyWindowFrameViaCGWindowList(
                 windowID: identity.windowID,
@@ -311,7 +311,7 @@ extension WindowManager {
             )
 
             if !cgVerified {
-                usleep(150_000)
+                usleep(80_000)
                 let retrySucceeded = apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame_retry")
                 if !retrySucceeded {
                     log(
@@ -380,6 +380,37 @@ extension WindowManager {
         )
 
         let persistedState = saveWindowState(savedState, window: windowAX)
+
+        // 同时更新 WindowState 中的 toggle state（统一宽表）
+        SessionWindowRegistry.shared.updateToggleState(
+            pid: identity.pid,
+            tty: nil
+        ) { state in
+            state.windowID = currentWindowID
+            state.appName = identity.appName
+            state.bundleIdentifier = identity.bundleIdentifier
+            state.title = resolvedTitle
+            state.axWindowNumber = resolvedWindowNumber
+            state.origX = currentFrame.origin.x
+            state.origY = currentFrame.origin.y
+            state.origW = currentFrame.width
+            state.origH = currentFrame.height
+            state.targetX = actualTargetFrame.origin.x
+            state.targetY = actualTargetFrame.origin.y
+            state.targetW = actualTargetFrame.width
+            state.targetH = actualTargetFrame.height
+            state.sourceSpace = spaceContext.sourceSpaceIndex
+            state.sourceDisplay = sourceContext.index
+            state.sourceYabaiDisp = spaceContext.sourceDisplayIndex
+            state.sourceDispSpace = spaceContext.sourceDisplaySpaceIndex
+            state.targetDisplay = targetDisplayIndex
+            state.toggleReason = reason.rawValue
+            state.toggledAt = Date()
+            if let sid = sessionID {
+                state.sessionID = sid
+            }
+        }
+
         log(
             "[moveWindowToMainScreen] saved window state",
             level: .debug,
