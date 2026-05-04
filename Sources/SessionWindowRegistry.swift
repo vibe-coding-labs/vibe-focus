@@ -32,7 +32,7 @@ final class SessionWindowRegistry: ObservableObject {
     }
 
     /// 绑定 session 到窗口 — 创建或更新 WindowState 行
-    func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil, cwd: String? = nil, model: String? = nil) {
+    func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil, itermSessionID: String? = nil, cwd: String? = nil, model: String? = nil) {
         let now = Date()
         let key = cacheKey(pid: windowIdentity.pid, tty: terminalTTY)
 
@@ -54,6 +54,7 @@ final class SessionWindowRegistry: ObservableObject {
             existing.updatedAt = now
             existing.tty = terminalTTY
             existing.termSessionID = terminalSessionID
+            existing.itermSessionID = itermSessionID
             existing.cwd = cwd
             existing.model = model
             windowStates[key] = existing
@@ -67,6 +68,7 @@ final class SessionWindowRegistry: ObservableObject {
                 bundleIdentifier: windowIdentity.bundleIdentifier,
                 title: windowIdentity.title,
                 termSessionID: terminalSessionID,
+                itermSessionID: itermSessionID,
                 sessionID: sessionID,
                 isCompleted: false,
                 createdAt: now,
