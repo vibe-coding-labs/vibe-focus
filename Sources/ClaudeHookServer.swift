@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 @preconcurrency import GCDWebServer
 
 @MainActor
@@ -534,30 +535,55 @@ final class ClaudeHookServer: ObservableObject {
             )
 
             log(
-                "[ClaudeHookServer] UserPromptSubmit exact/windowID match failed, trying shouldRestoreCurrentWindow",
+                "[ClaudeHookServer] UserPromptSubmit exact/windowID match failed, trying app-level fallback",
                 fields: [
                     "sessionID": payload.sessionID,
                     "bindingWindowID": String(targetWindowID),
-                    "windowOnMain": String(isOnMain)
+                    "windowOnMain": String(isOnMain),
+                    "savedStatesCount": String(wm.savedWindowStates.count)
                 ]
             )
 
-            // 优先级 3: 使用通用 restore 检测（检查焦点窗口匹配 saved state）
+            if isOnMain {
+                // 窗口在主屏 → 尝试同 app 的任意 saved state
+                if let appState = wm.savedWindowStates.reversed().first(where: { state in
+                    state.appName == binding.windowIdentity.appName
+                        && !wm.isSavedStateCorrupted(state)
+                }) {
+                    log(
+                        "[ClaudeHookServer] UserPromptSubmit app-level fallback: using saved state from same app",
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "stateApp": appState.appName ?? "unknown",
+                            "stateWindowID": String(describing: appState.windowID),
+                            "bindingWindowID": String(targetWindowID)
+                        ]
+                    )
+                    return performRestore(
+                        payload: payload, matchedState: appState,
+                        matchLevel: "app_level_fallback"
+                    )
+                }
+
+                // 没有 saved state 但窗口在主屏 → 直接移到副屏
+                return performDirectSecondaryRestore(
+                    payload: payload, binding: binding
+                )
+            }
+
+            // 窗口不在主屏 → 最后尝试通用 restore
             if wm.shouldRestoreCurrentWindow() {
                 wm.restore(
-                    operationID: makeOperationID(prefix: "hook-restore-binding-fallback"),
-                    triggerSource: "user_prompt_submit_binding_fallback"
+                    operationID: makeOperationID(prefix: "hook-restore-generic"),
+                    triggerSource: "user_prompt_submit_generic"
                 )
                 handledRequestCount += 1
                 SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-                SessionWindowRegistry.shared.setLastEventDescription(
-                    "UserPromptSubmit 回退恢复（binding 匹配失败，使用通用 restore）"
-                )
                 return (
                     200,
                     ClaudeHookResponse(
                         ok: true, code: "window_restored_generic",
-                        message: "Window restored via generic restore path",
+                        message: "Window restored via generic path",
                         sessionID: payload.sessionID, handled: true
                     )
                 )
@@ -647,6 +673,87 @@ final class ClaudeHookServer: ObservableObject {
             ClaudeHookResponse(
                 ok: true, code: "window_restored",
                 message: "Window restored to original position",
+                sessionID: payload.sessionID, handled: true
+            )
+        )
+    }
+
+    private func performDirectSecondaryRestore(
+        payload: ClaudeHookPayload,
+        binding: SessionWindowBinding
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        guard NSScreen.screens.count > 1 else {
+            log(
+                "[ClaudeHookServer] no secondary screen for direct restore",
+                level: .warn,
+                fields: ["sessionID": payload.sessionID]
+            )
+            handledRequestCount += 1
+            return (
+                404,
+                ClaudeHookResponse(
+                    ok: false, code: "no_secondary_screen",
+                    message: "No secondary screen available",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // screens[0] = main screen, screens[1] = secondary
+        let secondaryScreen = NSScreen.screens[1]
+        let targetFrame = secondaryScreen.visibleFrame
+        let identity = binding.windowIdentity
+
+        let currentFrame = WindowManager.shared.getCurrentWindowFrame(windowID: identity.windowID) ?? targetFrame
+        let syntheticState = WindowManager.SavedWindowState(
+            id: UUID().uuidString,
+            pid: identity.pid,
+            bundleIdentifier: identity.bundleIdentifier,
+            appName: identity.appName,
+            windowID: identity.windowID,
+            windowNumber: identity.windowNumber,
+            title: identity.title,
+            originalFrame: WindowManager.RectPayload(targetFrame),
+            targetFrame: WindowManager.RectPayload(currentFrame),
+            sourceSpaceIndex: nil,
+            targetSpaceIndex: nil,
+            sourceYabaiDisplayIndex: nil,
+            sourceDisplaySpaceIndex: nil,
+            sourceDisplayIndex: nil,
+            sourceDisplayID: nil,
+            targetDisplayIndex: nil,
+            restoreReason: "direct_secondary_restore",
+            sessionID: payload.sessionID,
+            savedAt: Date()
+        )
+
+        log(
+            "[ClaudeHookServer] performing direct secondary restore",
+            fields: [
+                "sessionID": payload.sessionID,
+                "windowID": String(identity.windowID),
+                "app": identity.appName ?? "unknown",
+                "targetFrame": String(describing: targetFrame),
+                "currentFrame": String(describing: currentFrame)
+            ]
+        )
+
+        WindowManager.shared.hydrateMemory(from: syntheticState, window: nil)
+        WindowManager.shared.restore(
+            operationID: makeOperationID(prefix: "hook-direct-restore"),
+            triggerSource: "user_prompt_submit_direct"
+        )
+
+        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+        handledRequestCount += 1
+        SessionWindowRegistry.shared.setLastEventDescription(
+            "UserPromptSubmit 直接恢复：\(identity.appName ?? "Unknown") → 副屏"
+        )
+        return (
+            200,
+            ClaudeHookResponse(
+                ok: true, code: "window_restored_direct",
+                message: "Window restored directly to secondary screen",
                 sessionID: payload.sessionID, handled: true
             )
         )

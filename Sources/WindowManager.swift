@@ -97,6 +97,7 @@ class WindowManager {
             log("Loaded persisted window states from disk: \(savedWindowStates.count)")
         }
         evictExpiredStates()
+        cleanupStaleSavedStates()
     }
 
     /// 清理超过 maxAge 的 savedWindowStates，防止无限增长
@@ -119,6 +120,44 @@ class WindowManager {
                 ]
             )
         }
+    }
+
+    private func cleanupStaleSavedStates() {
+        let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
+        let existingWindowIDs = Set(windowList.compactMap { $0["kCGWindowNumber"] as? UInt32 })
+
+        let before = savedWindowStates.count
+        savedWindowStates.removeAll { state in
+            guard let wid = state.windowID else { return false }
+            let isStale = !existingWindowIDs.contains(wid)
+            if isStale {
+                log(
+                    "[WindowManager] cleaning stale state: windowID \(wid) no longer exists",
+                    level: .debug,
+                    fields: ["stateID": state.id, "app": state.appName ?? "unknown"]
+                )
+            }
+            return isStale
+        }
+        let removed = before - savedWindowStates.count
+        if removed > 0 {
+            persistSavedWindowStates()
+            log("[WindowManager] cleaned \(removed) stale state(s), \(savedWindowStates.count) remaining")
+        }
+    }
+
+    func getCurrentWindowFrame(windowID: UInt32) -> CGRect? {
+        guard let list = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for w in list {
+            if let wid = w["kCGWindowNumber"] as? UInt32, wid == windowID {
+                if let b = w["kCGWindowBounds"] as? [String: Double] {
+                    return CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
+                }
+            }
+        }
+        return nil
     }
 
     func toggle(operationID: String? = nil, triggerSource: String = "unknown") {
