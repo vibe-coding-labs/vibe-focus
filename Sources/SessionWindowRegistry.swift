@@ -230,15 +230,27 @@ final class SessionWindowRegistry: ObservableObject {
         return nil
     }
 
-    /// 按 windowID 查找窗口状态
-    func findStateByWindowID(_ windowID: UInt32) -> WindowState? {
-        if let state = windowStates.values.first(where: { $0.windowID == windowID }) {
-            return state
-        }
-        if let state = WindowStateStore.shared.findWindowStateByWindowID(windowID) {
-            let key = cacheKey(pid: state.pid, tty: state.tty)
-            windowStates[key] = state
-            return state
+    /// 按 windowID 查找窗口状态，可选 PID 验证防止跨进程误匹配
+    func findStateByWindowID(_ windowID: UInt32, expectedPID: Int32? = nil) -> WindowState? {
+        let candidates = windowStates.values.filter { $0.windowID == windowID }
+        if let pid = expectedPID {
+            if let state = candidates.first(where: { $0.pid == pid }) {
+                return state
+            }
+            if let state = WindowStateStore.shared.findWindowStateByWindowID(windowID), state.pid == pid {
+                let key = cacheKey(pid: state.pid, tty: state.tty)
+                windowStates[key] = state
+                return state
+            }
+        } else {
+            if let state = candidates.first {
+                return state
+            }
+            if let state = WindowStateStore.shared.findWindowStateByWindowID(windowID) {
+                let key = cacheKey(pid: state.pid, tty: state.tty)
+                windowStates[key] = state
+                return state
+            }
         }
         return nil
     }
