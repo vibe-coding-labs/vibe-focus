@@ -8,9 +8,15 @@ import Foundation
 extension WindowManager {
 
     func saveWindowState(_ state: SavedWindowState, window: AXUIElement? = nil) -> SavedWindowState {
-        let removed = WindowStateStore.shared.evictStatesOlderThan(maxAge: 24 * 60 * 60)
+        let removed = WindowStateStore.shared.evictStatesOlderThan(maxAge: 3600)
         if removed > 0 {
             log("Evicted \(removed) expired state(s) from SQLite")
+        }
+
+        // 限制内存数组最多 10 条，避免无限增长
+        while savedWindowStates.count >= 10 {
+            let oldest = savedWindowStates.removeFirst()
+            WindowStateStore.shared.deleteState(id: oldest.id)
         }
 
         if let window {
