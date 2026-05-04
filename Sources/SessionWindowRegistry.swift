@@ -152,8 +152,20 @@ final class SessionWindowRegistry: ObservableObject {
     }
 
     /// 更新指定窗口的 toggle state（由 WindowManager 调用）
+    /// 当 tty 为 nil 时，自动查找该 PID 已有的行（优先选有 session 的行）
     func updateToggleState(pid: Int32, tty: String?, toggleUpdater: (inout WindowState) -> Void) {
-        let key = cacheKey(pid: pid, tty: tty)
+        let key: String
+        if let tty, !tty.isEmpty {
+            key = cacheKey(pid: pid, tty: tty)
+        } else {
+            // tty 为空 — 查找该 PID 是否已有行（优先有 session_id 的行）
+            let existingKey = windowStates.keys.first(where: { k in
+                k.hasPrefix("\(pid)_") && windowStates[k]?.sessionID != nil
+            }) ?? windowStates.keys.first(where: { k in
+                k.hasPrefix("\(pid)_")
+            })
+            key = existingKey ?? cacheKey(pid: pid, tty: nil)
+        }
         if var state = windowStates[key] {
             toggleUpdater(&state)
             state.updatedAt = Date()
@@ -171,13 +183,22 @@ final class SessionWindowRegistry: ObservableObject {
         }
     }
 
-    /// 按 pid+tty 查找窗口状态
+    /// 按 pid+tty 查找窗口状态（tty 为空时自动查找该 PID 的任意行）
     func findState(pid: Int32, tty: String?) -> WindowState? {
-        let key = cacheKey(pid: pid, tty: tty)
-        if let state = windowStates[key] { return state }
-        if let state = WindowStateStore.shared.findWindowState(pid: pid, tty: tty) {
-            windowStates[key] = state
-            return state
+        if let tty, !tty.isEmpty {
+            let key = cacheKey(pid: pid, tty: tty)
+            if let state = windowStates[key] { return state }
+            if let state = WindowStateStore.shared.findWindowState(pid: pid, tty: tty) {
+                windowStates[key] = state
+                return state
+            }
+        } else {
+            // tty 为空 — 查找该 PID 的任意行（内存优先）
+            if let state = windowStates.values.first(where: { $0.pid == pid }) {
+                return state
+            }
+            // fallback: SQLite 中查找（无法按 PID 查全部，逐个试）
+            return nil
         }
         return nil
     }
