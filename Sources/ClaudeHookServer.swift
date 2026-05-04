@@ -419,7 +419,12 @@ final class ClaudeHookServer: ObservableObject {
                 )
             )
         }
-        SessionWindowRegistry.shared.bind(sessionID: payload.sessionID, windowIdentity: identity)
+        SessionWindowRegistry.shared.bind(
+            sessionID: payload.sessionID,
+            windowIdentity: identity,
+            terminalTTY: payload.terminalCtx?.tty,
+            terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID
+        )
         handledRequestCount += 1
         log(
             "[handleSessionStart] bind succeeded",

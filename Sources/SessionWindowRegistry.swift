@@ -26,8 +26,8 @@ final class SessionWindowRegistry: ObservableObject {
         log("SessionWindowRegistry.init exit", level: .debug, fields: ["activeCount": String(activeBindingCount), "completedCount": String(completedBindingCount)])
     }
 
-    func bind(sessionID: String, windowIdentity: WindowIdentity) {
-        log("SessionWindowRegistry.bind entry", level: .debug, fields: ["sessionID": sessionID, "appName": windowIdentity.appName ?? "nil", "title": windowIdentity.title ?? "nil"])
+    func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil) {
+        log("SessionWindowRegistry.bind entry", level: .debug, fields: ["sessionID": sessionID, "appName": windowIdentity.appName ?? "nil", "title": windowIdentity.title ?? "nil", "terminalTTY": terminalTTY ?? "nil"])
         let now = Date()
         let normalizedSession = normalizeSessionID(sessionID)
         guard !normalizedSession.isEmpty else {
@@ -51,8 +51,8 @@ final class SessionWindowRegistry: ObservableObject {
                 lastSeenAt: now,
                 isCompleted: false,
                 completedAt: nil,
-                terminalTTY: nil,
-                terminalSessionID: nil
+                terminalTTY: terminalTTY,
+                terminalSessionID: terminalSessionID
             )
         }
         lastEventDescription = "SessionStart 绑定窗口：\(windowIdentity.appName ?? "Unknown") / \(windowIdentity.title ?? "Untitled")"
