@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 
 @MainActor
 final class SessionWindowRegistry: ObservableObject {
@@ -71,6 +72,58 @@ final class SessionWindowRegistry: ObservableObject {
         let result = bindings[normalizedSession]
         log("SessionWindowRegistry.binding lookup exit", level: .debug, fields: ["normalizedSession": normalizedSession, "found": String(result != nil)])
         return result
+    }
+
+    /// 验证 binding 的窗口仍然属于同一个进程，且 TTY（如果有）仍然匹配
+    /// 返回 true 表示 binding 有效，可以安全地操作窗口
+    func verifyBinding(_ binding: SessionWindowBinding) -> Bool {
+        let windowID = binding.windowIdentity.windowID
+        let expectedPID = binding.windowIdentity.pid
+
+        // 检查 1: PID 是否仍然存在
+        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: binding.windowIdentity.bundleIdentifier ?? "")
+        let pidMatches = runningApps.contains { $0.processIdentifier == expectedPID }
+        if !pidMatches {
+            // 也检查 raw PID（bundleIdentifier 可能为 nil）
+            let pidExists = kill(expectedPID, 0) == 0
+            if !pidExists {
+                log(
+                    "[SessionWindowRegistry] verifyBinding FAILED: PID \(expectedPID) no longer exists",
+                    level: .warn,
+                    fields: ["sessionID": binding.sessionID, "pid": String(expectedPID)]
+                )
+                return false
+            }
+        }
+
+        // 检查 2: windowID 对应的窗口 PID 是否匹配
+        let options: CGWindowListOption = [.optionOnScreenOnly]
+        if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
+            if let matchedWindow = windowList.first(where: { ($0[kCGWindowNumber as String] as? UInt32) == windowID }) {
+                let actualPID = matchedWindow[kCGWindowOwnerPID as String] as? Int32
+                if actualPID != expectedPID {
+                    log(
+                        "[SessionWindowRegistry] verifyBinding FAILED: window PID mismatch (expected \(expectedPID), got \(actualPID ?? 0))",
+                        level: .warn,
+                        fields: ["sessionID": binding.sessionID, "windowID": String(windowID)]
+                    )
+                    return false
+                }
+            } else {
+                log(
+                    "[SessionWindowRegistry] verifyBinding FAILED: windowID \(windowID) not found in window list",
+                    level: .warn,
+                    fields: ["sessionID": binding.sessionID, "windowID": String(windowID)]
+                )
+                return false
+            }
+        }
+
+        log(
+            "[SessionWindowRegistry] verifyBinding PASSED for session \(binding.sessionID)",
+            fields: ["windowID": String(windowID), "pid": String(expectedPID)]
+        )
+        return true
     }
 
     func markCompleted(sessionID: String) {
