@@ -235,7 +235,7 @@ final class HookEventHandler {
         }
 
         // Fallback: 按 windowID 查找
-        if let windowState = SessionWindowRegistry.shared.findStateByWindowID(identity.windowID) {
+        if let windowState = SessionWindowRegistry.shared.findStateByWindowID(identity.windowID, expectedPID: identity.pid) {
             if windowState.hasToggleState {
                 guard let mainScreen = wm.getMainScreen() else {
                     return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))

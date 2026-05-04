@@ -855,7 +855,7 @@ class WindowManager {
         }
 
         // 聚焦窗口在主屏 → 检查 WindowState 中是否有 toggle state 可以恢复
-        if let wsState = SessionWindowRegistry.shared.findStateByWindowID(currentWindowID) {
+        if let wsState = SessionWindowRegistry.shared.findStateByWindowID(currentWindowID, expectedPID: frontApp.processIdentifier) {
             if wsState.hasToggleState {
                 guard let mainScreen = getMainScreen() else { return false }
                 if wsState.isCorrupted(mainScreenFrame: mainScreen.frame) {
