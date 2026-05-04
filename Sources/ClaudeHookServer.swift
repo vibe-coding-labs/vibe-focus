@@ -831,64 +831,45 @@ final class ClaudeHookServer: ObservableObject {
             )
         }
 
-        // 尝试从 SessionStart 绑定中找窗口
-        // 如果找不到（SessionStart HTTP hook 是 Claude Code 已知 bug，可能不触发），
-        // 尝试通过终端上下文精确定位，最后回退到 cwd 匹配
-        let binding: SessionWindowBinding
-        if let existingBinding = SessionWindowRegistry.shared.binding(for: payload.sessionID) {
-            binding = existingBinding
-        } else if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
-            // 新路径：通过 hook 辅助脚本捕获的终端上下文（TTY/PPID）精确定位窗口
+        // 严格检查：必须有 binding 且通过验证
+        guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+            unmatchedSessionCount += 1
             log(
-                "[ClaudeHookServer] \(triggerName) no binding, trying terminal context",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "tty": terminalCtx.tty ?? "nil",
-                    "ppid": terminalCtx.ppid ?? "nil",
-                    "termSessionID": terminalCtx.termSessionID ?? "nil"
-                ]
+                "[ClaudeHookServer] \(triggerName) no binding found, skipping",
+                level: .warn,
+                fields: ["sessionID": payload.sessionID]
             )
-            guard let ctxIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) else {
-                unmatchedSessionCount += 1
-                SessionWindowRegistry.shared.setLastEventDescription(
-                    "\(triggerName) 终端上下文匹配失败：\(payload.sessionID)"
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "no_binding_skip",
+                    message: "No session binding, skipping window move",
+                    sessionID: payload.sessionID, handled: false
                 )
-                log(
-                    "[ClaudeHookServer] \(triggerName) terminal context match failed",
-                    level: .warn,
-                    fields: ["sessionID": payload.sessionID]
-                )
-                // 回退到 cwd 匹配
-                return fallbackToCWDMatching(payload: payload, triggerName: triggerName)
-            }
-
-            log(
-                "[ClaudeHookServer] \(triggerName) matched via terminal context",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "app": ctxIdentity.appName ?? "unknown",
-                    "title": ctxIdentity.title ?? "untitled",
-                    "windowID": String(ctxIdentity.windowID)
-                ]
             )
-
-            let now = Date()
-            binding = SessionWindowBinding(
-                sessionID: payload.sessionID,
-                windowIdentity: ctxIdentity,
-                createdAt: now,
-                lastSeenAt: now,
-                isCompleted: false,
-                completedAt: nil,
-                terminalTTY: payload.terminalCtx?.tty,
-                terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID
-            )
-        } else {
-            // 回退：通过 cwd 项目名匹配窗口（旧路径，保留兼容）
-            return fallbackToCWDMatching(payload: payload, triggerName: triggerName)
         }
 
-        // 有 binding（来自 SessionStart 绑定或终端上下文匹配），执行窗口移动
+        guard SessionWindowRegistry.shared.verifyBinding(binding) else {
+            log(
+                "[ClaudeHookServer] \(triggerName) binding verification failed, skipping",
+                level: .warn,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "windowID": String(binding.windowIdentity.windowID),
+                    "pid": String(binding.windowIdentity.pid)
+                ]
+            )
+            handledRequestCount += 1
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "binding_verification_failed",
+                    message: "Binding verification failed, skipping window move",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
         return moveBindingToMainScreen(binding: binding, payload: payload, triggerName: triggerName)
     }
 
@@ -905,106 +886,6 @@ final class ClaudeHookServer: ObservableObject {
         if let appName, terminalAppNames.contains(appName) { return true }
         if let bundleIdentifier, terminalAppNames.contains(bundleIdentifier) { return true }
         return false
-    }
-
-    /// cwd 匹配回退：当没有 SessionStart 绑定也没有终端上下文时，通过 cwd 项目名匹配窗口
-    private func fallbackToCWDMatching(
-        payload: ClaudeHookPayload,
-        triggerName: String
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        log(
-            "[ClaudeHookServer] \(triggerName) no binding found, falling back to cwd matching",
-            fields: [
-                "sessionID": payload.sessionID,
-                "cwd": payload.cwd ?? "nil"
-            ]
-        )
-        guard let focusedIdentity = WindowManager.shared.findClaudeCodeWindow(cwd: payload.cwd) else {
-            unmatchedSessionCount += 1
-            SessionWindowRegistry.shared.setLastEventDescription(
-                "\(triggerName) 未命中绑定且无前台窗口：\(payload.sessionID)"
-            )
-            log(
-                "[ClaudeHookServer] \(triggerName) no binding and no focused window",
-                level: .warn,
-                fields: ["sessionID": payload.sessionID]
-            )
-            return (
-                404,
-                ClaudeHookResponse(
-                    ok: false, code: "binding_not_found",
-                    message: "No bound window for session and no focused window available",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        // 安全检查：findClaudeCodeWindow 的 Strategy 4（焦点窗口回退）
-        // 可能返回非终端/IDE 窗口（Chrome、飞书等），这类窗口不应被自动移动
-        let isTerminalApp = Self.isTerminalOrIDEApp(
-            appName: focusedIdentity.appName,
-            bundleIdentifier: focusedIdentity.bundleIdentifier
-        )
-
-        // 如果 cwd 匹配到了非终端窗口（如 Chrome），检查窗口标题是否包含 cwd 项目名
-        // 只有标题明确包含项目名时才认为是 Claude Code 相关窗口
-        if !isTerminalApp {
-            let projectName = payload.cwd?
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                .components(separatedBy: "/")
-                .last?
-                .lowercased()
-            let titleContainsProject = projectName.map { p in
-                (focusedIdentity.title ?? "").lowercased().contains(p)
-            } ?? false
-
-            if !titleContainsProject {
-                unmatchedSessionCount += 1
-                log(
-                    "[ClaudeHookServer] \(triggerName) cwd fallback matched non-terminal app without project name in title, skipping",
-                    level: .warn,
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "app": focusedIdentity.appName ?? "unknown",
-                        "title": focusedIdentity.title ?? "untitled",
-                        "windowID": String(focusedIdentity.windowID)
-                    ]
-                )
-                return (
-                    404,
-                    ClaudeHookResponse(
-                        ok: false, code: "non_terminal_window",
-                        message: "Matched non-terminal window without project name correlation",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            }
-        }
-
-        log(
-            "[ClaudeHookServer] \(triggerName) using cwd fallback",
-            fields: [
-                "sessionID": payload.sessionID,
-                "app": focusedIdentity.appName ?? "unknown",
-                "title": focusedIdentity.title ?? "untitled",
-                "windowID": String(focusedIdentity.windowID),
-                "isTerminalApp": String(isTerminalApp)
-            ]
-        )
-
-        let now = Date()
-        let binding = SessionWindowBinding(
-            sessionID: payload.sessionID,
-            windowIdentity: focusedIdentity,
-            createdAt: now,
-            lastSeenAt: now,
-            isCompleted: false,
-            completedAt: nil,
-            terminalTTY: payload.terminalCtx?.tty,
-            terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID
-        )
-
-        return moveBindingToMainScreen(binding: binding, payload: payload, triggerName: triggerName)
     }
 
     /// 执行窗口移动：将绑定窗口移到主屏幕并最大化
