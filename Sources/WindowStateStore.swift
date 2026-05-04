@@ -138,19 +138,32 @@ final class WindowStateStore {
     func findState(windowID: UInt32, sessionID: String?) -> WindowManager.SavedWindowState? {
         guard let db else { return nil }
         var stmt: OpaquePointer?
-        let sql: String
-        if let sessionID, !sessionID.isEmpty {
-            sql = "SELECT data FROM window_states WHERE window_id = ? AND session_id = ? ORDER BY saved_at DESC LIMIT 1;"
-        } else {
-            sql = "SELECT data FROM window_states WHERE window_id = ? ORDER BY saved_at DESC LIMIT 1;"
-        }
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_int64(stmt, 1, Int64(windowID))
+        // 优先 windowID + sessionID 精确匹配
         if let sessionID, !sessionID.isEmpty {
+            let sql = "SELECT data FROM window_states WHERE window_id = ? AND session_id = ? ORDER BY saved_at DESC LIMIT 1;"
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, Int64(windowID))
             sqlite3_bind_text(stmt, 2, sessionID, -1, SQLITE_TRANSIENT)
+
+            if sqlite3_step(stmt) == SQLITE_ROW,
+               let cStr = sqlite3_column_text(stmt, 0) {
+                let jsonString = String(cString: cStr)
+                if let data = jsonString.data(using: .utf8),
+                   let state = try? JSONDecoder().decode(WindowManager.SavedWindowState.self, from: data) {
+                    return state
+                }
+            }
+            sqlite3_finalize(stmt)
+            stmt = nil
         }
+
+        // Fallback: 仅 windowID 匹配（session_id 为空或历史数据）
+        let fallbackSQL = "SELECT data FROM window_states WHERE window_id = ? ORDER BY saved_at DESC LIMIT 1;"
+        guard sqlite3_prepare_v2(db, fallbackSQL, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(windowID))
 
         guard sqlite3_step(stmt) == SQLITE_ROW,
               let cStr = sqlite3_column_text(stmt, 0) else { return nil }
@@ -172,6 +185,30 @@ final class WindowStateStore {
         defer { sqlite3_finalize(stmt) }
 
         sqlite3_bind_text(stmt, 1, appName, -1, SQLITE_TRANSIENT)
+        if let sessionID, !sessionID.isEmpty {
+            sqlite3_bind_text(stmt, 2, sessionID, -1, SQLITE_TRANSIENT)
+        }
+
+        guard sqlite3_step(stmt) == SQLITE_ROW,
+              let cStr = sqlite3_column_text(stmt, 0) else { return nil }
+        let jsonString = String(cString: cStr)
+        guard let data = jsonString.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(WindowManager.SavedWindowState.self, from: data)
+    }
+
+    func findStateByPID(pid: Int32, sessionID: String?) -> WindowManager.SavedWindowState? {
+        guard let db else { return nil }
+        var stmt: OpaquePointer?
+        let sql: String
+        if let sessionID, !sessionID.isEmpty {
+            sql = "SELECT data FROM window_states WHERE pid = ? AND session_id = ? ORDER BY saved_at DESC LIMIT 1;"
+        } else {
+            sql = "SELECT data FROM window_states WHERE pid = ? ORDER BY saved_at DESC LIMIT 1;"
+        }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_int64(stmt, 1, Int64(pid))
         if let sessionID, !sessionID.isEmpty {
             sqlite3_bind_text(stmt, 2, sessionID, -1, SQLITE_TRANSIENT)
         }

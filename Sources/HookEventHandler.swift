@@ -123,14 +123,51 @@ final class HookEventHandler {
             )
         }
 
-        // 严格检查：必须有 binding 且 binding 必须通过验证
-        guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+        // 优先使用 binding，无 binding 时通过 terminal context 动态查找窗口
+        let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID)
+        let identity: WindowIdentity?
+
+        if let binding {
+            guard SessionWindowRegistry.shared.verifyBinding(binding) else {
+                log(
+                    "[HookEventHandler] UserPromptSubmit binding verification failed, skipping",
+                    level: .warn,
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "windowID": String(binding.windowIdentity.windowID),
+                        "pid": String(binding.windowIdentity.pid)
+                    ]
+                )
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "binding_verification_failed",
+                        message: "Binding verification failed, skipping restore",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+            identity = binding.windowIdentity
+        } else if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+            // 无 binding（SessionStart 可能失败过），通过 terminal context 动态查找
+            identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            if let identity {
+                log(
+                    "[HookEventHandler] UserPromptSubmit no binding, resolved window via terminal context",
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "resolvedWindowID": String(identity.windowID),
+                        "app": identity.appName ?? "unknown"
+                    ]
+                )
+            }
+        } else {
             log(
-                "[HookEventHandler] UserPromptSubmit no binding found, skipping",
+                "[HookEventHandler] UserPromptSubmit no binding and no terminal context, skipping",
                 level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
-                    "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
+                    "sqliteStatesCount": String(WindowStateStore.shared.statesCount)
                 ]
             )
             return (
@@ -143,29 +180,24 @@ final class HookEventHandler {
             )
         }
 
-        // 验证 binding：确认窗口 PID + windowID 仍然有效
-        guard SessionWindowRegistry.shared.verifyBinding(binding) else {
+        guard let identity else {
             log(
-                "[HookEventHandler] UserPromptSubmit binding verification failed, skipping",
+                "[HookEventHandler] UserPromptSubmit could not resolve window identity",
                 level: .warn,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "windowID": String(binding.windowIdentity.windowID),
-                    "pid": String(binding.windowIdentity.pid)
-                ]
+                fields: ["sessionID": payload.sessionID]
             )
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "binding_verification_failed",
-                    message: "Binding verification failed, skipping restore",
+                    ok: true, code: "no_binding_skip",
+                    message: "Could not resolve window identity",
                     sessionID: payload.sessionID, handled: false
                 )
             )
         }
 
-        let targetWindowID = binding.windowIdentity.windowID
-        let targetPID = binding.windowIdentity.pid
+        let targetWindowID = identity.windowID
+        let targetPID = identity.pid
         let store = WindowStateStore.shared
         let wm = WindowManager.shared
 
@@ -179,28 +211,85 @@ final class HookEventHandler {
             ]
         )
 
-        // 优先级 1: windowID + session 精确匹配
-        if let matchedState = store.findState(windowID: targetWindowID, sessionID: payload.sessionID) {
-            if !wm.isSavedStateCorrupted(matchedState) {
-                return performRestore(
-                    payload: payload, matchedState: matchedState,
-                    matchLevel: "exact_binding_match_session_scoped"
-                )
-            } else {
-                wm.clearSavedWindowState(id: matchedState.id)
+        // === 多级匹配策略 ===
+        // 问题：toggle 保存的 saved state 的 windowID 可能与 session binding 的 windowID 不同
+        // （toggle 移动的是焦点窗口，binding 绑定的是 SessionStart 时的窗口）
+        // 解决：从精确匹配逐步降级到模糊匹配
+
+        let isOnMain = wm.isWindowOnMainScreen(windowID: targetWindowID)
+
+        // 优先级 1: windowID 精确匹配（同 session）
+        if isOnMain {
+            if let matchedState = store.findState(windowID: targetWindowID, sessionID: payload.sessionID) {
+                if !wm.isSavedStateCorrupted(matchedState) {
+                    return performRestore(
+                        payload: payload, matchedState: matchedState,
+                        matchLevel: "exact_windowid_session_scoped"
+                    )
+                } else {
+                    wm.clearSavedWindowState(id: matchedState.id)
+                }
             }
         }
 
-        // 优先级 2: 窗口在主屏 + 同会话同 app 的 saved state
-        let isOnMain = wm.isWindowOnMainScreen(windowID: targetWindowID)
+        // 优先级 2: windowID 精确匹配（任意 session）
+        if isOnMain {
+            if let matchedState = store.findState(windowID: targetWindowID, sessionID: nil) {
+                if !wm.isSavedStateCorrupted(matchedState) {
+                    return performRestore(
+                        payload: payload, matchedState: matchedState,
+                        matchLevel: "exact_windowid_any_session"
+                    )
+                } else {
+                    wm.clearSavedWindowState(id: matchedState.id)
+                }
+            }
+        }
+
+        // 优先级 3: PID 匹配（同 session）
+        // toggle 保存的窗口可能和 binding 的窗口不同（同 app 不同窗口 ID）
+        if isOnMain {
+            if let matchedState = store.findStateByPID(
+                pid: targetPID,
+                sessionID: payload.sessionID
+            ) {
+                if !wm.isSavedStateCorrupted(matchedState) {
+                    return performRestore(
+                        payload: payload, matchedState: matchedState,
+                        matchLevel: "pid_session_scoped"
+                    )
+                } else {
+                    wm.clearSavedWindowState(id: matchedState.id)
+                }
+            }
+        }
+
+        // 优先级 4: PID 匹配（任意 session）
+        if isOnMain {
+            if let matchedState = store.findStateByPID(
+                pid: targetPID,
+                sessionID: nil
+            ) {
+                if !wm.isSavedStateCorrupted(matchedState) {
+                    return performRestore(
+                        payload: payload, matchedState: matchedState,
+                        matchLevel: "pid_any_session"
+                    )
+                } else {
+                    wm.clearSavedWindowState(id: matchedState.id)
+                }
+            }
+        }
+
+        // 优先级 5: appName 匹配（同 session）
         if isOnMain {
             if let appState = store.findStateByApp(
-                appName: binding.windowIdentity.appName ?? "",
+                appName: identity.appName ?? "",
                 sessionID: payload.sessionID
             ) {
                 if !wm.isSavedStateCorrupted(appState) {
                     log(
-                        "[HookEventHandler] UserPromptSubmit session-scoped app fallback (SQLite)",
+                        "[HookEventHandler] UserPromptSubmit app-name fallback (SQLite)",
                         fields: [
                             "sessionID": payload.sessionID,
                             "stateApp": appState.appName ?? "unknown",
@@ -209,7 +298,30 @@ final class HookEventHandler {
                     )
                     return performRestore(
                         payload: payload, matchedState: appState,
-                        matchLevel: "app_fallback_session_scoped"
+                        matchLevel: "appname_session_scoped"
+                    )
+                }
+            }
+        }
+
+        // 优先级 6: appName 匹配（任意 session）
+        if isOnMain {
+            if let appState = store.findStateByApp(
+                appName: identity.appName ?? "",
+                sessionID: nil
+            ) {
+                if !wm.isSavedStateCorrupted(appState) {
+                    log(
+                        "[HookEventHandler] UserPromptSubmit app-name fallback any session (SQLite)",
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "stateApp": appState.appName ?? "unknown",
+                            "bindingWindowID": String(targetWindowID)
+                        ]
+                    )
+                    return performRestore(
+                        payload: payload, matchedState: appState,
+                        matchLevel: "appname_any_session"
                     )
                 }
             }
@@ -219,7 +331,10 @@ final class HookEventHandler {
             "[HookEventHandler] UserPromptSubmit no matching state in SQLite",
             fields: [
                 "sessionID": payload.sessionID,
-                "windowOnMainScreen": String(isOnMain)
+                "windowOnMainScreen": String(isOnMain),
+                "bindingWindowID": String(targetWindowID),
+                "bindingPID": String(targetPID),
+                "bindingAppName": identity.appName ?? "nil"
             ]
         )
         return (
