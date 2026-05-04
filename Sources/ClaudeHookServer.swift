@@ -18,6 +18,11 @@ final class ClaudeHookServer: ObservableObject {
     private var activePort: Int?
     private var configuredToken: String?
 
+    /// 记录每个 session 最后收到 UserPromptSubmit 的时间，用于 Stop 防抖
+    private var lastActivityBySession: [String: Date] = [:]
+    /// Stop 防抖阈值：超过此时间无活动才视为真正结束
+    private let stopDebounceInterval: TimeInterval = 30.0
+
     private init() {}
 
     func applyPreferences() {
@@ -449,6 +454,8 @@ final class ClaudeHookServer: ObservableObject {
     private func handleUserPromptSubmit(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        lastActivityBySession[payload.sessionID] = Date()
+
         log(
             "[ClaudeHookServer] UserPromptSubmit triggered",
             fields: [
@@ -762,6 +769,34 @@ final class ClaudeHookServer: ObservableObject {
     private func handleStop(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        // 防抖：如果 session 最近有 UserPromptSubmit，Stop 是中间态不是真正结束
+        if let lastActivity = lastActivityBySession[payload.sessionID] {
+            let elapsed = Date().timeIntervalSince(lastActivity)
+            if elapsed < stopDebounceInterval {
+                log(
+                    "[ClaudeHookServer] Stop debounced — session was active \(String(format: "%.1f", elapsed))s ago (threshold: \(String(format: "%.0f", stopDebounceInterval))s)",
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "elapsedSinceActivity": String(format: "%.1f", elapsed),
+                        "debounceThreshold": String(format: "%.0f", stopDebounceInterval)
+                    ]
+                )
+                SessionWindowRegistry.shared.touch(
+                    sessionID: payload.sessionID,
+                    message: "Stop 收到（防抖中：会话仍活跃）"
+                )
+                handledRequestCount += 1
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "stop_debounced",
+                        message: "Stop debounced — session still active",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+        }
+
         guard ClaudeHookPreferences.triggerOnStop else {
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
@@ -781,6 +816,9 @@ final class ClaudeHookServer: ObservableObject {
                 )
             )
         }
+
+        // 防抖通过 + trigger 已启用 → 清理活动记录
+        lastActivityBySession.removeValue(forKey: payload.sessionID)
         return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
     }
 
