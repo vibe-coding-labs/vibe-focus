@@ -111,6 +111,14 @@ struct WindowState: Codable, Equatable {
         return mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
     }
 
+    /// 窗口当前位置是否在 targetFrame 附近（容差 150px）
+    /// 用于验证被恢复的窗口确实在之前被 toggle 到的位置
+    func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 150) -> Bool {
+        guard let tgt = targetFrame else { return true }
+        return abs(currentFrame.origin.x - tgt.origin.x) <= tolerance &&
+               abs(currentFrame.origin.y - tgt.origin.y) <= tolerance
+    }
+
     /// 兼容 WindowManager.WindowToken 的构造
     var windowToken: WindowManager.WindowToken? {
         guard let wid = windowID else { return nil }
