@@ -37,6 +37,95 @@ struct SessionWindowBinding: Codable, Equatable {
     let terminalSessionID: String?
 }
 
+/// 统一的窗口状态记录 — 对应 SQLite `windows` 表的一行
+/// 合并了原来的 SessionWindowBinding + SavedWindowState
+struct WindowState: Codable, Equatable {
+    // MARK: - Primary Key
+    let pid: Int32
+    var tty: String?              // 终端 TTY 路径 (如 /dev/ttys003)，非终端窗口为 nil
+
+    // MARK: - Window Identity
+    var windowID: UInt32?         // CGWindowNumber
+    var axWindowNumber: Int?
+    var appName: String?
+    var bundleIdentifier: String?
+    var title: String?
+
+    // MARK: - Terminal Context
+    var termSessionID: String?
+    var itermSessionID: String?
+    var kittyWindowID: String?
+    var weztermPane: String?
+    var envWindowID: String?
+
+    // MARK: - Claude Session
+    var sessionID: String?
+    var cwd: String?
+    var model: String?
+
+    // MARK: - Toggle State (窗口位置信息)
+    var origX: CGFloat?
+    var origY: CGFloat?
+    var origW: CGFloat?
+    var origH: CGFloat?
+    var targetX: CGFloat?
+    var targetY: CGFloat?
+    var targetW: CGFloat?
+    var targetH: CGFloat?
+    var sourceSpace: Int?
+    var sourceDisplay: Int?
+    var sourceYabaiDisp: Int?
+    var sourceDispSpace: Int?
+    var targetDisplay: Int?
+    var toggleReason: String?
+    var toggledAt: Date?
+
+    // MARK: - Lifecycle
+    var isCompleted: Bool
+    var completedAt: Date?
+    let createdAt: Date
+    var updatedAt: Date
+
+    /// toggle state 是否已填充（有 origX 且有 targetX 表示曾被 toggle 保存过）
+    var hasToggleState: Bool {
+        origX != nil && targetX != nil
+    }
+
+    /// 获取原始 frame
+    var originalFrame: CGRect? {
+        guard let x = origX, let y = origY, let w = origW, let h = origH else { return nil }
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    /// 获取目标 frame
+    var targetFrame: CGRect? {
+        guard let x = targetX, let y = targetY, let w = targetW, let h = targetH else { return nil }
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    /// 是否被污染（originalFrame 和 targetFrame 都在主屏幕上）
+    func isCorrupted(mainScreenFrame: CGRect) -> Bool {
+        guard let orig = originalFrame, let tgt = targetFrame else { return false }
+        let origCenter = CGPoint(x: orig.midX, y: orig.midY)
+        let tgtCenter = CGPoint(x: tgt.midX, y: tgt.midY)
+        return mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
+    }
+
+    /// 兼容 WindowManager.WindowToken 的构造
+    var windowToken: WindowManager.WindowToken? {
+        guard let wid = windowID else { return nil }
+        return WindowManager.WindowToken(
+            stateID: "\(pid)_\(tty ?? "none")",
+            pid: pid,
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            windowID: wid,
+            windowNumber: axWindowNumber,
+            title: title
+        )
+    }
+}
+
 /// Claude Code hook 辅助脚本捕获的终端上下文信息
 /// 用于精确定位 hook 事件对应的终端窗口，解决多工作区/多实例场景下的窗口匹配问题
 struct TerminalContext: Codable, Equatable {

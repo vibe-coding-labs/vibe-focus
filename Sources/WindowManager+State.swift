@@ -17,6 +17,13 @@ extension WindowManager {
             windowElementsByStateID[state.id] = window
         }
 
+        // 保持内存数组与 SQLite 同步
+        if let idx = savedWindowStates.firstIndex(where: { $0.id == state.id }) {
+            savedWindowStates[idx] = state
+        } else {
+            savedWindowStates.append(state)
+        }
+
         WindowStateStore.shared.saveState(state)
         log(
             "Saved window state to SQLite: \(state.id)",
@@ -42,6 +49,7 @@ extension WindowManager {
         guard let id else { return }
         WindowStateStore.shared.deleteState(id: id)
         windowElementsByStateID.removeValue(forKey: id)
+        savedWindowStates.removeAll { $0.id == id }
         log("Cleared window state from SQLite: \(id)")
     }
 

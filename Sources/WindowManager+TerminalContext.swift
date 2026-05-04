@@ -108,8 +108,17 @@ extension WindowManager {
             return match
         }
 
+        // Fallback: Terminal.app 的 CGWindowList 无窗口标题，用 AppleScript 按 TTY 查窗口 ID
+        if let match = matchTerminalWindowByAppleScript(tty: tty, terminalPID: terminalPID, windows: windows) {
+            log(
+                "[WindowManager] findWindowByTerminalContext: matched window by AppleScript TTY lookup",
+                fields: ["tty": tty, "windowID": String(match.windowID)]
+            )
+            return match
+        }
+
         log(
-            "[WindowManager] findWindowByTerminalContext: TTY process matching failed among \(windows.count) windows",
+            "[WindowManager] findWindowByTerminalContext: all matching methods failed among \(windows.count) windows",
             level: .warn,
             fields: ["tty": tty, "terminalPID": String(terminalPID)]
         )
@@ -128,7 +137,10 @@ extension WindowManager {
             let nameOutput = runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(currentPID)])
             let name = nameOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-            if terminalAppNames.contains(name) {
+            // ps -o comm= 对 macOS app bundle 返回完整路径（如 /System/.../Terminal.app/Contents/MacOS/Terminal）
+            // 需要取 lastPathComponent 才能与终端名匹配
+            let basename = URL(fileURLWithPath: name).lastPathComponent
+            if terminalAppNames.contains(basename) {
                 return currentPID
             }
 
@@ -177,6 +189,123 @@ extension WindowManager {
             ))
         }
         return results
+    }
+
+    /// 通过 Shell 命令查询 Terminal.app 窗口，按 TTY 精确匹配
+    /// Terminal.app 不在 CGWindowList 中暴露窗口标题，用 osascript 获取 TTY→窗口ID 映射
+    /// 如果 osascript 权限不足，则按 TTY 进程在 CGWindowList 窗口中的顺序推断
+    private func matchTerminalWindowByAppleScript(tty: String, terminalPID: Int32, windows: [WindowIdentity]) -> WindowIdentity? {
+        let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+
+        // 方法 1: 尝试 osascript 获取 Terminal 窗口 TTY 映射
+        let script = """
+        osascript -e 'tell application "Terminal"
+            set winCount to count of windows
+            repeat with i from 1 to winCount
+                try
+                    repeat with tb in tabs of window i
+                        if tty of tb is "\(fullTTY)" then
+                            return (id of window i) as text
+                        end if
+                    end repeat
+                end try
+            end repeat
+            return ""
+        end tell'
+        """
+        let scriptResult = runShellCommand("/bin/bash", args: ["-c", script])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if !scriptResult.isEmpty, let windowID = UInt32(scriptResult) {
+            log(
+                "[WindowManager] matchTerminalWindowByShellScript: found window by osascript",
+                fields: ["tty": fullTTY, "windowID": String(windowID)]
+            )
+            if let match = windows.first(where: { $0.windowID == windowID }) {
+                return match
+            }
+            let appName = NSRunningApplication(processIdentifier: terminalPID)?.localizedName ?? "Terminal"
+            let bundleID = NSRunningApplication(processIdentifier: terminalPID)?.bundleIdentifier
+            return WindowIdentity(
+                windowID: windowID,
+                pid: terminalPID,
+                bundleIdentifier: bundleID,
+                appName: appName,
+                windowNumber: nil,
+                title: nil,
+                capturedAt: Date()
+            )
+        }
+
+        // 方法 2: osascript 权限不足时，用 TTY 上的 login 进程的 SID 推断窗口索引
+        // Terminal.app 的每个 tab 有一个 login→zsh 进程链，按创建顺序对应窗口
+        // 通过 ps 获取所有属于 Terminal 的 TTY，按 ttys 编号排序，推断窗口顺序
+        log(
+            "[WindowManager] matchTerminalWindowByShellScript: osascript failed, trying TTY ordering fallback",
+            level: .debug,
+            fields: ["tty": fullTTY, "terminalPID": String(terminalPID)]
+        )
+
+        // 获取 Terminal 下所有 TTY
+        // Terminal 主进程没有 TTY，用 lsof 找它打开的 tty 设备
+        let lsofOutput = runShellCommand("/usr/sbin/lsof", args: ["-p", String(terminalPID), "-c", "Terminal"])
+
+        // 收集该 PID 的所有 ttys
+        var ttys: [String] = []
+        if let lsofOutput {
+            for line in lsofOutput.components(separatedBy: "\n") {
+                if line.contains("tty") || line.contains("/dev/ttys") {
+                    let parts = line.split(separator: " ").filter { $0.hasPrefix("/dev/ttys") || $0.hasPrefix("ttys") }
+                    for part in parts {
+                        let tty = part.hasPrefix("/dev/") ? String(part) : "/dev/\(part)"
+                        if !ttys.contains(tty) {
+                            ttys.append(tty)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 如果 lsof 没结果，用 ps 找该 PID 下所有子进程的 TTY
+        if ttys.isEmpty {
+            let childTTYs = runShellCommand("/bin/ps", args: ["-E", "-o", "tty=", "-p", String(terminalPID)]) ?? ""
+            for part in childTTYs.components(separatedBy: .whitespaces) {
+                let trimmed = part.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("ttys") || trimmed.hasPrefix("/dev/ttys") {
+                    let tty = trimmed.hasPrefix("/") ? trimmed : "/dev/\(trimmed)"
+                    if !ttys.contains(tty) {
+                        ttys.append(tty)
+                    }
+                }
+            }
+        }
+
+        if ttys.isEmpty {
+            log(
+                "[WindowManager] matchTerminalWindowByShellScript: no TTYs found for Terminal PID",
+                level: .debug,
+                fields: ["terminalPID": String(terminalPID)]
+            )
+            return nil
+        }
+
+        // 排序 TTY 并找到目标 TTY 的索引
+        ttys.sort()
+        guard let targetIndex = ttys.firstIndex(of: fullTTY) else {
+            log(
+                "[WindowManager] matchTerminalWindowByShellScript: target TTY not in Terminal's TTY list",
+                level: .debug,
+                fields: ["tty": fullTTY, "availableTTYs": ttys.joined(separator: ",")]
+            )
+            return nil
+        }
+
+        // 按窗口 ID 排序（Terminal 的窗口 ID 通常与 tab 创建顺序一致）
+        let sortedWindows = windows.sorted { $0.windowID < $1.windowID }
+        if targetIndex < sortedWindows.count {
+            return sortedWindows[targetIndex]
+        }
+
+        return nil
     }
 
     /// 通过 TTY 上的进程 command 在候选窗口中精确匹配

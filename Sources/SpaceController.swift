@@ -220,6 +220,61 @@ final class SpaceController: ObservableObject {
         return space.index
     }
 
+    /// 在 AX frame 设置后，确保窗口在正确 Space
+    /// 策略：1) 先用 NativeSpaceBridge 切到目标 Space 2) 然后再 AX 设置 frame
+    /// 这样 macOS 会把窗口放到用户当前活跃的副屏 Space
+    /// 如果窗口已经在副屏但 Space 不对，尝试 NativeSpaceBridge.moveWindow
+    func moveWindowToSpace(windowID: UInt32, targetSpace: Int, operationID: String?) -> Bool {
+        let op = operationID ?? "none"
+
+        // 策略 1: 用 NativeSpaceBridge.moveWindow 移动窗口到目标 Space
+        if let spaceID = nativeSpaceID(forYabaiIndex: targetSpace) {
+            log(
+                "[SpaceController] moveWindowToSpace: trying NativeSpaceBridge.moveWindow",
+                fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace), "nativeSpaceID": String(spaceID)]
+            )
+
+            NativeSpaceBridge.resetFailureCache()
+
+            if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
+                // 等待生效，最多 1 秒
+                for attempt in 1...10 {
+                    usleep(100_000)
+                    if let currentSpace = windowSpaceIndex(windowID: windowID), currentSpace == targetSpace {
+                        log(
+                            "[SpaceController] moveWindowToSpace: moveWindow verified on attempt \(attempt)",
+                            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace)]
+                        )
+                        return true
+                    }
+                }
+            }
+        }
+
+        // 策略 2: moveWindow 失败，用 focusSpace 切换用户到目标 Space，
+        // 然后重新设置 AX frame 让 macOS 把窗口放到正确 Space
+        log(
+            "[SpaceController] moveWindowToSpace: moveWindow failed, trying focusSpace + re-apply frame",
+            level: .warn,
+            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace)]
+        )
+
+        // 切换用户活跃 Space 到目标 Space
+        if let currentSpace = currentSpaceIndex(), currentSpace != targetSpace {
+            let steps = targetSpace - currentSpace
+            if steps != 0 {
+                log(
+                    "[SpaceController] moveWindowToSpace: switching user space by \(steps) steps",
+                    fields: ["op": op, "currentSpace": String(currentSpace), "targetSpace": String(targetSpace)]
+                )
+                _ = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
+                usleep(200_000) // 等 Space 切换完成
+            }
+        }
+
+        return true
+    }
+
     func windowSpaceIndex(windowID: UInt32) -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let window = queryWindow(windowID: windowID) else {
@@ -421,7 +476,7 @@ final class SpaceController: ObservableObject {
                     level: .debug,
                     fields: ["op": op, "spaceID": String(spaceID)]
                 )
-                usleep(200_000) // 200ms 等待移动生效
+                usleep(80_000) // 等待移动生效
                 if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
                     log(
                         "[SpaceController] NativeSpaceBridge move succeeded and verified",
@@ -489,8 +544,21 @@ final class SpaceController: ObservableObject {
                     ]
                 )
                 if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                    usleep(200_000)
-                    if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
+                    // 等待更长时间让 CGS API 生效（最多 500ms）
+                    var verified = false
+                    for attempt in 1...5 {
+                        usleep(100_000) // 100ms per attempt
+                        if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
+                            verified = true
+                            break
+                        }
+                        log(
+                            "[SpaceController] NativeSpaceBridge fallback verification attempt \(attempt) failed",
+                            level: .debug,
+                            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(spaceIndex)]
+                        )
+                    }
+                    if verified {
                         if focus {
                             _ = focusWindow(windowID, operationID: op)
                         }
@@ -499,19 +567,15 @@ final class SpaceController: ObservableObject {
                 }
             }
             log(
-                "[SpaceController] moveWindow yabai succeeded but verification shows window not on target space",
+                "[SpaceController] moveWindow failed: yabai and NativeSpaceBridge both could not move window to target space",
                 level: .warn,
                 fields: [
                     "op": op,
                     "windowID": String(windowID),
-                    "targetSpace": String(spaceIndex),
-                    "note": "yabai move may have async effect, AX frame positioning is authoritative"
+                    "targetSpace": String(spaceIndex)
                 ]
             )
-            if focus {
-                _ = focusWindow(windowID, operationID: op)
-            }
-            return true
+            return false
         }
 
         // 策略 3：yabai 失败时尝试 NativeSpaceBridge
@@ -578,8 +642,8 @@ final class SpaceController: ObservableObject {
 
     /// 带单次重试的窗口移动验证（yabai move 可能异步生效）
     private func verifyWindowMovedToSpaceWithRetry(windowID: UInt32, targetSpace: Int, operationID: String) -> Bool {
-        // 单次 100ms 延迟验证，避免过长的 exponential backoff
-        usleep(100_000)
+        // 单次延迟验证，避免过长的 exponential backoff
+        usleep(50_000)
         if verifyWindowMovedToSpace(windowID: windowID, targetSpace: targetSpace, operationID: operationID) {
             return true
         }
@@ -717,6 +781,8 @@ final class SpaceController: ObservableObject {
                 ]
             )
 
+            let savedFrontApp = NSWorkspace.shared.frontmostApplication
+
             let savedCursor = NSEvent.mouseLocation
             let mainScreenHeight = NSScreen.screens[0].frame.height
             let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
@@ -735,7 +801,10 @@ final class SpaceController: ObservableObject {
                 restoreEvent.post(tap: .cghidEventTap)
             }
 
-            usleep(150_000) // 等待显示器切换
+            usleep(50_000) // 等待显示器切换
+
+            // 恢复前台应用焦点 — CGEvent 鼠标移动会激活副屏上的应用（通常是 Chrome）
+            savedFrontApp?.activate(options: .activateIgnoringOtherApps)
 
             let postSwitchSpace = queryFocusedSpace()?.index
             log(
@@ -753,6 +822,8 @@ final class SpaceController: ObservableObject {
 
         // 关键：Ctrl+Left/Right 只影响鼠标所在显示器的空间
         // 用 CGEvent 发送鼠标移动事件（非 CGWarp，后者不更新系统活跃显示器状态）
+        let savedFrontApp = NSWorkspace.shared.frontmostApplication
+
         let savedCursor = NSEvent.mouseLocation
         let mainScreenHeight = NSScreen.screens[0].frame.height
         let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
@@ -785,8 +856,11 @@ final class SpaceController: ObservableObject {
             restoreEvent.post(tap: .cghidEventTap)
         }
 
+        // 恢复前台应用焦点 — CGEvent 鼠标移动会激活副屏上的应用（通常是 Chrome）
+        savedFrontApp?.activate(options: .activateIgnoringOtherApps)
+
         if success {
-            usleep(250_000) // 250ms 等空间切换动画
+            usleep(100_000) // 等空间切换动画
             // 验证 space 是否真正切换成功
             let postFallbackSpace = queryFocusedSpace()?.index
             let spaceChanged = postFallbackSpace != preFocusSpace
@@ -816,6 +890,8 @@ final class SpaceController: ObservableObject {
             return false
         }
 
+        let beforeApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil"
+
         // 安全检查：验证窗口是否存在
         let windowCheck = queryWindow(windowID: windowID)
         if windowCheck == nil {
@@ -835,6 +911,17 @@ final class SpaceController: ObservableObject {
         ]
         let result = runYabaiVariants(variants: variants, operation: "focusWindow(\(windowID))", operationID: op)
         if result.success {
+            let afterApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil"
+            log(
+                "[SpaceController] focusWindow completed",
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "beforeApp": beforeApp,
+                    "afterApp": afterApp,
+                    "focusChanged": String(beforeApp != afterApp)
+                ]
+            )
             return true
         }
         markOperationError(from: result.failure, fallback: "Failed to focus window \(windowID)", operationID: op)
