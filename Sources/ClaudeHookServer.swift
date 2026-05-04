@@ -486,164 +486,138 @@ final class ClaudeHookServer: ObservableObject {
             )
         }
 
-        let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID)
-        let wm = WindowManager.shared
-
-        if let binding {
-            let targetWindowID = binding.windowIdentity.windowID
-            let targetPID = binding.windowIdentity.pid
-
+        // 严格检查：必须有 binding 且 binding 必须通过验证
+        guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
             log(
-                "[ClaudeHookServer] UserPromptSubmit searching saved state by binding",
+                "[ClaudeHookServer] UserPromptSubmit no binding found, skipping",
+                level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
-                    "bindingWindowID": String(targetWindowID),
-                    "bindingPID": String(targetPID),
-                    "bindingApp": binding.windowIdentity.appName ?? "unknown",
-                    "savedStatesCount": String(wm.savedWindowStates.count)
+                    "savedStatesCount": String(WindowManager.shared.savedWindowStates.count)
                 ]
             )
-
-            // 优先级 1: windowID + pid 精确匹配
-            if let matchedState = wm.savedWindowStates.reversed().first(where: { state in
-                state.windowID == targetWindowID
-                    && state.pid == targetPID
-                    && !wm.isSavedStateCorrupted(state)
-            }) {
-                return performRestore(
-                    payload: payload, matchedState: matchedState,
-                    matchLevel: "exact_binding_match"
+            handledRequestCount += 1
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "no_binding_skip",
+                    message: "No session binding, skipping restore",
+                    sessionID: payload.sessionID, handled: false
                 )
-            }
-
-            // 优先级 2: 仅 windowID 匹配（pid 可能因进程重启而不同）
-            if let matchedState = wm.savedWindowStates.reversed().first(where: { state in
-                state.windowID == targetWindowID && !wm.isSavedStateCorrupted(state)
-            }) {
-                log(
-                    "[ClaudeHookServer] UserPromptSubmit fallback: matched by windowID only",
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "stateWindowID": String(matchedState.windowID ?? 0),
-                        "statePID": String(matchedState.pid ?? 0),
-                        "bindingPID": String(targetPID)
-                    ]
-                )
-                return performRestore(
-                    payload: payload, matchedState: matchedState,
-                    matchLevel: "windowid_only_fallback"
-                )
-            }
-
-            // 优先级 3: 检查窗口是否在主屏，且有任意同 app 的 saved state 可用
-            let isOnMain = wm.isWindowOnMainScreen(windowID: targetWindowID)
-            log(
-                "[ClaudeHookServer] UserPromptSubmit no saved state for binding window, checking main screen status",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "windowOnMainScreen": String(isOnMain),
-                    "bindingApp": binding.windowIdentity.appName ?? "unknown"
-                ]
             )
-
-            log(
-                "[ClaudeHookServer] UserPromptSubmit exact/windowID match failed, trying app-level fallback",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "bindingWindowID": String(targetWindowID),
-                    "windowOnMain": String(isOnMain),
-                    "savedStatesCount": String(wm.savedWindowStates.count)
-                ]
-            )
-
-            if isOnMain {
-                // 窗口在主屏 → 尝试同 app 的任意 saved state
-                if let appState = wm.savedWindowStates.reversed().first(where: { state in
-                    state.appName == binding.windowIdentity.appName
-                        && !wm.isSavedStateCorrupted(state)
-                }) {
-                    log(
-                        "[ClaudeHookServer] UserPromptSubmit app-level fallback: using saved state from same app",
-                        fields: [
-                            "sessionID": payload.sessionID,
-                            "stateApp": appState.appName ?? "unknown",
-                            "stateWindowID": String(describing: appState.windowID),
-                            "bindingWindowID": String(targetWindowID)
-                        ]
-                    )
-                    return performRestore(
-                        payload: payload, matchedState: appState,
-                        matchLevel: "app_level_fallback"
-                    )
-                }
-
-                // 没有 saved state 但窗口在主屏 → 直接移到副屏
-                return performDirectSecondaryRestore(
-                    payload: payload, binding: binding
-                )
-            }
-
-            // 窗口不在主屏 → 最后尝试通用 restore
-            if wm.shouldRestoreCurrentWindow() {
-                wm.restore(
-                    operationID: makeOperationID(prefix: "hook-restore-generic"),
-                    triggerSource: "user_prompt_submit_generic"
-                )
-                handledRequestCount += 1
-                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "window_restored_generic",
-                        message: "Window restored via generic path",
-                        sessionID: payload.sessionID, handled: true
-                    )
-                )
-            }
-        } else {
-            log(
-                "[ClaudeHookServer] UserPromptSubmit no binding, trying lastWindowToken restore",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "savedStatesCount": String(wm.savedWindowStates.count)
-                ]
-            )
-
-            // 无 binding 时，回退到 lastWindowToken 检查（用户可能通过热键移动了窗口）
-            if wm.shouldRestoreCurrentWindow() {
-                wm.restore(
-                    operationID: makeOperationID(prefix: "hook-restore-fallback"),
-                    triggerSource: "user_prompt_submit_fallback"
-                )
-                handledRequestCount += 1
-                SessionWindowRegistry.shared.setLastEventDescription(
-                    "UserPromptSubmit 回退恢复（无 binding，使用 lastWindowToken）"
-                )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "window_restored_fallback",
-                        message: "Window restored via fallback path",
-                        sessionID: payload.sessionID, handled: true
-                    )
-                )
-            }
         }
 
+        // 验证 binding：确认窗口 PID + windowID 仍然有效
+        guard SessionWindowRegistry.shared.verifyBinding(binding) else {
+            log(
+                "[ClaudeHookServer] UserPromptSubmit binding verification failed, skipping",
+                level: .warn,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "windowID": String(binding.windowIdentity.windowID),
+                    "pid": String(binding.windowIdentity.pid)
+                ]
+            )
+            handledRequestCount += 1
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "binding_verification_failed",
+                    message: "Binding verification failed, skipping restore",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        let targetWindowID = binding.windowIdentity.windowID
+        let targetPID = binding.windowIdentity.pid
+        let wm = WindowManager.shared
+
         log(
-            "[ClaudeHookServer] UserPromptSubmit no restore possible",
-            level: .warn,
+            "[ClaudeHookServer] UserPromptSubmit searching saved state (session-scoped)",
             fields: [
                 "sessionID": payload.sessionID,
-                "hasBinding": String(binding != nil),
+                "bindingWindowID": String(targetWindowID),
+                "bindingPID": String(targetPID),
                 "savedStatesCount": String(wm.savedWindowStates.count)
             ]
         )
+
+        // 优先级 1: windowID + pid 精确匹配（限当前会话）
+        if let matchedState = wm.savedWindowStates.reversed().first(where: { state in
+            state.windowID == targetWindowID
+                && state.pid == targetPID
+                && state.sessionID == payload.sessionID
+                && !wm.isSavedStateCorrupted(state)
+        }) {
+            return performRestore(
+                payload: payload, matchedState: matchedState,
+                matchLevel: "exact_binding_match_session_scoped"
+            )
+        }
+
+        // 优先级 2: 仅 windowID 匹配（限当前会话）
+        if let matchedState = wm.savedWindowStates.reversed().first(where: { state in
+            state.windowID == targetWindowID
+                && state.sessionID == payload.sessionID
+                && !wm.isSavedStateCorrupted(state)
+        }) {
+            log(
+                "[ClaudeHookServer] UserPromptSubmit session-scoped windowID fallback",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "stateWindowID": String(matchedState.windowID ?? 0),
+                    "bindingPID": String(targetPID)
+                ]
+            )
+            return performRestore(
+                payload: payload, matchedState: matchedState,
+                matchLevel: "windowid_session_scoped"
+            )
+        }
+
+        // 优先级 3: 窗口在主屏 + 同会话同 app 的 saved state
+        let isOnMain = wm.isWindowOnMainScreen(windowID: targetWindowID)
+        if isOnMain {
+            if let appState = wm.savedWindowStates.reversed().first(where: { state in
+                state.appName == binding.windowIdentity.appName
+                    && state.sessionID == payload.sessionID
+                    && !wm.isSavedStateCorrupted(state)
+            }) {
+                log(
+                    "[ClaudeHookServer] UserPromptSubmit session-scoped app fallback",
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "stateApp": appState.appName ?? "unknown",
+                        "bindingWindowID": String(targetWindowID)
+                    ]
+                )
+                return performRestore(
+                    payload: payload, matchedState: appState,
+                    matchLevel: "app_fallback_session_scoped"
+                )
+            }
+
+            // 同会话无 saved state 但窗口在主屏 → 直接移到副屏
+            return performDirectSecondaryRestore(
+                payload: payload, binding: binding
+            )
+        }
+
+        // 窗口不在主屏且无匹配 saved state → 不做任何操作
+        log(
+            "[ClaudeHookServer] UserPromptSubmit window not on main screen and no session-scoped saved state, skipping",
+            fields: [
+                "sessionID": payload.sessionID,
+                "windowOnMainScreen": String(isOnMain)
+            ]
+        )
+        handledRequestCount += 1
         return (
-            404,
+            200,
             ClaudeHookResponse(
-                ok: false, code: "no_saved_state",
-                message: "No saved window state found for session",
+                ok: true, code: "no_action_needed",
+                message: "Window not on main screen and no session-scoped state to restore",
                 sessionID: payload.sessionID, handled: false
             )
         )
