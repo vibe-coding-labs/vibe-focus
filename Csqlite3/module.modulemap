@@ -1,0 +1,5 @@
+module Csqlite3 [system] {
+    header "/Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sqlite3.h"
+    link "sqlite3"
+    export *
+}

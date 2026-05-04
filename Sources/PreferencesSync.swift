@@ -33,11 +33,8 @@ enum PreferencesSync {
         // ScreenIndexPreferences — 整体 Codable 对象存为 String
         ScreenIndexPreferences.userDefaultsKey: "",
 
-        // SessionWindowRegistry
-        "claudeSessionWindowBindings.v1": Data(),
-
-        // WindowManager savedWindowStates
-        "savedWindowStates": Data(),
+        // SessionWindowRegistry and WindowManager savedWindowStates
+        // migrated to SQLite — no longer in UserDefaults
     ]
 
     private static let syncQueue = DispatchQueue(label: "com.vibefocus.prefsync", qos: .utility)

@@ -13,10 +13,12 @@ let package = Package(
         .package(url: "https://github.com/yene/GCDWebServer", from: "3.5.4")
     ],
     targets: [
+        .systemLibrary(name: "Csqlite3", path: "Csqlite3"),
         .executableTarget(
             name: "VibeFocusHotkeys",
             dependencies: [
-                .product(name: "GCDWebServer", package: "GCDWebServer")
+                .product(name: "GCDWebServer", package: "GCDWebServer"),
+                .target(name: "Csqlite3")
             ],
             path: "Sources",
             exclude: [],

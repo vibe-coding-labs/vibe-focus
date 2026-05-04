@@ -17,11 +17,11 @@ final class SessionWindowRegistry: ObservableObject {
     }
 
     private let storageKey = "claudeSessionWindowBindings.v1"
-    private let completedRetention: TimeInterval = 30 * 60
-    private let activeRetention: TimeInterval = 12 * 60 * 60
+    private let completedRetention: TimeInterval = 4 * 60 * 60  // 4 小时（原 30 分钟）
+    private let activeRetention: TimeInterval = 24 * 60 * 60    // 24 小时（原 12 小时）
 
     private init() {
-        bindings = loadBindings()
+        bindings = WindowStateStore.shared.loadBindings()
         log("SessionWindowRegistry.init entry", level: .debug, fields: ["loadedBindingCount": String(bindings.count)])
         pruneExpiredBindings(shouldPersist: false)
         log("SessionWindowRegistry.init exit", level: .debug, fields: ["activeCount": String(activeBindingCount), "completedCount": String(completedBindingCount)])
@@ -97,7 +97,7 @@ final class SessionWindowRegistry: ObservableObject {
         }
 
         // 检查 2: windowID 对应的窗口 PID 是否匹配
-        let options: CGWindowListOption = [.optionOnScreenOnly]
+        let options: CGWindowListOption = [.optionAll]
         if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
             if let matchedWindow = windowList.first(where: { ($0[kCGWindowNumber as String] as? UInt32) == windowID }) {
                 let actualPID = matchedWindow[kCGWindowOwnerPID as String] as? Int32
@@ -211,7 +211,7 @@ final class SessionWindowRegistry: ObservableObject {
         log("SessionWindowRegistry.clearAllBindings entry", level: .debug, fields: ["count": String(bindings.count)])
         bindings.removeAll()
         lastEventDescription = "所有绑定已清除"
-        persistBindings()
+        WindowStateStore.shared.deleteAllBindings()
         log("SessionWindowRegistry.clearAllBindings exit", level: .debug)
     }
 
@@ -221,8 +221,13 @@ final class SessionWindowRegistry: ObservableObject {
 
     private func pruneExpiredBindings(shouldPersist: Bool = true) {
         log("SessionWindowRegistry.pruneExpiredBindings entry", level: .debug, fields: ["bindingCount": String(bindings.count)])
+
+        let removed = WindowStateStore.shared.pruneExpiredBindings(
+            activeRetention: activeRetention,
+            completedRetention: completedRetention
+        )
+
         let now = Date()
-        let previousCount = bindings.count
         bindings = bindings.filter { _, binding in
             if binding.isCompleted {
                 let deadline = (binding.completedAt ?? binding.lastSeenAt).addingTimeInterval(completedRetention)
@@ -231,33 +236,22 @@ final class SessionWindowRegistry: ObservableObject {
             let deadline = binding.lastSeenAt.addingTimeInterval(activeRetention)
             return deadline > now
         }
-        let removedCount = previousCount - bindings.count
-        if removedCount > 0 {
-            log("SessionWindowRegistry.pruneExpiredBindings pruned", level: .debug, fields: ["removedCount": String(removedCount), "remaining": String(bindings.count)])
-        }
-        if shouldPersist && bindings.count != previousCount {
-            persistBindings()
+
+        if removed > 0 {
+            log("SessionWindowRegistry.pruneExpiredBindings pruned", level: .debug, fields: ["removedCount": String(removed), "remaining": String(bindings.count)])
         }
     }
 
     private func persistBindings() {
-        log("SessionWindowRegistry.persistBindings entry", level: .debug, fields: ["bindingCount": String(bindings.count)])
-        guard let data = try? JSONEncoder().encode(bindings) else {
-            log("SessionWindowRegistry failed to encode bindings")
-            return
+        for (_, binding) in bindings {
+            WindowStateStore.shared.saveBinding(binding)
         }
-        UserDefaults.standard.set(data, forKey: storageKey)
-        log("SessionWindowRegistry.persistBindings exit", level: .debug, fields: ["dataSize": String(data.count)])
+        log("SessionWindowRegistry.persistBindings exit", level: .debug, fields: ["bindingCount": String(bindings.count)])
     }
 
     private func loadBindings() -> [String: SessionWindowBinding] {
-        log("SessionWindowRegistry.loadBindings entry", level: .debug, fields: ["storageKey": storageKey])
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let decoded = try? JSONDecoder().decode([String: SessionWindowBinding].self, from: data) else {
-            log("SessionWindowRegistry.loadBindings no saved data or decode failed", level: .debug)
-            return [:]
-        }
-        log("SessionWindowRegistry.loadBindings exit", level: .debug, fields: ["loadedCount": String(decoded.count)])
-        return decoded
+        let loaded = WindowStateStore.shared.loadBindings()
+        log("SessionWindowRegistry.loadBindings exit", level: .debug, fields: ["loadedCount": String(loaded.count)])
+        return loaded
     }
 }
