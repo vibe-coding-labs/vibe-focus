@@ -18,6 +18,7 @@ final class WindowStateStore {
         dbPath = (dir as NSString).appendingPathComponent("vibefocus.db")
         openDatabase()
         createTables()
+        cleanupLegacyTables()
     }
 
     // MARK: - Database Setup
@@ -47,6 +48,8 @@ final class WindowStateStore {
     }
 
     private func createTables() {
+        // 旧表保留但不再新建（兼容已有数据库）
+        // session_bindings 已废弃：数据迁移到 windows 表后清理
         runSchema("""
             CREATE TABLE IF NOT EXISTS window_states (
                 id TEXT PRIMARY KEY,
@@ -59,18 +62,6 @@ final class WindowStateStore {
                 created_at REAL NOT NULL DEFAULT (strftime('%s','now'))
             );
             """)
-        runSchema("CREATE INDEX IF NOT EXISTS idx_window_states_window_id ON window_states(window_id);")
-        runSchema("CREATE INDEX IF NOT EXISTS idx_window_states_session_id ON window_states(session_id);")
-        runSchema("""
-            CREATE TABLE IF NOT EXISTS session_bindings (
-                session_id TEXT PRIMARY KEY,
-                data TEXT NOT NULL,
-                is_completed INTEGER NOT NULL DEFAULT 0,
-                last_seen_at REAL NOT NULL,
-                created_at REAL NOT NULL DEFAULT (strftime('%s','now'))
-            );
-            """)
-        runSchema("CREATE INDEX IF NOT EXISTS idx_session_bindings_last_seen ON session_bindings(last_seen_at);")
 
         // 新宽表：合并 session_bindings + window_states
         runSchema("""
@@ -109,6 +100,24 @@ final class WindowStateStore {
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_window_id ON windows(window_id);")
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_last_seen ON windows(updated_at);")
         log("[WindowStateStore] tables created/verified")
+    }
+
+    private func cleanupLegacyTables() {
+        // session_bindings 已废弃：清理所有数据
+        runSchema("DELETE FROM session_bindings;")
+        // window_states 保留给 WindowManager+State 使用，但清理超过 1 小时的旧记录
+        let cutoff = Date().addingTimeInterval(-3600).timeIntervalSince1970
+        var stmt: OpaquePointer?
+        let sql = "DELETE FROM window_states WHERE saved_at < ?;"
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_double(stmt, 1, cutoff)
+            sqlite3_step(stmt)
+            let removed = sqlite3_changes(db)
+            sqlite3_finalize(stmt)
+            if removed > 0 {
+                log("[WindowStateStore] cleanupLegacyTables: removed \(removed) old window_states rows")
+            }
+        }
     }
 
     // MARK: - Window States
@@ -445,7 +454,16 @@ final class WindowStateStore {
         sqlite3_bind_double(stmt, 33, state.updatedAt.timeIntervalSince1970)
 
         if sqlite3_step(stmt) != SQLITE_DONE {
-            log("[WindowStateStore] saveWindowState (windows table) failed", level: .error)
+            let errMsg = String(cString: sqlite3_errmsg(db))
+            log("[WindowStateStore] saveWindowState (windows table) failed: \(errMsg)", level: .error)
+        } else {
+            let srcSp: String = if let v = state.sourceSpace { String(v) } else { "nil" }
+            let tgtDsp: String = if let v = state.targetDisplay { String(v) } else { "nil" }
+            let oX: String = if let v = state.origX { String(describing: v) } else { "nil" }
+            let tX: String = if let v = state.targetX { String(describing: v) } else { "nil" }
+            let sid: String = if let v = state.sessionID { String(v.prefix(8)) } else { "nil" }
+            let wid: String = if let v = state.windowID { String(v) } else { "nil" }
+            log("[WindowStateStore] saveWindowState OK pid=\(state.pid) tty=\(state.tty ?? "") wid=\(wid) origX=\(oX) targetX=\(tX) srcSpace=\(srcSp) tgtDisp=\(tgtDsp) sid=\(sid)")
         }
     }
 
