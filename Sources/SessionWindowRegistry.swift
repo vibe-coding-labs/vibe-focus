@@ -50,7 +50,9 @@ final class SessionWindowRegistry: ObservableObject {
                 createdAt: now,
                 lastSeenAt: now,
                 isCompleted: false,
-                completedAt: nil
+                completedAt: nil,
+                terminalTTY: nil,
+                terminalSessionID: nil
             )
         }
         lastEventDescription = "SessionStart 绑定窗口：\(windowIdentity.appName ?? "Unknown") / \(windowIdentity.title ?? "Untitled")"
