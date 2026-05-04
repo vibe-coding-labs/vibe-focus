@@ -771,45 +771,15 @@ class WindowManager {
             return shouldRestoreCurrentWindowViaSystemEvents()
         }
 
-        // 优先检查活跃上下文：如果上次移动的窗口仍在主屏，直接恢复它
-        // 这解决了用户移动窗口后切换到其他窗口再按热键无法恢复的问题
-        if let activeToken = lastWindowToken,
-           let activeWindowID = activeToken.windowID,
-           let activeFrame = lastWindowFrame,
-           !savedWindowStates.isEmpty {
-            let activeOnMain = isWindowOnMainScreen(windowID: activeWindowID)
-            let hasMatchingState = savedWindowStates.contains { $0.windowID == activeWindowID && !isSavedStateCorrupted($0) }
+        // 核心原则：以当前聚焦窗口为决策依据，而非全局状态
+        // 用户按热键的意图由"当前聚焦窗口在哪里"决定：
+        //   - 聚焦窗口在副屏 → move to main
+        //   - 聚焦窗口在主屏且有 saved state → restore 回副屏
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
+              let currentWindowID = windowHandle(for: focusedWindow) else {
             log(
-                "[WindowManager] shouldRestoreCurrentWindow: checking active context",
-                level: .debug,
-                fields: [
-                    "activeWindowID": String(activeWindowID),
-                    "activeOnMainScreen": String(activeOnMain),
-                    "hasMatchingState": String(hasMatchingState)
-                ]
-            )
-            if activeOnMain && hasMatchingState {
-                // 活跃窗口在主屏且有有效保存状态 → 恢复它
-                // 重新 hydrate 以确保最新状态
-                if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == activeWindowID && !isSavedStateCorrupted($0) }) {
-                    hydrateMemory(from: matchedState, window: nil)
-                    log(
-                        "[WindowManager] shouldRestoreCurrentWindow: active context window on main screen, will restore",
-                        fields: [
-                            "windowID": String(activeWindowID),
-                            "originalFrame": String(describing: activeFrame)
-                        ]
-                    )
-                    return true
-                }
-            }
-        }
-
-        guard !savedWindowStates.isEmpty,
-              let frontApp = NSWorkspace.shared.frontmostApplication,
-              let focusedWindow = focusedWindow(for: frontApp.processIdentifier) else {
-            log(
-                "[WindowManager] shouldRestoreCurrentWindow: guard failed",
+                "[WindowManager] shouldRestoreCurrentWindow: cannot identify focused window",
                 level: .debug,
                 fields: [
                     "savedStatesEmpty": String(savedWindowStates.isEmpty),
@@ -819,89 +789,39 @@ class WindowManager {
             return false
         }
 
-        let currentTitle = title(of: focusedWindow) ?? ""
-        let currentFrame = frame(of: focusedWindow)
-        guard let currentWindowID = windowHandle(for: focusedWindow) else {
-            guard let currentFrame else {
-                return false
-            }
+        let focusedOnMain = isWindowOnMainScreen(windowID: currentWindowID)
+        log(
+            "[WindowManager] shouldRestoreCurrentWindow: focused window identified",
+            level: .debug,
+            fields: [
+                "focusedWindowID": String(currentWindowID),
+                "focusedOnMainScreen": String(focusedOnMain),
+                "savedStatesCount": String(savedWindowStates.count)
+            ]
+        )
 
-            if let matchedState = findStateByFallbackMatching(
-                pid: frontApp.processIdentifier,
-                title: currentTitle,
-                frame: currentFrame
-            ) {
-                hydrateMemory(from: matchedState, window: focusedWindow)
-                log(
-                    "Detected moved window state via fallback matching (PID+title+position, no windowID)",
-                    fields: [
-                        "pid": String(frontApp.processIdentifier),
-                        "title": truncateForLog(currentTitle, limit: 60),
-                        "frame": String(describing: currentFrame),
-                        "stateID": matchedState.id
-                    ]
-                )
-                return true
-            }
-
+        if !focusedOnMain {
+            // 聚焦窗口在副屏 → 用户想把它移到主屏
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: focused window on secondary screen → move to main",
+                fields: ["windowID": String(currentWindowID)]
+            )
             return false
         }
 
-        // 第一级匹配：通过 windowID（最可靠的方式）
-        log(
-            "[WindowManager] Checking windowID match",
-            fields: [
-                "currentWindowID": String(currentWindowID),
-                "currentTitle": truncateForLog(currentTitle, limit: 60),
-                "currentFrame": String(describing: currentFrame),
-                "savedWindowIDs": savedWindowStates.map { String(describing: $0.windowID) }.joined(separator: ","),
-                "savedCount": String(savedWindowStates.count)
-            ]
-        )
+        // 聚焦窗口在主屏 → 检查是否有对应的 saved state 可以恢复
+        if savedWindowStates.isEmpty {
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: focused on main but no saved states",
+                level: .debug
+            )
+            return false
+        }
+
         if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
             if isSavedStateCorrupted(matchedState) {
                 log(
-                    "[WindowManager] Corrupted state detected (originalFrame on main screen), clearing",
-                    level: .warn,
-                    fields: [
-                        "stateID": matchedState.id,
-                        "windowID": String(describing: matchedState.windowID),
-                        "originalFrame": String(describing: matchedState.originalFrame.cgRect),
-                        "targetFrame": String(describing: matchedState.targetFrame.cgRect),
-                        "savedAt": String(describing: matchedState.savedAt)
-                    ]
-                )
-                clearSavedWindowState(id: matchedState.id)
-                // 继续尝试第二级匹配，而不是直接返回 false
-            } else {
-                hydrateMemory(from: matchedState, window: focusedWindow)
-                log(
-                    "[WindowManager] Found match by windowID",
-                    fields: [
-                        "windowID": String(currentWindowID),
-                        "stateID": matchedState.id,
-                        "originalFrame": String(describing: matchedState.originalFrame.cgRect),
-                        "targetFrame": String(describing: matchedState.targetFrame.cgRect),
-                        "sourceSpace": String(describing: matchedState.sourceSpaceIndex),
-                        "savedAt": String(describing: matchedState.savedAt)
-                    ]
-                )
-                return true
-            }
-        } else {
-            log("[WindowManager] No match by windowID")
-        }
-
-        // 第二级匹配：通过 PID + 窗口标题 + 大致位置（备用机制）
-        if let currentFrame,
-           let matchedState = findStateByFallbackMatching(
-               pid: frontApp.processIdentifier,
-               title: currentTitle,
-               frame: currentFrame
-           ) {
-            if isSavedStateCorrupted(matchedState) {
-                log(
-                    "[WindowManager] fallback match found but state is corrupted, clearing",
+                    "[WindowManager] Corrupted state detected, clearing",
                     level: .warn,
                     fields: [
                         "stateID": matchedState.id,
@@ -911,22 +831,25 @@ class WindowManager {
                     ]
                 )
                 clearSavedWindowState(id: matchedState.id)
-            } else {
-                hydrateMemory(from: matchedState, window: focusedWindow)
-                log(
-                    "Detected moved window state via fallback matching (PID+title+position)",
-                    fields: [
-                        "pid": String(frontApp.processIdentifier),
-                        "title": truncateForLog(currentTitle, limit: 60),
-                        "stateID": matchedState.id,
-                        "originalFrame": String(describing: matchedState.originalFrame.cgRect),
-                        "sourceSpace": String(describing: matchedState.sourceSpaceIndex)
-                    ]
-                )
-                return true
+                return false
             }
+            hydrateMemory(from: matchedState, window: focusedWindow)
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: focused window on main, has saved state → restore",
+                fields: [
+                    "windowID": String(currentWindowID),
+                    "stateID": matchedState.id,
+                    "originalFrame": String(describing: matchedState.originalFrame.cgRect)
+                ]
+            )
+            return true
         }
 
+        log(
+            "[WindowManager] shouldRestoreCurrentWindow: focused window on main but no matching saved state",
+            level: .debug,
+            fields: ["windowID": String(currentWindowID)]
+        )
         return false
     }
 
@@ -964,65 +887,6 @@ class WindowManager {
             ]
         )
         return corrupted
-    }
-
-    /// 备用匹配机制：当 windowID 匹配失败时使用
-    /// 基于 PID + 窗口标题 + 大致位置进行匹配
-    private func findStateByFallbackMatching(
-        pid: pid_t,
-        title: String,
-        frame: CGRect
-    ) -> SavedWindowState? {
-        // 匹配条件：
-        // 1. PID 相同
-        // 2. 窗口标题相同（或都为空）
-        // 3. 当前位置接近保存的 targetFrame（因为窗口已经被移动过）
-
-        log(
-            "[WindowManager] findStateByFallbackMatching called",
-            level: .debug,
-            fields: [
-                "pid": String(pid),
-                "title": truncateForLog(title, limit: 60),
-                "frame": String(describing: frame),
-                "savedStatesCount": String(savedWindowStates.count)
-            ]
-        )
-
-        let positionTolerance: CGFloat = 50.0  // 位置容差 50 像素
-
-        let result = savedWindowStates.reversed().first { state in
-            // PID 必须匹配
-            guard state.pid == pid else { return false }
-
-            // 窗口标题必须匹配（都为空也算匹配）
-            let stateTitle = state.title ?? ""
-            let currentTitle = title
-            guard stateTitle == currentTitle else { return false }
-
-            // 当前窗口位置应该接近保存的 targetFrame（因为窗口已经被移动到主屏幕）
-            let targetFrame = state.targetFrame.cgRect
-            let xDiff = abs(frame.origin.x - targetFrame.origin.x)
-            let yDiff = abs(frame.origin.y - targetFrame.origin.y)
-
-            return xDiff <= positionTolerance && yDiff <= positionTolerance
-        }
-        if let result {
-            log(
-                "[WindowManager] findStateByFallbackMatching matched",
-                level: .debug,
-                fields: [
-                    "stateID": result.id,
-                    "matchedWindowID": String(describing: result.windowID)
-                ]
-            )
-        } else {
-            log(
-                "[WindowManager] findStateByFallbackMatching: no match found",
-                level: .debug
-            )
-        }
-        return result
     }
 
     func focusedWindow(for pid: pid_t) -> AXUIElement? {
