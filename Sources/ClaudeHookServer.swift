@@ -900,7 +900,9 @@ final class ClaudeHookServer: ObservableObject {
                 createdAt: now,
                 lastSeenAt: now,
                 isCompleted: false,
-                completedAt: nil
+                completedAt: nil,
+                terminalTTY: payload.terminalCtx?.tty,
+                terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID
             )
         } else {
             // 回退：通过 cwd 项目名匹配窗口（旧路径，保留兼容）
@@ -1018,7 +1020,9 @@ final class ClaudeHookServer: ObservableObject {
             createdAt: now,
             lastSeenAt: now,
             isCompleted: false,
-            completedAt: nil
+            completedAt: nil,
+            terminalTTY: payload.terminalCtx?.tty,
+            terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID
         )
 
         return moveBindingToMainScreen(binding: binding, payload: payload, triggerName: triggerName)

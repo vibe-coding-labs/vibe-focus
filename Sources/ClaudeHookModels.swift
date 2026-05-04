@@ -29,6 +29,12 @@ struct SessionWindowBinding: Codable, Equatable {
     var lastSeenAt: Date
     var isCompleted: Bool
     var completedAt: Date?
+
+    /// 绑定创建时终端的 TTY 路径（如 /dev/ttys001），用于严格验证窗口身份
+    /// TTY 在终端会话期间不变，比 windowID（可被复用）更可靠
+    let terminalTTY: String?
+    /// 终端会话标识（TERM_SESSION_ID 或 ITERM_SESSION_ID）
+    let terminalSessionID: String?
 }
 
 /// Claude Code hook 辅助脚本捕获的终端上下文信息
