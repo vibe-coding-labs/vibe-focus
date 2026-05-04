@@ -36,9 +36,15 @@ final class SessionWindowRegistry: ObservableObject {
         let now = Date()
         let key = cacheKey(pid: windowIdentity.pid, tty: terminalTTY)
 
+        // 如果 windowNumber 缺失，尝试通过 AX API 补充
+        var resolvedWindowNumber = windowIdentity.windowNumber
+        if resolvedWindowNumber == nil, let axWindow = WindowManager.shared.resolveWindow(identity: windowIdentity) {
+            resolvedWindowNumber = WindowManager.shared.windowNumber(for: axWindow)
+        }
+
         if var existing = windowStates[key] {
             existing.windowID = windowIdentity.windowID
-            existing.axWindowNumber = windowIdentity.windowNumber
+            existing.axWindowNumber = resolvedWindowNumber
             existing.appName = windowIdentity.appName
             existing.bundleIdentifier = windowIdentity.bundleIdentifier
             existing.title = windowIdentity.title
@@ -56,7 +62,7 @@ final class SessionWindowRegistry: ObservableObject {
                 pid: windowIdentity.pid,
                 tty: terminalTTY,
                 windowID: windowIdentity.windowID,
-                axWindowNumber: windowIdentity.windowNumber,
+                axWindowNumber: resolvedWindowNumber,
                 appName: windowIdentity.appName,
                 bundleIdentifier: windowIdentity.bundleIdentifier,
                 title: windowIdentity.title,
