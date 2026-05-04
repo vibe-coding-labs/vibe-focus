@@ -308,117 +308,55 @@ final class ClaudeHookServer: ObservableObject {
                 "terminalCtxUseful": String(payload.terminalCtx?.hasUsefulContext ?? false)
             ]
         )
-        // 优先使用 terminal context 精确匹配终端窗口
-        var identity: WindowIdentity?
-        if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+
+        // 唯一绑定路径：通过 terminal context (TTY/PPID 进程树) 精确匹配
+        guard let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext else {
             log(
-                "[handleSessionStart] trying terminal context matching",
-                level: .debug,
+                "[handleSessionStart] no terminal context, cannot bind",
+                level: .warn,
+                fields: ["sessionID": payload.sessionID]
+            )
+            SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：无终端上下文")
+            return (
+                409,
+                ClaudeHookResponse(
+                    ok: false, code: "no_terminal_context",
+                    message: "No terminal context available for precise binding",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        guard let identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) else {
+            log(
+                "[handleSessionStart] terminal context match failed",
+                level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
                     "tty": terminalCtx.tty ?? "nil",
                     "ppid": terminalCtx.ppid ?? "nil"
                 ]
             )
-            identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
-            if let identity {
-                log(
-                    "[ClaudeHookServer] SessionStart matched via terminal context",
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "app": identity.appName ?? "unknown",
-                        "title": identity.title ?? "untitled",
-                        "windowID": String(identity.windowID)
-                    ]
-                )
-            } else {
-                log(
-                    "[handleSessionStart] terminal context match returned nil",
-                    level: .debug,
-                    fields: ["sessionID": payload.sessionID]
-                )
-            }
-        }
-
-        // 回退策略 1：通过 cwd 项目名匹配窗口（多会话场景更准确）
-        if identity == nil, let cwd = payload.cwd {
-            log(
-                "[handleSessionStart] trying cwd fallback matching",
-                level: .debug,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "cwd": cwd
-                ]
-            )
-            identity = WindowManager.shared.findClaudeCodeWindow(cwd: cwd)
-            if let identity {
-                log(
-                    "[ClaudeHookServer] SessionStart matched via cwd fallback",
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "cwd": cwd,
-                        "app": identity.appName ?? "unknown",
-                        "title": identity.title ?? "untitled",
-                        "windowID": String(identity.windowID)
-                    ]
-                )
-            }
-        }
-
-        // 回退策略 2：捕获当前焦点窗口（最后手段，仅限终端/IDE App）
-        if identity == nil {
-            log(
-                "[handleSessionStart] falling back to captureFocusedWindowIdentity",
-                level: .debug,
-                fields: ["sessionID": payload.sessionID]
-            )
-            let focusedIdentity = WindowManager.shared.captureFocusedWindowIdentity()
-            if let focusedIdentity {
-                let isTerminalApp = Self.isTerminalOrIDEApp(
-                    appName: focusedIdentity.appName,
-                    bundleIdentifier: focusedIdentity.bundleIdentifier
-                )
-                if isTerminalApp {
-                    identity = focusedIdentity
-                    log(
-                        "[handleSessionStart] captureFocusedWindowIdentity succeeded",
-                        level: .debug,
-                        fields: [
-                            "sessionID": payload.sessionID,
-                            "windowID": String(focusedIdentity.windowID),
-                            "app": focusedIdentity.appName ?? "unknown"
-                        ]
-                    )
-                } else {
-                    log(
-                        "[handleSessionStart] captureFocusedWindowIdentity skipped: non-terminal app",
-                        level: .warn,
-                        fields: [
-                            "sessionID": payload.sessionID,
-                            "app": focusedIdentity.appName ?? "unknown",
-                            "bundleID": focusedIdentity.bundleIdentifier ?? "nil"
-                        ]
-                    )
-                }
-            }
-        }
-
-        guard let identity else {
-            log(
-                "[handleSessionStart] all window finding strategies failed",
-                level: .warn,
-                fields: ["sessionID": payload.sessionID]
-            )
-            SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：当前无可绑定窗口")
+            SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：终端上下文无法匹配窗口")
             return (
                 409,
                 ClaudeHookResponse(
-                    ok: false, code: "window_not_found",
-                    message: "No focused window available for session binding",
+                    ok: false, code: "terminal_context_match_failed",
+                    message: "Terminal context could not be resolved to a window",
                     sessionID: payload.sessionID, handled: false
                 )
             )
         }
+
+        log(
+            "[ClaudeHookServer] SessionStart matched via terminal context",
+            fields: [
+                "sessionID": payload.sessionID,
+                "app": identity.appName ?? "unknown",
+                "title": identity.title ?? "untitled",
+                "windowID": String(identity.windowID)
+            ]
+        )
         SessionWindowRegistry.shared.bind(
             sessionID: payload.sessionID,
             windowIdentity: identity,
@@ -426,31 +364,11 @@ final class ClaudeHookServer: ObservableObject {
             terminalSessionID: payload.terminalCtx?.termSessionID ?? payload.terminalCtx?.itermSessionID
         )
         handledRequestCount += 1
-        log(
-            "[handleSessionStart] bind succeeded",
-            level: .debug,
-            fields: [
-                "sessionID": payload.sessionID,
-                "windowID": String(identity.windowID),
-                "app": identity.appName ?? "unknown"
-            ]
-        )
-        log(
-            "[ClaudeHookServer] SessionStart bound",
-            fields: [
-                "sessionID": payload.sessionID,
-                "app": identity.appName ?? "unknown",
-                "title": identity.title ?? "untitled",
-                "windowID": String(identity.windowID),
-                "cwd": payload.cwd ?? "nil",
-                "model": payload.model ?? "nil"
-            ]
-        )
         return (
             200,
             ClaudeHookResponse(
                 ok: true, code: "session_bound",
-                message: "Session bound to focused window",
+                message: "Session bound to terminal window via TTY/PPID",
                 sessionID: payload.sessionID, handled: true
             )
         )
@@ -597,14 +515,9 @@ final class ClaudeHookServer: ObservableObject {
                     matchLevel: "app_fallback_session_scoped"
                 )
             }
-
-            // 同会话无 saved state 但窗口在主屏 → 直接移到副屏
-            return performDirectSecondaryRestore(
-                payload: payload, binding: binding
-            )
         }
 
-        // 窗口不在主屏且无匹配 saved state → 不做任何操作
+        // 无精确匹配的 saved state → 不做任何操作（不猜测窗口目标位置）
         log(
             "[ClaudeHookServer] UserPromptSubmit window not on main screen and no session-scoped saved state, skipping",
             fields: [
@@ -659,87 +572,6 @@ final class ClaudeHookServer: ObservableObject {
             ClaudeHookResponse(
                 ok: true, code: "window_restored",
                 message: "Window restored to original position",
-                sessionID: payload.sessionID, handled: true
-            )
-        )
-    }
-
-    private func performDirectSecondaryRestore(
-        payload: ClaudeHookPayload,
-        binding: SessionWindowBinding
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        guard NSScreen.screens.count > 1 else {
-            log(
-                "[ClaudeHookServer] no secondary screen for direct restore",
-                level: .warn,
-                fields: ["sessionID": payload.sessionID]
-            )
-            handledRequestCount += 1
-            return (
-                404,
-                ClaudeHookResponse(
-                    ok: false, code: "no_secondary_screen",
-                    message: "No secondary screen available",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        // screens[0] = main screen, screens[1] = secondary
-        let secondaryScreen = NSScreen.screens[1]
-        let targetFrame = secondaryScreen.visibleFrame
-        let identity = binding.windowIdentity
-
-        let currentFrame = WindowManager.shared.getCurrentWindowFrame(windowID: identity.windowID) ?? targetFrame
-        let syntheticState = WindowManager.SavedWindowState(
-            id: UUID().uuidString,
-            pid: identity.pid,
-            bundleIdentifier: identity.bundleIdentifier,
-            appName: identity.appName,
-            windowID: identity.windowID,
-            windowNumber: identity.windowNumber,
-            title: identity.title,
-            originalFrame: WindowManager.RectPayload(targetFrame),
-            targetFrame: WindowManager.RectPayload(currentFrame),
-            sourceSpaceIndex: nil,
-            targetSpaceIndex: nil,
-            sourceYabaiDisplayIndex: nil,
-            sourceDisplaySpaceIndex: nil,
-            sourceDisplayIndex: nil,
-            sourceDisplayID: nil,
-            targetDisplayIndex: nil,
-            restoreReason: "direct_secondary_restore",
-            sessionID: payload.sessionID,
-            savedAt: Date()
-        )
-
-        log(
-            "[ClaudeHookServer] performing direct secondary restore",
-            fields: [
-                "sessionID": payload.sessionID,
-                "windowID": String(identity.windowID),
-                "app": identity.appName ?? "unknown",
-                "targetFrame": String(describing: targetFrame),
-                "currentFrame": String(describing: currentFrame)
-            ]
-        )
-
-        WindowManager.shared.hydrateMemory(from: syntheticState, window: nil)
-        WindowManager.shared.restore(
-            operationID: makeOperationID(prefix: "hook-direct-restore"),
-            triggerSource: "user_prompt_submit_direct"
-        )
-
-        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-        handledRequestCount += 1
-        SessionWindowRegistry.shared.setLastEventDescription(
-            "UserPromptSubmit 直接恢复：\(identity.appName ?? "Unknown") → 副屏"
-        )
-        return (
-            200,
-            ClaudeHookResponse(
-                ok: true, code: "window_restored_direct",
-                message: "Window restored directly to secondary screen",
                 sessionID: payload.sessionID, handled: true
             )
         )
