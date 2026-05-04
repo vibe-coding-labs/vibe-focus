@@ -32,7 +32,7 @@ final class SessionWindowRegistry: ObservableObject {
     }
 
     /// 绑定 session 到窗口 — 创建或更新 WindowState 行
-    func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil) {
+    func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil, cwd: String? = nil, model: String? = nil) {
         let now = Date()
         let key = cacheKey(pid: windowIdentity.pid, tty: terminalTTY)
 
@@ -48,9 +48,11 @@ final class SessionWindowRegistry: ObservableObject {
             existing.updatedAt = now
             existing.tty = terminalTTY
             existing.termSessionID = terminalSessionID
+            existing.cwd = cwd
+            existing.model = model
             windowStates[key] = existing
         } else {
-            windowStates[key] = WindowState(
+            var state = WindowState(
                 pid: windowIdentity.pid,
                 tty: terminalTTY,
                 windowID: windowIdentity.windowID,
@@ -64,6 +66,9 @@ final class SessionWindowRegistry: ObservableObject {
                 createdAt: now,
                 updatedAt: now
             )
+            state.cwd = cwd
+            state.model = model
+            windowStates[key] = state
         }
 
         lastEventDescription = "SessionStart 绑定窗口：\(windowIdentity.appName ?? "Unknown") / \(windowIdentity.title ?? "Untitled")"
@@ -166,10 +171,19 @@ final class SessionWindowRegistry: ObservableObject {
             })
             key = existingKey ?? cacheKey(pid: pid, tty: nil)
         }
+        let existingState = windowStates[key]
+        let hasExisting = existingState != nil
+        let exSid = existingState?.sessionID?.prefix(8).description ?? "nil"
+        log("[SessionWindowRegistry] updateToggleState pid=\(pid) tty=\(tty ?? "nil") key=\(key) foundExisting=\(hasExisting) exSid=\(exSid)")
         if var state = windowStates[key] {
             toggleUpdater(&state)
             state.updatedAt = Date()
             windowStates[key] = state
+            let oX: String = if let v = state.origX { String(describing: v) } else { "nil" }
+            let tX: String = if let v = state.targetX { String(describing: v) } else { "nil" }
+            let sSp: String = if let v = state.sourceSpace { String(v) } else { "nil" }
+            let tDsp: String = if let v = state.targetDisplay { String(v) } else { "nil" }
+            log("[SessionWindowRegistry] updateToggleState UPDATED key=\(key) origX=\(oX) targetX=\(tX) srcSpace=\(sSp) tgtDisp=\(tDsp)")
             persistToDB(key: key)
         } else {
             var state = WindowState(
@@ -179,6 +193,11 @@ final class SessionWindowRegistry: ObservableObject {
             )
             toggleUpdater(&state)
             windowStates[key] = state
+            let oX: String = if let v = state.origX { String(describing: v) } else { "nil" }
+            let tX: String = if let v = state.targetX { String(describing: v) } else { "nil" }
+            let sSp: String = if let v = state.sourceSpace { String(v) } else { "nil" }
+            let tDsp: String = if let v = state.targetDisplay { String(v) } else { "nil" }
+            log("[SessionWindowRegistry] updateToggleState CREATED NEW key=\(key) origX=\(oX) targetX=\(tX) srcSpace=\(sSp) tgtDisp=\(tDsp)")
             persistToDB(key: key)
         }
     }
@@ -237,6 +256,43 @@ final class SessionWindowRegistry: ObservableObject {
         windowStates.removeAll()
         lastEventDescription = "所有绑定已清除"
         WindowStateStore.shared.deleteAllWindowsStates()
+    }
+
+    /// 检查并清理已关闭窗口的记录
+    /// 遍历所有 active 绑定，通过 CGWindowList 验证窗口是否仍存在
+    func purgeClosedWindows() {
+        let options: CGWindowListOption = [.optionAll]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return
+        }
+        var pidWindows: [Int32: Set<UInt32>] = [:]
+        for info in windowList {
+            guard let pid = info[kCGWindowOwnerPID as String] as? Int32,
+                  let wid = info[kCGWindowNumber as String] as? UInt32 else { continue }
+            pidWindows[pid, default: []].insert(wid)
+        }
+
+        let keysToRemove = windowStates.filter { _, state in
+            guard !state.isCompleted else { return false }
+            guard let wid = state.windowID else { return false }
+            let pidExists = pidWindows[state.pid] != nil
+            if !pidExists { return true }
+            return !(pidWindows[state.pid]?.contains(wid) ?? false)
+        }.map(\.key)
+
+        var purgedCount = 0
+        for key in keysToRemove {
+            if let state = windowStates[key] {
+                log("[SessionWindowRegistry] purging closed window: pid=\(state.pid) tty=\(state.tty ?? "") app=\(state.appName ?? "unknown")")
+                WindowStateStore.shared.deleteWindowState(pid: state.pid, tty: state.tty)
+            }
+            windowStates.removeValue(forKey: key)
+            purgedCount += 1
+        }
+
+        if purgedCount > 0 {
+            log("[SessionWindowRegistry] purgeClosedWindows removed \(purgedCount) stale records")
+        }
     }
 
     // MARK: - UI Support
