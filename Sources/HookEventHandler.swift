@@ -166,77 +166,57 @@ final class HookEventHandler {
 
         let targetWindowID = binding.windowIdentity.windowID
         let targetPID = binding.windowIdentity.pid
+        let store = WindowStateStore.shared
         let wm = WindowManager.shared
 
         log(
-            "[HookEventHandler] UserPromptSubmit searching saved state (session-scoped)",
+            "[HookEventHandler] UserPromptSubmit searching saved state via SQLite",
             fields: [
                 "sessionID": payload.sessionID,
                 "bindingWindowID": String(targetWindowID),
                 "bindingPID": String(targetPID),
-                "savedStatesCount": String(wm.savedWindowStates.count)
+                "sqliteStatesCount": String(store.statesCount)
             ]
         )
 
-        // 优先级 1: windowID + pid 精确匹配（限当前会话）
-        if let matchedState = wm.savedWindowStates.reversed().first(where: { state in
-            state.windowID == targetWindowID
-                && state.pid == targetPID
-                && state.sessionID == payload.sessionID
-                && !wm.isSavedStateCorrupted(state)
-        }) {
-            return performRestore(
-                payload: payload, matchedState: matchedState,
-                matchLevel: "exact_binding_match_session_scoped"
-            )
-        }
-
-        // 优先级 2: 仅 windowID 匹配（限当前会话）
-        if let matchedState = wm.savedWindowStates.reversed().first(where: { state in
-            state.windowID == targetWindowID
-                && state.sessionID == payload.sessionID
-                && !wm.isSavedStateCorrupted(state)
-        }) {
-            log(
-                "[HookEventHandler] UserPromptSubmit session-scoped windowID fallback",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "stateWindowID": String(matchedState.windowID ?? 0),
-                    "bindingPID": String(targetPID)
-                ]
-            )
-            return performRestore(
-                payload: payload, matchedState: matchedState,
-                matchLevel: "windowid_session_scoped"
-            )
-        }
-
-        // 优先级 3: 窗口在主屏 + 同会话同 app 的 saved state
-        let isOnMain = wm.isWindowOnMainScreen(windowID: targetWindowID)
-        if isOnMain {
-            if let appState = wm.savedWindowStates.reversed().first(where: { state in
-                state.appName == binding.windowIdentity.appName
-                    && state.sessionID == payload.sessionID
-                    && !wm.isSavedStateCorrupted(state)
-            }) {
-                log(
-                    "[HookEventHandler] UserPromptSubmit session-scoped app fallback",
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "stateApp": appState.appName ?? "unknown",
-                        "bindingWindowID": String(targetWindowID)
-                    ]
-                )
+        // 优先级 1: windowID + session 精确匹配
+        if let matchedState = store.findState(windowID: targetWindowID, sessionID: payload.sessionID) {
+            if !wm.isSavedStateCorrupted(matchedState) {
                 return performRestore(
-                    payload: payload, matchedState: appState,
-                    matchLevel: "app_fallback_session_scoped"
+                    payload: payload, matchedState: matchedState,
+                    matchLevel: "exact_binding_match_session_scoped"
                 )
+            } else {
+                wm.clearSavedWindowState(id: matchedState.id)
             }
         }
 
-        // 无精确匹配的 saved state → 不做任何操作（不猜测窗口目标位置）
+        // 优先级 2: 窗口在主屏 + 同会话同 app 的 saved state
+        let isOnMain = wm.isWindowOnMainScreen(windowID: targetWindowID)
+        if isOnMain {
+            if let appState = store.findStateByApp(
+                appName: binding.windowIdentity.appName ?? "",
+                sessionID: payload.sessionID
+            ) {
+                if !wm.isSavedStateCorrupted(appState) {
+                    log(
+                        "[HookEventHandler] UserPromptSubmit session-scoped app fallback (SQLite)",
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "stateApp": appState.appName ?? "unknown",
+                            "bindingWindowID": String(targetWindowID)
+                        ]
+                    )
+                    return performRestore(
+                        payload: payload, matchedState: appState,
+                        matchLevel: "app_fallback_session_scoped"
+                    )
+                }
+            }
+        }
+
         log(
-            "[HookEventHandler] UserPromptSubmit window not on main screen and no session-scoped saved state, skipping",
+            "[HookEventHandler] UserPromptSubmit no matching state in SQLite",
             fields: [
                 "sessionID": payload.sessionID,
                 "windowOnMainScreen": String(isOnMain)
@@ -246,7 +226,7 @@ final class HookEventHandler {
             200,
             ClaudeHookResponse(
                 ok: true, code: "no_action_needed",
-                message: "Window not on main screen and no session-scoped state to restore",
+                message: "No matching saved state in SQLite",
                 sessionID: payload.sessionID, handled: false
             )
         )

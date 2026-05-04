@@ -94,55 +94,30 @@ class WindowManager {
     init() {
         savedWindowStates = loadSavedWindowStates()
         if !savedWindowStates.isEmpty {
-            log("Loaded persisted window states from disk: \(savedWindowStates.count)")
+            log("Loaded persisted window states from SQLite: \(savedWindowStates.count)")
         }
-        evictExpiredStates()
-        cleanupStaleSavedStates()
+        cleanupStaleStatesWithGracePeriod()
     }
 
-    /// 清理超过 maxAge 的 savedWindowStates，防止无限增长
-    private func evictExpiredStates() {
-        let maxAge: TimeInterval = 24 * 60 * 60  // 24 小时
-        let now = Date()
-        let before = savedWindowStates.count
-        savedWindowStates.removeAll { state in
-            now.timeIntervalSince(state.savedAt) > maxAge
-        }
-        let removed = before - savedWindowStates.count
-        if removed > 0 {
-            persistSavedWindowStates()
-            log(
-                "[WindowManager] evicted expired states",
-                fields: [
-                    "removed": String(removed),
-                    "remaining": String(savedWindowStates.count),
-                    "maxAgeHours": "24"
-                ]
-            )
-        }
-    }
-
-    private func cleanupStaleSavedStates() {
+    /// 启动时清理 grace period 之外的无效 state
+    /// grace period = 5 分钟：state 保存时间超过 5 分钟且 window 已不存在才删除
+    /// 防止 app 短暂重启期间误删仍在使用的 state
+    private func cleanupStaleStatesWithGracePeriod() {
         let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
         let existingWindowIDs = Set(windowList.compactMap { $0["kCGWindowNumber"] as? UInt32 })
 
-        let before = savedWindowStates.count
-        savedWindowStates.removeAll { state in
-            guard let wid = state.windowID else { return false }
-            let isStale = !existingWindowIDs.contains(wid)
-            if isStale {
-                log(
-                    "[WindowManager] cleaning stale state: windowID \(wid) no longer exists",
-                    level: .debug,
-                    fields: ["stateID": state.id, "app": state.appName ?? "unknown"]
-                )
-            }
-            return isStale
-        }
-        let removed = before - savedWindowStates.count
+        let gracePeriod: TimeInterval = 5 * 60
+        let removed = WindowStateStore.shared.cleanupStaleStates(
+            existingWindowIDs: existingWindowIDs,
+            gracePeriod: gracePeriod
+        )
+
         if removed > 0 {
-            persistSavedWindowStates()
-            log("[WindowManager] cleaned \(removed) stale state(s), \(savedWindowStates.count) remaining")
+            savedWindowStates.removeAll { state in
+                guard let wid = state.windowID else { return false }
+                return !existingWindowIDs.contains(wid)
+            }
+            log("[WindowManager] cleanup with grace period: removed \(removed) stale state(s)")
         }
     }
 
@@ -818,7 +793,7 @@ class WindowManager {
             return false
         }
 
-        if let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
+        if let matchedState = WindowStateStore.shared.findState(windowID: currentWindowID, sessionID: nil) ?? savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
             if isSavedStateCorrupted(matchedState) {
                 log(
                     "[WindowManager] Corrupted state detected, clearing",

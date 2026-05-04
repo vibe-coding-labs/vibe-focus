@@ -8,55 +8,41 @@ import Foundation
 extension WindowManager {
 
     func saveWindowState(_ state: SavedWindowState, window: AXUIElement? = nil) -> SavedWindowState {
-        // 先清理过期 state
-        let maxAge: TimeInterval = 24 * 60 * 60
-        let now = Date()
-        let expiredBefore = savedWindowStates.count
-        savedWindowStates.removeAll { existing in
-            now.timeIntervalSince(existing.savedAt) > maxAge
+        let removed = WindowStateStore.shared.evictStatesOlderThan(maxAge: 24 * 60 * 60)
+        if removed > 0 {
+            log("Evicted \(removed) expired state(s) from SQLite")
         }
-        let expiredRemoved = expiredBefore - savedWindowStates.count
-
-        savedWindowStates.removeAll { existing in
-            shouldReplaceSavedState(existing, with: state, currentWindow: window)
-        }
-        savedWindowStates.append(state)
-        savedWindowStates.sort { $0.savedAt < $1.savedAt }
 
         if let window {
             windowElementsByStateID[state.id] = window
         }
 
-        persistSavedWindowStates()
+        WindowStateStore.shared.saveState(state)
         log(
-            "Persisted window states to UserDefaults: \(savedWindowStates.count)",
-            fields: expiredRemoved > 0 ? ["expiredEvicted": String(expiredRemoved)] : [:]
+            "Saved window state to SQLite: \(state.id)",
+            fields: [
+                "windowID": String(describing: state.windowID),
+                "app": state.appName ?? "unknown"
+            ]
         )
         return state
     }
 
     func loadSavedWindowStates() -> [SavedWindowState] {
-        guard let data = UserDefaults.standard.data(forKey: savedStatesKey),
-              let states = try? JSONDecoder().decode([SavedWindowState].self, from: data) else {
-            return []
-        }
-        return states.filter { $0.windowID != nil }
+        let states = WindowStateStore.shared.loadStates()
+        log("Loaded \(states.count) window state(s) from SQLite")
+        return states
     }
 
     func persistSavedWindowStates() {
-        guard let data = try? JSONEncoder().encode(savedWindowStates) else {
-            log("Failed to encode saved window states")
-            return
-        }
-        UserDefaults.standard.set(data, forKey: savedStatesKey)
+        // SQLite 的 saveWindowState 已经逐条写入，无需批量持久化
     }
 
     func clearSavedWindowState(id: String?) {
         guard let id else { return }
-        savedWindowStates.removeAll { $0.id == id }
+        WindowStateStore.shared.deleteState(id: id)
         windowElementsByStateID.removeValue(forKey: id)
-        persistSavedWindowStates()
-        log("Cleared persisted window state: \(id)")
+        log("Cleared window state from SQLite: \(id)")
     }
 
     func resetActiveWindowContext(removeState: Bool) {
