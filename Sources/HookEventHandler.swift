@@ -308,6 +308,27 @@ final class HookEventHandler {
 
         wm.hydrateMemory(from: savedState, window: nil)
 
+        // 验证找到的窗口确实在 targetFrame 附近
+        if let resolvedWindow = wm.lastWindowElement,
+           let resolvedFrame = wm.frame(of: resolvedWindow) {
+            if !toggleState.isNearTarget(currentFrame: resolvedFrame) {
+                log(
+                    "[HookEventHandler] UserPromptSubmit restore aborted: window moved from target pos resolvedX=\(resolvedFrame.origin.x) resolvedY=\(resolvedFrame.origin.y)",
+                    level: .warn,
+                    fields: ["sessionID": payload.sessionID]
+                )
+                SessionWindowRegistry.shared.clearToggleState(pid: toggleState.pid, tty: toggleState.tty)
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "window_moved_skip",
+                        message: "Window position changed, skipping stale restore",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+        }
+
         log(
             "[HookEventHandler] UserPromptSubmit restoring window",
             fields: [

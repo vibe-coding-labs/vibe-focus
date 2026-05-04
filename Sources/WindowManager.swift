@@ -863,6 +863,16 @@ class WindowManager {
                     return false
                 }
                 if let origFrame = wsState.originalFrame, let tgtFrame = wsState.targetFrame {
+                    // 验证窗口确实在 targetFrame 附近（被 toggle 到的位置）
+                    let currentFrame = self.frame(of: focusedWindow)
+                    if let curFrame = currentFrame, !wsState.isNearTarget(currentFrame: curFrame) {
+                        log(
+                            "[WindowManager] shouldRestoreCurrentWindow: window not at target position curX=\(curFrame.origin.x) curY=\(curFrame.origin.y) tgtX=\(tgtFrame.origin.x) tgtY=\(tgtFrame.origin.y)",
+                            level: .warn,
+                            fields: ["windowID": "\(currentWindowID)"]
+                        )
+                        return false
+                    }
                     let savedState = SavedWindowState(
                         id: "\(wsState.pid)_\(wsState.tty ?? "none")",
                         pid: wsState.pid,
