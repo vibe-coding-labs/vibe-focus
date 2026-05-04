@@ -93,12 +93,15 @@ final class WindowStateStore {
                 is_completed INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
+                completed_at REAL,
                 PRIMARY KEY (pid, tty)
             );
             """)
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_session_id ON windows(session_id);")
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_window_id ON windows(window_id);")
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_last_seen ON windows(updated_at);")
+        // Migration: add completed_at column if missing (existing databases)
+        runSchema("ALTER TABLE windows ADD COLUMN completed_at REAL;")
         log("[WindowStateStore] tables created/verified")
     }
 
@@ -413,8 +416,8 @@ final class WindowStateStore {
                 target_x, target_y, target_w, target_h,
                 source_space, source_display, source_yabai_disp, source_disp_space,
                 target_display, toggle_reason, toggled_at,
-                is_completed, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                is_completed, created_at, updated_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
@@ -452,6 +455,7 @@ final class WindowStateStore {
         sqlite3_bind_int(stmt, 31, state.isCompleted ? 1 : 0)
         sqlite3_bind_double(stmt, 32, state.createdAt.timeIntervalSince1970)
         sqlite3_bind_double(stmt, 33, state.updatedAt.timeIntervalSince1970)
+        if let v = state.completedAt { sqlite3_bind_double(stmt, 34, v.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 34) }
 
         if sqlite3_step(stmt) != SQLITE_DONE {
             let errMsg = String(cString: sqlite3_errmsg(db))
@@ -625,6 +629,7 @@ final class WindowStateStore {
         let isCompleted = sqlite3_column_int(stmt, 30) != 0
         let createdAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 31))
         let updatedAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 32))
+        let completedAt: Date? = sqlite3_column_type(stmt, 33) != SQLITE_NULL ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, 33)) : nil
 
         return WindowState(
             pid: pid,
@@ -652,7 +657,7 @@ final class WindowStateStore {
             toggleReason: toggleReason,
             toggledAt: toggledAt,
             isCompleted: isCompleted,
-            completedAt: nil,
+            completedAt: completedAt,
             createdAt: createdAt,
             updatedAt: updatedAt
         )
