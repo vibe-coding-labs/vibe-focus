@@ -171,13 +171,21 @@ final class SessionWindowRegistry: ObservableObject {
         if let tty, !tty.isEmpty {
             key = cacheKey(pid: pid, tty: tty)
         } else {
-            // tty 为空 — 查找该 PID 是否已有行（优先有 session_id 的行）
-            let existingKey = windowStates.keys.first(where: { k in
+            // tty 为空 — 多级匹配：windowID 精确匹配 > 有 session 的行 > 任意行
+            let focusedWID = WindowManager.shared.focusedWindow(for: pid).flatMap { WindowManager.shared.windowHandle(for: $0) }
+            // 优先按 windowID 精确匹配
+            let windowIDMatch = windowStates.keys.first(where: { k in
+                k.hasPrefix("\(pid)_") && windowStates[k]?.windowID == focusedWID
+            })
+            // 其次按有 sessionID 的行
+            let sessionMatch = windowStates.keys.first(where: { k in
                 k.hasPrefix("\(pid)_") && windowStates[k]?.sessionID != nil
-            }) ?? windowStates.keys.first(where: { k in
+            })
+            // 最后任意行
+            let anyMatch = windowStates.keys.first(where: { k in
                 k.hasPrefix("\(pid)_")
             })
-            key = existingKey ?? cacheKey(pid: pid, tty: nil)
+            key = windowIDMatch ?? sessionMatch ?? anyMatch ?? cacheKey(pid: pid, tty: nil)
         }
         let existingState = windowStates[key]
         let hasExisting = existingState != nil
