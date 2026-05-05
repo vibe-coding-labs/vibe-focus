@@ -150,35 +150,59 @@ final class ToggleEngine {
     // MARK: - Space Switching
 
     /// 切换到窗口的原始 space
+    /// 核心逻辑：查询目标 display 当前可见 space，如果已经是目标 space 则跳过切换
     private func switchToOriginalSpace(record: ToggleRecord, windowAX: AXUIElement, triggerSource: String) {
         let spaceController = SpaceController.shared
-
-        // 用 captureSpaceContext 获取窗口当前 space
-        let currentContext = spaceController.captureSpaceContext(windowID: record.windowID, operationID: "toggle_engine_space_check")
-        guard let currentSpace = currentContext.sourceSpaceIndex else {
-            log("ToggleEngine.switchToOriginalSpace: cannot query current space", level: .debug)
-            return
-        }
-
         let targetSpace = record.sourceSpace
-        guard currentSpace != targetSpace else {
-            log("ToggleEngine.switchToOriginalSpace: already on target space", level: .debug, fields: [
-                "space": String(targetSpace)
-            ])
-            return
-        }
+        let targetDisplay = record.sourceYabaiDisp
 
-        log("ToggleEngine.switchToOriginalSpace: switching", fields: [
-            "from": String(currentSpace),
-            "to": String(targetSpace),
-            "sourceYabaiDisp": String(record.sourceYabaiDisp),
-            "sourceDispSpace": String(record.sourceDispSpace)
+        // 查询目标 display 当前显示的 space（不是窗口所在的 space）
+        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+
+        log("ToggleEngine.switchToOriginalSpace: space check", fields: [
+            "targetSpace": String(targetSpace),
+            "targetDisplay": String(describing: targetDisplay),
+            "displayCurrentSpace": String(describing: displayCurrentSpace),
+            "triggerSource": triggerSource
         ])
 
-        // 使用 SpaceController.moveWindow — 包含完整 fallback 链：
-        // 1. NativeSpaceBridge (CGS private API)
-        // 2. yabai -m window --space (scripting-addition)
-        // 3. NativeSpaceBridge fallback
+        if let current = displayCurrentSpace, current == targetSpace {
+            log("ToggleEngine.switchToOriginalSpace: target display already on correct space, skipping switch", fields: [
+                "space": String(targetSpace)
+            ])
+            // display 已经在正确 space，只需移动窗口到该 space
+            _ = spaceController.moveWindow(
+                record.windowID,
+                toSpaceIndex: targetSpace,
+                focus: false,
+                operationID: "toggle_engine_move_only"
+            )
+            return
+        }
+
+        log("ToggleEngine.switchToOriginalSpace: need space switch", fields: [
+            "displayCurrentSpace": String(describing: displayCurrentSpace),
+            "targetSpace": String(targetSpace),
+            "targetDisplay": String(describing: targetDisplay),
+            "sourceYabaiDisp": String(record.sourceYabaiDisp)
+        ])
+
+        // 目标 display 不在正确 space — 需要先切换 display 的 space 再移动窗口
+        if let current = displayCurrentSpace, current != targetSpace {
+            let switched = spaceController.switchDisplayToSpace(
+                targetSpace: targetSpace,
+                operationID: "toggle_engine_switch_display"
+            )
+            log("ToggleEngine.switchToOriginalSpace: switchDisplayToSpace result", fields: [
+                "switched": String(switched),
+                "targetSpace": String(targetSpace)
+            ])
+            if switched {
+                usleep(400_000)
+            }
+        }
+
+        // 移动窗口到目标 space
         let moved = spaceController.moveWindow(
             record.windowID,
             toSpaceIndex: targetSpace,
@@ -186,41 +210,13 @@ final class ToggleEngine {
             operationID: "toggle_engine_space_switch"
         )
 
-        if !moved {
-            // moveWindow 三策略全部失败 — 用 focusSpace AppleScript 兜底
-            // AppleScript 发送 Ctrl+Left/Right 切换用户视角，窗口会随当前 space 一起移动
-            log("ToggleEngine.switchToOriginalSpace: moveWindow failed, trying focusSpace fallback", level: .warn, fields: [
-                "windowID": String(record.windowID),
-                "targetSpace": String(targetSpace),
-                "currentSpace": String(currentSpace)
-            ])
-
-            let steps = targetSpace - currentSpace
-            let focusOK = NativeSpaceBridge.focusSpace(steps: steps, operationID: "toggle_engine_focusSpace_fallback")
-            if !focusOK {
-                log("ToggleEngine.switchToOriginalSpace: focusSpace also failed", level: .error, fields: [
-                    "windowID": String(record.windowID),
-                    "steps": String(steps)
-                ])
-                return
-            }
-
-            log("ToggleEngine.switchToOriginalSpace: focusSpace succeeded", level: .info, fields: [
-                "steps": String(steps)
-            ])
-            usleep(300_000)
-        } else {
-            // moveWindow 成功，等待动画
+        if moved {
             usleep(200_000)
-        }
-
-        // hotkey 触发时确保用户视角跟随
-        if triggerSource == "carbon_hotkey" {
-            let steps = targetSpace - currentSpace
-            if steps != 0 {
-                _ = NativeSpaceBridge.focusSpace(steps: steps)
-                usleep(400_000)
-            }
+        } else {
+            log("ToggleEngine.switchToOriginalSpace: moveWindow also failed after display switch", level: .warn, fields: [
+                "windowID": String(record.windowID),
+                "targetSpace": String(targetSpace)
+            ])
         }
     }
 }
