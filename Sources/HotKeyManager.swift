@@ -31,8 +31,8 @@ final class HotKeyManager: ObservableObject {
     private var isToggleInFlight = false
     private var lastToggleTriggeredAt: Date = .distantPast
     private var lastToggleCompletedAt: Date = .distantPast
-    private let toggleDedupInterval: TimeInterval = 0.40
-    private let toggleCooldownInterval: TimeInterval = 0.80
+    private let toggleDedupInterval: TimeInterval = 0.15
+    private let toggleCooldownInterval: TimeInterval = 0.05
 
     private init() {
         currentHotKey = Self.loadStoredHotKey()

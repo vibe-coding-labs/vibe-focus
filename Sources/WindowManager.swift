@@ -353,49 +353,13 @@ class WindowManager {
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "restore_start")
 
-        // 采集恢复操作的完整上下文
-        var restoreContext: [String: String] = [
-            "op": op,
-            "source": triggerSource,
-            "hasToken": String(lastWindowToken != nil),
-            "hasOriginalFrame": String(lastWindowFrame != nil),
-            "hasTargetFrame": String(lastTargetFrame != nil)
-        ]
-        if let token = lastWindowToken {
-            restoreContext["tokenPID"] = String(token.pid)
-            restoreContext["tokenBundleID"] = token.bundleIdentifier ?? "nil"
-            restoreContext["tokenAppName"] = token.appName ?? "nil"
-            restoreContext["tokenWindowID"] = String(describing: token.windowID)
-            restoreContext["tokenTitle"] = truncateForLog(token.title ?? "", limit: 60)
-        }
-        if let frame = lastWindowFrame {
-            restoreContext["originalFrame"] = String(describing: frame)
-            // 判断 originalFrame 在哪个屏幕
-            let center = CGPoint(x: frame.midX, y: frame.midY)
-            for (idx, screen) in NSScreen.screens.enumerated() {
-                if screen.frame.contains(center) {
-                    restoreContext["originalScreenIndex"] = String(idx)
-                    break
-                }
-            }
-        }
-        if let target = lastTargetFrame {
-            restoreContext["targetFrame"] = String(describing: target)
-        }
-        restoreContext["sourceSpaceIndex"] = String(describing: lastSourceSpaceIndex)
-        restoreContext["sourceYabaiDisplayIndex"] = String(describing: lastSourceYabaiDisplayIndex)
-        log(
-            "[WindowManager] restore started",
-            fields: restoreContext
-        )
-
-        if !hasAccessibilityPermission() {
+        // === 直接从 ToggleEngine (SQLite) 读取状态，不依赖内存变量 ===
+        // 找到当前焦点窗口的 windowID，用它查 SQLite
+        guard hasAccessibilityPermission() else {
             log(
                 "[WindowManager] restore fallback: accessibility denied",
                 level: .warn,
-                fields: [
-                    "op": op
-                ]
+                fields: ["op": op]
             )
             CrashContextRecorder.shared.record("restore_ax_denied op=\(op)")
             logDiagnostics("ax_trusted_false_restore")
@@ -403,273 +367,192 @@ class WindowManager {
             return
         }
 
-        log(
-            "[WindowManager] restore AX permission OK, checking active state",
-            level: .debug,
-            fields: [
-                "op": op,
-                "hasToken": String(lastWindowToken != nil),
-                "hasFrame": String(lastWindowFrame != nil),
-                "hasTarget": String(lastTargetFrame != nil)
-            ]
-        )
-
-        if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
+        // 1. 拿到焦点窗口的 windowID
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
+              let currentWindowID = windowHandle(for: focusedWindow) else {
             log(
-                "[WindowManager] restore some active state nil, calling shouldRestoreCurrentWindow",
-                level: .debug,
+                "[WindowManager] restore failed: cannot identify focused window",
+                level: .error,
                 fields: ["op": op]
             )
-            if shouldRestoreCurrentWindow() == false {
-                log(
-                    "[WindowManager] restore skipped: no saved state",
-                    level: .warn,
-                    fields: [
-                        "op": op
-                    ]
-                )
-                return
-            }
-            log(
-                "[WindowManager] restore shouldRestoreCurrentWindow succeeded after nil check",
-                level: .debug,
-                fields: [
-                    "op": op,
-                    "hasToken": String(lastWindowToken != nil),
-                    "hasFrame": String(lastWindowFrame != nil)
-                ]
-            )
-        }
-
-        guard let token = lastWindowToken, let frame = lastWindowFrame else {
-            log(
-                "[WindowManager] restore failed: active state missing",
-                level: .error,
-                fields: [
-                    "op": op
-                ]
-            )
-            CrashContextRecorder.shared.record("restore_failed_no_active_state op=\(op)")
             return
         }
 
+        let focusedOnMain = isWindowOnMainScreen(windowID: currentWindowID)
         log(
-            "[WindowManager] restore resolved token and frame",
-            level: .debug,
+            "[WindowManager] restore started",
             fields: [
                 "op": op,
-                "tokenStateID": token.stateID,
-                "tokenPID": String(token.pid),
-                "tokenWindowID": String(describing: token.windowID),
-                "targetFrame": String(describing: frame)
+                "source": triggerSource,
+                "windowID": String(currentWindowID),
+                "focusedOnMain": String(focusedOnMain)
             ]
         )
 
-        // === 两阶段恢复：先移窗口到副屏，再切到正确 Space ===
+        guard focusedOnMain else {
+            log(
+                "[WindowManager] restore skipped: focused window not on main screen",
+                level: .warn,
+                fields: ["op": op, "windowID": String(currentWindowID)]
+            )
+            return
+        }
+
+        // 2. 从 SQLite 读取 toggle record（单一事实来源）
+        let engine = ToggleEngine.shared
+        guard let record = engine.load(windowID: currentWindowID) else {
+            log(
+                "[WindowManager] restore failed: no toggle record in SQLite",
+                level: .warn,
+                fields: ["op": op, "windowID": String(currentWindowID)]
+            )
+            return
+        }
+
+        // 3. 验证 record 有效性
+        guard let mainScreen = getMainScreen() else {
+            log("[WindowManager] restore failed: no main screen", level: .error, fields: ["op": op])
+            return
+        }
+        guard record.isValid(mainScreenFrame: mainScreen.frame) else {
+            log(
+                "[WindowManager] restore failed: toggle record corrupted (origFrame on main screen)",
+                level: .warn,
+                fields: ["op": op, "windowID": String(currentWindowID)]
+            )
+            engine.clear(windowID: currentWindowID)
+            return
+        }
+
+        let origFrame = record.origFrame
+        let targetSpace = record.sourceSpace
+        let targetDisplay = record.sourceYabaiDisp
+
         log(
-            "[WindowManager] restore: preparing space correction",
+            "[WindowManager] restore: loaded toggle record from SQLite",
             level: .info,
             fields: [
                 "op": op,
-                "sourceSpaceIndex": String(describing: lastSourceSpaceIndex),
-                "sourceYabaiDisplayIndex": String(describing: lastSourceYabaiDisplayIndex),
-                "triggerSource": triggerSource
+                "windowID": String(currentWindowID),
+                "pid": String(record.pid),
+                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+                "sourceSpace": String(targetSpace),
+                "sourceYabaiDisp": String(targetDisplay)
             ]
         )
-        let spacePrepared = true
 
-        guard let window = restoreWindow(using: token) else {
+        // 4. 找到窗口 AX element
+        guard let window = findWindowByPID(record.pid, windowID: currentWindowID) else {
             log(
-                "[WindowManager] restore failed: window not found",
+                "[WindowManager] restore failed: window AX element not found",
                 level: .error,
-                fields: [
-                    "op": op,
-                    "tokenWindowID": String(describing: token.windowID)
-                ]
+                fields: ["op": op, "windowID": String(currentWindowID), "pid": String(record.pid)]
             )
             CrashContextRecorder.shared.record("restore_failed_window_not_found op=\(op)")
             return
         }
 
-        log(
-            "[WindowManager] restore resolved window AX element",
-            level: .debug,
-            fields: [
-                "op": op,
-                "tokenWindowID": String(describing: token.windowID)
-            ]
-        )
-
-        // 预检：如果窗口已在目标（原始）位置，跳过恢复
-        // 防止对已恢复的窗口执行无意义操作，避免与手动快捷键操作冲突
-        log(
-            "[WindowManager] restore checking if window already at original position",
-            level: .debug,
-            fields: ["op": op]
-        )
-        if let currentFrame = self.frame(of: window),
-           let targetFrame = lastWindowFrame,
-           framesMatch(currentFrame, targetFrame) {
+        // 5. 验证窗口确实在 targetFrame 附近（确认这个窗口确实被 toggle 过来）
+        guard let currentFrame = self.frame(of: window) else {
+            log("[WindowManager] restore failed: cannot read current frame", level: .error, fields: ["op": op])
+            return
+        }
+        if !record.isNearTarget(currentFrame: currentFrame) {
             log(
-                "[WindowManager] restore skipped: window already at original position",
+                "[WindowManager] restore skipped: window not at toggle target position",
+                level: .warn,
                 fields: [
                     "op": op,
-                    "currentFrame": String(describing: currentFrame),
-                    "targetFrame": String(describing: targetFrame)
+                    "windowID": String(currentWindowID),
+                    "currentX": String(Int(currentFrame.origin.x)),
+                    "currentY": String(Int(currentFrame.origin.y)),
+                    "targetX": String(Int(record.targetFrame.origin.x)),
+                    "targetY": String(Int(record.targetFrame.origin.y))
                 ]
             )
-            resetActiveWindowContext(removeState: true)
+            return
+        }
+
+        // 6. 预检：窗口已在原始位置 → 跳过
+        if framesMatch(currentFrame, origFrame) {
+            log(
+                "[WindowManager] restore skipped: window already at original position",
+                fields: ["op": op]
+            )
+            engine.clear(windowID: currentWindowID)
             CrashContextRecorder.shared.record("restore_skipped_already_at_original op=\(op)")
             return
         }
 
-        // 诊断日志：记录找到的窗口的当前状态
-        let restoredWindowFrame = self.frame(of: window)
-        let restoredWindowID = windowHandle(for: window)
-        let restoredWindowSpace = restoredWindowID.flatMap { spaceController.windowSpaceIndex(windowID: $0) }
-        log(
-            "[WindowManager] restore_found_window",
-            fields: [
-                "op": op,
-                "windowID": String(describing: restoredWindowID),
-                "currentFrame": String(describing: restoredWindowFrame),
-                "windowActualSpace": String(describing: restoredWindowSpace),
-                "spacePrepared": String(spacePrepared)
-            ]
-        )
-
-        guard isAttributeSettable(window, attribute: kAXPositionAttribute) else {
+        // 7. AX 属性检查
+        guard isAttributeSettable(window, attribute: kAXPositionAttribute),
+              isAttributeSettable(window, attribute: kAXSizeAttribute) else {
             log(
-                "[WindowManager] restore failed: position attribute not settable",
+                "[WindowManager] restore failed: AX attributes not settable",
                 level: .error,
-                fields: [
-                    "op": op
-                ]
+                fields: ["op": op]
             )
-            CrashContextRecorder.shared.record("restore_failed_position_not_settable op=\(op)")
+            CrashContextRecorder.shared.record("restore_failed_ax_not_settable op=\(op)")
             return
         }
 
-        log(
-            "[WindowManager] restore position attribute is settable",
-            level: .debug,
-            fields: ["op": op]
-        )
+        // 8. Space 预切换（在 apply frame 之前，因为坐标相对于 Display）
+        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+        log("[WindowManager] restore: pre-apply space check", fields: [
+            "op": op,
+            "targetSpace": String(targetSpace),
+            "targetDisplay": String(targetDisplay),
+            "displayCurrentSpace": String(describing: displayCurrentSpace)
+        ])
 
-        guard isAttributeSettable(window, attribute: kAXSizeAttribute) else {
-            log(
-                "[WindowManager] restore failed: size attribute not settable",
-                level: .error,
-                fields: [
-                    "op": op
-                ]
-            )
-            CrashContextRecorder.shared.record("restore_failed_size_not_settable op=\(op)")
-            return
-        }
-
-        log(
-            "[WindowManager] restore size attribute is settable, proceeding to apply",
-            level: .debug,
-            fields: ["op": op]
-        )
-
-        let preApplyFrame = self.frame(of: window)
-        let preApplyWindowID = windowHandle(for: window)
-        let preApplySpace = preApplyWindowID.flatMap { spaceController.windowSpaceIndex(windowID: $0) }
-        log(
-            "[WindowManager] restore_pre_apply_frame",
-            fields: [
-                "op": op,
-                "windowID": String(describing: preApplyWindowID),
-                "currentFrame": String(describing: preApplyFrame),
-                "targetFrame": String(describing: frame),
-                "windowActualSpace": String(describing: preApplySpace)
-            ]
-        )
-
-        // === Space 切换：在 apply frame 之前确保目标 display 显示正确的 Space ===
-        // 逻辑：1) 查目标 display 当前显示什么 space  2) 如果不是目标 space，先用 yabai 切换  3) 然后再 apply frame
-        if triggerSource == "carbon_hotkey", let targetSpace = lastSourceSpaceIndex {
-            let targetDisplay = lastSourceYabaiDisplayIndex
-            let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
-
-            log("[WindowManager] restore: pre-apply space check", fields: [
-                "op": op,
-                "targetSpace": String(targetSpace),
-                "targetDisplay": String(describing: targetDisplay),
-                "displayCurrentSpace": String(describing: displayCurrentSpace)
+        if let current = displayCurrentSpace, current != targetSpace {
+            log("[WindowManager] restore: switching display from space \(current) to \(targetSpace)", level: .info, fields: [
+                "op": op, "targetDisplay": String(targetDisplay)
             ])
-
-            if let current = displayCurrentSpace, current != targetSpace {
-                log("[WindowManager] restore: switching display from space \(current) to \(targetSpace)", level: .info, fields: [
-                    "op": op, "targetDisplay": String(describing: targetDisplay)
-                ])
-
-                let switched = spaceController.switchDisplayToSpace(targetSpace: targetSpace, operationID: op)
-                if switched {
-                    usleep(400_000)
+            let switched = spaceController.switchDisplayToSpace(targetSpace: targetSpace, operationID: op)
+            if switched {
+                // 轮询等待 display 到达目标 space（替代固定 400ms sleep）
+                let td = targetDisplay
+                let started = Date()
+                while Date().timeIntervalSince(started) < 0.4 {
+                    if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
+                    usleep(30_000)
                 }
-                log("[WindowManager] restore: space switch result", fields: [
-                    "op": op, "switched": String(switched)
-                ])
-            } else {
-                log("[WindowManager] restore: display already on target space, no switch needed", fields: [
-                    "op": op
-                ])
             }
+            log("[WindowManager] restore: space switch result", fields: [
+                "op": op, "switched": String(switched)
+            ])
+        } else {
+            log("[WindowManager] restore: display already on target space, no switch needed", fields: [
+                "op": op
+            ])
         }
 
-        guard apply(frame: frame, to: window, operationID: op, stage: "restore_apply_frame") else {
-            log(
-                "[WindowManager] restore failed: apply frame failed",
-                level: .error,
-                fields: [
-                    "op": op
-                ]
-            )
+        // 9. Space 切换后重新获取 AX element（引用可能失效）
+        let restoreAX = findWindowByPID(record.pid, windowID: currentWindowID) ?? window
+
+        // 10. Apply frame
+        guard apply(frame: origFrame, to: restoreAX, operationID: op, stage: "restore_apply_frame") else {
+            log("[WindowManager] restore failed: apply frame failed", level: .error, fields: ["op": op])
             CrashContextRecorder.shared.record("restore_failed_apply_frame op=\(op)")
             return
         }
 
-        log(
-            "[WindowManager] restore apply() succeeded, reading back frame",
-            level: .debug,
-            fields: ["op": op]
-        )
-
-        guard let restoredFrame = self.frame(of: window) else {
-            log(
-                "[WindowManager] restore failed: cannot read back frame",
-                level: .error,
-                fields: [
-                    "op": op
-                ]
-            )
+        // 11. 验证 frame
+        guard let restoredFrame = self.frame(of: restoreAX) else {
+            log("[WindowManager] restore failed: cannot read back frame", level: .error, fields: ["op": op])
             CrashContextRecorder.shared.record("restore_failed_readback op=\(op)")
             return
         }
 
-        let readbackWindowID = windowHandle(for: window)
-        let readbackSpace = readbackWindowID.flatMap { spaceController.windowSpaceIndex(windowID: $0) }
-        log(
-            "[WindowManager] restore_post_apply_frame",
-            fields: [
-                "op": op,
-                "appliedFrame": String(describing: restoredFrame),
-                "targetFrame": String(describing: frame),
-                "frameMatched": String(framesMatch(restoredFrame, frame)),
-                "windowActualSpace": String(describing: readbackSpace)
-            ]
-        )
-
-        guard framesMatch(restoredFrame, frame) else {
+        guard framesMatch(restoredFrame, origFrame) else {
             log(
                 "[WindowManager] restore failed: frame mismatch",
                 level: .error,
                 fields: [
                     "op": op,
-                    "expected": String(describing: frame),
+                    "expected": String(describing: origFrame),
                     "actual": String(describing: restoredFrame)
                 ]
             )
@@ -677,46 +560,32 @@ class WindowManager {
             return
         }
 
-        log(
-            "[WindowManager] restore frame matched, resetting active context",
-            level: .debug,
-            fields: ["op": op]
-        )
-
-        // === Space 状态验证（post-apply） ===
-        if let windowID = windowHandle(for: window) {
-            let postApplySpace = spaceController.windowSpaceIndex(windowID: windowID)
-            log("[WindowManager] restore: post-apply space state", fields: [
-                "op": op,
-                "targetSpace": String(describing: lastSourceSpaceIndex),
-                "actualSpace": String(describing: postApplySpace)
-            ])
-
-            // toggle 热键恢复时跟随窗口焦点
-            if triggerSource == "carbon_hotkey" {
-                let currentSpace = spaceController.currentSpaceIndex()
-                if let ws = postApplySpace, let cs = currentSpace, ws != cs {
-                    log("[WindowManager] restore: following window to Space \(ws)", fields: [
-                        "op": op, "windowID": String(windowID), "currentSpace": String(cs)
-                    ])
-                    _ = spaceController.focusWindow(windowID, operationID: op)
-                }
+        // 12. 焦点跟随（仅 carbon_hotkey 触发）
+        if triggerSource == "carbon_hotkey" {
+            if let postApplySpace = spaceController.windowSpaceIndex(windowID: currentWindowID),
+               let currentSpace = spaceController.currentSpaceIndex(),
+               postApplySpace != currentSpace {
+                log("[WindowManager] restore: following window to Space \(postApplySpace)", fields: [
+                    "op": op, "windowID": String(currentWindowID), "currentSpace": String(currentSpace)
+                ])
+                _ = spaceController.focusWindow(currentWindowID, operationID: op)
             }
         }
 
-        resetActiveWindowContext(removeState: true)
-        let outcome = spacePrepared ? "restored" : "restored_frame_only"
+        // 13. 清理 — 清除 SQLite toggle record
+        engine.clear(windowID: currentWindowID)
+        SessionWindowRegistry.shared.clearToggleState(windowID: currentWindowID)
+
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
         log(
             "[WindowManager] restore finished",
             fields: [
                 "op": op,
-                "outcome": outcome,
-                "durationMs": String(finalDurationMs),
-                "spacePrepared": String(spacePrepared)
+                "outcome": "restored",
+                "durationMs": String(finalDurationMs)
             ]
         )
-        CrashContextRecorder.shared.record("restore_success op=\(op) outcome=\(outcome) durationMs=\(finalDurationMs)")
+        CrashContextRecorder.shared.record("restore_success op=\(op) outcome=restored durationMs=\(finalDurationMs)")
     }
 
     func getMainScreen() -> NSScreen? {
@@ -785,9 +654,7 @@ class WindowManager {
             "[WindowManager] shouldRestoreCurrentWindow called",
             level: .debug,
             fields: [
-                "savedStatesCount": String(savedWindowStates.count),
-                "hasActiveToken": String(lastWindowToken != nil),
-                "hasActiveFrame": String(lastWindowFrame != nil)
+                "savedStatesCount": String(savedWindowStates.count)
             ]
         )
         if !hasAccessibilityPermission() {
@@ -798,10 +665,6 @@ class WindowManager {
             return shouldRestoreCurrentWindowViaSystemEvents()
         }
 
-        // 核心原则：以当前聚焦窗口为决策依据，而非全局状态
-        // 用户按热键的意图由"当前聚焦窗口在哪里"决定：
-        //   - 聚焦窗口在副屏 → move to main
-        //   - 聚焦窗口在主屏且有 saved state → restore 回副屏
         guard let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
               let currentWindowID = windowHandle(for: focusedWindow) else {
@@ -822,13 +685,11 @@ class WindowManager {
             level: .debug,
             fields: [
                 "focusedWindowID": String(currentWindowID),
-                "focusedOnMainScreen": String(focusedOnMain),
-                "savedStatesCount": String(savedWindowStates.count)
+                "focusedOnMainScreen": String(focusedOnMain)
             ]
         )
 
         if !focusedOnMain {
-            // 聚焦窗口在副屏 → 用户想把它移到主屏
             log(
                 "[WindowManager] shouldRestoreCurrentWindow: focused window on secondary screen → move to main",
                 fields: ["windowID": String(currentWindowID)]
@@ -836,66 +697,46 @@ class WindowManager {
             return false
         }
 
-        // 聚焦窗口在主屏 → 检查 WindowState 中是否有 toggle state 可以恢复
-        if let wsState = SessionWindowRegistry.shared.findState(windowID: currentWindowID) {
-            if wsState.hasToggleState {
-                guard let mainScreen = getMainScreen() else { return false }
-                if wsState.isCorrupted(mainScreenFrame: mainScreen.frame) {
-                    SessionWindowRegistry.shared.clearToggleState(windowID: wsState.windowID)
-                    return false
-                }
-                if let origFrame = wsState.originalFrame, let tgtFrame = wsState.targetFrame {
-                    // 验证窗口确实在 targetFrame 附近（被 toggle 到的位置）
-                    let currentFrame = self.frame(of: focusedWindow)
-                    if let curFrame = currentFrame, !wsState.isNearTarget(currentFrame: curFrame) {
-                        log(
-                            "[WindowManager] shouldRestoreCurrentWindow: window not at target position curX=\(curFrame.origin.x) curY=\(curFrame.origin.y) tgtX=\(tgtFrame.origin.x) tgtY=\(tgtFrame.origin.y)",
-                            level: .warn,
-                            fields: ["windowID": "\(currentWindowID)"]
-                        )
-                        return false
-                    }
-                    let savedState = SavedWindowState(
-                        id: "\(wsState.pid)_\(wsState.tty ?? "none")",
-                        pid: wsState.pid,
-                        bundleIdentifier: wsState.bundleIdentifier,
-                        appName: wsState.appName,
-                        windowID: wsState.windowID,
-                        windowNumber: wsState.axWindowNumber,
-                        title: wsState.title,
-                        originalFrame: RectPayload(origFrame),
-                        targetFrame: RectPayload(tgtFrame),
-                        sourceSpaceIndex: wsState.sourceSpace,
-                        targetSpaceIndex: nil,
-                        sourceYabaiDisplayIndex: wsState.sourceYabaiDisp,
-                        sourceDisplaySpaceIndex: wsState.sourceDispSpace,
-                        sourceDisplayIndex: wsState.sourceDisplay,
-                        sourceDisplayID: nil,
-                        targetDisplayIndex: wsState.targetDisplay,
-                        restoreReason: wsState.toggleReason,
-                        sessionID: wsState.sessionID,
-                        savedAt: wsState.toggledAt ?? Date()
-                    )
-                    hydrateMemory(from: savedState, window: focusedWindow)
-                    log(
-                        "[WindowManager] shouldRestoreCurrentWindow: focused window on main, has toggle state → restore",
-                        fields: [
-                            "windowID": String(currentWindowID),
-                            "pid": String(wsState.pid),
-                            "tty": wsState.tty ?? "nil"
-                        ]
-                    )
-                    return true
-                }
-            }
+        // 聚焦窗口在主屏 → 直接查 SQLite 看有没有 toggle record
+        guard let record = ToggleEngine.shared.load(windowID: currentWindowID) else {
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: no toggle record for window",
+                level: .debug,
+                fields: ["windowID": String(currentWindowID)]
+            )
+            return false
+        }
+
+        guard let mainScreen = getMainScreen() else { return false }
+        if !record.isValid(mainScreenFrame: mainScreen.frame) {
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: toggle record corrupted, clearing",
+                level: .warn,
+                fields: ["windowID": String(currentWindowID)]
+            )
+            ToggleEngine.shared.clear(windowID: currentWindowID)
+            return false
+        }
+
+        // 验证窗口确实在 targetFrame 附近
+        if let currentFrame = self.frame(of: focusedWindow),
+           !record.isNearTarget(currentFrame: currentFrame) {
+            log(
+                "[WindowManager] shouldRestoreCurrentWindow: window not at target position",
+                level: .warn,
+                fields: ["windowID": String(currentWindowID)]
+            )
+            return false
         }
 
         log(
-            "[WindowManager] shouldRestoreCurrentWindow: focused window on main but no matching toggle state",
-            level: .debug,
-            fields: ["windowID": String(currentWindowID)]
+            "[WindowManager] shouldRestoreCurrentWindow: focused window on main, has valid toggle record → restore",
+            fields: [
+                "windowID": String(currentWindowID),
+                "pid": String(record.pid)
+            ]
         )
-        return false
+        return true
     }
 
     /// 检测 saved state 是否被污染（originalFrame 在主屏幕上）
@@ -1102,32 +943,36 @@ class WindowManager {
             return false
         }
 
+        // 需要焦点窗口的 windowID 来查 SQLite
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
+              let currentWindowID = windowHandle(for: focusedWindow) else {
+            return false
+        }
+
         let currentSpace = spaceController.currentSpaceIndex()
-        guard let candidate = savedWindowStates.last,
-              let sourceSpace = candidate.sourceSpaceIndex,
+        guard let record = ToggleEngine.shared.load(windowID: currentWindowID),
               let current = currentSpace,
-              sourceSpace != current else {
+              record.sourceSpace != current else {
             log(
                 "[WindowManager] shouldRestoreAcrossSpaces: no cross-space condition met",
                 level: .debug,
                 fields: [
-                    "currentSpace": String(describing: currentSpace),
-                    "sourceSpace": String(describing: savedWindowStates.last?.sourceSpaceIndex)
+                    "currentSpace": String(describing: currentSpace)
                 ]
             )
             return false
         }
 
-        hydrateMemory(from: candidate, window: nil)
         log(
             "[WindowManager] shouldRestoreAcrossSpaces: matched across spaces",
             level: .debug,
             fields: [
-                "sourceSpace": String(sourceSpace),
+                "sourceSpace": String(record.sourceSpace),
                 "currentSpace": String(current)
             ]
         )
-        log("Detected moved window state across spaces: source=\(sourceSpace) current=\(current)")
+        log("Detected moved window state across spaces: source=\(record.sourceSpace) current=\(current)")
         return true
     }
 
@@ -1354,7 +1199,12 @@ class WindowManager {
             if focusSucceeded {
                 // 仅在 space 实际切换且到达目标时等待动画完成
                 if postFocusSpace != preFocusCurrentSpace && postFocusSpace == sourceSpace {
-                    usleep(80_000)
+                    let settleStart = Date()
+                    let targetSourceSpace = sourceSpace
+                    while Date().timeIntervalSince(settleStart) < 0.1 {
+                        if let s = spaceController.currentSpaceIndex(), s == targetSourceSpace { break }
+                        usleep(20_000)
+                    }
                 }
 
                 let postSettleSpace = spaceController.currentSpaceIndex()

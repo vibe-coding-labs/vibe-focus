@@ -223,6 +223,27 @@ final class SpaceController: ObservableObject {
     /// 在 AX frame 设置后，确保窗口在正确 Space
     /// 策略：1) 先用 NativeSpaceBridge 切到目标 Space 2) 然后再 AX 设置 frame
     /// 这样 macOS 会把窗口放到用户当前活跃的副屏 Space
+    /// 轮询等待条件成立，替代固定 usleep — 条件满足时立即返回，不浪费时间
+    /// - Parameters:
+    ///   - timeout: 最大等待时间（微秒）
+    ///   - interval: 每次轮询间隔（微秒）
+    ///   - condition: 返回 true 表示条件满足
+    /// - Returns: true = 条件在超时前满足，false = 超时
+    @discardableResult
+    private func pollUntil(
+        timeout: useconds_t,
+        interval: useconds_t = 10_000,
+        condition: () -> Bool
+    ) -> Bool {
+        let start = Date()
+        let timeoutSec = Double(timeout) / 1_000_000
+        while Date().timeIntervalSince(start) < timeoutSec {
+            if condition() { return true }
+            usleep(interval)
+        }
+        return condition()
+    }
+
     /// 如果窗口已经在副屏但 Space 不对，尝试 NativeSpaceBridge.moveWindow
     func moveWindowToSpace(windowID: UInt32, targetSpace: Int, operationID: String?) -> Bool {
         let op = operationID ?? "none"
@@ -262,19 +283,20 @@ final class SpaceController: ObservableObject {
             operationID: op
         )
         if let result = moveResult, result.exitCode == 0 {
-            usleep(200_000)
-            let verifySpace = windowSpaceIndex(windowID: windowID)
-            if verifySpace == targetSpace {
+            let verified = pollUntil(timeout: 200_000, interval: 20_000) {
+                self.windowSpaceIndex(windowID: windowID) == targetSpace
+            }
+            if verified {
                 log(
                     "[SpaceController] moveWindowToSpace: yabai window --space succeeded",
-                    fields: ["op": op, "windowID": String(windowID), "verifiedSpace": String(describing: verifySpace)]
+                    fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace)]
                 )
                 return true
             }
             log(
                 "[SpaceController] moveWindowToSpace: yabai executed but window not on target, trying space focus first",
                 level: .warn,
-                fields: ["op": op, "windowID": String(windowID), "verifySpace": String(describing: verifySpace), "targetSpace": String(targetSpace)]
+                fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace)]
             )
         }
 
@@ -285,7 +307,10 @@ final class SpaceController: ObservableObject {
             operationID: op
         )
         if let result = focusResult, result.exitCode == 0 {
-            usleep(300_000)
+            // 等待 space focus 生效
+            pollUntil(timeout: 200_000, interval: 20_000) {
+                self.displayVisibleSpace(displayIndex: nil) == targetSpace
+            }
 
             let retryResult = runYabai(
                 arguments: ["-m", "window", String(windowID), "--space", String(targetSpace)],
@@ -293,12 +318,13 @@ final class SpaceController: ObservableObject {
                 operationID: op
             )
             if let retry = retryResult, retry.exitCode == 0 {
-                usleep(200_000)
-                let verifySpace = windowSpaceIndex(windowID: windowID)
-                if verifySpace == targetSpace {
+                let verified = pollUntil(timeout: 200_000, interval: 20_000) {
+                    self.windowSpaceIndex(windowID: windowID) == targetSpace
+                }
+                if verified {
                     log(
                         "[SpaceController] moveWindowToSpace: space focus + window move succeeded",
-                        fields: ["op": op, "windowID": String(windowID), "verifiedSpace": String(describing: verifySpace)]
+                        fields: ["op": op, "windowID": String(windowID)]
                     )
                     return true
                 }
@@ -313,15 +339,15 @@ final class SpaceController: ObservableObject {
             )
             NativeSpaceBridge.resetFailureCache()
             if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                for attempt in 1...5 {
-                    usleep(100_000)
-                    if windowSpaceIndex(windowID: windowID) == targetSpace {
-                        log(
-                            "[SpaceController] moveWindowToSpace: NativeSpaceBridge verified on attempt \(attempt)",
-                            fields: ["op": op, "windowID": String(windowID)]
-                        )
-                        return true
-                    }
+                let verified = pollUntil(timeout: 500_000, interval: 50_000) {
+                    self.windowSpaceIndex(windowID: windowID) == targetSpace
+                }
+                if verified {
+                    log(
+                        "[SpaceController] moveWindowToSpace: NativeSpaceBridge verified",
+                        fields: ["op": op, "windowID": String(windowID)]
+                    )
+                    return true
                 }
             }
         }
@@ -432,7 +458,7 @@ final class SpaceController: ObservableObject {
         savedFrontApp?.activate(options: .activateIgnoringOtherApps)
 
         if success {
-            usleep(100_000)
+            usleep(30_000)
             log("[SpaceController] switchDisplayToSpace: CGEvent succeeded", fields: [
                 "op": op, "targetSpace": String(targetSpace), "steps": String(steps)
             ])
@@ -810,23 +836,23 @@ final class SpaceController: ObservableObject {
         return verified
     }
 
-    /// 带单次重试的窗口移动验证（yabai move 可能异步生效）
+    /// 带重试的窗口移动验证 — 轮询代替固定等待
     private func verifyWindowMovedToSpaceWithRetry(windowID: UInt32, targetSpace: Int, operationID: String) -> Bool {
-        // 单次延迟验证，避免过长的 exponential backoff
-        usleep(50_000)
-        if verifyWindowMovedToSpace(windowID: windowID, targetSpace: targetSpace, operationID: operationID) {
-            return true
+        let verified = pollUntil(timeout: 100_000, interval: 15_000) {
+            self.verifyWindowMovedToSpace(windowID: windowID, targetSpace: targetSpace, operationID: operationID)
         }
-        log(
-            "[SpaceController] moveWindow verification failed after 100ms",
-            level: .warn,
-            fields: [
-                "op": operationID,
-                "windowID": String(windowID),
-                "targetSpace": String(targetSpace)
-            ]
-        )
-        return false
+        if !verified {
+            log(
+                "[SpaceController] moveWindow verification failed after polling",
+                level: .warn,
+                fields: [
+                    "op": operationID,
+                    "windowID": String(windowID),
+                    "targetSpace": String(targetSpace)
+                ]
+            )
+        }
+        return verified
     }
 
     @discardableResult
