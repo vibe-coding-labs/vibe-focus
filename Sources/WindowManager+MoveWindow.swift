@@ -383,10 +383,9 @@ extension WindowManager {
 
         // 同时更新 WindowState 中的 toggle state（统一宽表）
         SessionWindowRegistry.shared.updateToggleState(
-            pid: identity.pid,
-            tty: nil
+            windowID: currentWindowID
         ) { state in
-            state.windowID = currentWindowID
+            state.pid = identity.pid
             state.appName = identity.appName
             state.bundleIdentifier = identity.bundleIdentifier
             state.title = resolvedTitle
@@ -410,6 +409,23 @@ extension WindowManager {
                 state.sessionID = sid
             }
         }
+
+        // 新路径：ToggleEngine 保存完整恢复数据到 SQLite（单一事实来源）
+        let teSourceDisplay = spaceContext.sourceDisplayIndex ?? sourceContext.index ?? 0
+        ToggleEngine.shared.save(
+            windowID: currentWindowID,
+            pid: identity.pid,
+            bundleIdentifier: identity.bundleIdentifier,
+            appName: identity.appName,
+            origFrame: currentFrame,
+            sourceSpace: spaceContext.sourceSpaceIndex ?? 0,
+            sourceDisplay: teSourceDisplay,
+            sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? 0,
+            sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
+            targetFrame: actualTargetFrame,
+            targetDisplay: targetDisplayIndex ?? 0,
+            sessionID: sessionID
+        )
 
         log(
             "[moveWindowToMainScreen] saved window state",

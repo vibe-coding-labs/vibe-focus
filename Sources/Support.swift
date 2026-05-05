@@ -16,10 +16,17 @@ enum LogLevel: String {
     case error = "ERROR"
 }
 
-private let logFileURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
-private let structuredLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl")
-private let logFileBackupURL = URL(fileURLWithPath: "/tmp/vibefocus.log.1")
-private let structuredLogBackupURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl.1")
+private let logDirectoryURL: URL = {
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/VibeFocus", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+}()
+
+private let logFileURL = logDirectoryURL.appendingPathComponent("vibefocus.log")
+private let structuredLogFileURL = logDirectoryURL.appendingPathComponent("vibefocus-events.jsonl")
+private let logFileBackupURL = logDirectoryURL.appendingPathComponent("vibefocus.log.1")
+private let structuredLogBackupURL = logDirectoryURL.appendingPathComponent("vibefocus-events.jsonl.1")
 private let logMaxSizeBytes: UInt64 = 25 * 1024 * 1024
 private let logWriteQueue = DispatchQueue(label: "vibefocus.log.write", qos: .utility)
 private let logSessionID = UUID().uuidString

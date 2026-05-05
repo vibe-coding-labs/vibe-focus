@@ -7,8 +7,8 @@ final class SessionWindowRegistry: ObservableObject {
 
     @Published private(set) var lastEventDescription: String = "尚未收到 Claude Hook 事件"
 
-    /// 内存缓存：key = "\(pid)_\(tty ?? "")"，value = WindowState
-    private(set) var windowStates: [String: WindowState] = [:]
+    /// 内存缓存：key = windowID (CGWindowNumber)，value = WindowState
+    private(set) var windowStates: [UInt32: WindowState] = [:]
 
     var activeBindingCount: Int {
         windowStates.values.filter { !$0.isCompleted }.count
@@ -24,26 +24,26 @@ final class SessionWindowRegistry: ObservableObject {
     private init() {
         let loaded = WindowStateStore.shared.loadAllWindowStates()
         for state in loaded {
-            let key = cacheKey(pid: state.pid, tty: state.tty)
-            windowStates[key] = state
+            windowStates[state.windowID] = state
         }
         log("SessionWindowRegistry.init loaded \(loaded.count) window states from SQLite")
         pruneExpiredBindings(shouldPersist: false)
     }
 
-    /// 绑定 session 到窗口 — 创建或更新 WindowState 行
+    // MARK: - Bind
+
     func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil, itermSessionID: String? = nil, cwd: String? = nil, model: String? = nil) {
         let now = Date()
-        let key = cacheKey(pid: windowIdentity.pid, tty: terminalTTY)
+        let wid = windowIdentity.windowID
 
-        // 如果 windowNumber 缺失，尝试通过 AX API 补充
         var resolvedWindowNumber = windowIdentity.windowNumber
         if resolvedWindowNumber == nil, let axWindow = WindowManager.shared.resolveWindow(identity: windowIdentity) {
             resolvedWindowNumber = WindowManager.shared.windowNumber(for: axWindow)
         }
 
-        if var existing = windowStates[key] {
-            existing.windowID = windowIdentity.windowID
+        if var existing = windowStates[wid] {
+            existing.pid = windowIdentity.pid
+            existing.tty = terminalTTY
             existing.axWindowNumber = resolvedWindowNumber
             existing.appName = windowIdentity.appName
             existing.bundleIdentifier = windowIdentity.bundleIdentifier
@@ -52,17 +52,16 @@ final class SessionWindowRegistry: ObservableObject {
             existing.isCompleted = false
             existing.completedAt = nil
             existing.updatedAt = now
-            existing.tty = terminalTTY
             existing.termSessionID = terminalSessionID
             existing.itermSessionID = itermSessionID
             existing.cwd = cwd
             existing.model = model
-            windowStates[key] = existing
+            windowStates[wid] = existing
         } else {
             var state = WindowState(
+                windowID: wid,
                 pid: windowIdentity.pid,
                 tty: terminalTTY,
-                windowID: windowIdentity.windowID,
                 axWindowNumber: resolvedWindowNumber,
                 appName: windowIdentity.appName,
                 bundleIdentifier: windowIdentity.bundleIdentifier,
@@ -76,31 +75,45 @@ final class SessionWindowRegistry: ObservableObject {
             )
             state.cwd = cwd
             state.model = model
-            windowStates[key] = state
+            windowStates[wid] = state
         }
 
         lastEventDescription = "SessionStart 绑定窗口：\(windowIdentity.appName ?? "Unknown") / \(windowIdentity.title ?? "Untitled")"
         pruneExpiredBindings(shouldPersist: false)
-        persistToDB(key: key)
+        persistToDB(windowID: wid)
     }
 
-    /// 按 sessionID 查找窗口状态
+    // MARK: - Lookup
+
+    /// 按 sessionID 查找窗口状态（扫描，低频操作）
     func binding(for sessionID: String) -> WindowState? {
         if let state = windowStates.values.first(where: { $0.sessionID == sessionID }) {
             return state
         }
         if let state = WindowStateStore.shared.findWindowStateBySession(sessionID: sessionID) {
-            let key = cacheKey(pid: state.pid, tty: state.tty)
-            windowStates[key] = state
+            windowStates[state.windowID] = state
             return state
         }
         return nil
     }
 
-    /// 验证窗口状态是否仍然有效
+    /// 按 windowID 查找窗口状态（O(1)，主查找路径）
+    func findState(windowID: UInt32) -> WindowState? {
+        if let state = windowStates[windowID] {
+            return state
+        }
+        if let state = WindowStateStore.shared.findWindowState(windowID: windowID) {
+            windowStates[state.windowID] = state
+            return state
+        }
+        return nil
+    }
+
+    // MARK: - Verify
+
     func verifyBinding(_ state: WindowState) -> Bool {
-        guard let windowID = state.windowID else { return false }
         let expectedPID = state.pid
+        let windowID = state.windowID
 
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: state.bundleIdentifier ?? "")
         let pidMatches = runningApps.contains { $0.processIdentifier == expectedPID }
@@ -121,39 +134,35 @@ final class SessionWindowRegistry: ObservableObject {
         return false
     }
 
-    /// 标记会话完成
+    // MARK: - State Updates
+
     func markCompleted(sessionID: String) {
         guard let state = binding(for: sessionID) else { return }
-        let key = cacheKey(pid: state.pid, tty: state.tty)
-        guard var updated = windowStates[key] else { return }
+        guard var updated = windowStates[state.windowID] else { return }
         updated.isCompleted = true
         updated.completedAt = Date()
         updated.updatedAt = Date()
-        windowStates[key] = updated
+        windowStates[state.windowID] = updated
         lastEventDescription = "SessionEnd 已完成：\(updated.appName ?? "Unknown")"
-        persistToDB(key: key)
+        persistToDB(windowID: state.windowID)
     }
 
-    /// 重新激活已完成的绑定
     func reactivate(sessionID: String) {
         guard let state = binding(for: sessionID) else { return }
-        let key = cacheKey(pid: state.pid, tty: state.tty)
-        guard var updated = windowStates[key] else { return }
+        guard var updated = windowStates[state.windowID] else { return }
         updated.isCompleted = false
         updated.completedAt = nil
         updated.updatedAt = Date()
-        windowStates[key] = updated
-        persistToDB(key: key)
+        windowStates[state.windowID] = updated
+        persistToDB(windowID: state.windowID)
     }
 
-    /// 更新最后活跃时间
     func touch(sessionID: String, message: String? = nil) {
         guard let state = binding(for: sessionID) else { return }
-        let key = cacheKey(pid: state.pid, tty: state.tty)
-        guard var updated = windowStates[key] else { return }
+        guard var updated = windowStates[state.windowID] else { return }
         updated.updatedAt = Date()
-        windowStates[key] = updated
-        persistToDB(key: key)
+        windowStates[state.windowID] = updated
+        persistToDB(windowID: state.windowID)
         if let message, !message.isEmpty {
             lastEventDescription = message
         }
@@ -164,162 +173,75 @@ final class SessionWindowRegistry: ObservableObject {
         lastEventDescription = message
     }
 
-    /// 更新指定窗口的 toggle state（由 WindowManager 调用）
-    /// 当 tty 为 nil 时，自动查找该 PID 已有的行（优先选有 session 的行）
-    func updateToggleState(pid: Int32, tty: String?, toggleUpdater: (inout WindowState) -> Void) {
-        let key: String
-        if let tty, !tty.isEmpty {
-            key = cacheKey(pid: pid, tty: tty)
-        } else {
-            // tty 为空 — 多级匹配：windowID 精确匹配 > 有 session 的行 > 任意行
-            let focusedWID = WindowManager.shared.focusedWindow(for: pid).flatMap { WindowManager.shared.windowHandle(for: $0) }
-            // 优先按 windowID 精确匹配
-            let windowIDMatch = windowStates.keys.first(where: { k in
-                k.hasPrefix("\(pid)_") && windowStates[k]?.windowID == focusedWID
-            })
-            // 其次按有 sessionID 的行
-            let sessionMatch = windowStates.keys.first(where: { k in
-                k.hasPrefix("\(pid)_") && windowStates[k]?.sessionID != nil
-            })
-            // 最后任意行
-            let anyMatch = windowStates.keys.first(where: { k in
-                k.hasPrefix("\(pid)_")
-            })
-            key = windowIDMatch ?? sessionMatch ?? anyMatch ?? cacheKey(pid: pid, tty: nil)
-        }
-        let existingState = windowStates[key]
-        let hasExisting = existingState != nil
-        let exSid = existingState?.sessionID?.prefix(8).description ?? "nil"
-        log("[SessionWindowRegistry] updateToggleState pid=\(pid) tty=\(tty ?? "nil") key=\(key) foundExisting=\(hasExisting) exSid=\(exSid)")
-        if var state = windowStates[key] {
+    // MARK: - Toggle State
+
+    /// 按 windowID 更新 toggle state（由 WindowManager 调用）
+    func updateToggleState(windowID: UInt32, toggleUpdater: (inout WindowState) -> Void) {
+        if var state = windowStates[windowID] {
             toggleUpdater(&state)
             state.updatedAt = Date()
-            windowStates[key] = state
-            let oX: String = if let v = state.origX { String(describing: v) } else { "nil" }
-            let tX: String = if let v = state.targetX { String(describing: v) } else { "nil" }
-            let sSp: String = if let v = state.sourceSpace { String(v) } else { "nil" }
-            let tDsp: String = if let v = state.targetDisplay { String(v) } else { "nil" }
-            log("[SessionWindowRegistry] updateToggleState UPDATED key=\(key) origX=\(oX) targetX=\(tX) srcSpace=\(sSp) tgtDisp=\(tDsp)")
-            persistToDB(key: key)
+            windowStates[windowID] = state
+            persistToDB(windowID: windowID)
         } else {
             var state = WindowState(
-                pid: pid, tty: tty,
+                windowID: windowID,
+                pid: 0,
                 isCompleted: false,
-                createdAt: Date(), updatedAt: Date()
+                createdAt: Date(),
+                updatedAt: Date()
             )
             toggleUpdater(&state)
-            windowStates[key] = state
-            let oX: String = if let v = state.origX { String(describing: v) } else { "nil" }
-            let tX: String = if let v = state.targetX { String(describing: v) } else { "nil" }
-            let sSp: String = if let v = state.sourceSpace { String(v) } else { "nil" }
-            let tDsp: String = if let v = state.targetDisplay { String(v) } else { "nil" }
-            log("[SessionWindowRegistry] updateToggleState CREATED NEW key=\(key) origX=\(oX) targetX=\(tX) srcSpace=\(sSp) tgtDisp=\(tDsp)")
-            persistToDB(key: key)
+            windowStates[windowID] = state
+            persistToDB(windowID: windowID)
         }
-    }
-
-    /// 按 pid+tty 查找窗口状态（tty 为空时自动查找该 PID 的任意行）
-    func findState(pid: Int32, tty: String?) -> WindowState? {
-        if let tty, !tty.isEmpty {
-            let key = cacheKey(pid: pid, tty: tty)
-            if let state = windowStates[key] { return state }
-            if let state = WindowStateStore.shared.findWindowState(pid: pid, tty: tty) {
-                windowStates[key] = state
-                return state
-            }
-        } else {
-            // tty 为空 — 查找该 PID 的任意行（内存优先）
-            if let state = windowStates.values.first(where: { $0.pid == pid }) {
-                return state
-            }
-            // fallback: SQLite 中查找（无法按 PID 查全部，逐个试）
-            return nil
-        }
-        return nil
-    }
-
-    /// 按 windowID 查找窗口状态，可选 PID 验证防止跨进程误匹配
-    func findStateByWindowID(_ windowID: UInt32, expectedPID: Int32? = nil) -> WindowState? {
-        let candidates = windowStates.values.filter { $0.windowID == windowID }
-        if let pid = expectedPID {
-            if let state = candidates.first(where: { $0.pid == pid }) {
-                return state
-            }
-            if let state = WindowStateStore.shared.findWindowStateByWindowID(windowID), state.pid == pid {
-                let key = cacheKey(pid: state.pid, tty: state.tty)
-                windowStates[key] = state
-                return state
-            }
-        } else {
-            if let state = candidates.first {
-                return state
-            }
-            if let state = WindowStateStore.shared.findWindowStateByWindowID(windowID) {
-                let key = cacheKey(pid: state.pid, tty: state.tty)
-                windowStates[key] = state
-                return state
-            }
-        }
-        return nil
     }
 
     /// 清除指定窗口的 toggle state
-    func clearToggleState(pid: Int32, tty: String?) {
-        let key = cacheKey(pid: pid, tty: tty)
-        if var state = windowStates[key] {
+    func clearToggleState(windowID: UInt32) {
+        if var state = windowStates[windowID] {
             state.origX = nil; state.origY = nil; state.origW = nil; state.origH = nil
             state.targetX = nil; state.targetY = nil; state.targetW = nil; state.targetH = nil
             state.sourceSpace = nil; state.sourceDisplay = nil; state.sourceYabaiDisp = nil
             state.sourceDispSpace = nil; state.targetDisplay = nil
             state.toggleReason = nil; state.toggledAt = nil
             state.updatedAt = Date()
-            windowStates[key] = state
-            persistToDB(key: key)
+            windowStates[windowID] = state
+            persistToDB(windowID: windowID)
         }
-        WindowStateStore.shared.clearToggleState(pid: pid, tty: tty)
+        WindowStateStore.shared.clearToggleState(windowID: windowID)
     }
 
-    /// 清除所有绑定（调试用）
+    // MARK: - Bulk Operations
+
     func clearAllBindings() {
         windowStates.removeAll()
         lastEventDescription = "所有绑定已清除"
         WindowStateStore.shared.deleteAllWindowsStates()
     }
 
-    /// 检查并清理已关闭窗口的记录
-    /// 遍历所有 active 绑定，通过 CGWindowList 验证窗口是否仍存在
     func purgeClosedWindows() {
         let options: CGWindowListOption = [.optionAll]
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return
         }
-        var pidWindows: [Int32: Set<UInt32>] = [:]
+        var activeWindowIDs: Set<UInt32> = []
         for info in windowList {
-            guard let pid = info[kCGWindowOwnerPID as String] as? Int32,
-                  let wid = info[kCGWindowNumber as String] as? UInt32 else { continue }
-            pidWindows[pid, default: []].insert(wid)
+            if let wid = info[kCGWindowNumber as String] as? UInt32 {
+                activeWindowIDs.insert(wid)
+            }
         }
 
         let keysToRemove = windowStates.filter { _, state in
             guard !state.isCompleted else { return false }
-            guard let wid = state.windowID else { return false }
-            let pidExists = pidWindows[state.pid] != nil
-            if !pidExists { return true }
-            return !(pidWindows[state.pid]?.contains(wid) ?? false)
+            return !activeWindowIDs.contains(state.windowID)
         }.map(\.key)
 
-        var purgedCount = 0
         for key in keysToRemove {
             if let state = windowStates[key] {
-                log("[SessionWindowRegistry] purging closed window: pid=\(state.pid) tty=\(state.tty ?? "") app=\(state.appName ?? "unknown")")
-                WindowStateStore.shared.deleteWindowState(pid: state.pid, tty: state.tty)
+                log("[SessionWindowRegistry] purging closed window: wid=\(state.windowID) pid=\(state.pid) app=\(state.appName ?? "unknown")")
+                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
             }
             windowStates.removeValue(forKey: key)
-            purgedCount += 1
-        }
-
-        if purgedCount > 0 {
-            log("[SessionWindowRegistry] purgeClosedWindows removed \(purgedCount) stale records")
         }
     }
 
@@ -340,10 +262,6 @@ final class SessionWindowRegistry: ObservableObject {
 
     // MARK: - Private
 
-    private func cacheKey(pid: Int32, tty: String?) -> String {
-        "\(pid)_\(tty ?? "")"
-    }
-
     private func pruneExpiredBindings(shouldPersist: Bool = true) {
         let removed = WindowStateStore.shared.pruneExpiredWindowStates(
             activeRetention: activeRetention,
@@ -360,8 +278,8 @@ final class SessionWindowRegistry: ObservableObject {
         }
     }
 
-    private func persistToDB(key: String) {
-        guard let state = windowStates[key] else { return }
+    private func persistToDB(windowID: UInt32) {
+        guard let state = windowStates[windowID] else { return }
         WindowStateStore.shared.saveWindowState(state)
     }
 }
