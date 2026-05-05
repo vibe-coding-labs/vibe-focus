@@ -220,16 +220,32 @@ final class HookEventHandler {
         let tty = state?.tty ?? payload.terminalCtx?.tty
         if let toggleState = SessionWindowRegistry.shared.findState(pid: identity.pid, tty: tty) {
             if toggleState.hasToggleState {
-                guard let mainScreen = wm.getMainScreen() else {
-                    return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
-                }
-                if !toggleState.isCorrupted(mainScreenFrame: mainScreen.frame) {
-                    return performRestoreFromState(
-                        payload: payload, toggleState: toggleState,
-                        matchLevel: "pid_tty_direct"
+                // 验证 toggle state 的 windowID 与当前窗口匹配
+                // 同 PID+TTY 可能有多个窗口（如 Terminal.app 多窗口），防止恢复到错误窗口
+                if let stateWID = toggleState.windowID, stateWID != identity.windowID {
+                    log(
+                        "[HookEventHandler] UserPromptSubmit toggle state windowID mismatch, skipping pid_tty_direct",
+                        level: .warn,
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "identityWindowID": String(identity.windowID),
+                            "stateWindowID": String(stateWID),
+                            "pid": String(identity.pid),
+                            "tty": tty ?? "nil"
+                        ]
                     )
                 } else {
-                    SessionWindowRegistry.shared.clearToggleState(pid: identity.pid, tty: tty)
+                    guard let mainScreen = wm.getMainScreen() else {
+                        return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
+                    }
+                    if !toggleState.isCorrupted(mainScreenFrame: mainScreen.frame) {
+                        return performRestoreFromState(
+                            payload: payload, toggleState: toggleState,
+                            matchLevel: "pid_tty_direct"
+                        )
+                    } else {
+                        SessionWindowRegistry.shared.clearToggleState(pid: identity.pid, tty: tty)
+                    }
                 }
             }
         }
