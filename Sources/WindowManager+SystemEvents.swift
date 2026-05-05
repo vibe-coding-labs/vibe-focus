@@ -25,31 +25,9 @@ extension WindowManager {
         }
 
         let targetFrame = axFrame(forVisibleFrameOf: mainScreen)
-        let bundleIdentifier = frontApp.bundleIdentifier
-        let appName = frontApp.localizedName ?? snapshot.appName
-        let savedState = SavedWindowState(
-            id: UUID().uuidString,
-            pid: frontApp.processIdentifier,
-            bundleIdentifier: bundleIdentifier,
-            appName: appName,
-            windowID: snapshot.windowID,
-            windowNumber: nil,
-            title: snapshot.title,
-            originalFrame: RectPayload(snapshot.frame),
-            targetFrame: RectPayload(targetFrame),
-            sourceSpaceIndex: nil,
-            targetSpaceIndex: nil,
-            sourceYabaiDisplayIndex: nil,
-            sourceDisplaySpaceIndex: nil,
-            sourceDisplayIndex: nil,
-            sourceDisplayID: nil,
-            targetDisplayIndex: nil,
-            restoreReason: WindowMoveReason.manualHotkey.rawValue,
-            sessionID: nil,
-            savedAt: Date()
-        )
+        let origFrame = snapshot.frame
 
-        log("System Events snapshot frame: \(snapshot.frame)")
+        log("System Events snapshot frame: \(origFrame)")
         log("System Events target frame: \(targetFrame)")
 
         guard systemEventsApply(frame: targetFrame, toPID: frontApp.processIdentifier) else {
@@ -57,51 +35,38 @@ extension WindowManager {
             return
         }
 
-        let persistedState = saveWindowState(savedState)
-        hydrateMemory(from: persistedState, window: nil)
+        // 保存到 ToggleEngine (SQLite)，不写内存变量
+        if let windowID = snapshot.windowID {
+            ToggleEngine.shared.save(
+                windowID: windowID,
+                pid: frontApp.processIdentifier,
+                bundleIdentifier: frontApp.bundleIdentifier,
+                appName: frontApp.localizedName ?? snapshot.appName,
+                origFrame: origFrame,
+                sourceSpace: 0,
+                sourceDisplay: 0,
+                sourceYabaiDisp: 0,
+                sourceDispSpace: 0,
+                targetFrame: targetFrame,
+                targetDisplay: 0,
+                sessionID: nil
+            )
+        }
+
         log("✅ MOVED WITH SYSTEM EVENTS FALLBACK")
     }
 
     func restoreViaSystemEvents() {
-        log(
-            "[restoreViaSystemEvents] called",
-            level: .debug,
-            fields: [
-                "hasToken": String(lastWindowToken != nil),
-                "hasFrame": String(lastWindowFrame != nil),
-                "hasTarget": String(lastTargetFrame != nil)
-            ]
-        )
-        if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
-            log(
-                "[restoreViaSystemEvents] some state nil, calling shouldRestoreCurrentWindowViaSystemEvents",
-                level: .debug
-            )
-            if shouldRestoreCurrentWindowViaSystemEvents() == false {
-                log("No saved window to restore via System Events")
-                return
-            }
-            log(
-                "[restoreViaSystemEvents] shouldRestoreCurrentWindowViaSystemEvents succeeded",
-                level: .debug
-            )
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let snapshot = systemEventsSnapshot(forPID: frontApp.processIdentifier),
+              let windowID = snapshot.windowID else {
+            log("No window identified for System Events restore")
+            return
         }
 
-        guard let token = lastWindowToken,
-              let frame = lastWindowFrame,
-              let frontApp = NSWorkspace.shared.frontmostApplication,
-              let snapshot = systemEventsSnapshot(forPID: frontApp.processIdentifier),
-              snapshot.windowID == token.windowID else {
-            log(
-                "[restoreViaSystemEvents] guard failed: missing token/frame/app/snapshot",
-                level: .warn,
-                fields: [
-                    "hasToken": String(lastWindowToken != nil),
-                    "hasFrame": String(lastWindowFrame != nil),
-                    "hasFrontApp": String(NSWorkspace.shared.frontmostApplication != nil)
-                ]
-            )
-            log("No active window state to restore via System Events")
+        // 从 SQLite 读取 toggle record
+        guard let record = ToggleEngine.shared.load(windowID: windowID) else {
+            log("No toggle record for window \(windowID) in System Events restore")
             return
         }
 
@@ -109,76 +74,39 @@ extension WindowManager {
             "[restoreViaSystemEvents] matched window, applying frame",
             level: .debug,
             fields: [
-                "windowID": String(describing: token.windowID),
-                "frame": String(describing: frame)
+                "windowID": String(windowID),
+                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
             ]
         )
-        log("Restoring with System Events using window handle match")
-        guard systemEventsApply(frame: frame, toPID: frontApp.processIdentifier) else {
-            log(
-                "[restoreViaSystemEvents] systemEventsApply failed",
-                level: .error
-            )
-            log("System Events fallback failed to restore window")
+
+        guard systemEventsApply(frame: record.origFrame, toPID: frontApp.processIdentifier) else {
+            log("[restoreViaSystemEvents] systemEventsApply failed", level: .error)
             return
         }
 
-        log(
-            "[restoreViaSystemEvents] systemEventsApply succeeded, resetting context",
-            level: .debug
-        )
-        resetActiveWindowContext(removeState: true)
+        ToggleEngine.shared.clear(windowID: windowID)
         log("✅ RESTORED WITH SYSTEM EVENTS FALLBACK")
     }
 
     func shouldRestoreCurrentWindowViaSystemEvents() -> Bool {
-        guard !savedWindowStates.isEmpty,
-              let frontApp = NSWorkspace.shared.frontmostApplication,
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
               let snapshot = systemEventsSnapshot(forPID: frontApp.processIdentifier) else {
             return false
         }
 
-        // 第一级匹配：通过 windowID
+        // 通过 windowID 直接查 SQLite
         if let currentWindowID = snapshot.windowID,
-           let matchedState = savedWindowStates.reversed().first(where: { $0.windowID == currentWindowID }) {
-            if isSavedStateCorrupted(matchedState) {
+           let record = ToggleEngine.shared.load(windowID: currentWindowID) {
+            guard let mainScreen = getMainScreen() else { return false }
+            if !record.isValid(mainScreenFrame: mainScreen.frame) {
                 log(
-                    "System Events match found but state is corrupted, clearing",
+                    "System Events match found but toggle record corrupted, clearing",
                     level: .warn,
-                    fields: ["stateID": matchedState.id, "windowID": String(describing: currentWindowID)]
+                    fields: ["windowID": String(describing: currentWindowID)]
                 )
-                clearSavedWindowState(id: matchedState.id)
+                ToggleEngine.shared.clear(windowID: currentWindowID)
             } else {
-                hydrateMemory(from: matchedState, window: nil)
                 log("Detected moved window state via System Events handle: \(currentWindowID)")
-                return true
-            }
-        }
-
-        // 第二级匹配：通过 PID + 窗口标题 + 大致位置
-        let positionTolerance: CGFloat = 50.0
-        if let matchedState = savedWindowStates.reversed().first(where: { state in
-            guard state.pid == frontApp.processIdentifier else { return false }
-            let stateTitle = state.title ?? ""
-            let currentTitle = snapshot.title ?? ""
-            guard stateTitle == currentTitle else { return false }
-
-            // 检查当前位置是否接近保存的 targetFrame
-            let targetFrame = state.targetFrame.cgRect
-            let xDiff = abs(snapshot.x - targetFrame.origin.x)
-            let yDiff = abs(snapshot.y - targetFrame.origin.y)
-            return xDiff <= positionTolerance && yDiff <= positionTolerance
-        }) {
-            if isSavedStateCorrupted(matchedState) {
-                log(
-                    "System Events fallback match found but state is corrupted, clearing",
-                    level: .warn,
-                    fields: ["stateID": matchedState.id]
-                )
-                clearSavedWindowState(id: matchedState.id)
-            } else {
-                hydrateMemory(from: matchedState, window: nil)
-                log("Detected moved window state via System Events fallback matching (PID+title+position)")
                 return true
             }
         }

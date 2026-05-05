@@ -302,16 +302,15 @@ extension WindowManager {
                 ]
             )
 
-            usleep(50_000)
-
-            let cgVerified = verifyWindowFrameViaCGWindowList(
+            // 轮询验证 AX 是否实际成功（AX apply 返回 false 但可能实际已生效）
+            let cgVerified = pollUntil_axFrameMatch(
                 windowID: identity.windowID,
                 targetFrame: targetFrame,
+                timeout: 80_000,
                 operationID: op
             )
 
             if !cgVerified {
-                usleep(80_000)
                 let retrySucceeded = apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame_retry")
                 if !retrySucceeded {
                     log(
@@ -357,31 +356,7 @@ extension WindowManager {
                 "actualTargetFrame": String(describing: actualTargetFrame)
             ]
         )
-        let savedState = SavedWindowState(
-            id: UUID().uuidString,
-            pid: identity.pid,
-            bundleIdentifier: identity.bundleIdentifier,
-            appName: identity.appName,
-            windowID: currentWindowID,
-            windowNumber: resolvedWindowNumber,
-            title: resolvedTitle,
-            originalFrame: RectPayload(currentFrame),
-            targetFrame: RectPayload(actualTargetFrame),
-            sourceSpaceIndex: spaceContext.sourceSpaceIndex,
-            targetSpaceIndex: spaceContext.targetSpaceIndex,
-            sourceYabaiDisplayIndex: spaceContext.sourceDisplayIndex,
-            sourceDisplaySpaceIndex: spaceContext.sourceDisplaySpaceIndex,
-            sourceDisplayIndex: sourceContext.index,
-            sourceDisplayID: sourceContext.displayID,
-            targetDisplayIndex: targetDisplayIndex,
-            restoreReason: reason.rawValue,
-            sessionID: sessionID,
-            savedAt: Date()
-        )
-
-        let persistedState = saveWindowState(savedState, window: windowAX)
-
-        // 同时更新 WindowState 中的 toggle state（统一宽表）
+        // 写入 1: SessionWindowRegistry（session 绑定 + toggle state，写 SQLite）
         SessionWindowRegistry.shared.updateToggleState(
             windowID: currentWindowID
         ) { state in
@@ -410,7 +385,7 @@ extension WindowManager {
             }
         }
 
-        // 新路径：ToggleEngine 保存完整恢复数据到 SQLite（单一事实来源）
+        // 写入 2: ToggleEngine（SQLite 单一事实来源，restore 时直接读这里）
         let teSourceDisplay = spaceContext.sourceDisplayIndex ?? sourceContext.index ?? 0
         ToggleEngine.shared.save(
             windowID: currentWindowID,
@@ -428,27 +403,9 @@ extension WindowManager {
         )
 
         log(
-            "[moveWindowToMainScreen] saved window state",
-            level: .debug,
-            fields: [
-                "op": op,
-                "stateID": persistedState.id
-            ]
-        )
-        hydrateMemory(from: persistedState, window: windowAX)
-        log(
-            "[moveWindowToMainScreen] hydrated memory from persisted state",
-            level: .debug,
-            fields: [
-                "op": op,
-                "stateID": persistedState.id
-            ]
-        )
-        log(
             "[WindowManager] moveWindowToMainScreen finished",
             fields: [
                 "op": op,
-                "savedStateID": persistedState.id,
                 "windowID": String(currentWindowID),
                 "durationMs": String(elapsedMilliseconds(since: startedAt))
             ]
@@ -512,6 +469,24 @@ extension WindowManager {
             ]
         )
         return false
+    }
+
+    /// 轮询验证窗口 frame 是否已到达目标（通过 CGWindowList）
+    private func pollUntil_axFrameMatch(
+        windowID: UInt32,
+        targetFrame: CGRect,
+        timeout: useconds_t,
+        operationID: String
+    ) -> Bool {
+        let start = Date()
+        let timeoutSec = Double(timeout) / 1_000_000
+        while Date().timeIntervalSince(start) < timeoutSec {
+            if verifyWindowFrameViaCGWindowList(windowID: windowID, targetFrame: targetFrame, operationID: operationID) {
+                return true
+            }
+            usleep(15_000)
+        }
+        return verifyWindowFrameViaCGWindowList(windowID: windowID, targetFrame: targetFrame, operationID: operationID)
     }
 
     private func allWindows(for pid: pid_t) -> [AXUIElement] {

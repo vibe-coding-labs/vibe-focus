@@ -97,11 +97,14 @@ final class HookEventHandler {
     func handleUserPromptSubmit(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        let traceID = makeOperationID(prefix: "ups")
+        let handleStartedAt = Date()
         lastActivityBySession[payload.sessionID] = Date()
 
         log(
             "[HookEventHandler] UserPromptSubmit triggered",
             fields: [
+                "traceID": traceID,
                 "sessionID": payload.sessionID,
                 "autoRestoreEnabled": String(ClaudeHookPreferences.autoRestoreOnPromptSubmit),
                 "cwd": payload.cwd ?? "nil"
@@ -133,6 +136,7 @@ final class HookEventHandler {
                     "[HookEventHandler] UserPromptSubmit binding verification failed",
                     level: .warn,
                     fields: [
+                        "traceID": traceID,
                         "sessionID": payload.sessionID,
                         "pid": String(state.pid),
                         "tty": state.tty ?? "nil"
@@ -156,15 +160,39 @@ final class HookEventHandler {
                 title: state.title,
                 capturedAt: state.createdAt
             )
+            log(
+                "[HookEventHandler] UserPromptSubmit binding resolved",
+                level: .debug,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "windowID": String(state.windowID),
+                    "resolveDurationMs": String(elapsedMilliseconds(since: handleStartedAt))
+                ]
+            )
         } else if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+            let terminalResolveStart = Date()
             identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            let terminalResolveMs = elapsedMilliseconds(since: terminalResolveStart)
             if let identity {
                 log(
-                    "[HookEventHandler] UserPromptSubmit no binding, resolved via terminal context",
+                    "[HookEventHandler] UserPromptSubmit resolved via terminal context",
                     fields: [
+                        "traceID": traceID,
                         "sessionID": payload.sessionID,
                         "resolvedWindowID": String(identity.windowID),
-                        "app": identity.appName ?? "unknown"
+                        "app": identity.appName ?? "unknown",
+                        "terminalResolveMs": String(terminalResolveMs)
+                    ]
+                )
+            } else {
+                log(
+                    "[HookEventHandler] UserPromptSubmit terminal context resolve returned nil",
+                    level: .warn,
+                    fields: [
+                        "traceID": traceID,
+                        "sessionID": payload.sessionID,
+                        "terminalResolveMs": String(terminalResolveMs)
                     ]
                 )
             }
@@ -172,7 +200,10 @@ final class HookEventHandler {
             log(
                 "[HookEventHandler] UserPromptSubmit no binding and no terminal context",
                 level: .warn,
-                fields: ["sessionID": payload.sessionID]
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID
+                ]
             )
             return (
                 200,
@@ -202,6 +233,7 @@ final class HookEventHandler {
             log(
                 "[HookEventHandler] UserPromptSubmit window not on main screen",
                 fields: [
+                    "traceID": traceID,
                     "sessionID": payload.sessionID,
                     "windowID": String(identity.windowID)
                 ]
@@ -224,9 +256,31 @@ final class HookEventHandler {
             }
 
             if record.isValid(mainScreenFrame: mainScreen.frame) {
+                let restoreStart = Date()
+                log(
+                    "[HookEventHandler] UserPromptSubmit calling ToggleEngine.restore",
+                    level: .info,
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(identity.windowID),
+                        "preRestoreMs": String(elapsedMilliseconds(since: handleStartedAt))
+                    ]
+                )
                 let success = engine.restore(
                     windowID: identity.windowID,
-                    triggerSource: "user_prompt_submit"
+                    triggerSource: "user_prompt_submit",
+                    traceID: traceID
+                )
+                let restoreMs = elapsedMilliseconds(since: restoreStart)
+                log(
+                    "[HookEventHandler] UserPromptSubmit restore completed",
+                    level: success ? .info : .warn,
+                    fields: [
+                        "traceID": traceID,
+                        "success": String(success),
+                        "restoreMs": String(restoreMs),
+                        "totalMs": String(elapsedMilliseconds(since: handleStartedAt))
+                    ]
                 )
                 if success {
                     return (
@@ -252,16 +306,25 @@ final class HookEventHandler {
                     )
                 }
             } else {
-                // corrupted state（两个 frame 都在主屏），清除
                 engine.clear(windowID: identity.windowID)
+                log(
+                    "[HookEventHandler] UserPromptSubmit toggle record corrupted, cleared",
+                    level: .warn,
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(identity.windowID)
+                    ]
+                )
             }
         }
 
         log(
             "[HookEventHandler] UserPromptSubmit no toggle state found",
             fields: [
+                "traceID": traceID,
                 "sessionID": payload.sessionID,
-                "windowID": String(identity.windowID)
+                "windowID": String(identity.windowID),
+                "totalMs": String(elapsedMilliseconds(since: handleStartedAt))
             ]
         )
         return (
@@ -270,98 +333,6 @@ final class HookEventHandler {
                 ok: true, code: "no_action_needed",
                 message: "No toggle state found for window",
                 sessionID: payload.sessionID, handled: false
-            )
-        )
-    }
-
-    // MARK: - Perform Restore
-
-    private func performRestoreFromState(
-        payload: ClaudeHookPayload,
-        toggleState: WindowState
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        let wm = WindowManager.shared
-
-        guard let origFrame = toggleState.originalFrame,
-              let tgtFrame = toggleState.targetFrame else {
-            return (200, ClaudeHookResponse(ok: true, code: "no_frame_data", message: "No frame data", sessionID: payload.sessionID, handled: false))
-        }
-
-        let savedState = WindowManager.SavedWindowState(
-            id: "\(toggleState.pid)_\(toggleState.tty ?? "none")",
-            pid: toggleState.pid,
-            bundleIdentifier: toggleState.bundleIdentifier,
-            appName: toggleState.appName,
-            windowID: toggleState.windowID,
-            windowNumber: toggleState.axWindowNumber,
-            title: toggleState.title,
-            originalFrame: WindowManager.RectPayload(origFrame),
-            targetFrame: WindowManager.RectPayload(tgtFrame),
-            sourceSpaceIndex: toggleState.sourceSpace,
-            targetSpaceIndex: nil,
-            sourceYabaiDisplayIndex: toggleState.sourceYabaiDisp,
-            sourceDisplaySpaceIndex: toggleState.sourceDispSpace,
-            sourceDisplayIndex: toggleState.sourceDisplay,
-            sourceDisplayID: nil,
-            targetDisplayIndex: toggleState.targetDisplay,
-            restoreReason: toggleState.toggleReason,
-            sessionID: toggleState.sessionID,
-            savedAt: toggleState.toggledAt ?? Date()
-        )
-
-        wm.hydrateMemory(from: savedState, window: nil)
-
-        // 验证找到的窗口确实在 targetFrame 附近
-        if let resolvedWindow = wm.lastWindowElement,
-           let resolvedFrame = wm.frame(of: resolvedWindow) {
-            if !toggleState.isNearTarget(currentFrame: resolvedFrame) {
-                log(
-                    "[HookEventHandler] UserPromptSubmit restore aborted: window moved from target pos resolvedX=\(resolvedFrame.origin.x) resolvedY=\(resolvedFrame.origin.y)",
-                    level: .warn,
-                    fields: ["sessionID": payload.sessionID]
-                )
-                SessionWindowRegistry.shared.clearToggleState(windowID: toggleState.windowID)
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "window_moved_skip",
-                        message: "Window position changed, skipping stale restore",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            }
-        }
-
-        log(
-            "[HookEventHandler] UserPromptSubmit restoring window",
-            fields: [
-                "sessionID": payload.sessionID,
-                "pid": String(toggleState.pid),
-                "tty": toggleState.tty ?? "nil",
-                "app": toggleState.appName ?? "unknown",
-                "windowID": String(toggleState.windowID),
-                "originalFrame": String(describing: origFrame),
-                "targetFrame": String(describing: tgtFrame)
-            ]
-        )
-
-        wm.restore(
-            operationID: makeOperationID(prefix: "hook-restore"),
-            triggerSource: "user_prompt_submit"
-        )
-
-        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-        SessionWindowRegistry.shared.clearToggleState(windowID: toggleState.windowID)
-
-        SessionWindowRegistry.shared.setLastEventDescription(
-            "UserPromptSubmit 恢复窗口：\(toggleState.appName ?? "Unknown")"
-        )
-        return (
-            200,
-            ClaudeHookResponse(
-                ok: true, code: "window_restored",
-                message: "Window restored to original position",
-                sessionID: payload.sessionID, handled: true
             )
         )
     }

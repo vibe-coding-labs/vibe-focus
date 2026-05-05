@@ -1215,7 +1215,7 @@ private struct SettingsView: View {
                         }
 
                         if !hookToken.isEmpty {
-                            Text("重新生成后需重新安装 Hook，否则 Claude Code 会使用旧 Token 导致鉴权失败")
+                            Text("Token 已自动同步到 Hook 脚本配置，无需重新安装")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
