@@ -466,6 +466,16 @@ class WindowManager {
         )
 
         // === 两阶段恢复：先移窗口到副屏，再切到正确 Space ===
+        log(
+            "[WindowManager] restore: preparing space correction",
+            level: .info,
+            fields: [
+                "op": op,
+                "sourceSpaceIndex": String(describing: lastSourceSpaceIndex),
+                "sourceYabaiDisplayIndex": String(describing: lastSourceYabaiDisplayIndex),
+                "triggerSource": triggerSource
+            ]
+        )
         let spacePrepared = true
 
         guard let window = restoreWindow(using: token) else {
@@ -578,6 +588,38 @@ class WindowManager {
             ]
         )
 
+        // === Space 切换：在 apply frame 之前确保目标 display 显示正确的 Space ===
+        // 逻辑：1) 查目标 display 当前显示什么 space  2) 如果不是目标 space，先用 yabai 切换  3) 然后再 apply frame
+        if triggerSource == "carbon_hotkey", let targetSpace = lastSourceSpaceIndex {
+            let targetDisplay = lastSourceYabaiDisplayIndex
+            let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+
+            log("[WindowManager] restore: pre-apply space check", fields: [
+                "op": op,
+                "targetSpace": String(targetSpace),
+                "targetDisplay": String(describing: targetDisplay),
+                "displayCurrentSpace": String(describing: displayCurrentSpace)
+            ])
+
+            if let current = displayCurrentSpace, current != targetSpace {
+                log("[WindowManager] restore: switching display from space \(current) to \(targetSpace)", level: .info, fields: [
+                    "op": op, "targetDisplay": String(describing: targetDisplay)
+                ])
+
+                let switched = spaceController.switchDisplayToSpace(targetSpace: targetSpace, operationID: op)
+                if switched {
+                    usleep(400_000)
+                }
+                log("[WindowManager] restore: space switch result", fields: [
+                    "op": op, "switched": String(switched)
+                ])
+            } else {
+                log("[WindowManager] restore: display already on target space, no switch needed", fields: [
+                    "op": op
+                ])
+            }
+        }
+
         guard apply(frame: frame, to: window, operationID: op, stage: "restore_apply_frame") else {
             log(
                 "[WindowManager] restore failed: apply frame failed",
@@ -641,82 +683,22 @@ class WindowManager {
             fields: ["op": op]
         )
 
-        // === Space 修正：确保窗口在正确的目标 Space ===
-        // AX frame 设置了副屏坐标，macOS 把窗口移到副屏的当前活跃 Space（可能不是目标 Space）
-        // 修正流程：focusWindow 让副屏获得焦点 → 切副屏到目标 Space → 重新设 frame
-        let targetSpace = lastSourceSpaceIndex
-        if let windowID = windowHandle(for: window), let targetSpace {
-            usleep(150_000) // 等 macOS settle
+        // === Space 状态验证（post-apply） ===
+        if let windowID = windowHandle(for: window) {
+            let postApplySpace = spaceController.windowSpaceIndex(windowID: windowID)
+            log("[WindowManager] restore: post-apply space state", fields: [
+                "op": op,
+                "targetSpace": String(describing: lastSourceSpaceIndex),
+                "actualSpace": String(describing: postApplySpace)
+            ])
 
-            let currentWindowSpace = spaceController.windowSpaceIndex(windowID: windowID)
-            log(
-                "[WindowManager] restore: space check after AX frame",
-                fields: [
-                    "op": op,
-                    "windowID": String(windowID),
-                    "targetSpace": String(targetSpace),
-                    "currentWindowSpace": String(describing: currentWindowSpace)
-                ]
-            )
-
-            if let currentSpace = currentWindowSpace, currentSpace != targetSpace {
-                log(
-                    "[WindowManager] restore: window on wrong Space \(currentSpace), need Space \(targetSpace)",
-                    level: .warn,
-                    fields: ["op": op, "windowID": String(windowID)]
-                )
-
-                if triggerSource == "carbon_hotkey" {
-                    // toggle: focusWindow + Ctrl+Left/Right 切副屏 Space，然后 reapply frame
-                    _ = spaceController.focusWindow(windowID, operationID: op)
-                    usleep(150_000)
-
-                    let steps = targetSpace - currentSpace
-                    if steps != 0 {
-                        log(
-                            "[WindowManager] restore: switching secondary display Space by \(steps) steps",
-                            fields: ["op": op, "from": String(currentSpace), "to": String(targetSpace)]
-                        )
-                        _ = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
-                        usleep(400_000)
-                    }
-
-                    if let targetFrame = lastWindowFrame {
-                        _ = apply(frame: targetFrame, to: window, operationID: op, stage: "restore_reapply_frame")
-                        usleep(100_000)
-                    }
-                } else {
-                    // hook-restore: 只设 AX frame，不干预焦点和 Space
-                    // macOS 会自动把窗口放到 frame 坐标对应的 Space
-                    if let targetFrame = lastWindowFrame {
-                        _ = apply(frame: targetFrame, to: window, operationID: op, stage: "restore_apply_frame_no_space_switch")
-                        usleep(100_000)
-                    }
-                }
-
-                let recheckSpace = spaceController.windowSpaceIndex(windowID: windowID)
-                log(
-                    "[WindowManager] restore: after Space handling",
-                    fields: [
-                        "op": op,
-                        "windowID": String(windowID),
-                        "targetSpace": String(targetSpace),
-                        "recheckSpace": String(describing: recheckSpace),
-                        "triggerSource": triggerSource
-                    ]
-                )
-            }
-
-            // 只在 toggle 热键恢复时跟随窗口焦点
-            // hook-restore（UserPromptSubmit）时不碰焦点，让 macOS 自然保持当前焦点
+            // toggle 热键恢复时跟随窗口焦点
             if triggerSource == "carbon_hotkey" {
-                let finalWindowSpace = spaceController.windowSpaceIndex(windowID: windowID)
                 let currentSpace = spaceController.currentSpaceIndex()
-                if let ws = finalWindowSpace, let cs = currentSpace, ws != cs {
-                    log(
-                        "[WindowManager] restore: toggle restore, following window to Space \(ws)",
-                        fields: ["op": op, "windowID": String(windowID), "currentSpace": String(cs)]
-                    )
+                if let ws = postApplySpace, let cs = currentSpace, ws != cs {
+                    log("[WindowManager] restore: following window to Space \(ws)", fields: [
+                        "op": op, "windowID": String(windowID), "currentSpace": String(cs)
+                    ])
                     _ = spaceController.focusWindow(windowID, operationID: op)
                 }
             }
@@ -855,11 +837,11 @@ class WindowManager {
         }
 
         // 聚焦窗口在主屏 → 检查 WindowState 中是否有 toggle state 可以恢复
-        if let wsState = SessionWindowRegistry.shared.findStateByWindowID(currentWindowID, expectedPID: frontApp.processIdentifier) {
+        if let wsState = SessionWindowRegistry.shared.findState(windowID: currentWindowID) {
             if wsState.hasToggleState {
                 guard let mainScreen = getMainScreen() else { return false }
                 if wsState.isCorrupted(mainScreenFrame: mainScreen.frame) {
-                    SessionWindowRegistry.shared.clearToggleState(pid: wsState.pid, tty: wsState.tty)
+                    SessionWindowRegistry.shared.clearToggleState(windowID: wsState.windowID)
                     return false
                 }
                 if let origFrame = wsState.originalFrame, let tgtFrame = wsState.targetFrame {

@@ -41,11 +41,11 @@ struct SessionWindowBinding: Codable, Equatable {
 /// 合并了原来的 SessionWindowBinding + SavedWindowState
 struct WindowState: Codable, Equatable {
     // MARK: - Primary Key
-    let pid: Int32
-    var tty: String?              // 终端 TTY 路径 (如 /dev/ttys003)，非终端窗口为 nil
+    let windowID: UInt32          // CGWindowNumber — 主键，全局唯一标识窗口
+    var pid: Int32
+    var tty: String?              // 终端 TTY 路径 (如 /dev/ttys003)，仅用于日志和匹配辅助
 
     // MARK: - Window Identity
-    var windowID: UInt32?         // CGWindowNumber
     var axWindowNumber: Int?
     var appName: String?
     var bundleIdentifier: String?
@@ -119,18 +119,54 @@ struct WindowState: Codable, Equatable {
                abs(currentFrame.origin.y - tgt.origin.y) <= tolerance
     }
 
-    /// 兼容 WindowManager.WindowToken 的构造
     var windowToken: WindowManager.WindowToken? {
-        guard let wid = windowID else { return nil }
         return WindowManager.WindowToken(
-            stateID: "\(pid)_\(tty ?? "none")",
+            stateID: "\(windowID)",
             pid: pid,
             bundleIdentifier: bundleIdentifier,
             appName: appName,
-            windowID: wid,
+            windowID: windowID,
             windowNumber: axWindowNumber,
             title: title
         )
+    }
+}
+
+/// Toggle 操作的完整快照 — 单一事实来源
+/// Ctrl+Q 按下时原子性保存，Restore 时直接读取，不需要任何猜测
+struct ToggleRecord: Equatable {
+    // MARK: - 窗口身份（恢复时用于查找窗口）
+    let windowID: UInt32          // CGWindowNumber
+    let pid: Int32
+    let bundleIdentifier: String?
+    let appName: String?
+
+    // MARK: - 原始位置（恢复目标）
+    let origFrame: CGRect
+    let sourceSpace: Int          // yabai 全局 space index
+    let sourceDisplay: Int        // NSScreen display index
+    let sourceYabaiDisp: Int      // yabai display index
+    let sourceDispSpace: Int      // display-local space index
+
+    // MARK: - 目标位置（用于验证窗口确实被 toggle 了）
+    let targetFrame: CGRect       // 主屏上的 frame
+    let targetDisplay: Int        // 主屏的 display index
+
+    // MARK: - 元数据
+    let toggledAt: Date
+    let sessionID: String?
+
+    /// toggle state 是否有效（origFrame 不在主屏上，targetFrame 在主屏上）
+    func isValid(mainScreenFrame: CGRect) -> Bool {
+        let origCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
+        let tgtCenter = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+        return !mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
+    }
+
+    /// 窗口当前位置是否在 targetFrame 附近（容差 150px）
+    func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 150) -> Bool {
+        abs(currentFrame.origin.x - targetFrame.origin.x) <= tolerance &&
+        abs(currentFrame.origin.y - targetFrame.origin.y) <= tolerance
     }
 }
 

@@ -64,11 +64,12 @@ final class WindowStateStore {
             """)
 
         // 新宽表：合并 session_bindings + window_states
+        // PK = window_id (CGWindowNumber)，全局唯一标识窗口
         runSchema("""
             CREATE TABLE IF NOT EXISTS windows (
+                window_id INTEGER NOT NULL PRIMARY KEY,
                 pid INTEGER NOT NULL,
                 tty TEXT NOT NULL DEFAULT '',
-                window_id INTEGER,
                 ax_window_number INTEGER,
                 app_name TEXT,
                 bundle_id TEXT,
@@ -93,16 +94,119 @@ final class WindowStateStore {
                 is_completed INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
-                completed_at REAL,
-                PRIMARY KEY (pid, tty)
+                completed_at REAL
             );
             """)
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_session_id ON windows(session_id);")
-        runSchema("CREATE INDEX IF NOT EXISTS idx_windows_window_id ON windows(window_id);")
+        runSchema("CREATE INDEX IF NOT EXISTS idx_windows_pid_tty ON windows(pid, tty);")
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_last_seen ON windows(updated_at);")
         // Migration: add completed_at column if missing (existing databases)
         runSchema("ALTER TABLE windows ADD COLUMN completed_at REAL;")
+
+        // Migration: 如果旧表 PK 是 (pid, tty)，重建为 (window_id)
+        migrateWindowsPKIfNeeded()
         log("[WindowStateStore] tables created/verified")
+    }
+
+    // MARK: - PK Migration
+
+    /// 检测旧表 PK 是否为 (pid, tty)，如果是则重建为 (window_id)
+    private func migrateWindowsPKIfNeeded() {
+        guard let db else { return }
+
+        var stmt: OpaquePointer?
+        let pkSQL = "PRAGMA table_info('windows');"
+        guard sqlite3_prepare_v2(db, pkSQL, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+
+        var pkColumns: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let pkFlag = sqlite3_column_int(stmt, 5)
+            if pkFlag > 0 {
+                if let name = sqlite3_column_text(stmt, 1) {
+                    pkColumns.append(String(cString: name))
+                }
+            }
+        }
+        sqlite3_finalize(stmt)
+        stmt = nil
+
+        if pkColumns == ["window_id"] {
+            log("[WindowStateStore] windows table PK is correct (window_id)")
+            return
+        }
+
+        log("[WindowStateStore] MIGRATING windows table PK from (\(pkColumns.joined(separator: ", "))) to (window_id)", level: .warn)
+
+        let newTable = "windows_v2"
+        let createSQL = """
+            CREATE TABLE \(newTable) (
+                window_id INTEGER NOT NULL PRIMARY KEY,
+                pid INTEGER NOT NULL,
+                tty TEXT NOT NULL DEFAULT '',
+                ax_window_number INTEGER,
+                app_name TEXT,
+                bundle_id TEXT,
+                title TEXT,
+                term_session_id TEXT,
+                iterm_session_id TEXT,
+                kitty_window_id TEXT,
+                wezterm_pane TEXT,
+                env_window_id TEXT,
+                session_id TEXT,
+                cwd TEXT,
+                model TEXT,
+                orig_x REAL, orig_y REAL, orig_w REAL, orig_h REAL,
+                target_x REAL, target_y REAL, target_w REAL, target_h REAL,
+                source_space INTEGER,
+                source_display INTEGER,
+                source_yabai_disp INTEGER,
+                source_disp_space INTEGER,
+                target_display INTEGER,
+                toggle_reason TEXT,
+                toggled_at REAL,
+                is_completed INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                completed_at REAL
+            );
+            """
+
+        if sqlite3_exec(db, createSQL, nil, nil, nil) != SQLITE_OK {
+            let msg = String(cString: sqlite3_errmsg(db))
+            log("[WindowStateStore] migrate: create new table failed: \(msg)", level: .error)
+            return
+        }
+
+        let copySQL = """
+            INSERT OR IGNORE INTO \(newTable)
+                SELECT window_id, pid, tty, ax_window_number, app_name, bundle_id, title,
+                       term_session_id, iterm_session_id, kitty_window_id, wezterm_pane, env_window_id,
+                       session_id, cwd, model,
+                       orig_x, orig_y, orig_w, orig_h,
+                       target_x, target_y, target_w, target_h,
+                       source_space, source_display, source_yabai_disp, source_disp_space,
+                       target_display, toggle_reason, toggled_at,
+                       is_completed, created_at, updated_at, completed_at
+                FROM windows;
+            """
+        if sqlite3_exec(db, copySQL, nil, nil, nil) != SQLITE_OK {
+            let msg = String(cString: sqlite3_errmsg(db))
+            log("[WindowStateStore] migrate: copy data failed: \(msg)", level: .error)
+            sqlite3_exec(db, "DROP TABLE IF EXISTS \(newTable);", nil, nil, nil)
+            return
+        }
+
+        let copiedRows = sqlite3_changes(db)
+
+        sqlite3_exec(db, "DROP TABLE windows;", nil, nil, nil)
+        sqlite3_exec(db, "ALTER TABLE \(newTable) RENAME TO windows;", nil, nil, nil)
+
+        runSchema("CREATE INDEX IF NOT EXISTS idx_windows_session_id ON windows(session_id);")
+        runSchema("CREATE INDEX IF NOT EXISTS idx_windows_pid_tty ON windows(pid, tty);")
+        runSchema("CREATE INDEX IF NOT EXISTS idx_windows_last_seen ON windows(updated_at);")
+
+        log("[WindowStateStore] migrate: copied \(copiedRows) rows, PK now (window_id)")
     }
 
     private func cleanupLegacyTables() {
@@ -409,7 +513,7 @@ final class WindowStateStore {
         var stmt: OpaquePointer?
         let sql = """
             INSERT OR REPLACE INTO windows (
-                pid, tty, window_id, ax_window_number, app_name, bundle_id, title,
+                window_id, pid, tty, ax_window_number, app_name, bundle_id, title,
                 term_session_id, iterm_session_id, kitty_window_id, wezterm_pane, env_window_id,
                 session_id, cwd, model,
                 orig_x, orig_y, orig_w, orig_h,
@@ -422,9 +526,9 @@ final class WindowStateStore {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_int(stmt, 1, state.pid)
-        sqlite3_bind_text(stmt, 2, state.tty ?? "", -1, SQLITE_TRANSIENT)
-        if let v = state.windowID { sqlite3_bind_int64(stmt, 3, Int64(v)) } else { sqlite3_bind_null(stmt, 3) }
+        sqlite3_bind_int64(stmt, 1, Int64(state.windowID))
+        sqlite3_bind_int(stmt, 2, state.pid)
+        sqlite3_bind_text(stmt, 3, state.tty ?? "", -1, SQLITE_TRANSIENT)
         if let v = state.axWindowNumber { sqlite3_bind_int(stmt, 4, Int32(v)) } else { sqlite3_bind_null(stmt, 4) }
         sqlite3_bind_text(stmt, 5, state.appName ?? "", -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 6, state.bundleIdentifier ?? "", -1, SQLITE_TRANSIENT)
@@ -466,20 +570,17 @@ final class WindowStateStore {
             let oX: String = if let v = state.origX { String(describing: v) } else { "nil" }
             let tX: String = if let v = state.targetX { String(describing: v) } else { "nil" }
             let sid: String = if let v = state.sessionID { String(v.prefix(8)) } else { "nil" }
-            let wid: String = if let v = state.windowID { String(v) } else { "nil" }
-            log("[WindowStateStore] saveWindowState OK pid=\(state.pid) tty=\(state.tty ?? "") wid=\(wid) origX=\(oX) targetX=\(tX) srcSpace=\(srcSp) tgtDisp=\(tgtDsp) sid=\(sid)")
+            log("[WindowStateStore] saveWindowState OK wid=\(state.windowID) pid=\(state.pid) tty=\(state.tty ?? "") origX=\(oX) targetX=\(tX) srcSpace=\(srcSp) tgtDisp=\(tgtDsp) sid=\(sid)")
         }
     }
 
-    func findWindowState(pid: Int32, tty: String?) -> WindowState? {
+    func findWindowState(windowID: UInt32) -> WindowState? {
         guard let db else { return nil }
         var stmt: OpaquePointer?
-        let ttyValue = tty ?? ""
-        let sql = "SELECT * FROM windows WHERE pid = ? AND tty = ?;"
+        let sql = "SELECT * FROM windows WHERE window_id = ?;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, pid)
-        sqlite3_bind_text(stmt, 2, ttyValue, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 1, Int64(windowID))
 
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return parseWindowStateRow(stmt!)
@@ -509,7 +610,7 @@ final class WindowStateStore {
         return parseWindowStateRow(stmt!)
     }
 
-    func clearToggleState(pid: Int32, tty: String?) {
+    func clearToggleState(windowID: UInt32) {
         guard let db else { return }
         var stmt: OpaquePointer?
         let sql = """
@@ -520,13 +621,12 @@ final class WindowStateStore {
                 source_disp_space = NULL, target_display = NULL,
                 toggle_reason = NULL, toggled_at = NULL,
                 updated_at = ?
-            WHERE pid = ? AND tty = ?;
+            WHERE window_id = ?;
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, Date().timeIntervalSince1970)
-        sqlite3_bind_int(stmt, 2, pid)
-        sqlite3_bind_text(stmt, 3, tty ?? "", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, Int64(windowID))
         sqlite3_step(stmt)
     }
 
@@ -571,14 +671,13 @@ final class WindowStateStore {
         return results
     }
 
-    func deleteWindowState(pid: Int32, tty: String?) {
+    func deleteWindowState(windowID: UInt32) {
         guard let db else { return }
         var stmt: OpaquePointer?
-        let sql = "DELETE FROM windows WHERE pid = ? AND tty = ?;"
+        let sql = "DELETE FROM windows WHERE window_id = ?;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, pid)
-        sqlite3_bind_text(stmt, 2, tty ?? "", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 1, Int64(windowID))
         sqlite3_step(stmt)
     }
 
@@ -591,12 +690,164 @@ final class WindowStateStore {
         return Int(sqlite3_column_int(stmt, 0))
     }
 
+    // MARK: - ToggleRecord (Single Source of Truth)
+
+    /// 原子性保存 toggle record 到 windows 表
+    func saveToggleRecord(_ record: ToggleRecord) {
+        guard let db else {
+            log("saveToggleRecord: db is nil", level: .error)
+            return
+        }
+        let now = Date().timeIntervalSince1970
+        var stmt: OpaquePointer?
+
+        let sql = """
+            UPDATE windows SET
+                orig_x = ?, orig_y = ?, orig_w = ?, orig_h = ?,
+                target_x = ?, target_y = ?, target_w = ?, target_h = ?,
+                source_space = ?, source_display = ?,
+                source_yabai_disp = ?, source_disp_space = ?,
+                target_display = ?,
+                toggle_reason = 'manual_hotkey',
+                toggled_at = ?,
+                session_id = ?,
+                updated_at = ?
+            WHERE window_id = ?
+        """
+
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            log("saveToggleRecord prepare failed", level: .error, fields: [
+                "error": String(cString: sqlite3_errmsg(db))
+            ])
+            return
+        }
+
+        sqlite3_bind_double(stmt, 1, Double(record.origFrame.origin.x))
+        sqlite3_bind_double(stmt, 2, Double(record.origFrame.origin.y))
+        sqlite3_bind_double(stmt, 3, Double(record.origFrame.size.width))
+        sqlite3_bind_double(stmt, 4, Double(record.origFrame.size.height))
+        sqlite3_bind_double(stmt, 5, Double(record.targetFrame.origin.x))
+        sqlite3_bind_double(stmt, 6, Double(record.targetFrame.origin.y))
+        sqlite3_bind_double(stmt, 7, Double(record.targetFrame.size.width))
+        sqlite3_bind_double(stmt, 8, Double(record.targetFrame.size.height))
+        sqlite3_bind_int(stmt, 9, Int32(record.sourceSpace))
+        sqlite3_bind_int(stmt, 10, Int32(record.sourceDisplay))
+        sqlite3_bind_int(stmt, 11, Int32(record.sourceYabaiDisp))
+        sqlite3_bind_int(stmt, 12, Int32(record.sourceDispSpace))
+        sqlite3_bind_int(stmt, 13, Int32(record.targetDisplay))
+        sqlite3_bind_double(stmt, 14, record.toggledAt.timeIntervalSince1970)
+        if let sid = record.sessionID, !sid.isEmpty {
+            sqlite3_bind_text(stmt, 15, sid, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 15)
+        }
+        sqlite3_bind_double(stmt, 16, now)
+        sqlite3_bind_int64(stmt, 17, Int64(record.windowID))
+
+        let result = sqlite3_step(stmt)
+        sqlite3_finalize(stmt)
+
+        if result != SQLITE_DONE {
+            log("saveToggleRecord failed", level: .error, fields: [
+                "error": String(cString: sqlite3_errmsg(db)),
+                "windowID": String(record.windowID)
+            ])
+            return
+        }
+
+        log("saveToggleRecord saved", level: .info, fields: [
+            "windowID": String(record.windowID),
+            "sourceSpace": String(record.sourceSpace),
+            "sourceDisplay": String(record.sourceDisplay),
+            "sourceYabaiDisp": String(record.sourceYabaiDisp),
+            "sourceDispSpace": String(record.sourceDispSpace),
+            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
+            "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y))"
+        ])
+    }
+
+    /// 按 windowID 读取 toggle record
+    func loadToggleRecord(windowID: UInt32) -> ToggleRecord? {
+        guard let db else { return nil }
+        var stmt: OpaquePointer?
+        let sql = """
+            SELECT window_id, pid, bundle_id, app_name,
+                   orig_x, orig_y, orig_w, orig_h,
+                   target_x, target_y, target_w, target_h,
+                   source_space, source_display, source_yabai_disp, source_disp_space,
+                   target_display, toggled_at, session_id
+            FROM windows
+            WHERE window_id = ? AND toggle_reason IS NOT NULL AND orig_x IS NOT NULL
+        """
+
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(windowID))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        let wID = UInt32(sqlite3_column_int64(stmt, 0))
+        let pid = sqlite3_column_int(stmt, 1)
+        let bundleID: String? = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+        let appName: String? = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+
+        let ox = CGFloat(sqlite3_column_double(stmt, 4))
+        let oy = CGFloat(sqlite3_column_double(stmt, 5))
+        let ow = CGFloat(sqlite3_column_double(stmt, 6))
+        let oh = CGFloat(sqlite3_column_double(stmt, 7))
+        let tx = CGFloat(sqlite3_column_double(stmt, 8))
+        let ty = CGFloat(sqlite3_column_double(stmt, 9))
+        let tw = CGFloat(sqlite3_column_double(stmt, 10))
+        let th = CGFloat(sqlite3_column_double(stmt, 11))
+
+        let sourceSpace = Int(sqlite3_column_int(stmt, 12))
+        let sourceDisplay = Int(sqlite3_column_int(stmt, 13))
+        let sourceYabaiDisp = Int(sqlite3_column_int(stmt, 14))
+        let sourceDispSpace = Int(sqlite3_column_int(stmt, 15))
+        let targetDisplay = Int(sqlite3_column_int(stmt, 16))
+        let toggledAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 17))
+        let sessionID: String? = sqlite3_column_text(stmt, 18).map { String(cString: $0) }
+
+        return ToggleRecord(
+            windowID: wID, pid: pid,
+            bundleIdentifier: bundleID, appName: appName,
+            origFrame: CGRect(x: ox, y: oy, width: ow, height: oh),
+            sourceSpace: sourceSpace, sourceDisplay: sourceDisplay,
+            sourceYabaiDisp: sourceYabaiDisp, sourceDispSpace: sourceDispSpace,
+            targetFrame: CGRect(x: tx, y: ty, width: tw, height: th),
+            targetDisplay: targetDisplay,
+            toggledAt: toggledAt, sessionID: sessionID
+        )
+    }
+
+    /// 清除指定窗口的 toggle state
+    func clearToggleRecord(windowID: UInt32) {
+        guard let db else { return }
+        let sql = """
+            UPDATE windows SET
+                orig_x = NULL, orig_y = NULL, orig_w = NULL, orig_h = NULL,
+                target_x = NULL, target_y = NULL, target_w = NULL, target_h = NULL,
+                source_space = NULL, source_display = NULL,
+                source_yabai_disp = NULL, source_disp_space = NULL,
+                target_display = NULL,
+                toggle_reason = NULL, toggled_at = NULL,
+                updated_at = ?
+            WHERE window_id = ?
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, Date().timeIntervalSince1970)
+        sqlite3_bind_int64(stmt, 2, Int64(windowID))
+        sqlite3_step(stmt)
+        log("clearToggleRecord cleared", fields: ["windowID": String(windowID)])
+    }
+
     // MARK: - Row Parser
 
     private func parseWindowStateRow(_ stmt: OpaquePointer) -> WindowState? {
-        let pid = sqlite3_column_int(stmt, 0)
-        let tty = String(cString: sqlite3_column_text(stmt, 1))
-        let windowID: UInt32? = sqlite3_column_type(stmt, 2) != SQLITE_NULL ? UInt32(sqlite3_column_int64(stmt, 2)) : nil
+        let windowID = UInt32(sqlite3_column_int64(stmt, 0))
+        let pid = sqlite3_column_int(stmt, 1)
+        let tty = String(cString: sqlite3_column_text(stmt, 2))
         let axWindowNumber: Int? = sqlite3_column_type(stmt, 3) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 3)) : nil
         let appName = optionalStringCol(stmt, col: 4)
         let bundleID = optionalStringCol(stmt, col: 5)
@@ -632,9 +883,9 @@ final class WindowStateStore {
         let completedAt: Date? = sqlite3_column_type(stmt, 33) != SQLITE_NULL ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, 33)) : nil
 
         return WindowState(
+            windowID: windowID,
             pid: pid,
             tty: tty.isEmpty ? nil : tty,
-            windowID: windowID,
             axWindowNumber: axWindowNumber,
             appName: appName,
             bundleIdentifier: bundleID,

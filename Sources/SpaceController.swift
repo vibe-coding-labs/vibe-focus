@@ -227,23 +227,98 @@ final class SpaceController: ObservableObject {
     func moveWindowToSpace(windowID: UInt32, targetSpace: Int, operationID: String?) -> Bool {
         let op = operationID ?? "none"
 
-        // 策略 1: 用 NativeSpaceBridge.moveWindow 移动窗口到目标 Space
+        // 查询窗口当前所在的 space
+        guard let currentSpace = windowSpaceIndex(windowID: windowID) else {
+            log(
+                "[SpaceController] moveWindowToSpace: cannot query window space",
+                level: .warn,
+                fields: ["op": op, "windowID": String(windowID)]
+            )
+            return false
+        }
+
+        guard currentSpace != targetSpace else {
+            log(
+                "[SpaceController] moveWindowToSpace: already on target space",
+                fields: ["op": op, "windowID": String(windowID), "space": String(targetSpace)]
+            )
+            return true
+        }
+
+        log(
+            "[SpaceController] moveWindowToSpace: need to move window",
+            fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "currentSpace": String(currentSpace),
+                "targetSpace": String(targetSpace)
+            ]
+        )
+
+        // 策略 1: yabai -m window <id> --space <target>
+        let moveResult = runYabai(
+            arguments: ["-m", "window", String(windowID), "--space", String(targetSpace)],
+            operation: "moveWindowToSpace",
+            operationID: op
+        )
+        if let result = moveResult, result.exitCode == 0 {
+            usleep(200_000)
+            let verifySpace = windowSpaceIndex(windowID: windowID)
+            if verifySpace == targetSpace {
+                log(
+                    "[SpaceController] moveWindowToSpace: yabai window --space succeeded",
+                    fields: ["op": op, "windowID": String(windowID), "verifiedSpace": String(describing: verifySpace)]
+                )
+                return true
+            }
+            log(
+                "[SpaceController] moveWindowToSpace: yabai executed but window not on target, trying space focus first",
+                level: .warn,
+                fields: ["op": op, "windowID": String(windowID), "verifySpace": String(describing: verifySpace), "targetSpace": String(targetSpace)]
+            )
+        }
+
+        // 策略 2: 先切目标 space 所在 Display 到目标 space，再移窗口
+        let focusResult = runYabai(
+            arguments: ["-m", "space", "--focus", String(targetSpace)],
+            operation: "moveWindowToSpace_focusTargetSpace",
+            operationID: op
+        )
+        if let result = focusResult, result.exitCode == 0 {
+            usleep(300_000)
+
+            let retryResult = runYabai(
+                arguments: ["-m", "window", String(windowID), "--space", String(targetSpace)],
+                operation: "moveWindowToSpace_retry",
+                operationID: op
+            )
+            if let retry = retryResult, retry.exitCode == 0 {
+                usleep(200_000)
+                let verifySpace = windowSpaceIndex(windowID: windowID)
+                if verifySpace == targetSpace {
+                    log(
+                        "[SpaceController] moveWindowToSpace: space focus + window move succeeded",
+                        fields: ["op": op, "windowID": String(windowID), "verifiedSpace": String(describing: verifySpace)]
+                    )
+                    return true
+                }
+            }
+        }
+
+        // 策略 3: NativeSpaceBridge
         if let spaceID = nativeSpaceID(forYabaiIndex: targetSpace) {
             log(
-                "[SpaceController] moveWindowToSpace: trying NativeSpaceBridge.moveWindow",
+                "[SpaceController] moveWindowToSpace: trying NativeSpaceBridge",
                 fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace), "nativeSpaceID": String(spaceID)]
             )
-
             NativeSpaceBridge.resetFailureCache()
-
             if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                // 等待生效，最多 1 秒
-                for attempt in 1...10 {
+                for attempt in 1...5 {
                     usleep(100_000)
-                    if let currentSpace = windowSpaceIndex(windowID: windowID), currentSpace == targetSpace {
+                    if windowSpaceIndex(windowID: windowID) == targetSpace {
                         log(
-                            "[SpaceController] moveWindowToSpace: moveWindow verified on attempt \(attempt)",
-                            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace)]
+                            "[SpaceController] moveWindowToSpace: NativeSpaceBridge verified on attempt \(attempt)",
+                            fields: ["op": op, "windowID": String(windowID)]
                         )
                         return true
                     }
@@ -251,28 +326,123 @@ final class SpaceController: ObservableObject {
             }
         }
 
-        // 策略 2: moveWindow 失败，用 focusSpace 切换用户到目标 Space，
-        // 然后重新设置 AX frame 让 macOS 把窗口放到正确 Space
+        let finalSpace = windowSpaceIndex(windowID: windowID)
         log(
-            "[SpaceController] moveWindowToSpace: moveWindow failed, trying focusSpace + re-apply frame",
-            level: .warn,
-            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace)]
+            "[SpaceController] moveWindowToSpace: all strategies failed",
+            level: .error,
+            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(targetSpace), "finalSpace": String(describing: finalSpace)]
         )
+        return false
+    }
 
-        // 切换用户活跃 Space 到目标 Space
-        if let currentSpace = currentSpaceIndex(), currentSpace != targetSpace {
-            let steps = targetSpace - currentSpace
-            if steps != 0 {
-                log(
-                    "[SpaceController] moveWindowToSpace: switching user space by \(steps) steps",
-                    fields: ["op": op, "currentSpace": String(currentSpace), "targetSpace": String(targetSpace)]
-                )
-                _ = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
-                usleep(200_000) // 等 Space 切换完成
-            }
+    /// 查询指定 display 当前显示的 space index
+    func displayVisibleSpace(displayIndex: Int?) -> Int? {
+        return visibleSpaceIndex(forDisplayIndex: displayIndex)
+    }
+
+    /// 切换 display 到目标 space
+    /// Strategy 1: yabai -m space --focus (需要 scripting-addition)
+    /// Strategy 2: CGEvent — 移鼠标到目标 display → Ctrl+Left/Right → 恢复鼠标
+    func switchDisplayToSpace(targetSpace: Int, operationID: String?) -> Bool {
+        let op = operationID ?? "none"
+        refreshAvailabilityIfNeeded()
+        guard isEnabled else {
+            log("[SpaceController] switchDisplayToSpace: not enabled", level: .warn, fields: ["op": op])
+            return false
         }
 
-        return true
+        log("[SpaceController] switchDisplayToSpace", fields: [
+            "op": op, "targetSpace": String(targetSpace)
+        ])
+
+        // Strategy 1: yabai -m space --focus (需要 SA)
+        let yabaiResult = runYabai(
+            arguments: ["-m", "space", "--focus", String(targetSpace)],
+            operation: "switchDisplayToSpace_yabai",
+            operationID: op
+        )
+        if let result = yabaiResult, result.exitCode == 0 {
+            log("[SpaceController] switchDisplayToSpace: yabai succeeded", fields: [
+                "op": op, "targetSpace": String(targetSpace)
+            ])
+            return true
+        }
+
+        log("[SpaceController] switchDisplayToSpace: yabai failed, trying CGEvent fallback", level: .info, fields: [
+            "op": op, "targetSpace": String(targetSpace)
+        ])
+
+        // Strategy 2: CGEvent — 移鼠标到目标 display + Ctrl+Left/Right
+        let steps = calculateFocusSteps(targetSpaceIndex: targetSpace)
+        log("[SpaceController] switchDisplayToSpace: CGEvent steps=\(steps)", fields: [
+            "op": op, "targetSpace": String(targetSpace), "steps": String(steps)
+        ])
+
+        guard steps != 0 else {
+            // 目标 space 已经可见，但可能需要移动活跃 display
+            // 通过移动鼠标到目标 display 来激活它
+            let savedFrontApp = NSWorkspace.shared.frontmostApplication
+            let savedCursor = NSEvent.mouseLocation
+            let mainScreenHeight = NSScreen.screens[0].frame.height
+            let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
+
+            if let center = displayCenterCG(spaceIndex: targetSpace) {
+                if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                            mouseCursorPosition: center, mouseButton: .left) {
+                    moveEvent.post(tap: .cghidEventTap)
+                }
+                usleep(50_000)
+            }
+
+            // 恢复鼠标
+            if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                           mouseCursorPosition: savedCursorCG, mouseButton: .left) {
+                restoreEvent.post(tap: .cghidEventTap)
+            }
+            savedFrontApp?.activate(options: .activateIgnoringOtherApps)
+            return true
+        }
+
+        // 移鼠标到目标 display
+        let savedFrontApp = NSWorkspace.shared.frontmostApplication
+        let savedCursor = NSEvent.mouseLocation
+        let mainScreenHeight = NSScreen.screens[0].frame.height
+        let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
+
+        if let center = displayCenterCG(spaceIndex: targetSpace) {
+            if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                        mouseCursorPosition: center, mouseButton: .left) {
+                moveEvent.post(tap: .cghidEventTap)
+            }
+            usleep(50_000)
+        } else {
+            log("[SpaceController] switchDisplayToSpace: cannot determine display center", level: .warn, fields: [
+                "op": op, "targetSpace": String(targetSpace)
+            ])
+        }
+
+        // 发送 Ctrl+Left/Right
+        let success = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
+
+        // 恢复鼠标
+        if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                       mouseCursorPosition: savedCursorCG, mouseButton: .left) {
+            restoreEvent.post(tap: .cghidEventTap)
+        }
+        savedFrontApp?.activate(options: .activateIgnoringOtherApps)
+
+        if success {
+            usleep(100_000)
+            log("[SpaceController] switchDisplayToSpace: CGEvent succeeded", fields: [
+                "op": op, "targetSpace": String(targetSpace), "steps": String(steps)
+            ])
+            return true
+        }
+
+        log("[SpaceController] switchDisplayToSpace: all strategies failed", level: .error, fields: [
+            "op": op, "targetSpace": String(targetSpace)
+        ])
+        return false
     }
 
     func windowSpaceIndex(windowID: UInt32) -> Int? {
@@ -1606,25 +1776,34 @@ final class SpaceController: ObservableObject {
         return Int64(id)
     }
 
-    /// 获取目标空间所属显示器的中心点（CG 坐标系，用于 CGWarpMouseCursorPosition）
+    /// 获取目标空间所属显示器的中心点（CG 坐标系）
+    /// 通过 yabai 查询 display frame，不依赖 NSScreen.screens 索引（索引顺序可能与 yabai display index 不一致）
     private func displayCenterCG(spaceIndex: Int) -> CGPoint? {
         guard let spaces = querySpaces(),
               let targetSpace = spaces.first(where: { $0.index == spaceIndex }),
               let displayIndex = targetSpace.display else { return nil }
 
-        // yabai display index 1 = NSScreen.screens[0], 2 = screens[1], ...
-        let screenIndex = displayIndex - 1
-        guard screenIndex >= 0, screenIndex < NSScreen.screens.count else { return nil }
-        let screen = NSScreen.screens[screenIndex]
+        // 查询 yabai 获取 display frame（不需要 scripting-addition）
+        guard let result = runYabai(arguments: ["-m", "query", "--displays", "--display", String(displayIndex)]),
+              result.exitCode == 0 else {
+            log("[SpaceController] displayCenterCG: yabai display query failed", level: .warn, fields: [
+                "displayIndex": String(displayIndex)
+            ])
+            return nil
+        }
 
-        // NSScreen.frame 用 Cocoa 坐标（原点在主屏左下角，Y 向上）
-        // CG 坐标原点在主屏左上角，Y 向下
-        // 转换：cgY = mainScreenHeight - nsFrame.origin.y - nsFrame.height
-        let mainScreenHeight = NSScreen.screens[0].frame.height
-        let nsFrame = screen.frame
+        guard let info = decodeSingleOrFirst(YabaiDisplayInfo.self, from: result.stdout),
+              let frame = info.frame else {
+            log("[SpaceController] displayCenterCG: failed to parse display frame", level: .warn, fields: [
+                "displayIndex": String(displayIndex), "stdout": String(result.stdout.prefix(200))
+            ])
+            return nil
+        }
+
+        // yabai frame 使用 CG 坐标系（原点在主屏左上角，Y 向下），与 CGEvent 一致
         return CGPoint(
-            x: nsFrame.origin.x + nsFrame.width / 2,
-            y: mainScreenHeight - nsFrame.origin.y - nsFrame.height + nsFrame.height / 2
+            x: frame.x + frame.w / 2,
+            y: frame.y + frame.h / 2
         )
     }
 
@@ -1727,4 +1906,16 @@ struct YabaiWindowInfo: Decodable {
     let title: String?
     let space: Int?
     let display: Int?
+}
+
+struct YabaiDisplayInfo: Decodable {
+    let index: Int?
+    let frame: Frame?
+
+    struct Frame: Decodable {
+        let x: Double
+        let y: Double
+        let w: Double
+        let h: Double
+    }
 }

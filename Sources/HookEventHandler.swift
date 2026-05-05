@@ -148,7 +148,7 @@ final class HookEventHandler {
                 )
             }
             identity = WindowIdentity(
-                windowID: state.windowID ?? 0,
+                windowID: state.windowID,
                 pid: state.pid,
                 bundleIdentifier: state.bundleIdentifier,
                 appName: state.appName,
@@ -216,54 +216,44 @@ final class HookEventHandler {
             )
         }
 
-        // 通过 (pid, tty) 在同一行查找 toggle state — 无需跨表匹配
-        let tty = state?.tty ?? payload.terminalCtx?.tty
-        if let toggleState = SessionWindowRegistry.shared.findState(pid: identity.pid, tty: tty) {
-            if toggleState.hasToggleState {
-                // 验证 toggle state 的 windowID 与当前窗口匹配
-                // 同 PID+TTY 可能有多个窗口（如 Terminal.app 多窗口），防止恢复到错误窗口
-                if let stateWID = toggleState.windowID, stateWID != identity.windowID {
-                    log(
-                        "[HookEventHandler] UserPromptSubmit toggle state windowID mismatch, skipping pid_tty_direct",
-                        level: .warn,
-                        fields: [
-                            "sessionID": payload.sessionID,
-                            "identityWindowID": String(identity.windowID),
-                            "stateWindowID": String(stateWID),
-                            "pid": String(identity.pid),
-                            "tty": tty ?? "nil"
-                        ]
-                    )
-                } else {
-                    guard let mainScreen = wm.getMainScreen() else {
-                        return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
-                    }
-                    if !toggleState.isCorrupted(mainScreenFrame: mainScreen.frame) {
-                        return performRestoreFromState(
-                            payload: payload, toggleState: toggleState,
-                            matchLevel: "pid_tty_direct"
-                        )
-                    } else {
-                        SessionWindowRegistry.shared.clearToggleState(pid: identity.pid, tty: tty)
-                    }
-                }
+        // 新路径：ToggleEngine 直接查 SQLite，不走内存缓存
+        let engine = ToggleEngine.shared
+        if let record = engine.load(windowID: identity.windowID) {
+            guard let mainScreen = wm.getMainScreen() else {
+                return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
             }
-        }
 
-        // Fallback: 按 windowID 查找
-        if let windowState = SessionWindowRegistry.shared.findStateByWindowID(identity.windowID, expectedPID: identity.pid) {
-            if windowState.hasToggleState {
-                guard let mainScreen = wm.getMainScreen() else {
-                    return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
-                }
-                if !windowState.isCorrupted(mainScreenFrame: mainScreen.frame) {
-                    return performRestoreFromState(
-                        payload: payload, toggleState: windowState,
-                        matchLevel: "windowid_fallback"
+            if record.isValid(mainScreenFrame: mainScreen.frame) {
+                let success = engine.restore(
+                    windowID: identity.windowID,
+                    triggerSource: "user_prompt_submit"
+                )
+                if success {
+                    return (
+                        200,
+                        ClaudeHookResponse(
+                            ok: true,
+                            code: "restored",
+                            message: "Window restored to original position",
+                            sessionID: payload.sessionID,
+                            handled: true
+                        )
                     )
                 } else {
-                    SessionWindowRegistry.shared.clearToggleState(pid: windowState.pid, tty: windowState.tty)
+                    return (
+                        200,
+                        ClaudeHookResponse(
+                            ok: true,
+                            code: "restore_failed",
+                            message: "Restore attempt failed",
+                            sessionID: payload.sessionID,
+                            handled: false
+                        )
+                    )
                 }
+            } else {
+                // corrupted state（两个 frame 都在主屏），清除
+                engine.clear(windowID: identity.windowID)
             }
         }
 
@@ -271,9 +261,7 @@ final class HookEventHandler {
             "[HookEventHandler] UserPromptSubmit no toggle state found",
             fields: [
                 "sessionID": payload.sessionID,
-                "pid": String(identity.pid),
-                "tty": tty ?? "nil",
-                "windowOnMainScreen": String(isOnMain)
+                "windowID": String(identity.windowID)
             ]
         )
         return (
@@ -290,8 +278,7 @@ final class HookEventHandler {
 
     private func performRestoreFromState(
         payload: ClaudeHookPayload,
-        toggleState: WindowState,
-        matchLevel: String
+        toggleState: WindowState
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         let wm = WindowManager.shared
 
@@ -333,7 +320,7 @@ final class HookEventHandler {
                     level: .warn,
                     fields: ["sessionID": payload.sessionID]
                 )
-                SessionWindowRegistry.shared.clearToggleState(pid: toggleState.pid, tty: toggleState.tty)
+                SessionWindowRegistry.shared.clearToggleState(windowID: toggleState.windowID)
                 return (
                     200,
                     ClaudeHookResponse(
@@ -349,11 +336,10 @@ final class HookEventHandler {
             "[HookEventHandler] UserPromptSubmit restoring window",
             fields: [
                 "sessionID": payload.sessionID,
-                "matchLevel": matchLevel,
                 "pid": String(toggleState.pid),
                 "tty": toggleState.tty ?? "nil",
                 "app": toggleState.appName ?? "unknown",
-                "windowID": String(describing: toggleState.windowID),
+                "windowID": String(toggleState.windowID),
                 "originalFrame": String(describing: origFrame),
                 "targetFrame": String(describing: tgtFrame)
             ]
@@ -365,10 +351,10 @@ final class HookEventHandler {
         )
 
         SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-        SessionWindowRegistry.shared.clearToggleState(pid: toggleState.pid, tty: toggleState.tty)
+        SessionWindowRegistry.shared.clearToggleState(windowID: toggleState.windowID)
 
         SessionWindowRegistry.shared.setLastEventDescription(
-            "UserPromptSubmit 恢复窗口（\(matchLevel)）：\(toggleState.appName ?? "Unknown")"
+            "UserPromptSubmit 恢复窗口：\(toggleState.appName ?? "Unknown")"
         )
         return (
             200,
@@ -540,23 +526,8 @@ final class HookEventHandler {
             )
         }
 
-        guard let windowID = binding.windowID else {
-            log(
-                "[HookEventHandler] \(triggerName) binding has no windowID",
-                level: .warn,
-                fields: ["sessionID": payload.sessionID]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "no_window_id",
-                    message: "Binding has no windowID",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
         // 预检：如果窗口已在主屏幕上，跳过移动
+        let windowID = binding.windowID
         if WindowManager.shared.isWindowOnMainScreen(windowID: windowID) {
             SessionWindowRegistry.shared.setLastEventDescription(
                 "\(triggerName) 窗口已在主屏幕，跳过移动"
