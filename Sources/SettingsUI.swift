@@ -7,399 +7,27 @@ import Foundation
 import Darwin
 import UniformTypeIdentifiers
 
-func bundledAppIconImage() -> NSImage? {
-    if let icnsURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-       let image = NSImage(contentsOf: icnsURL) {
-        return image
-    }
-    if let pngURL = Bundle.main.url(forResource: "AppIcon", withExtension: "png"),
-       let image = NSImage(contentsOf: pngURL) {
-        return image
-    }
-    return nil
-}
 
-private struct AppLogoBadge: View {
-    var size: CGFloat = 84
+// SettingsView — see SettingsComponents.swift for UI components
+// AppDelegate — see AppDelegate.swift for app lifecycle
 
-    var body: some View {
-        Group {
-            if let image = bundledAppIconImage() {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .antialiased(true)
-                    .aspectRatio(contentMode: .fit)
-            } else {
-                Image(systemName: "rectangle.3.group.bubble.left.fill")
-                    .font(.system(size: size * 0.38, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.accentColor.opacity(0.98), Color.accentColor.opacity(0.72)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    )
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
-    }
-}
-
-private final class ShortcutRecorderButton: NSButton {
-    var displayedShortcut = HotKeyConfiguration.default.displayString {
-        didSet { updateAppearance() }
-    }
-    var onShortcutCaptured: ((HotKeyConfiguration) -> Void)?
-    private var isRecording = false {
-        didSet { updateAppearance() }
-    }
-
-    override var acceptsFirstResponder: Bool { true }
-
-    init() {
-        super.init(frame: .zero)
-        bezelStyle = .rounded
-        setButtonType(.momentaryPushIn)
-        controlSize = .large
-        font = .monospacedSystemFont(ofSize: 13, weight: .semibold)
-        target = self
-        action = #selector(beginRecording)
-        updateAppearance()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    @objc private func beginRecording() {
-        log("[Settings] shortcut recorder begin recording")
-        isRecording = true
-        NSApp.activate(ignoringOtherApps: true)
-        window?.orderFrontRegardless()
-        window?.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.async { [weak self] in
-            self?.window?.makeFirstResponder(self)
-        }
-    }
-
-    override func resignFirstResponder() -> Bool {
-        let result = super.resignFirstResponder()
-        isRecording = false
-        log("[Settings] shortcut recorder resigned first responder")
-        return result
-    }
-
-    override func keyDown(with event: NSEvent) {
-        guard isRecording else {
-            super.keyDown(with: event)
-            return
-        }
-
-        if event.keyCode == UInt16(kVK_Escape) {
-            isRecording = false
-            log("[Settings] shortcut recorder canceled by Esc")
-            return
-        }
-
-        guard let hotKey = HotKeyConfiguration.from(event: event) else {
-            NSSound.beep()
-            log(
-                "[Settings] shortcut recorder rejected input",
-                level: .warn,
-                fields: [
-                    "keyCode": String(event.keyCode),
-                    "modifiers": String(event.modifierFlags.rawValue)
-                ]
-            )
-            return
-        }
-
-        log(
-            "[Settings] shortcut recorder captured",
-            fields: [
-                "key": hotKey.displayString,
-                "keyCode": String(hotKey.keyCode),
-                "modifiers": String(hotKey.modifiers)
-            ]
-        )
-        onShortcutCaptured?(hotKey)
-        isRecording = false
-        window?.makeFirstResponder(nil)
-    }
-
-    private func updateAppearance() {
-        title = isRecording ? "按下新的快捷键" : displayedShortcut
-        contentTintColor = isRecording ? .controlAccentColor : .labelColor
-    }
-}
-
-private struct ShortcutRecorderView: NSViewRepresentable {
-    let displayedShortcut: String
-    let onShortcutCaptured: (HotKeyConfiguration) -> Void
-
-    func makeNSView(context: Context) -> ShortcutRecorderButton {
-        let button = ShortcutRecorderButton()
-        button.displayedShortcut = displayedShortcut
-        button.onShortcutCaptured = onShortcutCaptured
-        return button
-    }
-
-    func updateNSView(_ nsView: ShortcutRecorderButton, context: Context) {
-        nsView.displayedShortcut = displayedShortcut
-        nsView.onShortcutCaptured = onShortcutCaptured
-    }
-}
-
-// MARK: - Draggable Slider
-// 使用 NSSlider 包装器实现真正的拖动功能
-struct DraggableSlider: NSViewRepresentable {
-    @Binding var value: Double
-    var minValue: Double
-    var maxValue: Double
-    var step: Double
-
-    func makeNSView(context: Context) -> NSSlider {
-        let slider = NSSlider()
-        slider.minValue = minValue
-        slider.maxValue = maxValue
-        slider.numberOfTickMarks = 0
-        slider.allowsTickMarkValuesOnly = false
-        slider.isContinuous = true  // 关键：启用连续更新
-
-        // 使用闭包来处理值变化
-        let coordinator = context.coordinator
-        slider.target = coordinator
-        slider.action = #selector(Coordinator.sliderValueChanged(_:))
-
-        return slider
-    }
-
-    func updateNSView(_ nsView: NSSlider, context: Context) {
-        // 只在值显著不同时更新，避免覆盖用户拖动
-        if abs(nsView.doubleValue - value) > 0.01 {
-            nsView.doubleValue = value
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    @MainActor
-    class Coordinator: NSObject {
-        var parent: DraggableSlider
-
-        init(_ parent: DraggableSlider) {
-            self.parent = parent
-        }
-
-        @objc func sliderValueChanged(_ sender: NSSlider) {
-            let newValue = sender.doubleValue
-            log("DraggableSlider.sliderValueChanged", level: .debug, fields: ["rawValue": String(newValue), "min": String(parent.minValue), "max": String(parent.maxValue), "step": String(parent.step)])
-
-            var finalValue = newValue
-            // 应用步进
-            if self.parent.step > 0 {
-                finalValue = round(newValue / self.parent.step) * self.parent.step
-            }
-            // 限制范围
-            finalValue = max(self.parent.minValue, min(self.parent.maxValue, finalValue))
-            self.parent.value = finalValue
-            log("DraggableSlider.sliderValueChanged exit", level: .debug, fields: ["finalValue": String(finalValue)])
-        }
-    }
-}
-
-private struct SettingsCard<Content: View>: View {
-    let title: String
-    let subtitle: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .lineSpacing(2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            content
-        }
-        .padding(22)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.86))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
-                )
-        )
-        .shadow(color: .black.opacity(0.06), radius: 18, y: 10)
-    }
-}
-
-// MARK: - Code Block View
-private struct CodeBlockView: View {
-    let code: String
-    let language: String
-    @State private var isCopied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(language)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.secondary.opacity(0.1))
-                    )
-
-                Spacer()
-
-                Button(action: copyToClipboard) {
-                    HStack(spacing: 4) {
-                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        Text(isCopied ? "已复制" : "复制")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(isCopied ? .green : .accentColor)
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
-                    .font(.system(size: 12, design: .monospaced))
-                    .lineSpacing(2)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .textBackgroundColor))
-                    )
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.secondary.opacity(0.2), lineWidth: 1)
-                )
-        )
-    }
-
-    private func copyToClipboard() {
-        log("CodeBlockView.copyToClipboard entry", level: .debug, fields: ["language": language, "codeLength": String(code.count)])
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(code, forType: .string)
-
-        withAnimation {
-            isCopied = true
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation {
-                isCopied = false
-            }
-        }
-    }
-}
-
-private struct SettingsStatusPill: View {
-    let title: String
-    let tint: Color
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 11, weight: .semibold))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(tint.opacity(0.12))
-            )
-            .foregroundStyle(tint)
-    }
-}
-
-private struct SidebarInfoCard: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 14, weight: .semibold))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct SettingsRow<Accessory: View>: View {
-    let title: String
-    let detail: String
-    @ViewBuilder let accessory: Accessory
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(detail)
-                    .font(.system(size: 13))
-                    .lineSpacing(2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            accessory
-        }
-    }
-}
-
-private struct SettingsView: View {
-    @EnvironmentObject private var hotKeyManager: HotKeyManager
-    @StateObject private var spaceController = SpaceController.shared
-    @StateObject private var loginItemManager = LoginItemManager.shared
-    @StateObject private var overlayManager = ScreenOverlayManager.shared
-    @AppStorage(SpacePreferences.integrationEnabledKey) private var spaceIntegrationEnabled = true
-    @AppStorage(SpacePreferences.restoreStrategyKey) private var restoreStrategyRaw = SpaceRestoreStrategy.switchToOriginal.rawValue
-    @State private var duplicateAppPaths: [String] = []
-    @State private var isCheckingInstallations = false
+struct SettingsView: View {
+    @EnvironmentObject var hotKeyManager: HotKeyManager
+    @StateObject var spaceController = SpaceController.shared
+    @StateObject var loginItemManager = LoginItemManager.shared
+    @StateObject var overlayManager = ScreenOverlayManager.shared
+    @AppStorage(SpacePreferences.integrationEnabledKey) var spaceIntegrationEnabled = true
+    @AppStorage(SpacePreferences.restoreStrategyKey) var restoreStrategyRaw = SpaceRestoreStrategy.switchToOriginal.rawValue
+    @State var duplicateAppPaths: [String] = []
+    @State var isCheckingInstallations = false
 
     // Claude Hook 集成
-    @StateObject private var hookServer = ClaudeHookServer.shared
-    @StateObject private var sessionRegistry = SessionWindowRegistry.shared
-    @AppStorage(ClaudeHookPreferences.enabledKey) private var hookEnabled = false
-    @AppStorage(ClaudeHookPreferences.portKey) private var hookPort = ClaudeHookPreferences.defaultPort
+    @StateObject var hookServer = ClaudeHookServer.shared
+    @StateObject var sessionRegistry = SessionWindowRegistry.shared
+    @AppStorage(ClaudeHookPreferences.enabledKey) var hookEnabled = false
+    @AppStorage(ClaudeHookPreferences.portKey) var hookPort = ClaudeHookPreferences.defaultPort
 
-    private var activeSessionList: some View {
+    var activeSessionList: some View {
         let bindings = sessionRegistry.activeBindingsForUI
         if bindings.isEmpty { return AnyView(EmptyView()) }
         return AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -433,7 +61,7 @@ private struct SettingsView: View {
         })
     }
 
-    private var completedSessionList: some View {
+    var completedSessionList: some View {
         let bindings = sessionRegistry.recentCompletedBindings
         if bindings.isEmpty { return AnyView(EmptyView()) }
         return AnyView(VStack(alignment: .leading, spacing: 8) {
@@ -458,30 +86,30 @@ private struct SettingsView: View {
             }
         })
     }
-    @State private var hookToken: String = ""
-    @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) private var autoFocusOnSessionEnd = true
-    @AppStorage(ClaudeHookPreferences.triggerOnStopKey) private var triggerOnStop = true
-    @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) private var triggerOnSessionEnd = false
-    @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) private var autoRestoreOnPromptSubmit = true
-    @State private var hookInstallMessage: String?
-    @State private var hookInstallSucceeded = false
+    @State var hookToken: String = ""
+    @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) var autoFocusOnSessionEnd = true
+    @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = true
+    @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) var triggerOnSessionEnd = false
+    @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) var autoRestoreOnPromptSubmit = true
+    @State var hookInstallMessage: String?
+    @State var hookInstallSucceeded = false
 
     // 提示音设置
-    @StateObject private var soundManager = SoundManager.shared
-    @State private var isPreviewPlaying = false
-    @State private var showFileImporter = false
+    @StateObject var soundManager = SoundManager.shared
+    @State var isPreviewPlaying = false
+    @State var showFileImporter = false
 
-    private var appVersionDisplay: String {
+    var appVersionDisplay: String {
         let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         let version = (bundleVersion?.isEmpty == false) ? bundleVersion! : AppVersion.current
         return "v\(version)"
     }
 
-    private var bundleIdentifier: String {
+    var bundleIdentifier: String {
         Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
     }
 
-    private var loginItemSidebarValue: String {
+    var loginItemSidebarValue: String {
         if loginItemManager.isEnabled {
             return "已启用"
         }
@@ -491,27 +119,27 @@ private struct SettingsView: View {
         return "未启用"
     }
 
-    private var currentAppPath: String {
+    var currentAppPath: String {
         Bundle.main.bundleURL.path
     }
 
-    private var expectedAppPath: String {
+    var expectedAppPath: String {
         (NSHomeDirectory() as NSString).appendingPathComponent("Applications/VibeFocus.app")
     }
 
-    private var otherInstallations: [String] {
+    var otherInstallations: [String] {
         duplicateAppPaths.filter { $0 != currentAppPath }
     }
 
-    private var resetAccessCommand: String {
+    var resetAccessCommand: String {
         "tccutil reset Accessibility \(bundleIdentifier)"
     }
 
-    private var spaceEffectiveEnabled: Bool {
+    var spaceEffectiveEnabled: Bool {
         spaceIntegrationEnabled && spaceController.availability == .available
     }
 
-    private var spaceStatusTitle: String {
+    var spaceStatusTitle: String {
         switch spaceController.availability {
         case .available:
             return "可用"
@@ -524,7 +152,7 @@ private struct SettingsView: View {
         }
     }
 
-    private var spaceStatusTint: Color {
+    var spaceStatusTint: Color {
         switch spaceController.availability {
         case .available:
             return .green
@@ -535,7 +163,7 @@ private struct SettingsView: View {
         }
     }
 
-    private var spaceStatusDetail: String {
+    var spaceStatusDetail: String {
         switch spaceController.availability {
         case .available:
             return "检测到 yabai，可启用跨工作区移动。"
@@ -548,7 +176,7 @@ private struct SettingsView: View {
         }
     }
 
-    private var spaceSidebarValue: String {
+    var spaceSidebarValue: String {
         if spaceEffectiveEnabled {
             return "已启用"
         }
@@ -894,6 +522,60 @@ private struct SettingsView: View {
                                     loginItemManager.refresh()
                                 }
                                 .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+
+                    SettingsCard(
+                        title: "关机快照",
+                        subtitle: "关机时自动保存所有终端窗口的位置和 Claude Code 会话，下次开机时可一键恢复。"
+                    ) {
+                        SettingsRow(
+                            title: "关机时保存终端状态",
+                            detail: "关机或退出时自动保存所有终端窗口状态。"
+                        ) {
+                            Toggle("", isOn: Binding(
+                                get: { ShutdownSnapshotManager.shared.isEnabled },
+                                set: { ShutdownSnapshotManager.shared.isEnabled = $0 }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.checkbox)
+                        }
+
+                        SettingsRow(
+                            title: "开机时自动恢复",
+                            detail: "检测到上次关机快照时自动恢复终端窗口和 Claude 会话。"
+                        ) {
+                            Toggle("", isOn: Binding(
+                                get: { UserDefaults.standard.object(forKey: "autoRestoreOnBoot") as? Bool ?? false },
+                                set: { UserDefaults.standard.set($0, forKey: "autoRestoreOnBoot"); PreferencesSync.persistToDisk() }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.checkbox)
+                        }
+
+                        if ShutdownSnapshotManager.shared.hasPendingSnapshot {
+                            Divider()
+
+                            SettingsRow(
+                                title: "待恢复快照",
+                                detail: "检测到上次关机时保存的终端窗口状态。"
+                            ) {
+                                HStack(spacing: 10) {
+                                    Button("立即恢复") {
+                                        if let snapshot = ShutdownSnapshotManager.shared.loadSnapshot() {
+                                            TerminalRestoreService.shared.performRestore(snapshot)
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+
+                                    Button("清除快照") {
+                                        ShutdownSnapshotManager.shared.clearSnapshot()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
                             }
                         }
                     }
@@ -1808,875 +1490,5 @@ private struct SettingsView: View {
             }
         }
     }
-
-    private func refreshInstallations() {
-        guard !isCheckingInstallations else { return }
-        isCheckingInstallations = true
-        let bundleID = bundleIdentifier
-        let startedAt = Date()
-        log(
-            "[Settings] refresh installations start",
-            fields: [
-                "bundleID": bundleID
-            ]
-        )
-        DispatchQueue.global(qos: .userInitiated).async {
-            let paths = findAppBundlePaths(bundleIdentifier: bundleID)
-            DispatchQueue.main.async {
-                duplicateAppPaths = paths
-                isCheckingInstallations = false
-                logOperationDuration(
-                    "[Settings] refresh installations finished",
-                    startedAt: startedAt,
-                    warnThresholdMs: 250,
-                    fields: [
-                        "bundleID": bundleID,
-                        "foundCount": String(paths.count)
-                    ]
-                )
-            }
-        }
-    }
-
-    private func showDuplicateInFinder(path: String) {
-        log("SettingsView.showDuplicateInFinder entry", level: .debug, fields: ["path": path])
-        let url = URL(fileURLWithPath: path)
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    private func moveDuplicateToTrash(path: String) {
-        log("SettingsView.moveDuplicateToTrash entry", level: .debug, fields: ["path": path])
-        let alert = NSAlert()
-        alert.messageText = "确认删除"
-        alert.informativeText = "确定要将以下应用移到废纸篓吗？\n\n\(path)\n\n此操作不可撤销。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "移到废纸篓")
-        alert.addButton(withTitle: "取消")
-
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else {
-            log("SettingsView.moveDuplicateToTrash user cancelled", level: .debug)
-            return
-        }
-
-        do {
-            let url = URL(fileURLWithPath: path)
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-            log("Moved duplicate to trash: \(path)")
-            log("SettingsView.moveDuplicateToTrash success", level: .debug, fields: ["path": path])
-            refreshInstallations()
-        } catch {
-            let errorAlert = NSAlert()
-            errorAlert.messageText = "删除失败"
-            errorAlert.informativeText = "无法移到废纸篓：\(error.localizedDescription)"
-            errorAlert.alertStyle = .critical
-            errorAlert.addButton(withTitle: "确定")
-            errorAlert.runModal()
-        }
-    }
-
-    private func moveAllDuplicatesToTrash() {
-        log("SettingsView.moveAllDuplicatesToTrash entry", level: .debug, fields: ["count": String(otherInstallations.count)])
-        let pathsToDelete = otherInstallations
-        guard !pathsToDelete.isEmpty else { return }
-
-        let alert = NSAlert()
-        alert.messageText = "确认批量删除"
-        alert.informativeText = "确定要将以下 \(pathsToDelete.count) 个副本全部移到废纸篓吗？\n\n此操作不可撤销。"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "全部移到废纸篓")
-        alert.addButton(withTitle: "取消")
-
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else {
-            log("SettingsView.moveAllDuplicatesToTrash user cancelled", level: .debug)
-            return
-        }
-
-        var failedPaths: [String] = []
-        for path in pathsToDelete {
-            do {
-                let url = URL(fileURLWithPath: path)
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                log("Moved duplicate to trash: \(path)")
-            } catch {
-                failedPaths.append(path)
-            }
-        }
-
-        refreshInstallations()
-
-        if !failedPaths.isEmpty {
-            let errorAlert = NSAlert()
-            errorAlert.messageText = "部分删除失败"
-            errorAlert.informativeText = "以下 \(failedPaths.count) 个副本未能删除：\n\n\(failedPaths.joined(separator: "\n"))"
-            errorAlert.alertStyle = .warning
-            errorAlert.addButton(withTitle: "确定")
-            errorAlert.runModal()
-        }
-    }
-
-    // MARK: - Claude Hook Test Helpers
-
-    private func sendTestHookEvent() {
-        let port = hookPort
-        let testSessionID = "test-\(UUID().uuidString.prefix(8))"
-        // 确保 token 已生成
-        if hookToken.isEmpty {
-            ClaudeHookPreferences.ensureTokenGenerated()
-            hookToken = ClaudeHookPreferences.authToken ?? ""
-        }
-        let token = hookToken.isEmpty ? nil : hookToken
-
-        log(
-            "[Settings] sending test SessionStart event",
-            fields: [
-                "sessionID": testSessionID,
-                "port": String(port),
-                "hasToken": String(token != nil)
-            ]
-        )
-
-        Self.sendHookRequest(
-            port: port,
-            endpoint: ClaudeHookPreferences.endpointPath,
-            payload: [
-                "event": "SessionStart",
-                "session_id": testSessionID,
-                "source": "test-ui"
-            ],
-            token: token
-        ) { result in
-            switch result {
-            case .success(let data):
-                log(
-                    "[Settings] test SessionStart response",
-                    fields: [
-                        "sessionID": testSessionID,
-                        "response": String(data: data, encoding: .utf8) ?? "nil"
-                    ]
-                )
-                // 1 秒后发送 SessionEnd
-                let endPort = port
-                let endToken = token
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    log(
-                        "[Settings] sending test SessionEnd event",
-                        fields: [
-                            "sessionID": testSessionID,
-                            "port": String(endPort)
-                        ]
-                    )
-                    Self.sendHookRequest(
-                        port: endPort,
-                        endpoint: ClaudeHookPreferences.endpointPath,
-                        payload: [
-                            "event": "SessionEnd",
-                            "session_id": testSessionID,
-                            "source": "test-ui"
-                        ],
-                        token: endToken
-                    ) { endResult in
-                        switch endResult {
-                        case .success(let endData):
-                            log(
-                                "[Settings] test SessionEnd response",
-                                fields: [
-                                    "sessionID": testSessionID,
-                                    "response": String(data: endData, encoding: .utf8) ?? "nil"
-                                ]
-                            )
-                        case .failure(let endError):
-                            log(
-                                "[Settings] test SessionEnd failed",
-                                level: .error,
-                                fields: [
-                                    "sessionID": testSessionID,
-                                    "error": endError.localizedDescription
-                                ]
-                            )
-                        }
-                    }
-                }
-            case .failure(let error):
-                log(
-                    "[Settings] test SessionStart failed",
-                    level: .error,
-                    fields: [
-                        "sessionID": testSessionID,
-                        "error": error.localizedDescription
-                    ]
-                )
-            }
-        }
-    }
-
-    private static func sendHookRequest(
-        port: Int,
-        endpoint: String,
-        payload: [String: String],
-        token: String?,
-        completion: @escaping (Result<Data, Error>) -> Void
-    ) {
-        log("SettingsView.sendHookRequest entry", level: .debug, fields: ["port": String(port), "endpoint": endpoint, "hasToken": String(token != nil)])
-        guard let url = URL(string: "http://127.0.0.1:\(port)\(endpoint)") else {
-            completion(.failure(NSError(domain: "VibeFocus", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 5
-
-        if let token, !token.isEmpty {
-            request.setValue(token, forHTTPHeaderField: "X-VibeFocus-Token")
-        }
-
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        } catch {
-            log("SettingsView.sendHookRequest JSON serialization failed", level: .debug, fields: ["error": error.localizedDescription])
-            completion(.failure(error))
-            return
-        }
-
-        log(
-            "[Settings] sending HTTP request",
-            fields: [
-                "url": url.absoluteString,
-                "payload": String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "nil"
-            ]
-        )
-
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error {
-                completion(.failure(error))
-                return
-            }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                completion(.failure(NSError(domain: "VibeFocus", code: -2, userInfo: [NSLocalizedDescriptionKey: "Not HTTP response"])))
-                return
-            }
-            log(
-                "[Settings] HTTP response received",
-                fields: [
-                    "statusCode": String(httpResponse.statusCode),
-                    "url": url.absoluteString
-                ]
-            )
-            if httpResponse.statusCode >= 400 {
-                let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "nil"
-                completion(.failure(NSError(
-                    domain: "VibeFocus",
-                    code: httpResponse.statusCode,
-                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode): \(body)"]
-                )))
-                return
-            }
-            completion(.success(data ?? Data()))
-        }
-        task.resume()
-    }
 }
 
-@MainActor
-private final class FocusableSettingsWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
-@MainActor
-final class SettingsWindowController: NSWindowController, NSWindowDelegate {
-    static let shared = SettingsWindowController()
-
-    private init() {
-        log("SettingsWindowController.init entry", level: .debug)
-        let hostingController = NSHostingController(
-            rootView: SettingsView()
-                .environmentObject(HotKeyManager.shared)
-        )
-
-        let window = FocusableSettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 900),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "VibeFocus 设置"
-        window.center()
-        window.minSize = NSSize(width: 820, height: 900)
-        window.isReleasedWhenClosed = false
-        window.level = .normal
-        window.collectionBehavior = [.moveToActiveSpace]
-        window.tabbingMode = .disallowed
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
-        window.toolbarStyle = .unifiedCompact
-        window.backgroundColor = .clear
-        window.contentViewController = hostingController
-        super.init(window: window)
-        window.delegate = self
-        log("SettingsWindowController.init exit", level: .debug)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func show(shouldFocus: Bool = true) {
-        guard let window else { return }
-        let startedAt = Date()
-        NSApp.setActivationPolicy(.regular)
-        if let icon = bundledAppIconImage() {
-            NSApp.applicationIconImage = icon
-            window.miniwindowImage = icon
-        }
-        DispatchQueue.main.async {
-            window.center()
-            if shouldFocus {
-                window.makeMain()
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                window.orderFront(nil)
-            }
-            logOperationDuration(
-                "[SettingsWindow] show finished",
-                startedAt: startedAt,
-                warnThresholdMs: 180,
-                fields: [
-                    "shouldFocus": String(shouldFocus),
-                    "frontmost": frontmostAppDescriptor()
-                ]
-            )
-        }
-    }
-
-    func windowDidBecomeKey(_ notification: Notification) {
-        log(
-            "[SettingsWindow] did become key",
-            fields: [
-                "frontmost": frontmostAppDescriptor()
-            ]
-        )
-        ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "settings_window_key")
-    }
-
-    func windowDidResignKey(_ notification: Notification) {
-        log(
-            "[SettingsWindow] did resign key",
-            fields: [
-                "frontmost": frontmostAppDescriptor()
-            ]
-        )
-        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_resign_key")
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        log("[SettingsWindow] will close")
-        window?.orderOut(nil)
-        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_closed")
-        NSApp.setActivationPolicy(.accessory)
-    }
-}
-
-// MARK: - 主程序
-@main
-struct VibeFocusApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    var body: some Scene {
-        Settings {
-            SettingsView()
-                .environmentObject(HotKeyManager.shared)
-        }
-    }
-}
-
-// MARK: - App Delegate
-@MainActor
-class AppDelegate: NSObject, NSApplicationDelegate {
-    private var statusItem: NSStatusItem?
-    private var toggleMenuItem: NSMenuItem?
-    private let openSettingsDistributedNotification = Notification.Name("com.vibefocus.app.open-settings")
-
-    private struct ExistingInstanceInfo {
-        let app: NSRunningApplication
-        let version: String?
-        let path: String?
-    }
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        installCrashSignalHandlers()
-        installAtExitHandler()
-        log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
-        logDiagnostics("launch")
-        CrashContextRecorder.shared.bootstrap()
-        NativeSpaceBridge.logAvailability()
-        PreferencesSync.restoreFromDisk()
-
-        // 单实例处理：同版本复用现有进程，不强制重启。
-        if let existing = findExistingInstance() {
-            let currentVersion = currentAppVersion()
-            let existingVersion = existing.version ?? "unknown"
-            log("Found existing instance pid=\(existing.app.processIdentifier) version=\(existingVersion) path=\(existing.path ?? "nil")")
-            CrashContextRecorder.shared.record("existing_instance_detected pid=\(existing.app.processIdentifier) version=\(existingVersion)")
-
-            if existing.version == nil || existing.version == currentVersion {
-                log("Reusing existing same-version instance; activating and opening settings")
-                CrashContextRecorder.shared.record("reuse_existing_instance pid=\(existing.app.processIdentifier)")
-                requestExistingInstanceOpenSettings()
-                existing.app.activate(options: [.activateAllWindows])
-                NSApp.terminate(nil)
-                return
-            }
-
-            log("Existing instance version differs (current=\(currentVersion), existing=\(existingVersion)); terminating old instance")
-            CrashContextRecorder.shared.record("terminate_old_instance pid=\(existing.app.processIdentifier)")
-            existing.app.terminate()
-            Thread.sleep(forTimeInterval: 0.3)
-            if !existing.app.isTerminated {
-                kill(existing.app.processIdentifier, SIGTERM)
-                Thread.sleep(forTimeInterval: 0.2)
-            }
-        }
-
-        // 获取锁（不同版本替换场景下应能成功）
-        if !acquireExclusiveLock() {
-            log("Failed to acquire lock after terminating old instance, retrying...")
-            CrashContextRecorder.shared.record("lock_retry")
-            Thread.sleep(forTimeInterval: 0.5)
-            if !acquireExclusiveLock() {
-                log("Still cannot acquire lock, terminating self")
-                CrashContextRecorder.shared.record("lock_failed_terminate")
-                NSApp.terminate(nil)
-                return
-            }
-        }
-
-        guard enforceExpectedInstallLocation() else {
-            return
-        }
-        applyApplicationIcon()
-        setupMenuBar()
-        HotKeyManager.shared.setup()
-        PreferencesSync.persistToDisk()
-        ClaudeHookServer.shared.applyPreferences()
-        ScreenOverlayManager.shared.refreshOverlays()
-        promptAccessibilityIfNeeded()
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-            Task { @MainActor in
-                SessionWindowRegistry.shared.purgeClosedWindows()
-            }
-        }
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(refreshMenuLabels),
-            name: .hotKeyConfigurationDidChange,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAppBecameActive),
-            name: NSApplication.didBecomeActiveNotification,
-            object: nil
-        )
-        DistributedNotificationCenter.default().addObserver(
-            self,
-            selector: #selector(handleOpenSettingsRequest(_:)),
-            name: openSettingsDistributedNotification,
-            object: nil
-        )
-        showSettingsWindowOnLaunch()
-    }
-
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        log("applicationShouldHandleReopen hasVisibleWindows=\(flag)")
-        SettingsWindowController.shared.show()
-        return true
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        ScreenOverlayManager.shared.flushPendingPreferenceSave(reason: "application_will_terminate")
-        PreferencesSync.persistToDiskAndWait()
-        CrashContextRecorder.shared.markCleanExit()
-    }
-
-    private func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        log("setupMenuBar called")
-        if let button = statusItem?.button {
-            if let image = loadStatusBarImage() {
-                log("Setting image to status bar")
-                button.image = image
-                button.imagePosition = .imageOnly
-                button.title = ""
-            } else if let fallbackSymbol = fallbackStatusBarSymbolImage() {
-                log("Using SF Symbol fallback for status bar")
-                button.image = fallbackSymbol
-                button.imagePosition = .imageOnly
-                button.title = ""
-            } else {
-                log("Failed to load status bar image/symbol, using text fallback")
-                button.image = nil
-                button.title = "VF"
-            }
-        }
-
-        let menu = NSMenu()
-        let toggleItem = NSMenuItem(title: "", action: #selector(toggle), keyEquivalent: "")
-        toggleItem.target = self
-        toggleMenuItem = toggleItem
-        menu.addItem(toggleItem)
-
-        let settingsItem = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
-
-        statusItem?.menu = menu
-        refreshMenuLabels()
-    }
-
-    private func loadStatusBarImage() -> NSImage? {
-        log("loadStatusBarImage: bundle path=\(Bundle.main.bundleURL.path)")
-
-        var candidates: [URL] = []
-        if let bundled = Bundle.main.url(forResource: "StatusBarIcon", withExtension: "png") {
-            candidates.append(bundled)
-        }
-        if let resourceURL = Bundle.main.resourceURL {
-            candidates.append(resourceURL.appendingPathComponent("StatusBarIcon.png"))
-        }
-
-        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        candidates.append(currentDirectory.appendingPathComponent("assets/StatusBarIcon.png"))
-
-        if let executableURL = Bundle.main.executableURL {
-            let releaseDir = executableURL.deletingLastPathComponent()
-            let repoRoot = releaseDir
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-            candidates.append(repoRoot.appendingPathComponent("assets/StatusBarIcon.png"))
-        }
-
-        var seenPaths: Set<String> = []
-        for candidate in candidates where seenPaths.insert(candidate.path).inserted {
-            if FileManager.default.fileExists(atPath: candidate.path),
-               let image = NSImage(contentsOf: candidate) {
-                log("loadStatusBarImage: Loaded from \(candidate.path) size=\(image.size)")
-                image.isTemplate = true
-                image.size = NSSize(width: 18, height: 18)
-                return image
-            }
-        }
-
-        log("loadStatusBarImage: no usable icon found in candidates")
-        return nil
-    }
-
-    private func fallbackStatusBarSymbolImage() -> NSImage? {
-        guard let image = NSImage(
-            systemSymbolName: "viewfinder.circle",
-            accessibilityDescription: "VibeFocus"
-        ) else {
-            return nil
-        }
-        image.isTemplate = true
-        image.size = NSSize(width: 18, height: 18)
-        return image
-    }
-
-    @objc private func refreshMenuLabels() {
-        toggleMenuItem?.title = "Toggle (\(HotKeyManager.shared.currentHotKey.displayString))"
-    }
-
-    @objc private func toggle() {
-        let op = makeOperationID(prefix: "menu-toggle")
-        log(
-            "[Menu] toggle clicked",
-            fields: [
-                "op": op,
-                "frontmost": frontmostAppDescriptor()
-            ]
-        )
-        WindowManager.shared.toggle(operationID: op, triggerSource: "menu")
-    }
-
-    @objc private func openSettings() {
-        log("[Menu] open settings clicked")
-        DispatchQueue.main.async {
-            SettingsWindowController.shared.show(shouldFocus: true)
-        }
-    }
-
-    @objc private func quit() {
-        NSApp.terminate(nil)
-    }
-
-    @objc private func handleAppBecameActive() {
-        let startedAt = Date()
-        applyApplicationIcon()
-        HotKeyManager.shared.refreshAccessibilityStatus()
-        logOperationDuration(
-            "[AppDelegate] didBecomeActive handled",
-            startedAt: startedAt,
-            warnThresholdMs: 140,
-            fields: [
-                "frontmost": frontmostAppDescriptor(),
-                "axTrusted": String(HotKeyManager.shared.accessibilityGranted)
-            ]
-        )
-    }
-
-    @objc private func handleOpenSettingsRequest(_ notification: Notification) {
-        log(
-            "Received distributed open-settings request",
-            fields: [
-                "frontmost": frontmostAppDescriptor()
-            ]
-        )
-        DispatchQueue.main.async {
-            SettingsWindowController.shared.show(shouldFocus: true)
-        }
-    }
-
-    private func showSettingsWindowOnLaunch() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            log("Showing settings window on launch")
-            SettingsWindowController.shared.show(shouldFocus: false)
-        }
-    }
-
-    private func requestExistingInstanceOpenSettings() {
-        DistributedNotificationCenter.default().post(
-            name: openSettingsDistributedNotification,
-            object: nil,
-            userInfo: nil
-        )
-    }
-
-    private func currentAppVersion() -> String {
-        let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        if let bundleVersion, !bundleVersion.isEmpty {
-            return bundleVersion
-        }
-        return AppVersion.current
-    }
-
-    private func installedVersion(for app: NSRunningApplication) -> String? {
-        guard let bundleURL = app.bundleURL,
-              let bundle = Bundle(url: bundleURL) else {
-            return nil
-        }
-        let shortVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String
-        if let shortVersion, !shortVersion.isEmpty {
-            return shortVersion
-        }
-        let buildVersion = bundle.infoDictionary?["CFBundleVersion"] as? String
-        if let buildVersion, !buildVersion.isEmpty {
-            return buildVersion
-        }
-        return nil
-    }
-
-    // MARK: - Single Instance Check
-
-    // 文件锁路径，用于防止竞态条件
-    private let lockFilePath = "/tmp/VibeFocus.lock"
-
-    private func acquireExclusiveLock() -> Bool {
-        log("AppDelegate.acquireExclusiveLock entry", level: .debug, fields: ["lockFilePath": lockFilePath])
-        let fd = open(lockFilePath, O_CREAT | O_RDWR, 0o644)
-        guard fd != -1 else {
-            log("Failed to open lock file")
-            return false
-        }
-
-        // 尝试获取排他锁（非阻塞）
-        let result = flock(fd, LOCK_EX | LOCK_NB)
-        if result == -1 {
-            // 锁已被占用，关闭文件描述符
-            log("AppDelegate.acquireExclusiveLock failed, lock held by another process", level: .debug)
-            close(fd)
-            return false
-        }
-
-        // 成功获取锁，保持文件描述符打开以维持锁
-        // 注意：文件描述符会在进程退出时自动关闭，锁会自动释放
-        log("Acquired exclusive lock, PID \(ProcessInfo.processInfo.processIdentifier)")
-        return true
-    }
-
-    private func findExistingInstance() -> ExistingInstanceInfo? {
-        log("AppDelegate.findExistingInstance entry", level: .debug)
-        let currentPID = ProcessInfo.processInfo.processIdentifier
-        let bundleID = Bundle.main.bundleIdentifier
-        let execPath = Bundle.main.executableURL?.resolvingSymlinksInPath().path
-
-        // Get all running processes with the same name
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-eo", "pid,comm", "-c"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else { return nil }
-
-            let processName = execPath?.components(separatedBy: "/").last ?? "VibeFocus"
-
-            for line in output.components(separatedBy: .newlines) {
-                let components = line.trimmingCharacters(in: .whitespaces)
-                    .components(separatedBy: .whitespaces)
-                    .filter { !$0.isEmpty }
-
-                guard components.count >= 2,
-                      let pid = Int32(components[0]),
-                      pid != currentPID else { continue }
-
-                let comm = components[1]
-                if comm == processName || comm == "VibeFocus" {
-                    log("AppDelegate.findExistingInstance found matching process", level: .debug, fields: ["pid": String(pid), "comm": comm])
-                    // Found another instance with same process name
-                    // Try to get NSRunningApplication for this PID
-                    if let app = NSRunningApplication(processIdentifier: pid) {
-                        return ExistingInstanceInfo(
-                            app: app,
-                            version: installedVersion(for: app),
-                            path: app.bundleURL?.path
-                        )
-                    }
-                }
-            }
-        } catch {
-            log("Failed to check for existing instances: \(error)")
-        }
-
-        // Fallback: match by bundle ID if available
-        if let bundleID = bundleID {
-            log("AppDelegate.findExistingInstance fallback to bundle ID match", level: .debug, fields: ["bundleID": bundleID])
-            let runningApps = NSWorkspace.shared.runningApplications
-            for app in runningApps {
-                if app.bundleIdentifier == bundleID && app.processIdentifier != currentPID {
-                    log("AppDelegate.findExistingInstance found via bundle ID", level: .debug, fields: ["pid": String(app.processIdentifier)])
-                    return ExistingInstanceInfo(
-                        app: app,
-                        version: installedVersion(for: app),
-                        path: app.bundleURL?.path
-                    )
-                }
-            }
-        }
-
-        return nil
-    }
-
-    private func applyApplicationIcon() {
-        log("AppDelegate.applyApplicationIcon entry", level: .debug)
-        guard let icon = bundledAppIconImage() else {
-            return
-        }
-        NSApp.applicationIconImage = icon
-    }
-
-    private func expectedAppBundlePaths() -> [String] {
-        let home = NSHomeDirectory()
-        return [
-            (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
-            (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
-            "/Applications/VibeFocus.app",
-            "/Applications/VibeFocus.app"
-        ]
-    }
-
-    private func isAllowedDevelopmentBundlePath(_ path: String) -> Bool {
-        path.hasSuffix("/dist/VibeFocus.app") || path.hasSuffix("/dist/VibeFocus.app")
-    }
-
-    @discardableResult
-    private func enforceExpectedInstallLocation() -> Bool {
-        log("AppDelegate.enforceExpectedInstallLocation entry", level: .debug)
-        let actualURL = Bundle.main.bundleURL
-        let actual = actualURL.path
-        if actualURL.pathExtension != "app" {
-            log("Skipping install-location enforcement for direct binary run: \(actual)")
-            log("AppDelegate.enforceExpectedInstallLocation binary run, returning true", level: .debug)
-            return true
-        }
-
-        if isAllowedDevelopmentBundlePath(actual) {
-            log("Skipping install-location enforcement for development bundle path: \(actual)")
-            log("AppDelegate.enforceExpectedInstallLocation dev path, returning true", level: .debug)
-            return true
-        }
-
-        let expectedPaths = expectedAppBundlePaths()
-        guard !expectedPaths.contains(actual) else {
-            log("AppDelegate.enforceExpectedInstallLocation at expected path, returning true", level: .debug, fields: ["actual": actual])
-            return true
-        }
-
-        log("Unexpected app location. actual=\(actual) expected=\(expectedPaths)")
-        logDiagnostics("unexpected_location")
-
-        // Try to open existing copy if found
-        for expected in expectedPaths {
-            if FileManager.default.fileExists(atPath: expected) {
-                NSWorkspace.shared.open(URL(fileURLWithPath: expected))
-                break
-            }
-        }
-
-        showWrongLocationAlert(actual: actual, expectedPaths: expectedPaths)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            NSApp.terminate(nil)
-        }
-        return false
-    }
-
-    private func showWrongLocationAlert(actual: String, expectedPaths: [String]) {
-        let alert = NSAlert()
-        alert.messageText = "VibeFocus 安装位置异常"
-        let home = NSHomeDirectory()
-        let displayExpected = expectedPaths
-            .prefix(2)
-            .map { path in
-                if path.hasPrefix(home) {
-                    return path.replacingOccurrences(of: home, with: "~")
-                }
-                return path
-            }
-            .joined(separator: "\n")
-        alert.informativeText = "当前运行位置：\n\(actual)\n\n建议位置：\n\(displayExpected)\n或\n/Applications/VibeFocus.app"
-        alert.addButton(withTitle: "退出")
-
-        NSApp.setActivationPolicy(.regular)
-        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
-        alert.runModal()
-        NSApp.setActivationPolicy(.accessory)
-    }
-
-    private func promptAccessibilityIfNeeded() {
-        guard HotKeyManager.shared.accessibilityGranted == false else {
-            log("AppDelegate.promptAccessibilityIfNeeded already granted, skipping", level: .debug)
-            return
-        }
-        log("Accessibility not granted; opening System Settings.")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            HotKeyManager.shared.openAccessibilitySettings()
-        }
-    }
-}
