@@ -47,16 +47,22 @@ extension WindowManager {
                 x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
                 width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
             )
-            let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
-            let onMainScreen = mainScreenFrame.contains(center)
+            // CGWindowList 返回 Quartz 坐标，NSScreen 使用 AppKit 坐标
+            // 需要转换 Y 坐标：appKitY = mainScreenHeight - quartzY - windowHeight
+            let mainScreenHeight = NSScreen.screens[0].frame.height
+            let appKitCenter = CGPoint(
+                x: windowFrame.midX,
+                y: mainScreenHeight - windowFrame.midY
+            )
+            let onMainScreen = mainScreenFrame.contains(appKitCenter)
             log(
                 "[WindowManager] isWindowOnMainScreen result",
                 level: .debug,
                 fields: [
                     "windowID": String(windowID),
                     "onMainScreen": String(onMainScreen),
-                    "windowCenterX": "\(center.x)",
-                    "windowCenterY": "\(center.y)"
+                    "windowCenterX": "\(appKitCenter.x)",
+                    "windowCenterY": "\(appKitCenter.y)"
                 ]
             )
             return onMainScreen
@@ -142,6 +148,12 @@ extension WindowManager {
         abs(lhs.origin.y - rhs.origin.y) <= frameTolerance &&
         abs(lhs.width - rhs.width) <= frameTolerance &&
         abs(lhs.height - rhs.height) <= frameTolerance
+    }
+
+    /// 根据窗口 frame 确定所在屏幕的 Display ID
+    func displayID(for frame: CGRect) -> UInt32? {
+        let context = displayContext(for: frame)
+        return context.displayID
     }
 
 }
