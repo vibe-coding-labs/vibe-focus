@@ -386,21 +386,27 @@ extension WindowManager {
         }
 
         // 写入 2: ToggleEngine（SQLite 单一事实来源，restore 时直接读这里）
-        let teSourceDisplay = spaceContext.sourceDisplayIndex ?? sourceContext.index ?? 0
-        ToggleEngine.shared.save(
-            windowID: currentWindowID,
-            pid: identity.pid,
-            bundleIdentifier: identity.bundleIdentifier,
-            appName: identity.appName,
-            origFrame: currentFrame,
-            sourceSpace: spaceContext.sourceSpaceIndex ?? 0,
-            sourceDisplay: teSourceDisplay,
-            sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? 0,
-            sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
-            targetFrame: actualTargetFrame,
-            targetDisplay: targetDisplayIndex ?? 0,
-            sessionID: sessionID
-        )
+        // 如果 space context 全部为 nil（yabai 不可用），不保存 toggle record
+        // 因为 sourceSpace=0 是无效的 yabai index，恢复时会发到错误的 space
+        if let sourceSpaceIndex = spaceContext.sourceSpaceIndex {
+            let teSourceDisplay = spaceContext.sourceDisplayIndex ?? sourceContext.index ?? 0
+            ToggleEngine.shared.save(
+                windowID: currentWindowID,
+                pid: identity.pid,
+                bundleIdentifier: identity.bundleIdentifier,
+                appName: identity.appName,
+                origFrame: currentFrame,
+                sourceSpace: sourceSpaceIndex,
+                sourceDisplay: teSourceDisplay,
+                sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? 0,
+                sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
+                targetFrame: actualTargetFrame,
+                targetDisplay: targetDisplayIndex ?? 0,
+                sessionID: sessionID
+            )
+        } else {
+            log("[WindowManager] skipping ToggleEngine.save — space context unavailable (yabai may not be running)", level: .warn, fields: ["op": op])
+        }
 
         log(
             "[WindowManager] moveWindowToMainScreen finished",
