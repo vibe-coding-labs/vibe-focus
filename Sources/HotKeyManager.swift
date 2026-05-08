@@ -217,6 +217,20 @@ final class HotKeyManager: ObservableObject {
             return nil // Consume the event
         }
 
+        // Title editor hotkey: Ctrl+T (keyCode 17)
+        let titleEditorKeyCode: UInt32 = 17
+        let titleEditorModifiers: UInt32 = UInt32(controlKey)
+        if keyCode == titleEditorKeyCode && modifiers == titleEditorModifiers {
+            guard TitleEditorPreferences.isEnabled && TitleEditorPreferences.isHotKeyEnabled else {
+                return Unmanaged.passUnretained(event)
+            }
+            log("[HotKey] Title editor hotkey detected", fields: ["key": "Ctrl+T"])
+            DispatchQueue.main.async {
+                TitleEditorService.shared.editTitle()
+            }
+            return nil
+        }
+
         return Unmanaged.passUnretained(event)
     }
 

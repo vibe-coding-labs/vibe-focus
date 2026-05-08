@@ -959,6 +959,39 @@ struct SettingsView: View {
                     }
 
                     SettingsCard(
+                        title: "窗口标题编辑",
+                        subtitle: "通过快捷键编辑当前终端窗口标题，方便识别多个终端。"
+                    ) {
+                        Toggle("启用标题编辑", isOn: Binding(
+                            get: { TitleEditorPreferences.isEnabled },
+                            set: { TitleEditorPreferences.isEnabled = $0 }
+                        ))
+                        .font(.system(size: 13))
+
+                        Toggle("快捷键 ⌃T", isOn: Binding(
+                            get: { TitleEditorPreferences.isHotKeyEnabled },
+                            set: { TitleEditorPreferences.isHotKeyEnabled = $0 }
+                        ))
+                        .font(.system(size: 13))
+                        .disabled(!TitleEditorPreferences.isEnabled)
+
+                        HStack(spacing: 4) {
+                            Text("按下")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Text("⌃T")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.15))
+                                .cornerRadius(3)
+                            Text("编辑当前终端窗口标题")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    SettingsCard(
                         title: "屏幕序号显示",
                         subtitle: "在每个屏幕上显示编号标签，方便识别多屏幕环境。"
                     ) {
