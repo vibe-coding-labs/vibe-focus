@@ -115,6 +115,7 @@ class TitleEditorService {
 
         let axSuccess = applyViaAX(trimmed, to: window)
         let ttySuccess = applyViaTTY(trimmed, pid: pid)
+        let scriptSuccess = applyViaAppleScript(trimmed, bundleID: bundleID)
 
         log(
             "[TitleEditorService] applyTitle result",
@@ -122,9 +123,40 @@ class TitleEditorService {
                 "title": truncateForLog(trimmed, limit: 60),
                 "axSuccess": String(axSuccess),
                 "ttySuccess": String(ttySuccess),
+                "scriptSuccess": String(scriptSuccess),
                 "bundleID": bundleID
             ]
         )
+    }
+
+    private func applyViaAppleScript(_ title: String, bundleID: String) -> Bool {
+        let script: String
+        switch bundleID {
+        case "com.apple.Terminal":
+            let escaped = title
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            script = "tell application \"Terminal\" to set custom title of selected tab of front window to \"\(escaped)\""
+        case "com.googlecode.iterm2":
+            let escaped = title
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            script = "tell application \"iTerm2\" to set name of current session of current window to \"\(escaped)\""
+        default:
+            return false
+        }
+
+        log(
+            "[TitleEditorService] applyViaAppleScript: setting title",
+            fields: ["bundleID": bundleID, "title": truncateForLog(title, limit: 60)]
+        )
+
+        let result = WindowManager.shared.runShellCommand("/usr/bin/osascript", args: ["-e", script])
+        let success = result != nil
+        if !success {
+            log("[TitleEditorService] applyViaAppleScript: failed", level: .warn)
+        }
+        return success
     }
 
     private func applyViaAX(_ title: String, to window: AXUIElement) -> Bool {
