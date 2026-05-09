@@ -221,7 +221,23 @@ final class HotKeyManager: ObservableObject {
         let titleEditorKeyCode: UInt32 = 17
         let titleEditorModifiers: UInt32 = UInt32(controlKey)
         if keyCode == titleEditorKeyCode && modifiers == titleEditorModifiers {
-            guard TitleEditorPreferences.isEnabled && TitleEditorPreferences.isHotKeyEnabled else {
+            // Ignore auto-repeat — only act on the initial key press
+            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+                return nil
+            }
+
+            let enabled = TitleEditorPreferences.isEnabled
+            let hotKeyEnabled = TitleEditorPreferences.isHotKeyEnabled
+            log(
+                "[HotKey] Title editor Ctrl+T matched",
+                level: .debug,
+                fields: [
+                    "isEnabled": String(enabled),
+                    "isHotKeyEnabled": String(hotKeyEnabled)
+                ]
+            )
+            guard enabled && hotKeyEnabled else {
+                log("[HotKey] Title editor disabled, passing event through", level: .warn)
                 return Unmanaged.passUnretained(event)
             }
             log("[HotKey] Title editor hotkey detected", fields: ["key": "Ctrl+T"])
@@ -405,7 +421,6 @@ final class HotKeyManager: ObservableObject {
             return false
         }
 
-        // Debug: log ALL key events to diagnose hotkey issues
         let eventKeyCode = UInt32(event.keyCode)
         let eventModifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
         let matches = currentHotKey.matches(event: event)
@@ -423,12 +438,21 @@ final class HotKeyManager: ObservableObject {
             ]
         )
 
-        // Log every 46 (M key) event for debugging
-        if eventKeyCode == 46 {
-            log("[FALLBACK DEBUG] source=\(source) keyCode=\(eventKeyCode) modifiers=\(eventModifiers) expected=\(currentHotKey.modifiers) matches=\(matches)")
-        }
-
+        // Main toggle hotkey
         guard matches else {
+            // Title editor hotkey: Ctrl+T (keyCode 17)
+            let titleEditorKeyCode: UInt32 = 17
+            let titleEditorModifiers: UInt32 = UInt32(controlKey)
+            if eventKeyCode == titleEditorKeyCode && eventModifiers == titleEditorModifiers {
+                let enabled = TitleEditorPreferences.isEnabled
+                let hotKeyEnabled = TitleEditorPreferences.isHotKeyEnabled
+                guard enabled && hotKeyEnabled else { return false }
+                log("[HotKey] Title editor Ctrl+T matched in fallback handler")
+                DispatchQueue.main.async {
+                    TitleEditorService.shared.editTitle()
+                }
+                return true
+            }
             return false
         }
 
