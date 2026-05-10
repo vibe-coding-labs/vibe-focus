@@ -16,6 +16,11 @@ extension TitleEditorService {
             return false
         }
 
+        log(
+            "[TitleEditorService] applyViaTTY: resolved TTY",
+            fields: ["ttyPath": ttyPath, "pid": String(pid)]
+        )
+
         let sequence = "\u{1B}]0;\(title)\u{07}"
         return writeTTYSequence(sequence, to: ttyPath)
     }

@@ -151,12 +151,23 @@ class TitleEditorService {
             fields: ["bundleID": bundleID, "title": truncateForLog(title, limit: 60)]
         )
 
-        let result = WindowManager.shared.runShellCommand("/usr/bin/osascript", args: ["-e", script])
-        let success = result != nil
-        if !success {
-            log("[TitleEditorService] applyViaAppleScript: failed", level: .warn)
+        let appleScript = NSAppleScript(source: script)
+        var error: NSDictionary?
+        appleScript?.executeAndReturnError(&error)
+
+        if let error {
+            let errorMsg = error[NSAppleScript.errorMessage] as? String ?? "unknown"
+            let errorNum = error[NSAppleScript.errorNumber] as? Int ?? -1
+            log(
+                "[TitleEditorService] applyViaAppleScript: FAILED",
+                level: .warn,
+                fields: ["errorMsg": errorMsg, "errorNum": String(errorNum)]
+            )
+            return false
         }
-        return success
+
+        log("[TitleEditorService] applyViaAppleScript: success")
+        return true
     }
 
     private func applyViaAX(_ title: String, to window: AXUIElement) -> Bool {
