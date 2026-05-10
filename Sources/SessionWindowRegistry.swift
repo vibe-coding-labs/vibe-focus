@@ -23,11 +23,57 @@ final class SessionWindowRegistry: ObservableObject {
 
     private init() {
         let loaded = WindowStateStore.shared.loadAllWindowStates()
+        var prunedCount = 0
         for state in loaded {
-            windowStates[state.windowID] = state
+            if isTerminalAppPID(state.pid) {
+                windowStates[state.windowID] = state
+            } else {
+                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
+                prunedCount += 1
+                log("[SessionWindowRegistry] init pruned corrupt binding: wid=\(state.windowID) pid=\(state.pid) app=\(state.appName ?? "nil") sid=\(state.sessionID?.prefix(8) ?? "nil")")
+            }
         }
-        log("SessionWindowRegistry.init loaded \(loaded.count) window states from SQLite")
+        log("SessionWindowRegistry.init loaded \(loaded.count - prunedCount) valid window states, pruned \(prunedCount) corrupt bindings")
         pruneExpiredBindings(shouldPersist: false)
+    }
+
+    /// 检查 PID 是否属于已知终端应用（Terminal, iTerm2, Warp 等）
+    /// 用于防止系统守护进程（dmd, geod 等）的错误绑定进入数据库
+    private func isTerminalAppPID(_ pid: Int32) -> Bool {
+        if pid == 0 { return false }
+        let terminalAppNames: Set<String> = [
+            "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
+            "WezTerm", "Hyper", "Tabby"
+        ]
+        let terminalBundleIDs: Set<String> = [
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "dev.warp.Warp-Stable",
+            "com.mitchellh.ghostty",
+            "org.alacritty",
+            "net.kovidgoyal.kitty",
+            "com.github.wez.wezterm",
+        ]
+        if let app = NSRunningApplication(processIdentifier: pid) {
+            if let bundleID = app.bundleIdentifier, terminalBundleIDs.contains(bundleID) {
+                return true
+            }
+            if let name = app.localizedName, terminalAppNames.contains(name) {
+                return true
+            }
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-o", "comm=", "-p", String(pid)]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try? process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !output.isEmpty else { return false }
+        let basename = URL(fileURLWithPath: output).lastPathComponent
+        return terminalAppNames.contains(basename)
     }
 
     // MARK: - Bind
@@ -35,6 +81,16 @@ final class SessionWindowRegistry: ObservableObject {
     func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil, itermSessionID: String? = nil, cwd: String? = nil, model: String? = nil) {
         let now = Date()
         let wid = windowIdentity.windowID
+
+        guard isTerminalAppPID(windowIdentity.pid) else {
+            log("[SessionWindowRegistry] bind rejected: PID is not a terminal app", level: .warn, fields: [
+                "windowID": String(wid),
+                "pid": String(windowIdentity.pid),
+                "sessionID": sessionID,
+                "appName": windowIdentity.appName ?? "nil"
+            ])
+            return
+        }
 
         var resolvedWindowNumber = windowIdentity.windowNumber
         if resolvedWindowNumber == nil, let axWindow = WindowManager.shared.resolveWindow(identity: windowIdentity) {
@@ -86,11 +142,25 @@ final class SessionWindowRegistry: ObservableObject {
     // MARK: - Lookup
 
     /// 按 sessionID 查找窗口状态（扫描，低频操作）
+    /// 优先返回 PID 有效的绑定，避免返回损坏数据
     func binding(for sessionID: String) -> WindowState? {
-        if let state = windowStates.values.first(where: { $0.sessionID == sessionID }) {
-            return state
+        let candidates = windowStates.values.filter { $0.sessionID == sessionID }
+        if let valid = candidates.first(where: { isTerminalAppPID($0.pid) }) {
+            return valid
+        }
+        if let first = candidates.first {
+            return first
         }
         if let state = WindowStateStore.shared.findWindowStateBySession(sessionID: sessionID) {
+            if !isTerminalAppPID(state.pid) {
+                log("[SessionWindowRegistry] binding(for:) loaded corrupt binding from DB, cleaning up", level: .warn, fields: [
+                    "windowID": String(state.windowID),
+                    "pid": String(state.pid),
+                    "sessionID": sessionID
+                ])
+                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
+                return nil
+            }
             windowStates[state.windowID] = state
             return state
         }
