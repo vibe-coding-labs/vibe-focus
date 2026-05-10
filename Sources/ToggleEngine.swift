@@ -34,6 +34,26 @@ final class ToggleEngine {
         targetDisplay: Int,
         sessionID: String?
     ) {
+        // 验证 origFrame 不在主屏上 — 如果 origFrame 在主屏，说明数据异常
+        let mainScreen = NSScreen.screens.first { $0.frame.origin == .zero }
+        if let mainScreenFrame = mainScreen?.frame {
+            let origCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
+            if mainScreenFrame.contains(origCenter) {
+                log(
+                    "[ToggleEngine] save rejected: origFrame is on main screen (corrupted data)",
+                    level: .warn,
+                    fields: [
+                        "windowID": String(windowID),
+                        "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+                        "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))",
+                        "sourceSpace": String(describing: sourceSpace),
+                        "sourceYabaiDisp": String(describing: sourceYabaiDisp)
+                    ]
+                )
+                return
+            }
+        }
+
         let record = ToggleRecord(
             windowID: windowID,
             pid: pid,

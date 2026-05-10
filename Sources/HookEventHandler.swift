@@ -266,6 +266,22 @@ final class HookEventHandler {
         let wm = WindowManager.shared
         let isOnMain = wm.isWindowOnMainScreen(windowID: identity.windowID)
 
+        log(
+            "[HookEventHandler] UserPromptSubmit binding resolved, checking window state",
+            fields: [
+                "traceID": traceID,
+                "sessionID": payload.sessionID,
+                "windowID": String(identity.windowID),
+                "pid": String(identity.pid),
+                "app": identity.appName ?? "unknown",
+                "title": truncateForLog(identity.title ?? "", limit: 60),
+                "isOnMainScreen": String(isOnMain),
+                "hasBinding": String(state != nil),
+                "hasTerminalCtx": String(payload.terminalCtx?.hasUsefulContext ?? false),
+                "resolveDurationMs": String(elapsedMilliseconds(since: handleStartedAt))
+            ]
+        )
+
         guard isOnMain else {
             log(
                 "[HookEventHandler] UserPromptSubmit window not on main screen",
