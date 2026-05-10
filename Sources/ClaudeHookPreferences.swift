@@ -331,7 +331,7 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         print(json.dumps(d))
         " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
-        VF_URL="http://#{hostDefault}:$VF_PORT/claude/hook"
+        VF_URL="http://\(hostDefault):$VF_PORT/claude/hook"
         VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
         if [ -n "$VF_TOKEN" ]; then
             VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
