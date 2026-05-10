@@ -174,55 +174,8 @@ extension AppDelegate {
         log("AppDelegate.findExistingInstance entry", level: .debug)
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let bundleID = Bundle.main.bundleIdentifier
-        let execPath = Bundle.main.executableURL?.resolvingSymlinksInPath().path
 
-        // Get all running processes with the same name
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-eo", "pid,comm", "-c"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else { return nil }
-
-            let processName = execPath?.components(separatedBy: "/").last ?? "VibeFocus"
-
-            for line in output.components(separatedBy: .newlines) {
-                let components = line.trimmingCharacters(in: .whitespaces)
-                    .components(separatedBy: .whitespaces)
-                    .filter { !$0.isEmpty }
-
-                guard components.count >= 2,
-                      let pid = Int32(components[0]),
-                      pid != currentPID else { continue }
-
-                let comm = components[1]
-                if comm == processName || comm == "VibeFocus" {
-                    log("AppDelegate.findExistingInstance found matching process", level: .debug, fields: ["pid": String(pid), "comm": comm])
-                    // Found another instance with same process name
-                    // Try to get NSRunningApplication for this PID
-                    if let app = NSRunningApplication(processIdentifier: pid) {
-                        return ExistingInstanceInfo(
-                            app: app,
-                            version: installedVersion(for: app),
-                            path: app.bundleURL?.path
-                        )
-                    }
-                }
-            }
-        } catch {
-            log("Failed to check for existing instances: \(error)")
-        }
-
-        // Fallback: match by bundle ID if available
-        if let bundleID = bundleID {
-            log("AppDelegate.findExistingInstance fallback to bundle ID match", level: .debug, fields: ["bundleID": bundleID])
+        if let bundleID {
             let runningApps = NSWorkspace.shared.runningApplications
             for app in runningApps {
                 if app.bundleIdentifier == bundleID && app.processIdentifier != currentPID {
