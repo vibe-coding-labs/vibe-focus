@@ -132,6 +132,13 @@ class TitleEditorService {
                 "bundleID": bundleID
             ]
         )
+
+        // Diagnostic: read the actual window title after all apply methods
+        let actualTitle = WindowManager.shared.title(of: window) ?? "?"
+        log(
+            "[TitleEditorService] applyTitle: final window title",
+            fields: ["actualTitle": truncateForLog(actualTitle, limit: 120)]
+        )
     }
 
     private func applyViaAppleScript(_ title: String, bundleID: String) -> Bool {
@@ -183,6 +190,35 @@ class TitleEditorService {
         }
 
         log("[TitleEditorService] applyViaAppleScript: success")
+
+        // Diagnostic: read back Terminal.app title state after setting
+        if bundleID == "com.apple.Terminal" {
+            let diagScript = """
+                tell application "Terminal"
+                    set ct to custom title of selected tab of front window
+                    set s to current settings of front window
+                    set ws to title displays window size of s
+                    set dvc to title displays device name of s
+                    set c to title displays custom title of s
+                    return ct & "|" & ws & "|" & dvc & "|" & c
+                end tell
+                """
+            let diagAS = NSAppleScript(source: diagScript)
+            var diagErr: NSDictionary?
+            if let result = diagAS?.executeAndReturnError(&diagErr), let desc = result.stringValue {
+                let parts = desc.components(separatedBy: "|")
+                log(
+                    "[TitleEditorService] applyViaAppleScript: diagnostic readback",
+                    fields: [
+                        "customTitle": parts.count > 0 ? parts[0] : "?",
+                        "windowSizeEnabled": parts.count > 1 ? parts[1] : "?",
+                        "deviceNameEnabled": parts.count > 2 ? parts[2] : "?",
+                        "customTitleEnabled": parts.count > 3 ? parts[3] : "?"
+                    ]
+                )
+            }
+        }
+
         return true
     }
 
