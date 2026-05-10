@@ -113,6 +113,11 @@ final class SoundManager: ObservableObject {
             "soundType": soundType.rawValue,
             "volume": String(volume)
         ])
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            self?.currentSound?.stop()
+            self?.currentSound = nil
+        }
     }
 
     func stopPlayback() {
