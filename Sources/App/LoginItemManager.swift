@@ -11,6 +11,8 @@ final class LoginItemManager: ObservableObject {
     @Published private(set) var requiresApproval: Bool = false
     @Published private(set) var lastErrorMessage: String? = nil
 
+    private var didCleanupStaleItems = false
+
     private init() {
         refresh()
     }
@@ -47,8 +49,11 @@ final class LoginItemManager: ObservableObject {
             statusDetail = "系统返回未知状态。"
         }
 
-        // 清理指向 .build/ 目录的旧裸二进制 login items
-        cleanupStaleLoginItems()
+        // 清理指向 .build/ 目录的旧裸二进制 login items（只执行一次）
+        if !didCleanupStaleItems {
+            cleanupStaleLoginItems()
+            didCleanupStaleItems = true
+        }
     }
 
     /// 清理指向 .build/ 目录的旧裸二进制 login items 和 missing value 条目。
