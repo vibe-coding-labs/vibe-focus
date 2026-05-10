@@ -37,6 +37,7 @@ final class ClaudeHookServer: ObservableObject {
             // 防止 app 重启后 token 重新生成导致 hook-config.json 中的旧 token 失效
             ClaudeHookPreferences.writeConfigFile()
             ClaudeHookPreferences.installHelperScript()
+            ClaudeHookPreferences.installHookToClaudeSettings()
         } else {
             stop()
         }
@@ -134,17 +135,19 @@ final class ClaudeHookServer: ObservableObject {
         )
 
         do {
+            let bindToLocalhost = !LANHookPreferences.lanMode
             try webServer.start(options: [
                 GCDWebServerOption_Port: UInt(port),
-                GCDWebServerOption_BindToLocalhost: true
+                GCDWebServerOption_BindToLocalhost: bindToLocalhost
             ])
             self.server = webServer
             self.activePort = port
             self.configuredToken = token
             self.isRunning = true
-            self.statusDescription = "监听中 127.0.0.1:\(port)"
+            let bindAddr = bindToLocalhost ? "127.0.0.1" : "0.0.0.0"
+            self.statusDescription = "监听中 \(bindAddr):\(port)"
             self.lastErrorMessage = nil
-            log("[ClaudeHookServer] listening on 127.0.0.1:\(port)")
+            log("[ClaudeHookServer] listening on \(bindAddr):\(port)")
             NotificationCenter.default.post(name: .hookServerStateChanged, object: nil)
         } catch {
             isRunning = false
