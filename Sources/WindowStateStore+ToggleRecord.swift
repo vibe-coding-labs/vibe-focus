@@ -1,8 +1,6 @@
 import Foundation
 import SQLite3
 
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-
 extension WindowStateStore {
     // MARK: - ToggleRecord (Single Source of Truth)
 
