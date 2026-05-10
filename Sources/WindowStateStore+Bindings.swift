@@ -5,7 +5,10 @@ extension WindowStateStore {
     // MARK: - Windows Table (Unified)
 
     func saveWindowState(_ state: WindowState) {
-        guard let db else { return }
+        guard let db else {
+            log("[WindowStateStore] saveWindowState: db not available", level: .warn)
+            return
+        }
         var stmt: OpaquePointer?
         let sql = """
             INSERT OR REPLACE INTO windows (
@@ -71,7 +74,10 @@ extension WindowStateStore {
     }
 
     func findWindowState(windowID: UInt32) -> WindowState? {
-        guard let db else { return nil }
+        guard let db else {
+            log("[WindowStateStore] findWindowState: db not available", level: .warn)
+            return nil
+        }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows WHERE window_id = ?;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -83,7 +89,10 @@ extension WindowStateStore {
     }
 
     func findWindowStateBySession(sessionID: String) -> WindowState? {
-        guard let db else { return nil }
+        guard let db else {
+            log("[WindowStateStore] findWindowStateBySession: db not available", level: .warn)
+            return nil
+        }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -95,7 +104,10 @@ extension WindowStateStore {
     }
 
     func findWindowStateByWindowID(_ windowID: UInt32) -> WindowState? {
-        guard let db else { return nil }
+        guard let db else {
+            log("[WindowStateStore] findWindowStateByWindowID: db not available", level: .warn)
+            return nil
+        }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows WHERE window_id = ? ORDER BY updated_at DESC LIMIT 1;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -107,7 +119,10 @@ extension WindowStateStore {
     }
 
     func clearToggleState(windowID: UInt32) {
-        guard let db else { return }
+        guard let db else {
+            log("[WindowStateStore] clearToggleState: db not available", level: .warn)
+            return
+        }
         var stmt: OpaquePointer?
         let sql = """
             UPDATE windows SET
@@ -127,7 +142,10 @@ extension WindowStateStore {
     }
 
     func deleteAllWindowsStates() {
-        guard let db else { return }
+        guard let db else {
+            log("[WindowStateStore] deleteAllWindowsStates: db not available", level: .warn)
+            return
+        }
         runSchema("DELETE FROM windows;")
     }
 
@@ -168,7 +186,10 @@ extension WindowStateStore {
     }
 
     func deleteWindowState(windowID: UInt32) {
-        guard let db else { return }
+        guard let db else {
+            log("[WindowStateStore] deleteWindowState: db not available", level: .warn)
+            return
+        }
         var stmt: OpaquePointer?
         let sql = "DELETE FROM windows WHERE window_id = ?;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
