@@ -90,6 +90,11 @@ final class SoundManager: ObservableObject {
             "soundType": preferences.soundType.rawValue,
             "volume": String(preferences.volume)
         ])
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            self?.currentSound?.stop()
+            self?.currentSound = nil
+        }
     }
 
     func previewSound(_ soundType: CompletionSoundType, customPath: String? = nil, volume: Float) {
