@@ -163,8 +163,8 @@ struct ToggleRecord: Equatable {
         return !mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
     }
 
-    /// 窗口当前位置是否在 targetFrame 附近（容差 150px）
-    func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 150) -> Bool {
+    /// 窗口当前位置是否在 targetFrame 附近
+    func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 200) -> Bool {
         abs(currentFrame.origin.x - targetFrame.origin.x) <= tolerance &&
         abs(currentFrame.origin.y - targetFrame.origin.y) <= tolerance
     }

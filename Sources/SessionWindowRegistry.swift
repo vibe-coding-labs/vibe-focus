@@ -119,18 +119,38 @@ final class SessionWindowRegistry: ObservableObject {
         let pidMatches = runningApps.contains { $0.processIdentifier == expectedPID }
         if !pidMatches {
             let pidExists = kill(expectedPID, 0) == 0
-            if !pidExists { return false }
+            if !pidExists {
+                log("[SessionWindowRegistry] verifyBinding failed: PID \(expectedPID) no longer exists", level: .warn, fields: [
+                    "windowID": String(windowID),
+                    "bundleIdentifier": state.bundleIdentifier ?? "nil"
+                ])
+                return false
+            }
         }
 
         let options: CGWindowListOption = [.optionAll]
         if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
             if let matchedWindow = windowList.first(where: { ($0[kCGWindowNumber as String] as? UInt32) == windowID }) {
                 let actualPID = matchedWindow[kCGWindowOwnerPID as String] as? Int32
+                if actualPID != expectedPID {
+                    log("[SessionWindowRegistry] verifyBinding failed: window owner PID mismatch", level: .warn, fields: [
+                        "windowID": String(windowID),
+                        "expectedPID": String(expectedPID),
+                        "actualPID": String(describing: actualPID)
+                    ])
+                }
                 return actualPID == expectedPID
             } else {
+                log("[SessionWindowRegistry] verifyBinding failed: windowID \(windowID) not found in CGWindowList", level: .warn, fields: [
+                    "windowID": String(windowID),
+                    "expectedPID": String(expectedPID)
+                ])
                 return false
             }
         }
+        log("[SessionWindowRegistry] verifyBinding failed: CGWindowListCopyWindowInfo returned nil", level: .warn, fields: [
+            "windowID": String(windowID)
+        ])
         return false
     }
 
@@ -276,6 +296,19 @@ final class SessionWindowRegistry: ObservableObject {
                 return deadline > now
             }
         }
+    }
+
+    /// 根据 windowID 查找绑定信息（返回轻量结构，不暴露内部 WindowState）
+    func findBinding(forWindowID windowID: UInt32) -> (tty: String?, termSessionID: String?, itermSessionID: String?, sessionID: String?, cwd: String?, model: String?)? {
+        guard let state = windowStates[windowID] else { return nil }
+        return (
+            tty: state.tty,
+            termSessionID: state.termSessionID,
+            itermSessionID: state.itermSessionID,
+            sessionID: state.sessionID,
+            cwd: state.cwd,
+            model: state.model
+        )
     }
 
     private func persistToDB(windowID: UInt32) {
