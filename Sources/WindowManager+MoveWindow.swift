@@ -10,6 +10,9 @@ import Foundation
 @MainActor
 extension WindowManager {
 
+    private static let cgPollTimeoutMs: useconds_t = 80_000
+    private static let heightTolerance: CGFloat = 100
+
     /// 执行 shell 命令并返回输出
     func runShellCommand(_ executable: String, args: [String]) -> String? {
         let process = Process()
@@ -250,7 +253,7 @@ extension WindowManager {
             let cgVerified = pollUntil_axFrameMatch(
                 windowID: identity.windowID,
                 targetFrame: targetFrame,
-                timeout: 80_000,
+                timeout: Self.cgPollTimeoutMs,
                 operationID: op
             )
 
@@ -383,7 +386,7 @@ extension WindowManager {
             let positionMatches = abs(actualFrame.origin.x - targetFrame.origin.x) <= frameTolerance &&
                                  abs(actualFrame.origin.y - targetFrame.origin.y) <= frameTolerance
             let sizeClose = abs(actualFrame.width - targetFrame.width) <= frameTolerance * 2 &&
-                           abs(actualFrame.height - targetFrame.height) <= 100
+                           abs(actualFrame.height - targetFrame.height) <= Self.heightTolerance
 
             log(
                 "[WindowManager] CGWindowList frame verification",
