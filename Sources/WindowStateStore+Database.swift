@@ -2,8 +2,6 @@ import Foundation
 import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-import SQLite3
-import SQLite3
 
 extension WindowStateStore {
     // MARK: - Database Setup
@@ -33,8 +31,7 @@ extension WindowStateStore {
     }
 
     func createTables() {
-        // 旧表保留但不再新建（兼容已有数据库）
-        // session_bindings 已废弃：数据迁移到 windows 表后清理
+        // window_states: 保留给 WindowManager+State (SavedWindowState toggle snapshots)
         runSchema("""
             CREATE TABLE IF NOT EXISTS window_states (
                 id TEXT PRIMARY KEY,
@@ -48,7 +45,7 @@ extension WindowStateStore {
             );
             """)
 
-        // 新宽表：合并 session_bindings + window_states
+        // 新宽表：统一会话绑定 + toggle 状态
         // PK = window_id (CGWindowNumber)，全局唯一标识窗口
         runSchema("""
             CREATE TABLE IF NOT EXISTS windows (
@@ -197,8 +194,7 @@ extension WindowStateStore {
     }
 
     func cleanupLegacyTables() {
-        // session_bindings 已废弃：清理所有数据
-        runSchema("DELETE FROM session_bindings;")
+        runSchema("DROP TABLE IF EXISTS session_bindings;")
         // window_states 保留给 WindowManager+State 使用，但清理超过 1 小时的旧记录
         let cutoff = Date().addingTimeInterval(-3600).timeIntervalSince1970
         var stmt: OpaquePointer?

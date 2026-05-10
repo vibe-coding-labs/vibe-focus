@@ -22,21 +22,6 @@ struct WindowIdentity: Codable, Equatable {
     let capturedAt: Date
 }
 
-struct SessionWindowBinding: Codable, Equatable {
-    let sessionID: String
-    var windowIdentity: WindowIdentity
-    let createdAt: Date
-    var lastSeenAt: Date
-    var isCompleted: Bool
-    var completedAt: Date?
-
-    /// 绑定创建时终端的 TTY 路径（如 /dev/ttys001），用于严格验证窗口身份
-    /// TTY 在终端会话期间不变，比 windowID（可被复用）更可靠
-    let terminalTTY: String?
-    /// 终端会话标识（TERM_SESSION_ID 或 ITERM_SESSION_ID）
-    let terminalSessionID: String?
-}
-
 /// 统一的窗口状态记录 — 对应 SQLite `windows` 表的一行
 /// 合并了原来的 SessionWindowBinding + SavedWindowState
 struct WindowState: Codable, Equatable {
