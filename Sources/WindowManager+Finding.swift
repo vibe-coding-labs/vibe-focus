@@ -251,4 +251,33 @@ extension WindowManager {
             capturedAt: Date()
         )
     }
+
+    /// 通过 CGWindowID 查找窗口 — 遍历 CGWindowList 按 PID+bounds 匹配到 AXUIElement
+    func findWindowByCGWindowID(_ targetWindowID: UInt32) -> WindowIdentity? {
+        let windowListOption = CGWindowListOption(arrayLiteral: .optionAll)
+        guard let windowList = CGWindowListCopyWindowInfo(windowListOption, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        for windowInfo in windowList {
+            guard let cgID = windowInfo[kCGWindowNumber as String] as? UInt32, cgID == targetWindowID else {
+                continue
+            }
+            guard let pid = windowInfo[kCGWindowOwnerPID as String] as? Int32 else { return nil }
+            let appName = windowInfo[kCGWindowOwnerName as String] as? String
+            let title = windowInfo["kCGWindowName"] as? String ?? windowInfo["name"] as? String
+            let bundleID: String? = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+
+            return WindowIdentity(
+                windowID: targetWindowID,
+                pid: pid,
+                bundleIdentifier: bundleID,
+                appName: appName,
+                windowNumber: Int(targetWindowID),
+                title: title,
+                capturedAt: Date()
+            )
+        }
+        return nil
+    }
 }
