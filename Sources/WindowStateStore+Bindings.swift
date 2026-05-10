@@ -2,98 +2,9 @@ import Foundation
 import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-import SQLite3
-import SQLite3
 
 extension WindowStateStore {
-    // MARK: - Session Bindings
-
-    func saveBinding(_ binding: SessionWindowBinding) {
-        guard let db, let data = try? JSONEncoder().encode(binding) else { return }
-        let jsonString = String(data: data, encoding: .utf8) ?? "{}"
-        var stmt: OpaquePointer?
-        let sql = """
-            INSERT OR REPLACE INTO session_bindings (session_id, data, is_completed, last_seen_at)
-            VALUES (?, ?, ?, ?);
-            """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(stmt) }
-
-        sqlite3_bind_text(stmt, 1, binding.sessionID, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 2, jsonString, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_int(stmt, 3, binding.isCompleted ? 1 : 0)
-        sqlite3_bind_double(stmt, 4, binding.lastSeenAt.timeIntervalSince1970)
-
-        if sqlite3_step(stmt) != SQLITE_DONE {
-            log("[WindowStateStore] saveBinding failed", level: .error)
-        }
-    }
-
-    func loadBindings() -> [String: SessionWindowBinding] {
-        guard let db else { return [:] }
-        var stmt: OpaquePointer?
-        let sql = "SELECT data FROM session_bindings;"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
-        defer { sqlite3_finalize(stmt) }
-
-        var results: [String: SessionWindowBinding] = [:]
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let cStr = sqlite3_column_text(stmt, 0) else { continue }
-            let jsonString = String(cString: cStr)
-            guard let data = jsonString.data(using: .utf8),
-                  let binding = try? JSONDecoder().decode(SessionWindowBinding.self, from: data) else {
-                continue
-            }
-            results[binding.sessionID] = binding
-        }
-        return results
-    }
-
-    func deleteBinding(sessionID: String) {
-        guard let db else { return }
-        var stmt: OpaquePointer?
-        let sql = "DELETE FROM session_bindings WHERE session_id = ?;"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, sessionID, -1, SQLITE_TRANSIENT)
-        sqlite3_step(stmt)
-    }
-
-    func deleteAllBindings() {
-        guard let db else { return }
-        runSchema("DELETE FROM session_bindings;")
-    }
-
-    func pruneExpiredBindings(activeRetention: TimeInterval, completedRetention: TimeInterval) -> Int {
-        guard let db else { return 0 }
-        let now = Date().timeIntervalSince1970
-        let activeCutoff = now - activeRetention
-        let completedCutoff = now - completedRetention
-
-        let sql = """
-            DELETE FROM session_bindings
-            WHERE (is_completed = 0 AND last_seen_at < ?)
-               OR (is_completed = 1 AND last_seen_at < ?);
-            """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_double(stmt, 1, activeCutoff)
-        sqlite3_bind_double(stmt, 2, completedCutoff)
-        sqlite3_step(stmt)
-        return Int(sqlite3_changes(db))
-    }
-
-    var bindingsCount: Int {
-        guard let db else { return 0 }
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM session_bindings;", -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
-        return Int(sqlite3_column_int(stmt, 0))
-    }
-
-    // MARK: - Windows (New Unified Table)
+    // MARK: - Windows Table (Unified)
 
     func saveWindowState(_ state: WindowState) {
         guard let db else { return }
