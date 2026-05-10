@@ -96,6 +96,9 @@ class TitleEditorService {
         let response = alert.runModal()
         isEditing = false
 
+        // Reactivate terminal app to prevent VibeFocus settings window from appearing
+        _ = frontApp.activate(options: .activateIgnoringOtherApps)
+
         if response == .alertFirstButtonReturn {
             let newTitle = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !newTitle.isEmpty {
@@ -114,8 +117,10 @@ class TitleEditorService {
         }
 
         let axSuccess = applyViaAX(trimmed, to: window)
-        let ttySuccess = applyViaTTY(trimmed, pid: pid)
+        // AppleScript first: configures Terminal.app title display settings
+        // then TTY overrides with full title via OSC escape sequence
         let scriptSuccess = applyViaAppleScript(trimmed, bundleID: bundleID)
+        let ttySuccess = applyViaTTY(trimmed, pid: pid)
 
         log(
             "[TitleEditorService] applyTitle result",
@@ -136,7 +141,18 @@ class TitleEditorService {
             let escaped = title
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
-            script = "tell application \"Terminal\" to set custom title of selected tab of front window to \"\(escaped)\""
+            script = """
+                tell application "Terminal"
+                    set custom title of selected tab of front window to "\(escaped)"
+                    tell current settings of front window
+                        set title displays custom title to true
+                        set title displays device name to false
+                        set title displays shell path to false
+                        set title displays window size to false
+                        set title displays settings name to false
+                    end tell
+                end tell
+                """
         case "com.googlecode.iterm2":
             let escaped = title
                 .replacingOccurrences(of: "\\", with: "\\\\")
