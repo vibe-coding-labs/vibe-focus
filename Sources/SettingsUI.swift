@@ -958,6 +958,8 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    LANSettingsView()
+
                     SettingsCard(
                         title: "窗口标题编辑",
                         subtitle: "通过快捷键编辑当前终端窗口标题，方便识别多个终端。"
