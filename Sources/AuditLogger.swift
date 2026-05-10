@@ -1,8 +1,6 @@
 import Foundation
 import SQLite3
 
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-
 /// 窗口变更审计日志服务
 /// 记录所有窗口状态变更（toggle、restore、session bind、space move、UserPromptSubmit）
 /// 自动清理超过 maxRecords 条的旧记录
