@@ -100,6 +100,8 @@ final class AppLauncher: ObservableObject {
         await executePhase(.startingServices) {
             ScreenOverlayManager.shared.refreshOverlays()
             ClaudeHookServer.shared.applyPreferences()
+            ShutdownSnapshotManager.shared.start()
+            TerminalRestoreService.shared.checkAndRestore()
             return (true, "服务启动完成", nil)
         }
 

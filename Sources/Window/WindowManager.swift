@@ -119,21 +119,6 @@ class WindowManager {
         }
     }
 
-    func getCurrentWindowFrame(windowID: UInt32) -> CGRect? {
-        guard let list = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
-        for w in list {
-            if let wid = w["kCGWindowNumber"] as? UInt32, wid == windowID {
-                if let b = w["kCGWindowBounds"] as? [String: Double] {
-                    return CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
-                }
-            }
-        }
-        return nil
-    }
-
-
     func getMainScreen() -> NSScreen? {
         let mainDisplayID = CGMainDisplayID()
         log(
