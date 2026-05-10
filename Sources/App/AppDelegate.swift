@@ -190,10 +190,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func isAllowedDevelopmentBundlePath(_ path: String) -> Bool {
-        path.hasSuffix("/dist/VibeFocus.app") || path.hasSuffix("/dist/VibeFocus.app")
+        path.hasSuffix("/dist/VibeFocus.app")
     }
-
-    @discardableResult
 
     func showWrongLocationAlert(actual: String, expectedPaths: [String]) {
         let alert = NSAlert()
