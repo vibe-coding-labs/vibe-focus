@@ -176,48 +176,78 @@ final class HookEventHandler {
 
         // 通过 sessionID 找到窗口状态
         let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
-        let identity: WindowIdentity?
+        var identity: WindowIdentity?
+        var usedFallback = false
 
         if let state {
-            guard SessionWindowRegistry.shared.verifyBinding(state) else {
+            if SessionWindowRegistry.shared.verifyBinding(state) {
+                // 绑定验证通过 — 使用绑定中的 identity
+                identity = WindowIdentity(
+                    windowID: state.windowID,
+                    pid: state.pid,
+                    bundleIdentifier: state.bundleIdentifier,
+                    appName: state.appName,
+                    windowNumber: state.axWindowNumber,
+                    title: state.title,
+                    capturedAt: state.createdAt
+                )
                 log(
-                    "[HookEventHandler] UserPromptSubmit binding verification failed",
+                    "[HookEventHandler] UserPromptSubmit binding resolved",
+                    level: .debug,
+                    fields: [
+                        "traceID": traceID,
+                        "sessionID": payload.sessionID,
+                        "windowID": String(state.windowID),
+                        "resolveDurationMs": String(elapsedMilliseconds(since: handleStartedAt))
+                    ]
+                )
+            } else {
+                // 绑定验证失败 — 降级到 terminal context
+                log(
+                    "[HookEventHandler] UserPromptSubmit binding verification failed, trying terminal context fallback",
                     level: .warn,
                     fields: [
                         "traceID": traceID,
                         "sessionID": payload.sessionID,
-                        "pid": String(state.pid),
-                        "tty": state.tty ?? "nil"
+                        "boundWindowID": String(state.windowID),
+                        "boundPID": String(state.pid),
+                        "hasTerminalCtx": String(payload.terminalCtx?.hasUsefulContext ?? false)
                     ]
                 )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "binding_verification_failed",
-                        message: "Binding verification failed, skipping restore",
-                        sessionID: payload.sessionID, handled: false
+                if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+                    identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+                    usedFallback = identity != nil
+                    if let identity {
+                        log(
+                            "[HookEventHandler] UserPromptSubmit terminal context fallback resolved",
+                            fields: [
+                                "traceID": traceID,
+                                "sessionID": payload.sessionID,
+                                "fallbackWindowID": String(identity.windowID),
+                                "originalBoundWindowID": String(state.windowID)
+                            ]
+                        )
+                    }
+                }
+                if identity == nil {
+                    log(
+                        "[HookEventHandler] UserPromptSubmit binding verification failed and terminal context fallback also failed",
+                        level: .warn,
+                        fields: [
+                            "traceID": traceID,
+                            "sessionID": payload.sessionID
+                        ]
                     )
-                )
+                    return (
+                        200,
+                        ClaudeHookResponse(
+                            ok: true, code: "binding_verification_failed",
+                            message: "Binding verification and terminal context fallback both failed",
+                            sessionID: payload.sessionID, handled: false
+                        )
+                    )
+                }
             }
-            identity = WindowIdentity(
-                windowID: state.windowID,
-                pid: state.pid,
-                bundleIdentifier: state.bundleIdentifier,
-                appName: state.appName,
-                windowNumber: state.axWindowNumber,
-                title: state.title,
-                capturedAt: state.createdAt
-            )
-            log(
-                "[HookEventHandler] UserPromptSubmit binding resolved",
-                level: .debug,
-                fields: [
-                    "traceID": traceID,
-                    "sessionID": payload.sessionID,
-                    "windowID": String(state.windowID),
-                    "resolveDurationMs": String(elapsedMilliseconds(since: handleStartedAt))
-                ]
-            )
         } else if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
             let terminalResolveStart = Date()
             identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)

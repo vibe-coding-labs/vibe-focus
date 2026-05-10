@@ -144,13 +144,16 @@ final class ToggleEngine {
 
         // 3. 验证窗口确实在 target 位置附近
         if !record.isNearTarget(currentFrame: currentFrame) {
+            let xOffset = abs(currentFrame.origin.x - record.targetFrame.origin.x)
+            let yOffset = abs(currentFrame.origin.y - record.targetFrame.origin.y)
             log("ToggleEngine.restore: window moved from target, skipping restore", level: .warn, fields: [
                 "traceID": trace,
                 "windowID": String(windowID),
-                "currentX": String(Int(currentFrame.origin.x)),
-                "currentY": String(Int(currentFrame.origin.y)),
-                "targetX": String(Int(record.targetFrame.origin.x)),
-                "targetY": String(Int(record.targetFrame.origin.y))
+                "currentFrame": "\(Int(currentFrame.origin.x)),\(Int(currentFrame.origin.y)) \(Int(currentFrame.size.width))x\(Int(currentFrame.size.height))",
+                "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.size.width))x\(Int(record.targetFrame.size.height))",
+                "xOffset": String(Int(xOffset)),
+                "yOffset": String(Int(yOffset)),
+                "tolerance": "200"
             ])
             return false
         }
