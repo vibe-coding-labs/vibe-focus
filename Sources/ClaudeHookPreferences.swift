@@ -147,7 +147,7 @@ enum ClaudeHookPreferences {
     static func hookCommandExample(port: Int? = nil, token: String? = nil) -> String {
         let effectivePort = normalizePort(port ?? listenPort)
         let tokenHeader = token?.isEmpty == false
-            ? "  \\\n  -H 'X-VibeFocus-Token: \(token!)'"
+            ? "  \\\n  -H 'X-VibeFocus-Token: \(token ?? "")'"
             : ""
         return """
 #!/bin/bash

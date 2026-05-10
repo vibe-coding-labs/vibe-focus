@@ -27,7 +27,7 @@ final class ClaudeHookServer: ObservableObject {
             fields: [
                 "isEnabled": String(ClaudeHookPreferences.isEnabled),
                 "port": String(ClaudeHookPreferences.listenPort),
-                "hasToken": String(ClaudeHookPreferences.authToken != nil && !ClaudeHookPreferences.authToken!.isEmpty)
+                "hasToken": String((ClaudeHookPreferences.authToken ?? "").isEmpty == false)
             ]
         )
         if ClaudeHookPreferences.isEnabled {
@@ -181,7 +181,7 @@ final class ClaudeHookServer: ObservableObject {
             "[ClaudeHookServer] checking token authentication",
             level: .debug,
             fields: [
-                "hasConfiguredToken": String(configuredToken != nil && !configuredToken!.isEmpty)
+                "hasConfiguredToken": String((configuredToken ?? "").isEmpty == false)
             ]
         )
 

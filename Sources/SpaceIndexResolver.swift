@@ -76,7 +76,7 @@ enum SpaceIndexResolver {
             }
         }
 
-        log("SpaceIndexResolver.resolveStableIndex() falling back to last sample", level: .debug, fields: ["index": String(samples.last!)])
+        log("SpaceIndexResolver.resolveStableIndex() falling back to last sample", level: .debug, fields: ["index": samples.last.map(String.init) ?? "nil"])
         return samples.last
     }
 
