@@ -109,16 +109,6 @@ extension WindowManager {
             return false
         }
 
-        log(
-            "[moveWindowToMainScreen] AX permission OK, resolving window",
-            level: .debug,
-            fields: [
-                "op": op,
-                "windowID": String(identity.windowID),
-                "pid": String(identity.pid)
-            ]
-        )
-
         guard let windowAX = resolveWindow(identity: identity) else {
             log(
                 "moveWindowToMainScreen failed: cannot resolve window",
@@ -129,15 +119,6 @@ extension WindowManager {
             )
             return false
         }
-
-        log(
-            "[moveWindowToMainScreen] resolved window AX element",
-            level: .debug,
-            fields: [
-                "op": op,
-                "windowID": String(identity.windowID)
-            ]
-        )
 
         guard let currentFrame = frame(of: windowAX) else {
             log(
@@ -150,23 +131,9 @@ extension WindowManager {
             return false
         }
 
-        log(
-            "[moveWindowToMainScreen] read current frame",
-            level: .debug,
-            fields: [
-                "op": op,
-                "currentFrame": String(describing: currentFrame)
-            ]
-        )
-
         // 检查窗口是否已在主屏幕上
         // 使用 yabai display 信息作为主要判断依据
         // AX frame 对非可见工作区的窗口不可靠（macOS 会报告错误的坐标）
-        log(
-            "[moveWindowToMainScreen] checking if window already on main screen",
-            level: .debug,
-            fields: ["op": op]
-        )
         let yabaiDisplay = spaceController.windowDisplayIndex(windowID: identity.windowID)
         if let display = yabaiDisplay, display != 1 {
             // yabai 报告窗口在副显示器上，即使 AX frame 看起来在主屏也继续移动
@@ -195,12 +162,6 @@ extension WindowManager {
                 return true
             }
         }
-
-        log(
-            "[moveWindowToMainScreen] window not on main screen, getting window handle",
-            level: .debug,
-            fields: ["op": op]
-        )
 
         guard let axWindowID = windowHandle(for: windowAX) else {
             log(
@@ -244,17 +205,6 @@ extension WindowManager {
             return false
         }
 
-        log(
-            "[moveWindowToMainScreen] got window handle, checking settable attributes",
-            level: .debug,
-            fields: [
-                "op": op,
-                "effectiveWindowID": String(effectiveWindowID),
-                "requestedWindowID": String(identity.windowID),
-                "axWindowID": String(axWindowID)
-            ]
-        )
-
         let sourceContext = displayContext(for: currentFrame)
         let spaceCaptureStartAt = Date()
         let spaceContext = spaceController.captureSpaceContext(windowID: effectiveWindowID, operationID: op)
@@ -281,36 +231,9 @@ extension WindowManager {
         let targetDisplayID = displayID(for: mainScreen)
         let targetDisplayIndex = displayIndex(forDisplayID: targetDisplayID)
 
-        log(
-            "[moveWindowToMainScreen] computed target frame and display",
-            level: .debug,
-            fields: [
-                "op": op,
-                "targetFrame": String(describing: targetFrame),
-                "targetDisplayID": String(describing: targetDisplayID),
-                "targetDisplayIndex": String(describing: targetDisplayIndex)
-            ]
-        )
-
         // 尝试通过 AX 设置窗口位置
         // apply() 内部已含容差检查（高度 100px），返回 true 表示窗口已在目标位置附近
-        log(
-            "[moveWindowToMainScreen] calling apply() to set frame",
-            level: .debug,
-            fields: [
-                "op": op,
-                "targetFrame": String(describing: targetFrame)
-            ]
-        )
         let axApplySucceeded = apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main_apply_frame")
-        log(
-            "[moveWindowToMainScreen] apply() returned",
-            level: .debug,
-            fields: [
-                "op": op,
-                "axApplySucceeded": String(axApplySucceeded)
-            ]
-        )
 
         if !axApplySucceeded {
             // apply 本身失败 — 尝试 CGWindowList 验证后重试
@@ -349,16 +272,6 @@ extension WindowManager {
 
         // 使用实际应用的 frame（可能因 macOS 菜单栏调整而与理想 targetFrame 不同）
         let actualTargetFrame = frame(of: windowAX) ?? targetFrame
-
-        log(
-            "[moveWindowToMainScreen] move succeeded, capturing state for persistence",
-            level: .debug,
-            fields: [
-                "op": op,
-                "actualTargetFrame": String(describing: actualTargetFrame),
-                "requestedTargetFrame": String(describing: targetFrame)
-            ]
-        )
 
         let resolvedWindowNumber = windowNumber(for: windowAX) ?? identity.windowNumber
         let resolvedTitle = title(of: windowAX) ?? identity.title
