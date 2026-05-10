@@ -181,6 +181,7 @@ struct TerminalContext: Codable, Equatable {
     let ppid: String?
     let claudeProjectDir: String?
     let windowID: String?
+    let machineLabel: String?
 
     enum CodingKeys: String, CodingKey {
         case termSessionID = "term_session_id"
@@ -191,25 +192,31 @@ struct TerminalContext: Codable, Equatable {
         case ppid
         case claudeProjectDir = "claude_project_dir"
         case windowID = "window_id"
+        case machineLabel = "machine_label"
     }
 
     /// 是否包含可用于窗口匹配的有用上下文
     var hasUsefulContext: Bool {
-        let result = tty?.isEmpty == false || termSessionID?.isEmpty == false || itermSessionID?.isEmpty == false || (ppid.flatMap { Int32($0) }).map { $0 > 1 } ?? false
+        let result = tty?.isEmpty == false || termSessionID?.isEmpty == false || itermSessionID?.isEmpty == false || (ppid.flatMap { Int32($0) }).map { $0 > 1 } ?? false || machineLabel?.isEmpty == false
         log("TerminalContext.hasUsefulContext evaluated", level: .debug, fields: [
             "result": String(result),
             "hasTTY": String(tty?.isEmpty == false),
             "hasTermSessionID": String(termSessionID?.isEmpty == false),
             "hasItermSessionID": String(itermSessionID?.isEmpty == false),
-            "hasKittyWindowID": String(kittyWindowID?.isEmpty == false),
-            "hasWeztermPane": String(weztermPane?.isEmpty == false),
-            "hasClaudeProjectDir": String(claudeProjectDir?.isEmpty == false)
+            "hasMachineLabel": String(machineLabel?.isEmpty == false)
         ])
         if let tty, !tty.isEmpty { return true }
         if let termSessionID, !termSessionID.isEmpty { return true }
         if let itermSessionID, !itermSessionID.isEmpty { return true }
         if let ppid, let pid = Int32(ppid), pid > 1 { return true }
+        if let machineLabel, !machineLabel.isEmpty { return true }
         return false
+    }
+
+    /// 是否来自远程机器（有 machine_label）
+    var isRemote: Bool {
+        guard let label = machineLabel, !label.isEmpty else { return false }
+        return true
     }
 }
 
