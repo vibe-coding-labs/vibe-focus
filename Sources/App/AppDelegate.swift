@@ -185,8 +185,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let home = NSHomeDirectory()
         return [
             (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
-            (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
-            "/Applications/VibeFocus.app",
             "/Applications/VibeFocus.app"
         ]
     }
