@@ -101,7 +101,7 @@ struct SettingsView: View {
 
     var appVersionDisplay: String {
         let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        let version = (bundleVersion?.isEmpty == false) ? bundleVersion! : AppVersion.current
+        let version = (bundleVersion?.isEmpty == false) ? bundleVersion ?? AppVersion.current : AppVersion.current
         return "v\(version)"
     }
 
