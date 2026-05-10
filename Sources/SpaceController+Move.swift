@@ -159,10 +159,10 @@ extension SpaceController {
                     ]
                 )
                 if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                    // 等待更长时间让 CGS API 生效（最多 500ms）
+                    // 等待更长时间让 CGS API 生效（最多 1200ms）
                     var verified = false
-                    for attempt in 1...5 {
-                        usleep(100_000) // 100ms per attempt
+                    for attempt in 1...8 {
+                        usleep(150_000) // 150ms per attempt
                         if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
                             verified = true
                             break
@@ -371,7 +371,7 @@ extension SpaceController {
     }
 
     func verifyWindowMovedToSpaceWithRetry(windowID: UInt32, targetSpace: Int, operationID: String) -> Bool {
-        let verified = pollUntil(timeout: 100_000, interval: 15_000) {
+        let verified = pollUntil(timeout: 300_000, interval: 20_000) {
             self.verifyWindowMovedToSpace(windowID: windowID, targetSpace: targetSpace, operationID: operationID)
         }
         if !verified {

@@ -48,21 +48,27 @@ enum NativeSpaceBridge {
 
     // MARK: - Window Moving (SLS Private API)
 
-    // 缓存 moveWindow 失败时间 — 避免反复调用无效 API，5分钟后自动重试
-    private static var _moveWindowFailedAt: TimeInterval = 0
+    // 缓存每个窗口的 moveWindow 失败时间 — 避免对已失败的窗口反复调用
+    private static var _moveWindowFailures: [UInt32: TimeInterval] = [:]
     private static let moveWindowFailureRetryInterval: TimeInterval = 300
 
     static func resetFailureCache() {
-        _moveWindowFailedAt = 0
+        _moveWindowFailures.removeAll()
     }
 
     static func moveWindow(_ windowID: CGWindowID, toSpaceID spaceID: Int64) -> Bool {
-        if _moveWindowFailedAt > 0 {
-            let elapsed = Date().timeIntervalSince1970 - _moveWindowFailedAt
+        let key = UInt32(windowID)
+        if let failedAt = _moveWindowFailures[key] {
+            let elapsed = Date().timeIntervalSince1970 - failedAt
             if elapsed < moveWindowFailureRetryInterval {
+                log(
+                    "[NativeSpaceBridge] moveWindow skipped: window \(windowID) recently failed",
+                    level: .debug,
+                    fields: ["windowID": String(windowID), "elapsed": String(Int(elapsed)) + "s"]
+                )
                 return false
             }
-            _moveWindowFailedAt = 0
+            _moveWindowFailures.removeValue(forKey: key)
         }
         guard let cid = connectionID, let fn = fnMoveWindowsToManagedSpace else {
             log("[NativeSpaceBridge] moveWindow: API not available", level: .error, fields: [:])
@@ -75,7 +81,7 @@ enum NativeSpaceBridge {
         let windowArray: NSArray = [NSNumber(value: UInt32(windowID))]
         let result = fn(cid, windowArray, 1, spaceID)
         if result != 0 {
-            _moveWindowFailedAt = Date().timeIntervalSince1970
+            _moveWindowFailures[key] = Date().timeIntervalSince1970
         }
         log(
             "[NativeSpaceBridge] moveWindow",
@@ -84,7 +90,7 @@ enum NativeSpaceBridge {
                 "windowID": String(windowID),
                 "spaceID": String(spaceID),
                 "result": String(result),
-                "cached": String(_moveWindowFailedAt > 0),
+                "cached": String(_moveWindowFailures[key] != nil),
             ]
         )
         return result == 0
