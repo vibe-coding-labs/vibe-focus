@@ -4,7 +4,7 @@
 
 import Foundation
 
-// Minimal re-declarations mirroring Sources/TerminalAppRegistry.swift
+// Minimal re-declarations mirroring Sources/Hook/TerminalAppRegistry.swift
 enum TerminalAppRegistry {
     static let appNames: Set<String> = [
         "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",

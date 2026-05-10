@@ -4,6 +4,8 @@ struct LANSettingsView: View {
     @AppStorage(LANHookPreferences.lanModeKey) var lanMode = false
     @State var remoteBindings: [String: UInt32?] = LANHookPreferences.remoteBindings
     @State var newMachineLabel = ""
+    @State var remoteInstallMessage: String?
+    @State var remoteInstallSucceeded = true
 
     var body: some View {
         SettingsCard(
@@ -63,6 +65,10 @@ struct LANSettingsView: View {
             remoteBindingsList
 
             addMachineRow
+
+            Divider()
+
+            remoteInstallSection
 
             Text("在远程机器的 ~/.vibefocus/hook-config.json 中添加 \"machine_label\": \"标签名\"")
                 .font(.system(size: 11))
@@ -142,6 +148,84 @@ struct LANSettingsView: View {
             .disabled(newMachineLabel.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(.top, 4)
+    }
+
+    private var remoteInstallSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("远程一键安装")
+                    .font(.system(size: 13, weight: .medium))
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.blue)
+                    .font(.system(size: 12))
+                Text("复制以下命令，在运行 Claude Code 的远程机器终端执行即可。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 4)
+
+            let lanIP = LANHookPreferences.currentLANIP()
+            let installScript = ClaudeHookPreferences.generateRemoteInstallScript(host: lanIP)
+
+            ScrollView {
+                Text(installScript)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .textBackgroundColor))
+                    )
+            }
+            .frame(maxHeight: 200)
+
+            HStack(spacing: 12) {
+                Button("复制安装命令") {
+                    let lanIP = LANHookPreferences.currentLANIP()
+                    let script = ClaudeHookPreferences.generateRemoteInstallScript(host: lanIP)
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(script, forType: .string)
+                    remoteInstallMessage = "已复制到剪贴板（\(script.count) 字符）"
+                    remoteInstallSucceeded = true
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+
+                Button("复制 curl 一行命令") {
+                    let lanIP = LANHookPreferences.currentLANIP()
+                    let script = ClaudeHookPreferences.generateRemoteInstallScript(host: lanIP)
+                    let encoded = script.data(using: .utf8)?.base64EncodedString() ?? ""
+                    let oneLiner = "echo '\(encoded)' | base64 -d | bash"
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(oneLiner, forType: .string)
+                    remoteInstallMessage = "已复制一行命令（\(oneLiner.count) 字符）"
+                    remoteInstallSucceeded = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+            }
+
+            if let msg = remoteInstallMessage {
+                Text(msg)
+                    .font(.system(size: 12))
+                    .foregroundStyle(remoteInstallSucceeded ? .green : .red)
+            }
+
+            Text("注意：安装命令包含认证 Token，仅在可信网络中使用。卸载需在远程机器手动清理 ~/.vibefocus 和 ~/.claude/settings.json。")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func mapCurrentWindow(for label: String) {

@@ -105,6 +105,33 @@ class TitleEditorService {
                 applyTitle(newTitle, to: window, pid: pid, bundleID: bundleID)
             }
         }
+
+        // Re-activate terminal after applyTitle (AppleScript/AX calls may steal focus)
+        _ = frontApp.activate(options: .activateIgnoringOtherApps)
+    }
+
+    // MARK: - Auto Title
+
+    func autoSetTitle(cwd: String?, pid: pid_t, bundleID: String, window: AXUIElement) {
+        let projectName: String
+        if let cwd = cwd, !cwd.isEmpty {
+            projectName = URL(fileURLWithPath: cwd).lastPathComponent
+        } else {
+            projectName = "Claude"
+        }
+        let title = "\(projectName) — Claude Code"
+
+        log(
+            "[TitleEditorService] autoSetTitle",
+            fields: [
+                "title": title,
+                "cwd": cwd ?? "nil",
+                "pid": String(pid),
+                "bundleID": bundleID
+            ]
+        )
+
+        applyTitle(title, to: window, pid: pid, bundleID: bundleID)
     }
 
     // MARK: - Title Application
