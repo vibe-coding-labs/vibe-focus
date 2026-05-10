@@ -43,31 +43,51 @@ final class HookEventHandler {
             )
         }
 
-        guard let identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) else {
-            log(
-                "[handleSessionStart] terminal context match failed",
-                level: .warn,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "tty": terminalCtx.tty ?? "nil",
-                    "ppid": terminalCtx.ppid ?? "nil"
-                ]
-            )
-            SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：终端上下文无法匹配窗口")
-            return (
-                409,
-                ClaudeHookResponse(
-                    ok: false, code: "terminal_context_match_failed",
-                    message: "Terminal context could not be resolved to a window",
-                    sessionID: payload.sessionID, handled: false
+        // 区分本地绑定和远程映射
+        let identity: WindowIdentity
+        if terminalCtx.isRemote, let label = terminalCtx.machineLabel {
+            // 远程机器：通过 machine_label 查映射表
+            guard let resolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID) else {
+                return (
+                    409,
+                    ClaudeHookResponse(
+                        ok: false, code: "remote_binding_failed",
+                        message: "Remote machine label '\(label)' not mapped to a window",
+                        sessionID: payload.sessionID, handled: false
+                    )
                 )
-            )
+            }
+            identity = resolved
+        } else {
+            // 本地机器：用 PPID/TTY 进程树匹配（原有逻辑）
+            guard let localIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) else {
+                log(
+                    "[handleSessionStart] terminal context match failed",
+                    level: .warn,
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "tty": terminalCtx.tty ?? "nil",
+                        "ppid": terminalCtx.ppid ?? "nil"
+                    ]
+                )
+                SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：终端上下文无法匹配窗口")
+                return (
+                    409,
+                    ClaudeHookResponse(
+                        ok: false, code: "terminal_context_match_failed",
+                        message: "Terminal context could not be resolved to a window",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+            identity = localIdentity
         }
 
         log(
-            "[HookEventHandler] SessionStart matched via terminal context",
+            "[HookEventHandler] SessionStart matched",
             fields: [
                 "sessionID": payload.sessionID,
+                "isRemote": String(terminalCtx.isRemote),
                 "app": identity.appName ?? "unknown",
                 "title": identity.title ?? "untitled",
                 "windowID": String(identity.windowID)
@@ -82,11 +102,28 @@ final class HookEventHandler {
             cwd: payload.cwd,
             model: payload.model
         )
+
+        // Auto-set terminal title to project name
+        if let axWindow = WindowManager.shared.resolveWindow(identity: identity) {
+            TitleEditorService.shared.autoSetTitle(
+                cwd: payload.cwd,
+                pid: identity.pid,
+                bundleID: identity.bundleIdentifier ?? "",
+                window: axWindow
+            )
+        } else {
+            log(
+                "[HookEventHandler] SessionStart autoSetTitle skipped: could not resolve AX window",
+                level: .debug,
+                fields: ["windowID": String(identity.windowID)]
+            )
+        }
+
         return (
             200,
             ClaudeHookResponse(
                 ok: true, code: "session_bound",
-                message: "Session bound to terminal window via TTY/PPID",
+                message: "Session bound to terminal window via \(terminalCtx.isRemote ? "remote_label" : "TTY/PPID")",
                 sessionID: payload.sessionID, handled: true
             )
         )
