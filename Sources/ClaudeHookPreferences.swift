@@ -227,16 +227,19 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         ])
         let dir = helperScriptDir
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        let config: [String: Any] = [
+        var config: [String: Any] = [
             "port": listenPort,
             "token": authToken ?? ""
         ]
+        if LANHookPreferences.lanMode {
+            config["host"] = LANHookPreferences.currentLANIP()
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) else {
             log("ClaudeHookPreferences.writeConfigFile() failed to serialize config", level: .debug)
             return
         }
         try? data.write(to: URL(fileURLWithPath: configFilePath), options: .atomic)
-        log("ClaudeHookPreferences.writeConfigFile() completed", level: .debug)
+        log("ClaudeHookPreferences.writeConfigFile() completed", level: .debug, fields: ["lanMode": String(LANHookPreferences.lanMode)])
     }
 
     /// 安装辅助脚本到 ~/.vibefocus/hook-forwarder.sh
@@ -280,7 +283,12 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
 
     /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点
     private static func generateHelperScriptContent() -> String {
-        """
+        let hostBlock = LANHookPreferences.lanMode ? """
+        VF_HOST=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('host','127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
+
+""" : ""
+        let hostDefault = LANHookPreferences.lanMode ? "$VF_HOST" : "127.0.0.1"
+        return """
         #!/bin/bash
         set -euo pipefail
 
@@ -290,7 +298,7 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         VF_CONFIG="$HOME/.vibefocus/hook-config.json"
         VF_PORT=39277
         VF_TOKEN=""
-
+        \(hostBlock)
         if [ -f "$VF_CONFIG" ]; then
             VF_PORT=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('port',39277))" 2>/dev/null || echo "39277")
             VF_TOKEN=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('token',''))" 2>/dev/null || echo "")
@@ -323,11 +331,11 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         print(json.dumps(d))
         " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
-        VF_URL="http://127.0.0.1:$VF_PORT/claude/hook"
-        if [ -n "$VF_TOKEN" ]; then
-            VF_URL="$VF_URL?token=$VF_TOKEN"
-        fi
+        VF_URL="http://#{hostDefault}:$VF_PORT/claude/hook"
         VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
+        if [ -n "$VF_TOKEN" ]; then
+            VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
+        fi
         VF_CURL_ARGS+=(--data "$VF_ENRICHED")
         curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1 || true
         """
