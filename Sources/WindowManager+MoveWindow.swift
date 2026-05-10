@@ -202,7 +202,7 @@ extension WindowManager {
             fields: ["op": op]
         )
 
-        guard let currentWindowID = windowHandle(for: windowAX) else {
+        guard let axWindowID = windowHandle(for: windowAX) else {
             log(
                 "moveWindowToMainScreen failed: missing stable window handle",
                 level: .error,
@@ -211,6 +211,25 @@ extension WindowManager {
                 ]
             )
             return false
+        }
+
+        // 验证 AX resolve 的窗口 ID 与请求的窗口 ID 一致
+        // 如果不一致，说明 resolveWindow 匹配到了错误的窗口
+        let effectiveWindowID: UInt32
+        if axWindowID != identity.windowID {
+            log(
+                "[moveWindowToMainScreen] windowID mismatch: AX resolved \(axWindowID) but requested \(identity.windowID), using identity.windowID",
+                level: .warn,
+                fields: [
+                    "op": op,
+                    "requestedWindowID": String(identity.windowID),
+                    "resolvedWindowID": String(axWindowID),
+                    "pid": String(identity.pid)
+                ]
+            )
+            effectiveWindowID = identity.windowID
+        } else {
+            effectiveWindowID = identity.windowID
         }
 
         guard isAttributeSettable(windowAX, attribute: kAXPositionAttribute),
@@ -230,13 +249,15 @@ extension WindowManager {
             level: .debug,
             fields: [
                 "op": op,
-                "currentWindowID": String(currentWindowID)
+                "effectiveWindowID": String(effectiveWindowID),
+                "requestedWindowID": String(identity.windowID),
+                "axWindowID": String(axWindowID)
             ]
         )
 
         let sourceContext = displayContext(for: currentFrame)
         let spaceCaptureStartAt = Date()
-        let spaceContext = spaceController.captureSpaceContext(windowID: currentWindowID, operationID: op)
+        let spaceContext = spaceController.captureSpaceContext(windowID: effectiveWindowID, operationID: op)
         log(
             "[WindowManager] captured source space context",
             fields: [
@@ -358,7 +379,7 @@ extension WindowManager {
         )
         // 写入 1: SessionWindowRegistry（session 绑定 + toggle state，写 SQLite）
         SessionWindowRegistry.shared.updateToggleState(
-            windowID: currentWindowID
+            windowID: effectiveWindowID
         ) { state in
             state.pid = identity.pid
             state.appName = identity.appName
@@ -391,7 +412,7 @@ extension WindowManager {
         if let sourceSpaceIndex = spaceContext.sourceSpaceIndex {
             let teSourceDisplay = spaceContext.sourceDisplayIndex ?? sourceContext.index ?? 0
             ToggleEngine.shared.save(
-                windowID: currentWindowID,
+                windowID: effectiveWindowID,
                 pid: identity.pid,
                 bundleIdentifier: identity.bundleIdentifier,
                 appName: identity.appName,
@@ -412,7 +433,7 @@ extension WindowManager {
             "[WindowManager] moveWindowToMainScreen finished",
             fields: [
                 "op": op,
-                "windowID": String(currentWindowID),
+                "windowID": String(effectiveWindowID),
                 "durationMs": String(elapsedMilliseconds(since: startedAt))
             ]
         )

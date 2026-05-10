@@ -49,13 +49,31 @@ extension WindowManager {
             ]
         )
         let mode = shouldRestore ? "restore" : "move_to_main"
+
+        // 采集 toggle record 状态用于决策日志
+        var decisionFields: [String: String] = [
+            "op": op,
+            "source": triggerSource,
+            "mode": mode,
+            "windowFrame": toggleContext["windowFrame"] ?? "nil",
+            "onMainScreen": toggleContext["onMainScreen"] ?? "nil",
+            "windowID": toggleContext["windowID"] ?? "nil"
+        ]
+        if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+            if let record = ToggleEngine.shared.load(windowID: winID) {
+                decisionFields["toggleRecordExists"] = "true"
+                decisionFields["toggleRecordOrigFrame"] = "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))"
+                decisionFields["toggleRecordSourceSpace"] = String(record.sourceSpace)
+                if let mainScreen = getMainScreen() {
+                    decisionFields["toggleRecordValid"] = String(record.isValid(mainScreenFrame: mainScreen.frame))
+                }
+            } else {
+                decisionFields["toggleRecordExists"] = "false"
+            }
+        }
         log(
             "[WindowManager] toggle decision",
-            fields: [
-                "op": op,
-                "source": triggerSource,
-                "mode": mode
-            ]
+            fields: decisionFields
         )
 
         if shouldRestore {

@@ -190,8 +190,19 @@ extension WindowManager {
         let restoreAX = findWindowByPID(record.pid, windowID: currentWindowID) ?? window
 
         // 10. Apply frame
+        log("[WindowManager] restore: applying frame", fields: [
+            "op": op,
+            "currentFrame": String(describing: currentFrame),
+            "targetOrigFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+            "targetSpace": String(targetSpace),
+            "targetDisplay": String(targetDisplay)
+        ])
         guard apply(frame: origFrame, to: restoreAX, operationID: op, stage: "restore_apply_frame") else {
-            log("[WindowManager] restore failed: apply frame failed", level: .error, fields: ["op": op])
+            log("[WindowManager] restore failed: apply frame failed", level: .error, fields: [
+                "op": op,
+                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y))",
+                "currentFrame": String(describing: currentFrame)
+            ])
             CrashContextRecorder.shared.record("restore_failed_apply_frame op=\(op)")
             return
         }
@@ -210,7 +221,9 @@ extension WindowManager {
                 fields: [
                     "op": op,
                     "expected": String(describing: origFrame),
-                    "actual": String(describing: restoredFrame)
+                    "actual": String(describing: restoredFrame),
+                    "preApplyFrame": String(describing: currentFrame),
+                    "targetSpace": String(targetSpace)
                 ]
             )
             CrashContextRecorder.shared.record("restore_failed_frame_mismatch op=\(op)")
@@ -229,7 +242,19 @@ extension WindowManager {
             }
         }
 
-        // 13. 清理 — 清除 SQLite toggle record
+        // 13. 清理 — 清除 SQLite toggle record（先记录原始数据）
+        log(
+            "[WindowManager] restore: clearing toggle record",
+            level: .debug,
+            fields: [
+                "op": op,
+                "windowID": String(currentWindowID),
+                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+                "sourceSpace": String(targetSpace),
+                "sourceYabaiDisp": String(targetDisplay),
+                "restoredFrame": String(describing: restoredFrame)
+            ]
+        )
         engine.clear(windowID: currentWindowID)
         SessionWindowRegistry.shared.clearToggleState(windowID: currentWindowID)
 
