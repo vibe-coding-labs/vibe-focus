@@ -102,11 +102,11 @@ extension WindowManager {
         // 4. 找到窗口 AX element
         guard let window = findWindowByPID(record.pid, windowID: currentWindowID) else {
             log(
-                "[WindowManager] restore failed: window AX element not found",
-                level: .error,
+                "[WindowManager] restore: AX query failed, falling back to System Events",
+                level: .warn,
                 fields: ["op": op, "windowID": String(currentWindowID), "pid": String(record.pid)]
             )
-            CrashContextRecorder.shared.record("restore_failed_window_not_found op=\(op)")
+            restoreViaSystemEvents()
             return
         }
 

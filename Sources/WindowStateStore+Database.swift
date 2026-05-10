@@ -86,7 +86,9 @@ extension WindowStateStore {
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_pid_tty ON windows(pid, tty);")
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_last_seen ON windows(updated_at);")
         // Migration: add completed_at column if missing (existing databases)
-        runSchema("ALTER TABLE windows ADD COLUMN completed_at REAL;")
+        if !columnExists(table: "windows", column: "completed_at") {
+            runSchema("ALTER TABLE windows ADD COLUMN completed_at REAL;")
+        }
 
         // Migration: 如果旧表 PK 是 (pid, tty)，重建为 (window_id)
         migrateWindowsPKIfNeeded()
@@ -210,6 +212,23 @@ extension WindowStateStore {
                 log("[WindowStateStore] cleanupLegacyTables: removed \(removed) old window_states rows")
             }
         }
+    }
+
+    // MARK: - Schema Helpers
+
+    /// 检查表中是否存在指定列（用于安全的 migration）
+    private func columnExists(table: String, column: String) -> Bool {
+        guard let db else { return false }
+        var stmt: OpaquePointer?
+        let sql = "PRAGMA table_info('\(table)');"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let name = sqlite3_column_text(stmt, 1) {
+                if String(cString: name) == column { return true }
+            }
+        }
+        return false
     }
 
 }
