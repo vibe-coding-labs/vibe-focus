@@ -118,9 +118,16 @@ enum PreferencesSync {
             )
             log("PreferencesSync: persisted \(dict.count) keys to disk", level: .debug)
         } catch {
+            log("PreferencesSync: replaceItemAt failed, trying fallback", level: .warn, fields: [
+                "error": error.localizedDescription
+            ])
             do {
                 try FileManager.default.removeItem(atPath: configFilePath)
-            } catch {}
+            } catch {
+                log("PreferencesSync: removeItemAt failed in fallback", level: .warn, fields: [
+                    "error": error.localizedDescription
+                ])
+            }
             try? FileManager.default.moveItem(atPath: tmpPath, toPath: configFilePath)
             log("PreferencesSync: persisted via fallback move", level: .debug)
         }
