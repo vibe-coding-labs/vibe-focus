@@ -37,7 +37,7 @@ extension WindowManager {
             return nil
         }
 
-        guard let terminalPID = findTerminalAppPID(from: startPID) else {
+        guard let terminalPID = TerminalAppRegistry.findTerminalPID(from: startPID) else {
             log(
                 "[WindowManager] findWindowByTerminalContext: no terminal app found in process tree",
                 level: .warn,
@@ -122,35 +122,6 @@ extension WindowManager {
             level: .warn,
             fields: ["tty": tty, "terminalPID": String(terminalPID)]
         )
-        return nil
-    }
-
-    /// 从给定 PID 向上遍历进程树，找到终端 App 的 PID
-    private func findTerminalAppPID(from pid: Int32) -> Int32? {
-        let terminalAppNames: Set<String> = [
-            "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
-            "WezTerm", "Hyper", "Tabby"
-        ]
-
-        var currentPID = pid
-        for _ in 0..<10 {
-            let nameOutput = runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(currentPID)])
-            let name = nameOutput?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-            // ps -o comm= 对 macOS app bundle 返回完整路径（如 /System/.../Terminal.app/Contents/MacOS/Terminal）
-            // 需要取 lastPathComponent 才能与终端名匹配
-            let basename = URL(fileURLWithPath: name).lastPathComponent
-            if terminalAppNames.contains(basename) {
-                return currentPID
-            }
-
-            let ppidOutput = runShellCommand("/bin/ps", args: ["-o", "ppid=", "-p", String(currentPID)])
-            guard let ppidStr = ppidOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  let parentPID = Int32(ppidStr), parentPID > 1, parentPID != currentPID else {
-                break
-            }
-            currentPID = parentPID
-        }
         return nil
     }
 

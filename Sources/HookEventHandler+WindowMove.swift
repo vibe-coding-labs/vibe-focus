@@ -74,16 +74,16 @@ extension HookEventHandler {
 
     // MARK: - Terminal/IDE App Detection
 
-    private static let terminalAppNames: Set<String> = [
-        "Terminal", "iTerm2", "Warp", "Ghostty", "Alacritty", "kitty",
-        "Cursor", "Code", "Visual Studio Code",
-        "com.apple.Terminal", "com.googlecode.iterm2",
+    private static let ideAppNames: Set<String> = [
+        "Cursor", "Code", "Visual Studio Code"
+    ]
+    private static let ideBundleIDs: Set<String> = [
         "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92"
     ]
 
     static func isTerminalOrIDEApp(appName: String?, bundleIdentifier: String?) -> Bool {
-        if let appName, terminalAppNames.contains(appName) { return true }
-        if let bundleIdentifier, terminalAppNames.contains(bundleIdentifier) { return true }
+        if let appName, TerminalAppRegistry.appNames.contains(appName) || ideAppNames.contains(appName) { return true }
+        if let bundleIdentifier, TerminalAppRegistry.bundleIDs.contains(bundleIdentifier) || ideBundleIDs.contains(bundleIdentifier) { return true }
         return false
     }
 
