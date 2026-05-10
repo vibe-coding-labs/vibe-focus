@@ -78,6 +78,12 @@ extension WindowManager {
                 level: .warn,
                 fields: ["op": op, "windowID": String(currentWindowID)]
             )
+            AuditLogger.shared.record(
+                eventType: "restore_failed",
+                windowID: currentWindowID,
+                pid: record.pid,
+                details: ["reason": "corrupted_record", "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"]
+            )
             engine.clear(windowID: currentWindowID)
             return
         }
@@ -264,6 +270,18 @@ extension WindowManager {
             fields: [
                 "op": op,
                 "outcome": "restored",
+                "durationMs": String(finalDurationMs)
+            ]
+        )
+        AuditLogger.shared.record(
+            eventType: "restore_success",
+            windowID: currentWindowID,
+            pid: record.pid,
+            sessionID: record.sessionID,
+            details: [
+                "sourceSpace": String(targetSpace),
+                "sourceYabaiDisp": String(targetDisplay),
+                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y))",
                 "durationMs": String(finalDurationMs)
             ]
         )

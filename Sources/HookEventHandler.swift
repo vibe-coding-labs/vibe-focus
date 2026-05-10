@@ -102,6 +102,17 @@ final class HookEventHandler {
             cwd: payload.cwd,
             model: payload.model
         )
+        AuditLogger.shared.record(
+            eventType: "session_bind",
+            windowID: identity.windowID,
+            pid: identity.pid,
+            sessionID: payload.sessionID,
+            details: [
+                "app": identity.appName ?? "unknown",
+                "isRemote": String(terminalCtx.isRemote),
+                "cwd": payload.cwd ?? "nil"
+            ]
+        )
 
         // Auto-set terminal title to project name
         if let axWindow = WindowManager.shared.resolveWindow(identity: identity) {
@@ -331,6 +342,16 @@ final class HookEventHandler {
                     fields: [
                         "traceID": traceID,
                         "success": String(success),
+                        "restoreMs": String(restoreMs),
+                        "totalMs": String(elapsedMilliseconds(since: handleStartedAt))
+                    ]
+                )
+                AuditLogger.shared.record(
+                    eventType: success ? "user_prompt_restore" : "user_prompt_restore_failed",
+                    windowID: identity.windowID,
+                    pid: identity.pid,
+                    sessionID: payload.sessionID,
+                    details: [
                         "restoreMs": String(restoreMs),
                         "totalMs": String(elapsedMilliseconds(since: handleStartedAt))
                     ]

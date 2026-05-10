@@ -16,6 +16,15 @@ extension SpaceController {
                 "focus": String(focus)
             ]
         )
+        AuditLogger.shared.record(
+            eventType: "space_move",
+            windowID: windowID,
+            details: [
+                "targetSpace": String(spaceIndex),
+                "focus": String(focus),
+                "op": op
+            ]
+        )
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
             log(

@@ -83,6 +83,13 @@ extension WindowManager {
                 fields: ["op": op]
             )
             restore(operationID: op, triggerSource: triggerSource)
+            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+                AuditLogger.shared.record(
+                    eventType: "toggle_restore",
+                    windowID: winID,
+                    details: ["mode": "restore", "source": triggerSource]
+                )
+            }
         } else {
             log(
                 "[WindowManager] toggle branching to moveToMainScreen",
@@ -90,6 +97,13 @@ extension WindowManager {
                 fields: ["op": op]
             )
             moveToMainScreen(operationID: op, triggerSource: triggerSource)
+            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+                AuditLogger.shared.record(
+                    eventType: "toggle_move_to_main",
+                    windowID: winID,
+                    details: ["mode": "move_to_main", "source": triggerSource]
+                )
+            }
         }
 
         log(
