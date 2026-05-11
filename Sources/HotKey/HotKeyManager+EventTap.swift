@@ -28,6 +28,24 @@ extension HotKeyManager {
                     return Unmanaged.passUnretained(event)
                 }
                 let manager = Unmanaged<HotKeyManager>.fromOpaque(refcon).takeUnretainedValue()
+
+                // Title editor hotkey: Ctrl+T — detect BEFORE @MainActor dispatch
+                if type == .keyDown {
+                    let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
+                    let flags = event.flags
+                    let hasControl = flags.contains(.maskControl)
+                    let hasCommand = flags.contains(.maskCommand)
+                    let hasAlt = flags.contains(.maskAlternate)
+                    let hasShift = flags.contains(.maskShift)
+
+                    if keyCode == 17 && hasControl && !hasCommand && !hasAlt && !hasShift
+                        && event.getIntegerValueField(.keyboardEventAutorepeat) == 0
+                    {
+                        HotKeyManager.triggerTitleEditor()
+                        return nil
+                    }
+                }
+
                 return manager.handleCGEvent(proxy: proxy, type: type, event: event)
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
@@ -127,34 +145,6 @@ extension HotKeyManager {
             )
             DispatchQueue.main.async { [weak self] in
                 self?.triggerToggleIfNeeded(source: "cg_event_tap")
-            }
-            return nil
-        }
-
-        let titleEditorKeyCode: UInt32 = 17
-        let titleEditorModifiers: UInt32 = UInt32(controlKey)
-        if keyCode == titleEditorKeyCode && modifiers == titleEditorModifiers {
-            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
-                return nil
-            }
-
-            let enabled = TitleEditorPreferences.isEnabled
-            let hotKeyEnabled = TitleEditorPreferences.isHotKeyEnabled
-            log(
-                "[HotKey] Title editor Ctrl+T matched",
-                level: .debug,
-                fields: [
-                    "isEnabled": String(enabled),
-                    "isHotKeyEnabled": String(hotKeyEnabled)
-                ]
-            )
-            guard enabled && hotKeyEnabled else {
-                log("[HotKey] Title editor disabled, passing event through", level: .warn)
-                return Unmanaged.passUnretained(event)
-            }
-            log("[HotKey] Title editor hotkey detected", fields: ["key": "Ctrl+T"])
-            DispatchQueue.main.async {
-                TitleEditorService.shared.editTitle()
             }
             return nil
         }

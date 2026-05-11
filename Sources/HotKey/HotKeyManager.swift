@@ -38,6 +38,22 @@ final class HotKeyManager: ObservableObject {
         accessibilityStatus = Self.checkAccessibility()
     }
 
+    /// Nonisolated entry point for title editor hotkey — bypasses @MainActor
+    /// to avoid StrictConcurrency dispatch issues from CGEventTap C callback.
+    nonisolated static func triggerTitleEditor() {
+        let enabled = TitleEditorPreferences.isEnabled
+        let hotKeyEnabled = TitleEditorPreferences.isHotKeyEnabled
+        NSLog("[HotKey] Title editor Ctrl+T matched enabled=%d hotKeyEnabled=%d", enabled, hotKeyEnabled)
+        guard enabled && hotKeyEnabled else {
+            NSLog("[HotKey] Title editor disabled, passing event through")
+            return
+        }
+        NSLog("[HotKey] Title editor hotkey detected, dispatching editTitle")
+        DispatchQueue.main.async {
+            TitleEditorService.shared.editTitle()
+        }
+    }
+
     func setup() {
         refreshAccessibilityStatus()
         log(
