@@ -21,6 +21,7 @@ final class HotKeyManager: ObservableObject {
     let hotkeySignature: OSType = 0x56424648
     let hotkeyIdentifier: UInt32 = 1
     var hotKeyRef: EventHotKeyRef?
+    var titleEditorHotKeyRef: EventHotKeyRef?
     var handlerRef: EventHandlerRef?
     var globalMonitor: Any?
     var localMonitor: Any?
