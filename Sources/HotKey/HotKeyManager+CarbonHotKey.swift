@@ -67,6 +67,28 @@ extension HotKeyManager {
         shortcutStatusIsError = registerStatus != noErr
         log("Register hotkey \(currentHotKey.displayString) status: \(registerStatus)")
         CrashContextRecorder.shared.record("hotkey_register key=\(currentHotKey.displayString) status=\(registerStatus)")
+
+        // Register title editor hotkey: Ctrl+T (keyCode 17)
+        if let titleEditorHotKeyRef {
+            UnregisterEventHotKey(titleEditorHotKeyRef)
+            self.titleEditorHotKeyRef = nil
+        }
+
+        let titleEditorHotKeyID = EventHotKeyID(signature: hotkeySignature, id: 2)
+        let titleEditorStatus = RegisterEventHotKey(
+            17,
+            UInt32(controlKey),
+            titleEditorHotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &titleEditorHotKeyRef
+        )
+
+        if titleEditorStatus == noErr {
+            log("[HotKey] Registered title editor Carbon hotkey Ctrl+T")
+        } else {
+            log("[HotKey] Failed to register title editor Carbon hotkey: \(titleEditorStatus)", level: .warn)
+        }
     }
 
     func handleHotKeyEvent(_ eventRef: EventRef) -> OSStatus {
@@ -95,24 +117,25 @@ extension HotKeyManager {
 
         log("[HotKey] Got hotKeyID: signature=\(hotKeyID.signature), id=\(hotKeyID.id), expected: signature=\(hotkeySignature), id=\(hotkeyIdentifier)")
 
-        guard hotKeyID.signature == hotkeySignature, hotKeyID.id == hotkeyIdentifier else {
-            log(
-                "[handleHotKeyEvent] hotKeyID mismatch",
-                level: .debug,
-                fields: [
-                    "gotSignature": String(hotKeyID.signature),
-                    "gotID": String(hotKeyID.id),
-                    "expectedSignature": String(hotkeySignature),
-                    "expectedID": String(hotkeyIdentifier)
-                ]
-            )
+        guard hotKeyID.signature == hotkeySignature else {
             log("[HotKey] ID mismatch, ignoring")
             return noErr
         }
 
-        log("[HotKey] Hotkey \(currentHotKey.displayString) triggered")
-        triggerToggleIfNeeded(source: "carbon_hotkey")
-        log("[HotKey] handleHotKeyEvent finished")
+        if hotKeyID.id == hotkeyIdentifier {
+            log("[HotKey] Hotkey \(currentHotKey.displayString) triggered")
+            triggerToggleIfNeeded(source: "carbon_hotkey")
+            log("[HotKey] handleHotKeyEvent finished")
+            return noErr
+        }
+
+        if hotKeyID.id == 2 {
+            log("[HotKey] Title editor Carbon hotkey triggered")
+            HotKeyManager.triggerTitleEditor()
+            return noErr
+        }
+
+        log("[HotKey] Unknown hotkey id=\(hotKeyID.id), ignoring")
         return noErr
     }
 }
