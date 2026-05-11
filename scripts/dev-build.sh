@@ -79,6 +79,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <true/>
     <key>NSAccessibilityUsageDescription</key>
     <string>VibeFocus 需要辅助功能权限来管理窗口</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>VibeFocus 需要 Automation 权限来设置 iTerm2 和 Terminal.app 的窗口标题</string>
 </dict>
 </plist>
 PLIST
