@@ -35,21 +35,13 @@ extension WindowManager {
             return
         }
 
-        // 保存到 ToggleEngine (SQLite)，不写内存变量
+        // 不保存 sourceSpace=0 的 ToggleRecord — 0 是无效 yabai index，restore 时会切换到错误 Space
+        // SystemEvents fallback 无法获取 yabai space 信息，无法安全地支持 toggle-restore
         if let windowID = snapshot.windowID {
-            ToggleEngine.shared.save(
-                windowID: windowID,
-                pid: frontApp.processIdentifier,
-                bundleIdentifier: frontApp.bundleIdentifier,
-                appName: frontApp.localizedName ?? snapshot.appName,
-                origFrame: origFrame,
-                sourceSpace: 0,
-                sourceDisplay: 0,
-                sourceYabaiDisp: 0,
-                sourceDispSpace: 0,
-                targetFrame: targetFrame,
-                targetDisplay: 0,
-                sessionID: nil
+            log(
+                "[WindowManager] SystemEvents fallback moved window but skipping ToggleEngine.save (no yabai space info)",
+                level: .warn,
+                fields: ["windowID": String(windowID)]
             )
         }
 
@@ -94,7 +86,6 @@ extension WindowManager {
             return false
         }
 
-        // 通过 windowID 直接查 SQLite
         if let currentWindowID = snapshot.windowID,
            let record = ToggleEngine.shared.load(windowID: currentWindowID) {
             guard let mainScreen = getMainScreen() else { return false }
@@ -105,9 +96,17 @@ extension WindowManager {
                     fields: ["windowID": String(describing: currentWindowID)]
                 )
                 ToggleEngine.shared.clear(windowID: currentWindowID)
-            } else {
-                log("Detected moved window state via System Events handle: \(currentWindowID)")
+            } else if record.sourceSpace > 0 {
+                // sourceSpace=0 是无效 yabai index（SystemEvents fallback 写入的），不支持 restore
+                log("Detected valid toggle record via System Events, windowID=\(currentWindowID)")
                 return true
+            } else {
+                log(
+                    "System Events found toggle record with sourceSpace=0, clearing (invalid yabai index)",
+                    level: .warn,
+                    fields: ["windowID": String(currentWindowID)]
+                )
+                ToggleEngine.shared.clear(windowID: currentWindowID)
             }
         }
 
