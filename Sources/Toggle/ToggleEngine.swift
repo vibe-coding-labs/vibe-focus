@@ -236,6 +236,24 @@ final class ToggleEngine {
                 ])
                 return false
             }
+            // 验证窗口真正到达目标 space
+            let started = Date()
+            var windowOnTarget = false
+            while Date().timeIntervalSince(started) < 0.2 {
+                if let s = spaceController.windowSpaceIndex(windowID: record.windowID), s == targetSpace {
+                    windowOnTarget = true
+                    break
+                }
+                usleep(20_000)
+            }
+            if !windowOnTarget {
+                log("ToggleEngine.switchToOriginalSpace: window did not reach target space after moveWindow", level: .warn, fields: [
+                    "traceID": traceID,
+                    "windowID": String(record.windowID),
+                    "targetSpace": String(targetSpace)
+                ])
+                return false
+            }
             return true
         }
 
@@ -275,9 +293,13 @@ final class ToggleEngine {
                 ])
                 return false
             }
+        } else {
+            log("ToggleEngine.switchToOriginalSpace: could not determine display current space, aborting", level: .warn, fields: [
+                "traceID": traceID,
+                "targetDisplay": String(targetDisplay)
+            ])
+            return false
         }
-
-        // 移动窗口到目标 space
         let moveStart = Date()
         let moved = spaceController.moveWindow(
             record.windowID,
@@ -294,9 +316,21 @@ final class ToggleEngine {
         if moved {
             // 快速验证窗口已在目标 space（替代固定 200ms）
             let started = Date()
+            var windowOnTarget = false
             while Date().timeIntervalSince(started) < 0.2 {
-                if let s = spaceController.windowSpaceIndex(windowID: record.windowID), s == targetSpace { break }
+                if let s = spaceController.windowSpaceIndex(windowID: record.windowID), s == targetSpace {
+                    windowOnTarget = true
+                    break
+                }
                 usleep(20_000)
+            }
+            if !windowOnTarget {
+                log("ToggleEngine.switchToOriginalSpace: window did not reach target space after moveWindow", level: .warn, fields: [
+                    "traceID": traceID,
+                    "windowID": String(record.windowID),
+                    "targetSpace": String(targetSpace)
+                ])
+                return false
             }
             return true
         } else {

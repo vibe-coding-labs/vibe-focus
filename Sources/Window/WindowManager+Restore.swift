@@ -180,11 +180,21 @@ extension WindowManager {
             if moved {
                 // 快速验证窗口已到达目标 Space
                 let started = Date()
+                var windowOnTarget = false
                 while Date().timeIntervalSince(started) < 0.2 {
-                    if let s = spaceController.windowSpaceIndex(windowID: currentWindowID), s == targetSpace { break }
+                    if let s = spaceController.windowSpaceIndex(windowID: currentWindowID), s == targetSpace {
+                        windowOnTarget = true
+                        break
+                    }
                     usleep(20_000)
                 }
-                spaceReady = true
+                if !windowOnTarget {
+                    log("[WindowManager] restore: window did not reach target space after moveWindow", level: .warn, fields: [
+                        "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
+                    ])
+                } else {
+                    spaceReady = true
+                }
             } else {
                 log("[WindowManager] restore: moveWindow failed (display on target space)", level: .warn, fields: [
                     "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
@@ -208,11 +218,21 @@ extension WindowManager {
                 let moved = spaceController.moveWindow(currentWindowID, toSpaceIndex: targetSpace, focus: triggerSource == "carbon_hotkey", operationID: op)
                 if moved {
                     let started = Date()
+                    var windowOnTarget = false
                     while Date().timeIntervalSince(started) < 0.2 {
-                        if let s = spaceController.windowSpaceIndex(windowID: currentWindowID), s == targetSpace { break }
+                        if let s = spaceController.windowSpaceIndex(windowID: currentWindowID), s == targetSpace {
+                            windowOnTarget = true
+                            break
+                        }
                         usleep(20_000)
                     }
-                    spaceReady = true
+                    if !windowOnTarget {
+                        log("[WindowManager] restore: window did not reach target space after moveWindow", level: .warn, fields: [
+                            "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
+                        ])
+                    } else {
+                        spaceReady = true
+                    }
                 } else {
                     log("[WindowManager] restore: moveWindow failed after display switch", level: .warn, fields: [
                         "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
