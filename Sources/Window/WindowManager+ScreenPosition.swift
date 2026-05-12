@@ -47,12 +47,16 @@ extension WindowManager {
                 x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
                 width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
             )
-            // CGWindowList 返回 Quartz 坐标，NSScreen 使用 AppKit 坐标
-            // 需要转换 Y 坐标：appKitY = mainScreenHeight - quartzY - windowHeight
+            // CGWindowList 返回 Quartz 坐标（原点左上角），NSScreen 使用 AppKit 坐标（原点左下角）
+            // 转换公式: appKitY = mainScreenHeight - quartzY - windowHeight
             let mainScreenHeight = NSScreen.screens[0].frame.height
+            let appKitOrigin = CGPoint(
+                x: windowFrame.origin.x,
+                y: mainScreenHeight - windowFrame.origin.y - windowFrame.height
+            )
             let appKitCenter = CGPoint(
                 x: windowFrame.midX,
-                y: mainScreenHeight - windowFrame.midY
+                y: appKitOrigin.y + windowFrame.height / 2
             )
             let onMainScreen = mainScreenFrame.contains(appKitCenter)
             log(
