@@ -168,14 +168,17 @@ extension WindowManager {
     private func matchTerminalWindowByAppleScript(tty: String, terminalPID: Int32, windows: [WindowIdentity]) -> WindowIdentity? {
         let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
 
-        // 方法 1: 尝试 osascript 获取 Terminal 窗口 TTY 映射
+        // 对 TTY 路径做 AppleScript 转义：替换双引号和反斜杠，防止注入
+        let escapedTTY = fullTTY
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
         osascript -e 'tell application "Terminal"
             set winCount to count of windows
             repeat with i from 1 to winCount
                 try
                     repeat with tb in tabs of window i
-                        if tty of tb is "\(fullTTY)" then
+                        if tty of tb is "\(escapedTTY)" then
                             return (id of window i) as text
                         end if
                     end repeat
