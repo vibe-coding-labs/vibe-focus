@@ -119,9 +119,6 @@ extension WindowManager {
             return nil
         }
 
-        let mainScreen = getMainScreen()
-        let mainScreenFrame = mainScreen?.frame
-
         // 从 cwd 中提取项目名（最后一段路径）
         let projectName = cwd?
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -152,20 +149,7 @@ extension WindowManager {
 
             let appName = info[kCGWindowOwnerName as String] as? String ?? ""
             let title = info["kCGWindowName"] as? String ?? info["name"] as? String ?? ""
-            let bounds = info[kCGWindowBounds as String] as? [String: CGFloat]
-            let isOnMainScreen: Bool
-            if let bounds, let mainScreenFrame {
-                let windowFrame = CGRect(
-                    x: bounds["X"] ?? 0,
-                    y: bounds["Y"] ?? 0,
-                    width: bounds["Width"] ?? 0,
-                    height: bounds["Height"] ?? 0
-                )
-                let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
-                isOnMainScreen = mainScreenFrame.contains(center)
-            } else {
-                isOnMainScreen = false
-            }
+            let isOnMainScreen = isWindowOnMainScreen(windowID: windowID)
 
             // 获取 bundleIdentifier
             let bundleIdentifier: String?
