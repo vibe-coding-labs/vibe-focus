@@ -93,6 +93,41 @@ extension WindowManager {
         return frame
     }
 
+    /// 读取窗口 frame，优先使用 yabai 交叉校验确保准确性。
+    /// AX API 对非可见 Space 上的窗口返回错误坐标，yabai 始终准确。
+    /// 调用方应优先使用此方法而非 frame(of:)，除非确定窗口可见。
+    func readAccurateFrame(windowID: UInt32, axElement: AXUIElement) -> CGRect? {
+        guard let axFrame = frame(of: axElement) else {
+            return nil
+        }
+        // 主屏上的窗口 AX frame 是准确的（可见窗口），不需要 yabai 交叉校验
+        // yabai frame 是 display-relative 坐标，与 AX 的 global 坐标不同
+        // 对主屏窗口做 yabai override 会把正确的 global 坐标替换成错误的 display-relative 坐标
+        if isWindowOnMainScreen(windowID: windowID) {
+            return axFrame
+        }
+        guard let yabaiInfo = spaceController.queryWindow(windowID: windowID),
+              let yabaiFrame = yabaiInfo.frame else {
+            return axFrame
+        }
+        let yabaiRect = yabaiFrame.cgRect
+        let positionDiff = hypot(yabaiRect.midX - axFrame.midX, yabaiRect.midY - axFrame.midY)
+        if positionDiff > frameTolerance * 3 {
+            log(
+                "[WindowManager] readAccurateFrame: yabai override",
+                level: .info,
+                fields: [
+                    "windowID": String(windowID),
+                    "axFrame": "\(axFrame)",
+                    "yabaiFrame": "\(yabaiRect)",
+                    "positionDiff": String(format: "%.0f", positionDiff)
+                ]
+            )
+            return yabaiRect
+        }
+        return axFrame
+    }
+
     func isAttributeSettable(_ element: AXUIElement, attribute: String) -> Bool {
         var settable = DarwinBoolean(false)
         let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
@@ -244,6 +279,7 @@ extension WindowManager {
                 level: .debug,
                 fields: ["op": op, "stage": stage, "attempt": String(attempt)]
             )
+            // AX-safe: verifying frame after apply — window was just manipulated
             if let appliedFrame = frame(of: window) {
                 log(
                     "[WindowManager] applied frame snapshot",
