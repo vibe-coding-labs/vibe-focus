@@ -117,7 +117,7 @@ extension WindowManager {
         }
 
         // 5. 验证窗口确实在 targetFrame 附近（确认这个窗口确实被 toggle 过来）
-        guard let currentFrame = readAccurateFrame(windowID: currentWindowID, axElement: window) else {
+        guard let currentFrame = self.frame(of: window) else {
             log("[WindowManager] restore failed: cannot read current frame", level: .error, fields: ["op": op])
             return
         }
@@ -169,38 +169,7 @@ extension WindowManager {
             "displayCurrentSpace": String(describing: displayCurrentSpace)
         ])
 
-        var spaceReady = false
-
-        if let current = displayCurrentSpace, current == targetSpace {
-            // Display 已经在目标 Space，只需移动窗口
-            log("[WindowManager] restore: display already on target space, moving window", fields: [
-                "op": op, "targetSpace": String(targetSpace)
-            ])
-            let moved = spaceController.moveWindow(currentWindowID, toSpaceIndex: targetSpace, focus: false, operationID: op)
-            if moved {
-                // 快速验证窗口已到达目标 Space
-                let started = Date()
-                var windowOnTarget = false
-                while Date().timeIntervalSince(started) < 0.2 {
-                    if let s = spaceController.windowSpaceIndex(windowID: currentWindowID), s == targetSpace {
-                        windowOnTarget = true
-                        break
-                    }
-                    usleep(20_000)
-                }
-                if !windowOnTarget {
-                    log("[WindowManager] restore: window did not reach target space after moveWindow", level: .warn, fields: [
-                        "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
-                    ])
-                } else {
-                    spaceReady = true
-                }
-            } else {
-                log("[WindowManager] restore: moveWindow failed (display on target space)", level: .warn, fields: [
-                    "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
-                ])
-            }
-        } else if let current = displayCurrentSpace, current != targetSpace {
+        if let current = displayCurrentSpace, current != targetSpace {
             log("[WindowManager] restore: switching display from space \(current) to \(targetSpace)", level: .info, fields: [
                 "op": op, "targetDisplay": String(targetDisplay)
             ])
@@ -213,76 +182,18 @@ extension WindowManager {
                     if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
                     usleep(30_000)
                 }
-
-                // 移动窗口到目标 Space
-                let moved = spaceController.moveWindow(currentWindowID, toSpaceIndex: targetSpace, focus: triggerSource == "carbon_hotkey", operationID: op)
-                if moved {
-                    let started = Date()
-                    var windowOnTarget = false
-                    while Date().timeIntervalSince(started) < 0.2 {
-                        if let s = spaceController.windowSpaceIndex(windowID: currentWindowID), s == targetSpace {
-                            windowOnTarget = true
-                            break
-                        }
-                        usleep(20_000)
-                    }
-                    if !windowOnTarget {
-                        log("[WindowManager] restore: window did not reach target space after moveWindow", level: .warn, fields: [
-                            "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
-                        ])
-                    } else {
-                        spaceReady = true
-                    }
-                } else {
-                    log("[WindowManager] restore: moveWindow failed after display switch", level: .warn, fields: [
-                        "op": op, "windowID": String(currentWindowID), "targetSpace": String(targetSpace)
-                    ])
-                }
-            } else {
-                log("[WindowManager] restore: switchDisplayToSpace failed", level: .warn, fields: [
-                    "op": op, "targetSpace": String(targetSpace)
-                ])
             }
-        } else {
-            log("[WindowManager] restore: could not determine display current space", level: .warn, fields: [
-                "op": op, "targetDisplay": String(targetDisplay)
+            log("[WindowManager] restore: space switch result", fields: [
+                "op": op, "switched": String(switched)
             ])
-        }
-
-        if !spaceReady {
-            // moveWindow 失败，但 origFrame 的坐标可能已经在目标 display 的范围内
-            // 如果直接 AX apply 这个坐标，macOS 会自动将窗口吸附到目标 display
-            let (origDisplayIndex, _) = displayContext(for: origFrame)
-            let targetDisplayIndex = targetDisplay > 0 ? targetDisplay - 1 : nil
-            if origDisplayIndex == targetDisplayIndex {
-                log("[WindowManager] restore: moveWindow failed but origFrame is on target display, proceeding with direct AX apply", level: .info, fields: [
-                    "op": op,
-                    "windowID": String(currentWindowID),
-                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-                    "targetDisplayIndex": String(describing: targetDisplayIndex),
-                    "origDisplayIndex": String(describing: origDisplayIndex)
-                ])
-            } else {
-                log("[WindowManager] restore: window not on target space and origFrame not on target display, aborting", level: .error, fields: [
-                    "op": op,
-                    "windowID": String(currentWindowID),
-                    "targetSpace": String(targetSpace),
-                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-                    "targetDisplayIndex": String(describing: targetDisplayIndex),
-                    "origDisplayIndex": String(describing: origDisplayIndex)
-                ])
-                return
-            }
+        } else {
+            log("[WindowManager] restore: display already on target space, no switch needed", fields: [
+                "op": op
+            ])
         }
 
         // 9. Space 切换后重新获取 AX element（引用可能失效）
-        guard let restoreAX = findWindowByPID(record.pid, windowID: currentWindowID) else {
-            log("[WindowManager] restore failed: AX element lost after space switch", level: .error, fields: [
-                "op": op, "windowID": String(currentWindowID), "pid": String(record.pid)
-            ])
-            CrashContextRecorder.shared.record("restore_failed_ax_lost_after_space_switch op=\(op)")
-            return
-        }
+        let restoreAX = findWindowByPID(record.pid, windowID: currentWindowID) ?? window
 
         // 10. Apply frame
         log("[WindowManager] restore: applying frame", fields: [
@@ -303,7 +214,6 @@ extension WindowManager {
         }
 
         // 11. 验证 frame
-        // AX-safe: window was just moved to original position, target space is now visible
         guard let restoredFrame = self.frame(of: restoreAX) else {
             log("[WindowManager] restore failed: cannot read back frame", level: .error, fields: ["op": op])
             CrashContextRecorder.shared.record("restore_failed_readback op=\(op)")
@@ -331,17 +241,10 @@ extension WindowManager {
             if let postApplySpace = spaceController.windowSpaceIndex(windowID: currentWindowID),
                let currentSpace = spaceController.currentSpaceIndex(),
                postApplySpace != currentSpace {
-                let spaceMatch = postApplySpace == targetSpace
                 log("[WindowManager] restore: following window to Space \(postApplySpace)", fields: [
-                    "op": op, "windowID": String(currentWindowID), "currentSpace": String(currentSpace),
-                    "targetSpace": String(targetSpace), "spaceMatchTarget": String(spaceMatch)
+                    "op": op, "windowID": String(currentWindowID), "currentSpace": String(currentSpace)
                 ])
                 _ = spaceController.focusWindow(currentWindowID, operationID: op)
-                if !spaceMatch {
-                    log("[WindowManager] restore: window ended up on unexpected Space \(postApplySpace) (expected \(targetSpace))", level: .warn, fields: [
-                        "op": op, "windowID": String(currentWindowID)
-                    ])
-                }
             }
         }
 
