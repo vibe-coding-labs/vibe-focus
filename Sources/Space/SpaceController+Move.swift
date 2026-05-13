@@ -84,6 +84,8 @@ extension SpaceController {
 
         // 策略 1：使用 NativeSpaceBridge (CGS API) 直接移动
         // 这比 yabai 更可靠，不依赖 scripting-addition
+        // 清除失败缓存，给本次操作全新机会
+        NativeSpaceBridge.resetFailureCache()
         if nativeAvailable, let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
             log(
                 "[SpaceController] trying NativeSpaceBridge first",
@@ -159,6 +161,7 @@ extension SpaceController {
             }
             // yabai 报成功但窗口实际未移动 — 尝试 NativeSpaceBridge fallback
             if nativeAvailable, let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
+                NativeSpaceBridge.resetFailureCache()
                 log(
                     "[SpaceController] yabai move unverified, trying NativeSpaceBridge fallback",
                     fields: [
