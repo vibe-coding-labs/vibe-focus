@@ -69,46 +69,21 @@ extension WindowManager {
             return focused
         }
 
-        // 第二级匹配：通过 windowID 匹配缓存的窗口引用（先验证有效性）
-        if let lastWindowElement {
-            if isValidAXElement(lastWindowElement),
-               let currentWindowID = windowHandle(for: lastWindowElement),
-               currentWindowID == token.windowID {
-                log("Restoring using saved AX handle match")
-                return lastWindowElement
-            } else {
-                // 缓存的 AX 元素已失效，立即清除
-                log("Cached AX element is stale, clearing", level: .warn, fields: [
-                    "tokenWindowID": String(describing: token.windowID)
-                ])
-                self.lastWindowElement = nil
-                if let stateID = lastWindowToken?.stateID {
-                    windowElementsByStateID.removeValue(forKey: stateID)
-                }
-            }
-        }
-
-        // 第二级-B：主动按 PID 遍历所有窗口查找匹配 windowID
-        // 这解决了 hook 路径中 hydrateMemory(window:nil) 导致缓存元素过期的问题
+        // 第二级匹配：主动按 PID 遍历所有窗口查找匹配 windowID
         if let resolvedByPID = findWindowByPID(token.pid, windowID: token.windowID) {
             log("Restoring using PID-based window enumeration")
             return resolvedByPID
         }
 
-        // 第三级匹配：备用匹配（PID + 标题 + 大致位置）
+        // 第三级匹配：备用匹配（PID + 标题）
         if let frontApp = NSWorkspace.shared.frontmostApplication,
            let focused = focusedWindow(for: frontApp.processIdentifier),
-           let currentTitle = title(of: focused),
-           let currentFrame = frame(of: focused),
-           let lastTarget = lastTargetFrame {
-            // 检查当前窗口是否匹配 token 的描述
+           let currentTitle = title(of: focused) {
             let pidMatches = frontApp.processIdentifier == token.pid
             let titleMatches = (token.title ?? "") == currentTitle
-            let positionMatches = abs(currentFrame.origin.x - lastTarget.origin.x) <= 50 &&
-                                 abs(currentFrame.origin.y - lastTarget.origin.y) <= 50
 
-            if pidMatches && titleMatches && positionMatches {
-                log("Restoring using fallback matching (PID+title+position)")
+            if pidMatches && titleMatches {
+                log("Restoring using fallback matching (PID+title)")
                 return focused
             }
         }

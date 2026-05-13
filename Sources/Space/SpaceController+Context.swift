@@ -173,8 +173,8 @@ extension SpaceController {
 
     func preferredSourceSpace(windowSpace: Int?, visibleSpace: Int?, fallbackSpace: Int?) -> Int? {
         if let windowSpace, let visibleSpace, windowSpace != visibleSpace {
-            log("[SpaceController] source space mismatch windowSpace=\(windowSpace) visibleSpace=\(visibleSpace); prefer visibleSpace")
-            return visibleSpace
+            log("[SpaceController] source space mismatch windowSpace=\(windowSpace) visibleSpace=\(visibleSpace); prefer windowSpace for accurate restore")
+            return windowSpace
         }
         return windowSpace ?? visibleSpace ?? fallbackSpace
     }

@@ -123,7 +123,7 @@ extension WindowManager {
             return false
         }
 
-        guard let currentFrame = frame(of: windowAX) else {
+        guard let origFrame = readAccurateFrame(windowID: identity.windowID, axElement: windowAX) else {
             log(
                 "moveWindowToMainScreen failed: cannot read current frame",
                 level: .error,
@@ -146,12 +146,12 @@ extension WindowManager {
                     "op": op,
                     "windowID": String(identity.windowID),
                     "yabaiDisplay": String(display),
-                    "axFrame": "\(currentFrame)"
+                    "axFrame": "\(origFrame)"
                 ]
             )
         } else if let mainScreen = getMainScreen() {
             let mainScreenFrame = mainScreen.frame
-            let windowCenter = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
+            let windowCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
             if mainScreenFrame.contains(windowCenter) {
                 log(
                     "[WindowManager] moveWindowToMainScreen skipped: already on main screen",
@@ -208,7 +208,7 @@ extension WindowManager {
             return false
         }
 
-        let sourceContext = displayContext(for: currentFrame)
+        let sourceContext = displayContext(for: origFrame)
         let spaceCaptureStartAt = Date()
         let spaceContext = spaceController.captureSpaceContext(windowID: effectiveWindowID, operationID: op)
         log(
@@ -273,6 +273,7 @@ extension WindowManager {
             }
         }
 
+        // AX-safe: reading frame after move to main screen — window is visible
         // 使用实际应用的 frame（可能因 macOS 菜单栏调整而与理想 targetFrame 不同）
         let actualTargetFrame = frame(of: windowAX) ?? targetFrame
 
@@ -302,10 +303,10 @@ extension WindowManager {
             state.bundleIdentifier = identity.bundleIdentifier
             state.title = resolvedTitle
             state.axWindowNumber = resolvedWindowNumber
-            state.origX = currentFrame.origin.x
-            state.origY = currentFrame.origin.y
-            state.origW = currentFrame.width
-            state.origH = currentFrame.height
+            state.origX = origFrame.origin.x
+            state.origY = origFrame.origin.y
+            state.origW = origFrame.width
+            state.origH = origFrame.height
             state.targetX = actualTargetFrame.origin.x
             state.targetY = actualTargetFrame.origin.y
             state.targetW = actualTargetFrame.width
@@ -332,7 +333,7 @@ extension WindowManager {
                 pid: identity.pid,
                 bundleIdentifier: identity.bundleIdentifier,
                 appName: identity.appName,
-                origFrame: currentFrame,
+                origFrame: origFrame,
                 sourceSpace: sourceSpaceIndex,
                 sourceDisplay: teSourceDisplay,
                 sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? 0,

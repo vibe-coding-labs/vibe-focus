@@ -144,10 +144,21 @@ class TitleEditorService {
         }
 
         let axSuccess = applyViaAX(trimmed, to: window)
-        // AppleScript first: configures Terminal.app title display settings
-        // then TTY overrides with full title via OSC escape sequence
         let scriptSuccess = applyViaAppleScript(trimmed, bundleID: bundleID)
-        let ttySuccess = applyViaTTY(trimmed, pid: pid)
+
+        // For iTerm2, AppleScript sets session-level name which overrides OSC sequences —
+        // skip TTY to avoid a brief flash where OSC overwrites before iTerm2 applies the session name.
+        // For other terminals, TTY is the primary (or only) mechanism.
+        let ttySuccess: Bool
+        if scriptSuccess && bundleID == "com.googlecode.iterm2" {
+            ttySuccess = false
+            log(
+                "[TitleEditorService] applyTitle: skipping TTY for iTerm2 (AppleScript session name overrides OSC)",
+                level: .debug
+            )
+        } else {
+            ttySuccess = applyViaTTY(trimmed, pid: pid)
+        }
 
         log(
             "[TitleEditorService] applyTitle result",
@@ -158,13 +169,6 @@ class TitleEditorService {
                 "scriptSuccess": String(scriptSuccess),
                 "bundleID": bundleID
             ]
-        )
-
-        // Diagnostic: read the actual window title after all apply methods
-        let actualTitle = WindowManager.shared.title(of: window) ?? "?"
-        log(
-            "[TitleEditorService] applyTitle: final window title",
-            fields: ["actualTitle": truncateForLog(actualTitle, limit: 120)]
         )
     }
 
