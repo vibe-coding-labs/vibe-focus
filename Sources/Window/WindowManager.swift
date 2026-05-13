@@ -10,18 +10,7 @@ import Foundation
 class WindowManager {
     static let shared = WindowManager()
 
-    let savedStatesKey = "savedWindowStates"
     let spaceController = SpaceController.shared
-    var windowElementsByStateID: [String: AXUIElement] = [:]
-    var lastWindowElement: AXUIElement?
-    var lastWindowToken: WindowToken?
-    var lastWindowFrame: CGRect?
-    var lastTargetFrame: CGRect?
-    var lastSourceSpaceIndex: Int?
-    var lastTargetSpaceIndex: Int?
-    var lastSourceYabaiDisplayIndex: Int?
-    var lastSourceDisplaySpaceIndex: Int?
-    var savedWindowStates: [SavedWindowState] = []
     var focusSpaceKnownBroken: Bool = false
     var didPromptForAccessibility = false
     let frameTolerance: CGFloat = 10
@@ -93,10 +82,6 @@ class WindowManager {
     }
 
     init() {
-        savedWindowStates = loadSavedWindowStates()
-        if !savedWindowStates.isEmpty {
-            log("Loaded persisted window states from SQLite: \(savedWindowStates.count)")
-        }
         cleanupStaleStatesWithGracePeriod()
     }
 
@@ -111,10 +96,6 @@ class WindowManager {
         )
 
         if removed > 0 {
-            savedWindowStates.removeAll { state in
-                guard let wid = state.windowID else { return false }
-                return !existingWindowIDs.contains(wid)
-            }
             log("[WindowManager] cleanup with grace period: removed \(removed) stale state(s)")
         }
     }

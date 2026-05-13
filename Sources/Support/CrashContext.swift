@@ -170,24 +170,6 @@ func updateCrashSnapshotFromRuntime() {
         appendField("screenCount", String(NSScreen.screens.count))
 
         let wm = WindowManager.shared
-        appendField("savedStates", String(wm.savedWindowStates.count))
-        appendField("hasToken", String(wm.lastWindowToken != nil))
-        appendField("hasFrame", String(wm.lastWindowFrame != nil))
-        appendField("hasTarget", String(wm.lastTargetFrame != nil))
-
-        if let token = wm.lastWindowToken {
-            appendField("tokenPID", String(token.pid))
-            appendField("tokenWinID", String(describing: token.windowID))
-            appendField("tokenBundleID", token.bundleIdentifier ?? "nil")
-        }
-        if let frame = wm.lastWindowFrame {
-            appendField("origFrame", "(\(frame.origin.x),\(frame.origin.y),\(frame.width),\(frame.height))")
-        }
-        if let target = wm.lastTargetFrame {
-            appendField("targetFrame", "(\(target.origin.x),\(target.origin.y),\(target.width),\(target.height))")
-        }
-        appendField("srcSpace", String(describing: wm.lastSourceSpaceIndex))
-        appendField("srcYabaiDisp", String(describing: wm.lastSourceYabaiDisplayIndex))
 
         let hkm = HotKeyManager.shared
         appendField("hotkey", hkm.currentHotKey.displayString)
@@ -196,7 +178,7 @@ func updateCrashSnapshotFromRuntime() {
         let hookServer = ClaudeHookServer.shared
         appendField("hookRunning", String(hookServer.isRunning))
 
-        appendField("eventCount", String(wm.savedWindowStates.count))
+        appendField("eventCount", "0")
 
         buf[pos] = 0
         return pos
@@ -211,40 +193,12 @@ func logRuntimeStateSnapshot(context: String) {
 
     var fields: [String: String] = [
         "context": context,
-        "savedStates": String(wm.savedWindowStates.count),
-        "hasToken": String(wm.lastWindowToken != nil),
-        "hasFrame": String(wm.lastWindowFrame != nil),
-        "hasTarget": String(wm.lastTargetFrame != nil),
-        "hasElement": String(wm.lastWindowElement != nil),
-        "srcSpace": String(describing: wm.lastSourceSpaceIndex),
-        "srcYabaiDisp": String(describing: wm.lastSourceYabaiDisplayIndex),
-        "srcDispSpace": String(describing: wm.lastSourceDisplaySpaceIndex),
         "hotkey": hkm.currentHotKey.displayString,
         "axGranted": String(hkm.accessibilityGranted),
         "hookRunning": String(hookServer.isRunning),
         "screenCount": String(NSScreen.screens.count),
         "frontmost": frontmostAppDescriptor()
     ]
-
-    if let token = wm.lastWindowToken {
-        fields["tokenPID"] = String(token.pid)
-        fields["tokenWinID"] = String(describing: token.windowID)
-        fields["tokenBundleID"] = token.bundleIdentifier ?? "nil"
-        fields["tokenTitle"] = truncateForLog(token.title ?? "", limit: 60)
-    }
-    if let frame = wm.lastWindowFrame {
-        fields["origFrame"] = "(\(frame.origin.x),\(frame.origin.y),\(frame.width),\(frame.height))"
-    }
-    if let target = wm.lastTargetFrame {
-        fields["targetFrame"] = "(\(target.origin.x),\(target.origin.y),\(target.width),\(target.height))"
-    }
-
-    if !wm.savedWindowStates.isEmpty {
-        let summaries = wm.savedWindowStates.suffix(5).map { state in
-            "\(state.id.prefix(8))..pid=\(state.pid)win=\(String(describing: state.windowID))"
-        }
-        fields["recentStates"] = summaries.joined(separator: ",")
-    }
 
     log("[STATE_SNAPSHOT] \(context)", level: .debug, fields: fields)
 }

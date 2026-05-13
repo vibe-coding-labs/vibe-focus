@@ -15,12 +15,12 @@ extension WindowManager {
         var toggleContext: [String: String] = [
             "op": op,
             "source": triggerSource,
-            "savedStates": String(savedWindowStates.count),
             "frontBefore": frontBefore
         ]
         if let frontApp = NSWorkspace.shared.frontmostApplication,
            let focusedWin = focusedWindow(for: frontApp.processIdentifier) {
             let winTitle = title(of: focusedWin) ?? ""
+            // AX-safe: focused window is always visible
             let winFrame = frame(of: focusedWin)
             let winID = windowHandle(for: focusedWin)
             toggleContext["windowID"] = String(describing: winID)
@@ -90,6 +90,22 @@ extension WindowManager {
                     details: ["mode": "restore", "source": triggerSource]
                 )
             }
+        } else if toggleContext["onMainScreen"] == "true" {
+            // Window is on main screen but has no valid toggle record → stuck state.
+            // Move to secondary screen to unblock the toggle cycle.
+            log(
+                "[WindowManager] toggle: window stuck on main screen with no toggle record, moving to secondary",
+                level: .info,
+                fields: ["op": op, "windowID": toggleContext["windowID"] ?? "nil"]
+            )
+            moveStuckWindowToSecondaryScreen(operationID: op, triggerSource: triggerSource)
+            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+                AuditLogger.shared.record(
+                    eventType: "toggle_move_to_secondary",
+                    windowID: winID,
+                    details: ["mode": "move_to_secondary_stuck", "source": triggerSource]
+                )
+            }
         } else {
             log(
                 "[WindowManager] toggle branching to moveToMainScreen",
@@ -149,6 +165,58 @@ extension WindowManager {
         if durationMs >= 650 {
             CrashContextRecorder.shared.record("toggle_slow op=\(op) durationMs=\(durationMs) mode=\(mode)")
         }
+    }
+
+    private func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String) {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let focusedWin = focusedWindow(for: frontApp.processIdentifier),
+              // AX-safe: focused window is always visible
+              let currentFrame = frame(of: focusedWin) else {
+            log("[WindowManager] moveStuckWindowToSecondaryScreen: no focused window", level: .warn)
+            return
+        }
+
+        let screens = NSScreen.screens
+        guard screens.count > 1, let mainScreen = getMainScreen() else {
+            log("[WindowManager] moveStuckWindowToSecondaryScreen: no secondary screen available", level: .warn)
+            return
+        }
+
+        let targetScreen = screens.first { screen in
+            !mainScreen.frame.contains(CGPoint(x: screen.frame.midX, y: screen.frame.midY))
+        }
+
+        guard let targetScreen else {
+            log("[WindowManager] moveStuckWindowToSecondaryScreen: could not find secondary screen", level: .warn)
+            return
+        }
+
+        let targetVisibleFrame = targetScreen.visibleFrame
+        let newX = targetVisibleFrame.origin.x + (targetVisibleFrame.width - currentFrame.width) / 2
+        let newY = targetVisibleFrame.origin.y + (targetVisibleFrame.height - currentFrame.height) / 2
+        let centeredFrame = CGRect(x: newX, y: newY, width: currentFrame.width, height: currentFrame.height)
+
+        var targetOrigin = CGPoint(x: centeredFrame.origin.x, y: centeredFrame.origin.y)
+        var targetSize = CGSize(width: centeredFrame.width, height: centeredFrame.height)
+        guard let originValue = AXValueCreate(.cgPoint, &targetOrigin),
+              let sizeValue = AXValueCreate(.cgSize, &targetSize) else {
+            log("[WindowManager] moveStuckWindowToSecondaryScreen: AXValueCreate failed", level: .warn)
+            return
+        }
+        AXUIElementSetAttributeValue(focusedWin, kAXPositionAttribute as CFString, originValue as CFTypeRef)
+        AXUIElementSetAttributeValue(focusedWin, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
+
+        log(
+            "[WindowManager] moveStuckWindowToSecondaryScreen: moved window",
+            fields: [
+                "op": operationID,
+                "windowID": String(describing: windowHandle(for: focusedWin)),
+                "fromX": String(Int(currentFrame.origin.x)),
+                "fromY": String(Int(currentFrame.origin.y)),
+                "toX": String(Int(centeredFrame.origin.x)),
+                "toY": String(Int(centeredFrame.origin.y))
+            ]
+        )
     }
 
     func moveToMainScreen(operationID: String? = nil, triggerSource: String = "unknown") {
@@ -249,10 +317,7 @@ extension WindowManager {
     func shouldRestoreCurrentWindow() -> Bool {
         log(
             "[WindowManager] shouldRestoreCurrentWindow called",
-            level: .debug,
-            fields: [
-                "savedStatesCount": String(savedWindowStates.count)
-            ]
+            level: .debug
         )
         if !hasAccessibilityPermission() {
             log(
@@ -269,7 +334,6 @@ extension WindowManager {
                 "[WindowManager] shouldRestoreCurrentWindow: cannot identify focused window",
                 level: .debug,
                 fields: [
-                    "savedStatesEmpty": String(savedWindowStates.isEmpty),
                     "hasFrontApp": String(NSWorkspace.shared.frontmostApplication != nil)
                 ]
             )
@@ -315,7 +379,7 @@ extension WindowManager {
             return false
         }
 
-        // 验证窗口确实在 targetFrame 附近
+        // AX-safe: focused window is always visible
         if let currentFrame = self.frame(of: focusedWindow),
            !record.isNearTarget(currentFrame: currentFrame) {
             log(
@@ -333,81 +397,6 @@ extension WindowManager {
                 "pid": String(record.pid)
             ]
         )
-        return true
-    }
-
-    func isSavedStateCorrupted(_ state: SavedWindowState) -> Bool {
-        guard let mainScreen = getMainScreen() else {
-            log(
-                "[WindowManager] isSavedStateCorrupted: no main screen, returning false",
-                level: .debug,
-                fields: ["stateID": state.id]
-            )
-            return false
-        }
-        let mainScreenFrame = mainScreen.frame
-        let originalFrame = state.originalFrame.cgRect
-        let originalCenter = CGPoint(x: originalFrame.midX, y: originalFrame.midY)
-        let targetFrame = state.targetFrame.cgRect
-        let targetCenter = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
-
-        // originalFrame 和 targetFrame 的中心都在主屏幕上 → 被污染
-        let originalOnMain = mainScreenFrame.contains(originalCenter)
-        let targetOnMain = mainScreenFrame.contains(targetCenter)
-        let corrupted = originalOnMain && targetOnMain
-        log(
-            "[WindowManager] isSavedStateCorrupted checked",
-            level: .debug,
-            fields: [
-                "stateID": state.id,
-                "originalOnMain": String(originalOnMain),
-                "targetOnMain": String(targetOnMain),
-                "corrupted": String(corrupted)
-            ]
-        )
-        return corrupted
-    }
-
-    func shouldRestoreAcrossSpaces() -> Bool {
-        spaceController.refreshAvailabilityIfNeeded()
-        guard spaceController.isEnabled else {
-            log(
-                "[WindowManager] shouldRestoreAcrossSpaces: space integration disabled",
-                level: .debug
-            )
-            return false
-        }
-
-        // 需要焦点窗口的 windowID 来查 SQLite
-        guard let frontApp = NSWorkspace.shared.frontmostApplication,
-              let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
-              let currentWindowID = windowHandle(for: focusedWindow) else {
-            return false
-        }
-
-        let currentSpace = spaceController.currentSpaceIndex()
-        guard let record = ToggleEngine.shared.load(windowID: currentWindowID),
-              let current = currentSpace,
-              record.sourceSpace != current else {
-            log(
-                "[WindowManager] shouldRestoreAcrossSpaces: no cross-space condition met",
-                level: .debug,
-                fields: [
-                    "currentSpace": String(describing: currentSpace)
-                ]
-            )
-            return false
-        }
-
-        log(
-            "[WindowManager] shouldRestoreAcrossSpaces: matched across spaces",
-            level: .debug,
-            fields: [
-                "sourceSpace": String(record.sourceSpace),
-                "currentSpace": String(current)
-            ]
-        )
-        log("Detected moved window state across spaces: source=\(record.sourceSpace) current=\(current)")
         return true
     }
 }

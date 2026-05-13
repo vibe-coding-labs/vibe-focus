@@ -412,6 +412,18 @@ struct YabaiWindowInfo: Decodable {
     let title: String?
     let space: Int?
     let display: Int?
+    let frame: Frame?
+
+    struct Frame: Decodable {
+        let x: Double
+        let y: Double
+        let w: Double
+        let h: Double
+
+        var cgRect: CGRect {
+            CGRect(x: x, y: y, width: w, height: h)
+        }
+    }
 }
 
 struct YabaiDisplayInfo: Decodable {
