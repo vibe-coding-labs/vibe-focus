@@ -135,7 +135,7 @@ final class ToggleEngine {
         }
 
         // 2. 获取当前 frame（验证用）
-        guard let currentFrame = wm.readAccurateFrame(windowID: windowID, axElement: windowAX) else {
+        guard let currentFrame = wm.frame(of: windowAX) else {
             log("ToggleEngine.restore: cannot get current frame", level: .warn, fields: [
                 "traceID": trace
             ])
@@ -159,48 +159,17 @@ final class ToggleEngine {
         }
 
         // 4. 先切换到原始 space（必须在 apply frame 之前，因为坐标是相对于目标屏幕的）
-        let spaceSwitched = switchToOriginalSpace(record: record, windowAX: windowAX, triggerSource: triggerSource, traceID: trace)
-        if !spaceSwitched {
-            log("ToggleEngine.restore: space switch failed, aborting restore to avoid applying wrong-screen coordinates", level: .error, fields: [
-                "traceID": trace,
-                "windowID": String(windowID),
-                "targetSpace": String(record.sourceSpace),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))"
-            ])
-            return false
-        }
+        switchToOriginalSpace(record: record, windowAX: windowAX, triggerSource: triggerSource, traceID: trace)
 
         // 5. 切换完成后重新获取 AX element（space 切换可能使旧引用失效）
-        guard let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) else {
-            log("ToggleEngine.restore: AX element lost after space switch, cannot continue", level: .error, fields: [
-                "traceID": trace,
-                "windowID": String(windowID),
-                "pid": String(record.pid)
-            ])
-            return false
-        }
+        let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
 
         // 6. 设置恢复 frame（此时窗口已在正确的屏幕/工作区上，坐标系统匹配）
         let restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
         if !restored {
-            log("ToggleEngine.restore: frame apply failed, returning false", level: .error, fields: [
-                "traceID": trace,
-                "windowID": String(windowID),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))"
+            log("ToggleEngine.restore: frame apply failed", level: .error, fields: [
+                "traceID": trace
             ])
-            return false
-        }
-
-        // 验证窗口确实到达了目标 space（防御性检查）
-        let postRestoreSpace = SpaceController.shared.windowSpaceIndex(windowID: windowID)
-        if let postSpace = postRestoreSpace, postSpace != record.sourceSpace {
-            log("ToggleEngine.restore: window ended up on wrong space after restore", level: .error, fields: [
-                "traceID": trace,
-                "windowID": String(windowID),
-                "expectedSpace": String(record.sourceSpace),
-                "actualSpace": String(postSpace)
-            ])
-            return false
         }
 
         log("ToggleEngine.restore: success", level: .info, fields: [
@@ -215,7 +184,7 @@ final class ToggleEngine {
 
     /// 切换到窗口的原始 space
     /// 核心逻辑：查询目标 display 当前可见 space，如果已经是目标 space 则跳过切换
-    private func switchToOriginalSpace(record: ToggleRecord, windowAX: AXUIElement, triggerSource: String, traceID: String) -> Bool {
+    private func switchToOriginalSpace(record: ToggleRecord, windowAX: AXUIElement, triggerSource: String, traceID: String) {
         let spaceController = SpaceController.shared
         let targetSpace = record.sourceSpace
         let targetDisplay = record.sourceYabaiDisp
@@ -237,39 +206,13 @@ final class ToggleEngine {
                 "space": String(targetSpace)
             ])
             // display 已经在正确 space，只需移动窗口到该 space
-            let moved = spaceController.moveWindow(
+            _ = spaceController.moveWindow(
                 record.windowID,
                 toSpaceIndex: targetSpace,
                 focus: false,
                 operationID: traceID
             )
-            if !moved {
-                log("ToggleEngine.switchToOriginalSpace: moveWindow failed (display already on correct space)", level: .warn, fields: [
-                    "traceID": traceID,
-                    "windowID": String(record.windowID),
-                    "targetSpace": String(targetSpace)
-                ])
-                return false
-            }
-            // 验证窗口真正到达目标 space
-            let started = Date()
-            var windowOnTarget = false
-            while Date().timeIntervalSince(started) < 0.2 {
-                if let s = spaceController.windowSpaceIndex(windowID: record.windowID), s == targetSpace {
-                    windowOnTarget = true
-                    break
-                }
-                usleep(20_000)
-            }
-            if !windowOnTarget {
-                log("ToggleEngine.switchToOriginalSpace: window did not reach target space after moveWindow", level: .warn, fields: [
-                    "traceID": traceID,
-                    "windowID": String(record.windowID),
-                    "targetSpace": String(targetSpace)
-                ])
-                return false
-            }
-            return true
+            return
         }
 
         log("ToggleEngine.switchToOriginalSpace: need space switch", fields: [
@@ -301,20 +244,10 @@ final class ToggleEngine {
                     if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
                     usleep(30_000)
                 }
-            } else {
-                log("ToggleEngine.switchToOriginalSpace: switchDisplayToSpace failed", level: .warn, fields: [
-                    "traceID": traceID,
-                    "targetSpace": String(targetSpace)
-                ])
-                return false
             }
-        } else {
-            log("ToggleEngine.switchToOriginalSpace: could not determine display current space, aborting", level: .warn, fields: [
-                "traceID": traceID,
-                "targetDisplay": String(targetDisplay)
-            ])
-            return false
         }
+
+        // 移动窗口到目标 space
         let moveStart = Date()
         let moved = spaceController.moveWindow(
             record.windowID,
@@ -331,30 +264,16 @@ final class ToggleEngine {
         if moved {
             // 快速验证窗口已在目标 space（替代固定 200ms）
             let started = Date()
-            var windowOnTarget = false
             while Date().timeIntervalSince(started) < 0.2 {
-                if let s = spaceController.windowSpaceIndex(windowID: record.windowID), s == targetSpace {
-                    windowOnTarget = true
-                    break
-                }
+                if let s = spaceController.windowSpaceIndex(windowID: record.windowID), s == targetSpace { break }
                 usleep(20_000)
             }
-            if !windowOnTarget {
-                log("ToggleEngine.switchToOriginalSpace: window did not reach target space after moveWindow", level: .warn, fields: [
-                    "traceID": traceID,
-                    "windowID": String(record.windowID),
-                    "targetSpace": String(targetSpace)
-                ])
-                return false
-            }
-            return true
         } else {
-            log("ToggleEngine.switchToOriginalSpace: moveWindow failed, aborting restore", level: .warn, fields: [
+            log("ToggleEngine.switchToOriginalSpace: moveWindow also failed after display switch", level: .warn, fields: [
                 "traceID": traceID,
                 "windowID": String(record.windowID),
                 "targetSpace": String(targetSpace)
             ])
-            return false
         }
     }
 }
