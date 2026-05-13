@@ -250,13 +250,29 @@ extension WindowManager {
         }
 
         if !spaceReady {
-            log("[WindowManager] restore: window not on target space, aborting to avoid wrong-screen coordinates", level: .error, fields: [
-                "op": op,
-                "windowID": String(currentWindowID),
-                "targetSpace": String(targetSpace),
-                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))"
-            ])
-            return
+            // moveWindow 失败，但 origFrame 的坐标可能已经在目标 display 的范围内
+            // 如果直接 AX apply 这个坐标，macOS 会自动将窗口吸附到目标 display
+            let (origDisplayIndex, _) = displayContext(for: origFrame)
+            let targetDisplayIndex = targetDisplay > 0 ? targetDisplay - 1 : nil
+            if origDisplayIndex == targetDisplayIndex {
+                log("[WindowManager] restore: moveWindow failed but origFrame is on target display, proceeding with direct AX apply", level: .info, fields: [
+                    "op": op,
+                    "windowID": String(currentWindowID),
+                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+                    "targetDisplayIndex": String(describing: targetDisplayIndex),
+                    "origDisplayIndex": String(describing: origDisplayIndex)
+                ])
+            } else {
+                log("[WindowManager] restore: window not on target space and origFrame not on target display, aborting", level: .error, fields: [
+                    "op": op,
+                    "windowID": String(currentWindowID),
+                    "targetSpace": String(targetSpace),
+                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+                    "targetDisplayIndex": String(describing: targetDisplayIndex),
+                    "origDisplayIndex": String(describing: origDisplayIndex)
+                ])
+                return
+            }
         }
 
         // 9. Space 切换后重新获取 AX element（引用可能失效）
