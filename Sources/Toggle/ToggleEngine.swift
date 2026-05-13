@@ -183,9 +183,24 @@ final class ToggleEngine {
         // 6. 设置恢复 frame（此时窗口已在正确的屏幕/工作区上，坐标系统匹配）
         let restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
         if !restored {
-            log("ToggleEngine.restore: frame apply failed", level: .error, fields: [
-                "traceID": trace
+            log("ToggleEngine.restore: frame apply failed, returning false", level: .error, fields: [
+                "traceID": trace,
+                "windowID": String(windowID),
+                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))"
             ])
+            return false
+        }
+
+        // 验证窗口确实到达了目标 space（防御性检查）
+        let postRestoreSpace = SpaceController.shared.windowSpaceIndex(windowID: windowID)
+        if let postSpace = postRestoreSpace, postSpace != record.sourceSpace {
+            log("ToggleEngine.restore: window ended up on wrong space after restore", level: .error, fields: [
+                "traceID": trace,
+                "windowID": String(windowID),
+                "expectedSpace": String(record.sourceSpace),
+                "actualSpace": String(postSpace)
+            ])
+            return false
         }
 
         log("ToggleEngine.restore: success", level: .info, fields: [
