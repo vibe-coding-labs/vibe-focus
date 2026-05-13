@@ -193,8 +193,45 @@ extension SpaceController {
                     }
                 }
             }
+            // yabai + NativeSpaceBridge 都失败 — 尝试 focus 目标 space 再重试
             log(
-                "[SpaceController] moveWindow failed: yabai and NativeSpaceBridge both could not move window to target space",
+                "[SpaceController] trying focus-then-move strategy (yabai unverified branch)",
+                fields: [
+                    "op": op,
+                    "windowID": String(windowID),
+                    "targetSpace": String(spaceIndex)
+                ]
+            )
+            let focusResult = runYabai(
+                arguments: ["-m", "space", "--focus", "\(spaceIndex)"],
+                operation: "moveWindow_focusTargetSpace_unverified",
+                operationID: op
+            )
+            if let result = focusResult, result.exitCode == 0 {
+                pollUntil(timeout: 200_000, interval: 20_000) {
+                    self.windowSpaceIndex(windowID: windowID) == spaceIndex
+                }
+                let retryResult = runYabai(
+                    arguments: ["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"],
+                    operation: "moveWindow_focusRetry_unverified",
+                    operationID: op
+                )
+                if let retry = retryResult, retry.exitCode == 0 {
+                    if verifyWindowMovedToSpaceWithRetry(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
+                        log(
+                            "[SpaceController] focus-then-move succeeded (unverified branch)",
+                            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(spaceIndex)]
+                        )
+                        if focus {
+                            _ = focusWindow(windowID, operationID: op)
+                        }
+                        return true
+                    }
+                }
+            }
+
+            log(
+                "[SpaceController] moveWindow failed: all strategies including focus-then-move could not move window to target space",
                 level: .warn,
                 fields: [
                     "op": op,
