@@ -114,15 +114,21 @@ extension WindowManager {
         // 与 AX/apply 坐标系一致，不需要转换
         let yabaiRect = yabaiFrame.cgRect
         let positionDiff = hypot(yabaiRect.midX - axFrame.midX, yabaiRect.midY - axFrame.midY)
-        if positionDiff > frameTolerance * 3 {
+        let sizeDiff = max(abs(yabaiRect.width - axFrame.width), abs(yabaiRect.height - axFrame.height))
+
+        // 位置 OR 尺寸任一偏差过大，都应使用 yabai 的数据
+        // AX 对非可见 Space 窗口可能返回正确的位置但错误的尺寸（如残留主屏尺寸）
+        if positionDiff > frameTolerance * 3 || sizeDiff > frameTolerance * 3 {
             log(
-                "[WindowManager] readAccurateFrame: yabai override (Quartz, no conversion needed)",
+                "[WindowManager] readAccurateFrame: yabai override",
                 level: .info,
                 fields: [
                     "windowID": String(windowID),
                     "axFrame": "\(axFrame)",
-                    "yabaiQuartz": "\(yabaiRect)",
-                    "positionDiff": String(format: "%.0f", positionDiff)
+                    "yabaiFrame": "\(yabaiRect)",
+                    "positionDiff": String(format: "%.0f", positionDiff),
+                    "sizeDiff": String(format: "%.0f", sizeDiff),
+                    "reason": sizeDiff > frameTolerance * 3 ? "size_mismatch" : "position_mismatch"
                 ]
             )
             return yabaiRect
