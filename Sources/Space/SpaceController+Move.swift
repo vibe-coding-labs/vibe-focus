@@ -480,9 +480,20 @@ extension SpaceController {
         let op = operationID ?? "none"
         guard isEnabled else { return }
 
-        // 查询当前浮动状态 — 避免把已经浮动的窗口 toggle 回 bsp（导致 yabai 全屏平铺）
-        if let info = queryWindow(windowID: windowID), info.isFloating {
-            log("setWindowFloat: already floating, skipping toggle", fields: [
+        // 查询当前浮动状态
+        // - 已经浮动 → 跳过
+        // - 查询失败（yabai 不可用/窗口不可见）→ 跳过（安全默认：不 toggle）
+        // - 未浮动 → toggle float
+        if let info = queryWindow(windowID: windowID) {
+            if info.isFloating {
+                log("setWindowFloat: already floating, skipping toggle", fields: [
+                    "op": op,
+                    "windowID": String(windowID)
+                ])
+                return
+            }
+        } else {
+            log("setWindowFloat: queryWindow returned nil, skipping toggle (safe default)", level: .warn, fields: [
                 "op": op,
                 "windowID": String(windowID)
             ])
