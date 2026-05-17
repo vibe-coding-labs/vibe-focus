@@ -61,35 +61,49 @@ extension SpaceController {
             level: .debug,
             fields: ["windowID": String(windowID)]
         )
-        guard let result = runYabai(arguments: ["-m", "query", "--windows", "--window", "\(windowID)"]),
-              result.exitCode == 0 else {
-            log(
-                "[SpaceController] queryWindow: yabai query failed",
-                level: .debug,
-                fields: ["windowID": String(windowID)]
-            )
+        // 先尝试精确查询
+        if let result = runYabai(arguments: ["-m", "query", "--windows", "--window", "\(windowID)"]),
+           result.exitCode == 0 {
+            let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
+            if info != nil {
+                log(
+                    "[queryWindow] direct query succeeded",
+                    level: .debug,
+                    fields: [
+                        "windowID": String(windowID),
+                        "space": String(describing: info?.space),
+                        "display": String(describing: info?.display)
+                    ]
+                )
+                return info
+            }
+        }
+
+        // 精确查询失败 — 用全量窗口列表 fallback
+        log(
+            "[queryWindow] direct query failed, trying all-windows fallback",
+            level: .warn,
+            fields: ["windowID": String(windowID)]
+        )
+        guard let allResult = runYabai(arguments: ["-m", "query", "--windows"]),
+              allResult.exitCode == 0 else {
+            log("[queryWindow] all-windows fallback also failed", level: .warn, fields: ["windowID": String(windowID)])
             return nil
         }
+        let allWindows = decodeArray(YabaiWindowInfo.self, from: allResult.stdout) ?? []
+        let match = allWindows.first { $0.id == Int(windowID) }
         log(
-            "[queryWindow] yabai query succeeded, decoding JSON",
-            level: .debug,
+            "[queryWindow] fallback result",
+            level: .warn,
             fields: [
                 "windowID": String(windowID),
-                "stdoutLen": String(result.stdout.count)
+                "found": String(match != nil),
+                "space": String(describing: match?.space),
+                "display": String(describing: match?.display),
+                "totalWindows": String(allWindows.count)
             ]
         )
-        let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
-        log(
-            "[SpaceController] queryWindow result",
-            level: .debug,
-            fields: [
-                "windowID": String(windowID),
-                "space": String(describing: info?.space),
-                "display": String(describing: info?.display),
-                "app": info?.app ?? "nil"
-            ]
-        )
-        return info
+        return match
     }
 
     func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> Int? {

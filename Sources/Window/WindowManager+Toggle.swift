@@ -170,20 +170,52 @@ extension WindowManager {
     private func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String) {
         guard let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWin = focusedWindow(for: frontApp.processIdentifier),
-              // AX-safe: focused window is always visible
+              let windowID = windowHandle(for: focusedWin),
               let currentFrame = frame(of: focusedWin) else {
             log("[WindowManager] moveStuckWindowToSecondaryScreen: no focused window", level: .warn)
             return
         }
 
+        let spaceController = SpaceController.shared
+
+        // 优先使用 yabai space move（让 yabai 追踪窗口位置）
+        // 找到副屏当前可见的 space
         let screens = NSScreen.screens
-        guard screens.count > 1, let mainScreen = getMainScreen() else {
+        let mainScreen = getMainScreen()
+        let secondaryScreen = screens.first { screen in
+            mainScreen.map { !$0.frame.contains(CGPoint(x: screen.frame.midX, y: screen.frame.midY)) } ?? false
+        }
+        if let secondaryScreen,
+           let secDisplayID = displayID(for: secondaryScreen),
+           let secDisplayIndex = displayIndex(forDisplayID: secDisplayID),
+           let targetSpace = spaceController.displayVisibleSpace(displayIndex: secDisplayIndex) {
+            let moved = spaceController.moveWindow(
+                windowID,
+                toSpaceIndex: targetSpace,
+                focus: false,
+                operationID: operationID
+            )
+            log(
+                "[WindowManager] moveStuckWindowToSecondaryScreen: yabai space move",
+                fields: [
+                    "op": operationID,
+                    "windowID": String(windowID),
+                    "targetSpace": String(targetSpace),
+                    "moved": String(moved)
+                ]
+            )
+            if moved { return }
+        }
+
+        // yabai space move 失败 — 回退到 AX 位置移动
+        guard NSScreen.screens.count > 1, let mainScr = getMainScreen() else {
             log("[WindowManager] moveStuckWindowToSecondaryScreen: no secondary screen available", level: .warn)
             return
         }
 
-        let targetScreen = screens.first { screen in
-            !mainScreen.frame.contains(CGPoint(x: screen.frame.midX, y: screen.frame.midY))
+        let allScreens = NSScreen.screens
+        let targetScreen = allScreens.first { screen in
+            !mainScr.frame.contains(CGPoint(x: screen.frame.midX, y: screen.frame.midY))
         }
 
         guard let targetScreen else {
@@ -207,10 +239,10 @@ extension WindowManager {
         AXUIElementSetAttributeValue(focusedWin, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
 
         log(
-            "[WindowManager] moveStuckWindowToSecondaryScreen: moved window",
+            "[WindowManager] moveStuckWindowToSecondaryScreen: AX fallback moved",
             fields: [
                 "op": operationID,
-                "windowID": String(describing: windowHandle(for: focusedWin)),
+                "windowID": String(windowID),
                 "fromX": String(Int(currentFrame.origin.x)),
                 "fromY": String(Int(currentFrame.origin.y)),
                 "toX": String(Int(centeredFrame.origin.x)),
