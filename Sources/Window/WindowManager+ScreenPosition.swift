@@ -22,14 +22,6 @@ extension WindowManager {
             )
             return false
         }
-        guard let mainScreen = getMainScreen() else {
-            log(
-                "[WindowManager] isWindowOnMainScreen: no main screen",
-                level: .debug
-            )
-            return false
-        }
-        let mainScreenFrame = mainScreen.frame
 
         for info in windowList {
             guard let id = info[kCGWindowNumber as String] as? UInt32,
@@ -43,30 +35,20 @@ extension WindowManager {
                 )
                 return false
             }
+            // CGWindowList 返回 Quartz 坐标 — 直接用 CoordinateKit 判断
             let windowFrame = CGRect(
                 x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
                 width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
             )
-            // CGWindowList 返回 Quartz 坐标（原点左上角），NSScreen 使用 AppKit 坐标（原点左下角）
-            // 转换公式: appKitY = mainScreenHeight - quartzY - windowHeight
-            let mainScreenHeight = NSScreen.screens[0].frame.height
-            let appKitOrigin = CGPoint(
-                x: windowFrame.origin.x,
-                y: mainScreenHeight - windowFrame.origin.y - windowFrame.height
-            )
-            let appKitCenter = CGPoint(
-                x: windowFrame.midX,
-                y: appKitOrigin.y + windowFrame.height / 2
-            )
-            let onMainScreen = mainScreenFrame.contains(appKitCenter)
+            let onMainScreen = CoordinateKit.isOnMainScreen(windowFrame)
             log(
                 "[WindowManager] isWindowOnMainScreen result",
                 level: .debug,
                 fields: [
                     "windowID": String(windowID),
                     "onMainScreen": String(onMainScreen),
-                    "windowCenterX": "\(appKitCenter.x)",
-                    "windowCenterY": "\(appKitCenter.y)"
+                    "windowCenterX": "\(windowFrame.midX)",
+                    "windowCenterY": "\(windowFrame.midY)"
                 ]
             )
             return onMainScreen
@@ -80,24 +62,17 @@ extension WindowManager {
     }
 
     func displayID(for screen: NSScreen) -> UInt32? {
-        let key = NSDeviceDescriptionKey("NSScreenNumber")
-        guard let number = screen.deviceDescription[key] as? NSNumber else {
-            return nil
-        }
-        return number.uint32Value
+        return CoordinateKit.cgDisplayID(for: screen)
     }
 
     func displayIndex(forDisplayID displayID: UInt32?) -> Int? {
         guard let displayID else {
             return nil
         }
-        let key = NSDeviceDescriptionKey("NSScreenNumber")
-        return NSScreen.screens.enumerated().first(where: { _, screen in
-            guard let number = screen.deviceDescription[key] as? NSNumber else {
-                return false
-            }
-            return number.uint32Value == displayID
-        })?.offset
+        guard let screen = CoordinateKit.nsScreen(forCGDisplayID: displayID) else {
+            return nil
+        }
+        return CoordinateKit.screenArrayIndex(for: screen)
     }
 
     func displayContext(for frame: CGRect) -> (index: Int?, displayID: UInt32?) {
@@ -112,20 +87,18 @@ extension WindowManager {
             ]
         )
         let center = CGPoint(x: frame.midX, y: frame.midY)
-        let key = NSDeviceDescriptionKey("NSScreenNumber")
         for (index, screen) in NSScreen.screens.enumerated() {
-            let displayFrame = screen.frame
-            if displayFrame.contains(center) || displayFrame.intersects(frame) {
-                let displayID = (screen.deviceDescription[key] as? NSNumber)?.uint32Value
+            if screen.frame.contains(center) || screen.frame.intersects(frame) {
+                let dID = CoordinateKit.cgDisplayID(for: screen)
                 log(
                     "[WindowManager] displayContext matched screen",
                     level: .debug,
                     fields: [
                         "index": String(index),
-                        "displayID": String(describing: displayID)
+                        "displayID": String(describing: dID)
                     ]
                 )
-                return (index, displayID)
+                return (index, dID)
             }
         }
         log(
@@ -136,15 +109,7 @@ extension WindowManager {
     }
 
     func axFrame(forVisibleFrameOf screen: NSScreen) -> CGRect {
-        let visibleFrame = screen.visibleFrame
-        // 使用当前屏幕的 frame.maxY 进行坐标转换
-        let screenMaxY = screen.frame.maxY
-        return CGRect(
-            x: visibleFrame.origin.x,
-            y: screenMaxY - visibleFrame.maxY,
-            width: visibleFrame.width,
-            height: visibleFrame.height
-        )
+        return CoordinateKit.quartzVisibleFrame(of: screen)
     }
 
     func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
