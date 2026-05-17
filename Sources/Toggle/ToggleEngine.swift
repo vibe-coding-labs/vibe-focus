@@ -187,10 +187,48 @@ final class ToggleEngine {
         // 5. 切换完成后重新获取 AX element（space 切换可能使旧引用失效）
         let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
 
-        // 6. 设置恢复 frame — 即使 space 移动失败也继续 apply
-        // macOS 会在 AX 设位置时自动处理跨显示器移动
-        // 即使位置被限制到当前显示器，也比完全阻断恢复要好
-        let restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
+        // 5.5 两步恢复：先粗移到目标显示器中心，再精移到 origFrame
+        // macOS 会限制窗口在当前 space 的显示器范围内，直接设副屏坐标会被 clamp
+        // 但把窗口移到目标显示器后，macOS 会自动把它分配到正确的 space
+        var restored = false
+        let mainScreenFrame = NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? .zero
+        let postSwitchFrame = wm.frame(of: restoreAX)
+        let windowOnMain = postSwitchFrame.map { mainScreenFrame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false
+        let origOnMain = mainScreenFrame.contains(origCenter)
+
+        if windowOnMain && !origOnMain {
+            // 窗口仍在主屏但 origFrame 在副屏 — 尝试粗移
+            let targetScreen = NSScreen.screens.first { $0.frame.origin != .zero }
+            if let screen = targetScreen {
+                let nudgeFrame = CGRect(
+                    x: screen.frame.origin.x + (screen.frame.width - record.origFrame.width) / 2,
+                    y: screen.frame.origin.y + (screen.frame.height - record.origFrame.height) / 2,
+                    width: record.origFrame.width,
+                    height: record.origFrame.height
+                )
+                log(
+                    "[ToggleEngine] restore: nudging window to target display center first",
+                    level: .info,
+                    fields: [
+                        "traceID": trace,
+                        "windowID": String(windowID),
+                        "nudgeFrame": "\(nudgeFrame)",
+                        "origFrame": "\(record.origFrame)"
+                    ]
+                )
+                _ = wm.apply(frame: nudgeFrame, to: restoreAX, operationID: trace, stage: "restore_nudge")
+
+                // 粗移后重新获取 AX element，再精移到 origFrame
+                let preciseAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? restoreAX
+                restored = wm.apply(frame: record.origFrame, to: preciseAX, operationID: trace, stage: "restore_orig")
+            } else {
+                restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
+            }
+        } else {
+            // 窗口已在正确显示器或 origFrame 也在主屏 — 直接精移
+            restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
+        }
+
         if !restored {
             log("ToggleEngine.restore: frame apply failed", level: .error, fields: [
                 "traceID": trace
