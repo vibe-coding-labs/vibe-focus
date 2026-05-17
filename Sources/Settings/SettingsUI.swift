@@ -245,35 +245,23 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color(nsColor: .underPageBackgroundColor),
-                    Color.accentColor.opacity(0.08)
-                ],
-                startPoint: .top,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+        VStack(spacing: 0) {
+            headerBar
+                .padding(.top, 20)
 
-            VStack(spacing: 0) {
-                headerBar
-                    .padding(.top, 20)
+            tabBar
+                .padding(.top, 14)
 
-                tabBar
-                    .padding(.top, 14)
+            Divider()
+                .padding(.top, 10)
 
-                Divider()
-                    .padding(.top, 10)
-
-                tabContent
-                    .padding(.top, 16)
-                    .padding(.bottom, 20)
-            }
-            .padding(.horizontal, 28)
+            tabContent
+                .padding(.top, 16)
+                .padding(.bottom, 20)
         }
+        .padding(.horizontal, 28)
         .frame(minWidth: 720, idealWidth: 720, minHeight: 680, idealHeight: 680)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             let startedAt = Date()
             log("[Settings] view onAppear start")
