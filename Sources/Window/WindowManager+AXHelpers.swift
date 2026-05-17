@@ -100,9 +100,9 @@ extension WindowManager {
         guard let axFrame = frame(of: axElement) else {
             return nil
         }
-        // 主屏上的窗口 AX frame 是准确的（可见窗口），不需要 yabai 交叉校验
-        // yabai frame 是 display-relative 坐标，与 AX 的 global 坐标不同
-        // 对主屏窗口做 yabai override 会把正确的 global 坐标替换成错误的 display-relative 坐标
+        // 主屏窗口 AX frame 准确，不需要 yabai 校验
+        // yabai 使用 Cocoa 坐标（Y-up），AX 使用 Quartz 坐标（Y-down）
+        // 对主屏窗口做 yabai override 会因坐标系不同导致错误
         if isWindowOnMainScreen(windowID: windowID) {
             return axFrame
         }
@@ -110,20 +110,31 @@ extension WindowManager {
               let yabaiFrame = yabaiInfo.frame else {
             return axFrame
         }
-        let yabaiRect = yabaiFrame.cgRect
-        let positionDiff = hypot(yabaiRect.midX - axFrame.midX, yabaiRect.midY - axFrame.midY)
+        // yabai 返回 Cocoa 坐标（Y-up, origin at bottom-left of primary）
+        // AX/apply 使用 Quartz 坐标（Y-down, origin at top-left of primary）
+        // 转换: quartzY = mainScreenHeight - cocoaY - cocoaH
+        let cocoaRect = yabaiFrame.cgRect
+        let mainScreenHeight = NSScreen.screens[0].frame.height
+        let quartzRect = CGRect(
+            x: cocoaRect.origin.x,
+            y: mainScreenHeight - cocoaRect.origin.y - cocoaRect.height,
+            width: cocoaRect.width,
+            height: cocoaRect.height
+        )
+        let positionDiff = hypot(quartzRect.midX - axFrame.midX, quartzRect.midY - axFrame.midY)
         if positionDiff > frameTolerance * 3 {
             log(
-                "[WindowManager] readAccurateFrame: yabai override",
+                "[WindowManager] readAccurateFrame: yabai override (converted to Quartz)",
                 level: .info,
                 fields: [
                     "windowID": String(windowID),
                     "axFrame": "\(axFrame)",
-                    "yabaiFrame": "\(yabaiRect)",
+                    "yabaiCocoa": "\(cocoaRect)",
+                    "yabaiQuartz": "\(quartzRect)",
                     "positionDiff": String(format: "%.0f", positionDiff)
                 ]
             )
-            return yabaiRect
+            return quartzRect
         }
         return axFrame
     }
