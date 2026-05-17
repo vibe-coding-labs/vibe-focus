@@ -33,23 +33,12 @@ struct AppLogoBadge: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.accentColor.opacity(0.98), Color.accentColor.opacity(0.72)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                            .fill(Color.accentColor)
                     )
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
     }
 }
 
@@ -241,13 +230,8 @@ struct SettingsCard<Content: View>: View {
         .padding(22)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.86))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
-                )
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
-        .shadow(color: .black.opacity(0.06), radius: 18, y: 10)
     }
 }
 
