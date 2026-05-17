@@ -184,11 +184,12 @@ final class ToggleEngine {
             }
         }
 
-        // 3. 先切换到原始 space（必须在 apply frame 之前，因为坐标是相对于目标屏幕的）
-        switchToOriginalSpace(record: record, windowAX: windowAX, triggerSource: triggerSource, traceID: trace)
-
-        // 4. 将窗口设为浮动状态 — 防止 yabai 在 apply frame 后重新 tile 改变尺寸
+        // 3. 先将窗口设为浮动状态（必须在 space 切换之前！）
+        // 如果先切 space 再设浮动，yabai 会在 space 切换瞬间立刻 tile 窗口，改变尺寸
         spaceController.setWindowFloat(record.windowID, operationID: trace)
+
+        // 4. 切换到原始 space
+        switchToOriginalSpace(record: record, windowAX: windowAX, triggerSource: triggerSource, traceID: trace)
 
         // 5. 切换完成后重新获取 AX element（space 切换可能使旧引用失效）
         let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
