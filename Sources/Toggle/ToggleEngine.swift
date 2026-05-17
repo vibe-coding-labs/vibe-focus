@@ -139,7 +139,7 @@ final class ToggleEngine {
         }
         if !onAnyScreen {
             log(
-                "[ToggleEngine] restore: origFrame not on any screen, clearing corrupted record",
+                "[ToggleEngine] restore: origFrame not on any screen, skipping restore (data preserved)",
                 level: .warn,
                 fields: [
                     "traceID": trace,
@@ -148,7 +148,6 @@ final class ToggleEngine {
                     "screens": NSScreen.screens.map { "\($0.frame)" }.joined(separator: ", ")
                 ]
             )
-            clear(windowID: windowID)
             return false
         }
 

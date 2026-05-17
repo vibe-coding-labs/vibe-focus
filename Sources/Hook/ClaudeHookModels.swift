@@ -142,10 +142,13 @@ struct ToggleRecord: Equatable {
     let sessionID: String?
 
     /// toggle state 是否有效（origFrame 不在主屏上，targetFrame 在主屏上）
+    /// origFrame/targetFrame 是 Quartz 坐标，mainScreenFrame 是 Cocoa 坐标
+    /// 需要转换后再比较
     func isValid(mainScreenFrame: CGRect) -> Bool {
-        let origCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
-        let tgtCenter = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
-        return !mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
+        let mainScreenHeight = mainScreenFrame.height
+        let origCocoaCenter = CGPoint(x: origFrame.midX, y: mainScreenHeight - origFrame.midY)
+        let tgtCocoaCenter = CGPoint(x: targetFrame.midX, y: mainScreenHeight - targetFrame.midY)
+        return !mainScreenFrame.contains(origCocoaCenter) && mainScreenFrame.contains(tgtCocoaCenter)
     }
 
     /// 窗口当前位置是否在 targetFrame 附近
