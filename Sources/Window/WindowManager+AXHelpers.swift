@@ -352,7 +352,7 @@ extension WindowManager {
             let positionMatches = abs(lastFrame.origin.x - targetFrame.origin.x) <= frameTolerance &&
                                  abs(lastFrame.origin.y - targetFrame.origin.y) <= frameTolerance
             let sizeCloseEnough = abs(lastFrame.width - targetFrame.width) <= frameTolerance * 2 &&
-                                 abs(lastFrame.height - targetFrame.height) <= 100 // 允许高度有较大偏差（最小尺寸限制）
+                                 abs(lastFrame.height - targetFrame.height) <= frameTolerance * 2
 
             if positionMatches && sizeCloseEnough {
                 log(
