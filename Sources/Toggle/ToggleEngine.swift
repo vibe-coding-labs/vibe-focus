@@ -152,6 +152,7 @@ final class ToggleEngine {
         }
 
         let wm = WindowManager.shared
+        let spaceController = SpaceController.shared
 
         // 1. 找到窗口 AX element
         guard let windowAX = wm.findWindowByPID(record.pid, windowID: record.windowID) else {
@@ -185,6 +186,9 @@ final class ToggleEngine {
 
         // 3. 先切换到原始 space（必须在 apply frame 之前，因为坐标是相对于目标屏幕的）
         switchToOriginalSpace(record: record, windowAX: windowAX, triggerSource: triggerSource, traceID: trace)
+
+        // 4. 将窗口设为浮动状态 — 防止 yabai 在 apply frame 后重新 tile 改变尺寸
+        spaceController.setWindowFloat(record.windowID, operationID: trace)
 
         // 5. 切换完成后重新获取 AX element（space 切换可能使旧引用失效）
         let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
