@@ -10,8 +10,7 @@ extension WindowManager {
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "restore_start")
 
-        // === 直接从 ToggleEngine (SQLite) 读取状态，不依赖内存变量 ===
-        // 找到当前焦点窗口的 windowID，用它查 SQLite
+        // 1. 前置检查：accessibility 权限 + 焦点窗口识别
         guard hasAccessibilityPermission() else {
             log(
                 "[WindowManager] restore fallback: accessibility denied",
@@ -24,7 +23,6 @@ extension WindowManager {
             return
         }
 
-        // 1. 拿到焦点窗口的 windowID
         guard let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
               let currentWindowID = windowHandle(for: focusedWindow) else {
@@ -56,126 +54,14 @@ extension WindowManager {
             return
         }
 
-        // 2. 从 SQLite 读取 toggle record（单一事实来源）
+        // 2. 委托 ToggleEngine 执行 restore（唯一执行入口）
+        // ToggleEngine 内部处理：load record → validate → space switch → apply frame
         let engine = ToggleEngine.shared
-        guard let record = engine.load(windowID: currentWindowID) else {
-            log(
-                "[WindowManager] restore failed: no toggle record in SQLite",
-                level: .warn,
-                fields: ["op": op, "windowID": String(currentWindowID)]
-            )
-            return
-        }
-
-        // 3. 验证 record 有效性
-        guard let mainScreen = getMainScreen() else {
-            log("[WindowManager] restore failed: no main screen", level: .error, fields: ["op": op])
-            return
-        }
-        guard record.isValid(mainScreenFrame: mainScreen.frame) else {
-            log(
-                "[WindowManager] restore failed: toggle record corrupted (origFrame on main screen)",
-                level: .warn,
-                fields: ["op": op, "windowID": String(currentWindowID)]
-            )
-            AuditLogger.shared.record(
-                eventType: "restore_failed",
-                windowID: currentWindowID,
-                pid: record.pid,
-                details: ["reason": "corrupted_record", "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"]
-            )
-            engine.clear(windowID: currentWindowID)
-            return
-        }
-
-        let origFrame = record.origFrame
-        let targetSpace = record.sourceSpace
-        let targetDisplay = record.sourceYabaiDisp
-
-        log(
-            "[WindowManager] restore: loaded toggle record from SQLite",
-            level: .info,
-            fields: [
-                "op": op,
-                "windowID": String(currentWindowID),
-                "pid": String(record.pid),
-                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-                "sourceSpace": String(targetSpace),
-                "sourceYabaiDisp": String(targetDisplay)
-            ]
-        )
-
-        // 4. 找到窗口 AX element
-        guard let window = findWindowByPID(record.pid, windowID: currentWindowID) else {
-            log(
-                "[WindowManager] restore: AX query failed, falling back to System Events",
-                level: .warn,
-                fields: ["op": op, "windowID": String(currentWindowID), "pid": String(record.pid)]
-            )
-            restoreViaSystemEvents()
-            return
-        }
-
-        // 5. 验证窗口确实在 targetFrame 附近（确认这个窗口确实被 toggle 过来）
-        guard let currentFrame = self.frame(of: window) else {
-            log("[WindowManager] restore failed: cannot read current frame", level: .error, fields: ["op": op])
-            return
-        }
-        if !record.isNearTarget(currentFrame: currentFrame) {
-            log(
-                "[WindowManager] restore skipped: window not at toggle target position",
-                level: .warn,
-                fields: [
-                    "op": op,
-                    "windowID": String(currentWindowID),
-                    "currentX": String(Int(currentFrame.origin.x)),
-                    "currentY": String(Int(currentFrame.origin.y)),
-                    "targetX": String(Int(record.targetFrame.origin.x)),
-                    "targetY": String(Int(record.targetFrame.origin.y))
-                ]
-            )
-            return
-        }
-
-        // 6. 预检：窗口已在原始位置 → 跳过
-        if framesMatch(currentFrame, origFrame) {
-            log(
-                "[WindowManager] restore skipped: window already at original position",
-                fields: ["op": op]
-            )
-            engine.clear(windowID: currentWindowID)
-            CrashContextRecorder.shared.record("restore_skipped_already_at_original op=\(op)")
-            return
-        }
-
-        // 7. AX 属性检查
-        guard isAttributeSettable(window, attribute: kAXPositionAttribute),
-              isAttributeSettable(window, attribute: kAXSizeAttribute) else {
-            log(
-                "[WindowManager] restore failed: AX attributes not settable",
-                level: .error,
-                fields: ["op": op]
-            )
-            CrashContextRecorder.shared.record("restore_failed_ax_not_settable op=\(op)")
-            return
-        }
-
-        // 8. 委托 ToggleEngine 执行 restore（space switch + moveWindow + apply frame）
-        // ToggleEngine 是唯一的 restore 执行入口，避免双路径 drift 导致回归
-        log("[WindowManager] restore: delegating to ToggleEngine.restore", fields: [
-            "op": op,
-            "windowID": String(currentWindowID),
-            "triggerSource": triggerSource
-        ])
         let restoreSucceeded = engine.restore(
             windowID: currentWindowID,
             triggerSource: triggerSource,
             traceID: op
         )
-        log("[WindowManager] restore: ToggleEngine.restore returned", fields: [
-            "op": op,
-            "success": String(restoreSucceeded)
-        ])
 
         guard restoreSucceeded else {
             log("[WindowManager] restore failed: ToggleEngine.restore returned false", level: .error, fields: [
@@ -186,33 +72,13 @@ extension WindowManager {
             return
         }
 
-        // 9. ToggleEngine 执行后重新获取 AX element（space 切换可能使引用失效）
-        let restoreAX = findWindowByPID(record.pid, windowID: currentWindowID) ?? window
-
-        // 10. 验证 frame
-        guard let restoredFrame = self.frame(of: restoreAX) else {
-            log("[WindowManager] restore failed: cannot read back frame", level: .error, fields: ["op": op])
-            CrashContextRecorder.shared.record("restore_failed_readback op=\(op)")
+        // 3. 读取 record 用于日志和清理
+        guard let record = engine.load(windowID: currentWindowID) else {
+            log("[WindowManager] restore: record already cleared after successful restore", level: .debug, fields: ["op": op])
             return
         }
 
-        guard framesMatch(restoredFrame, origFrame) else {
-            log(
-                "[WindowManager] restore failed: frame mismatch",
-                level: .error,
-                fields: [
-                    "op": op,
-                    "expected": String(describing: origFrame),
-                    "actual": String(describing: restoredFrame),
-                    "preApplyFrame": String(describing: currentFrame),
-                    "targetSpace": String(targetSpace)
-                ]
-            )
-            CrashContextRecorder.shared.record("restore_failed_frame_mismatch op=\(op)")
-            return
-        }
-
-        // 12. 焦点跟随（仅 carbon_hotkey 触发）
+        // 4. 焦点跟随（仅 carbon_hotkey 触发）
         if triggerSource == "carbon_hotkey" {
             if let postApplySpace = spaceController.windowSpaceIndex(windowID: currentWindowID),
                let currentSpace = spaceController.currentSpaceIndex(),
@@ -224,17 +90,16 @@ extension WindowManager {
             }
         }
 
-        // 13. 清理 — 清除 SQLite toggle record（先记录原始数据）
+        // 5. 清理 — 清除 SQLite toggle record
         log(
             "[WindowManager] restore: clearing toggle record",
             level: .debug,
             fields: [
                 "op": op,
                 "windowID": String(currentWindowID),
-                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-                "sourceSpace": String(targetSpace),
-                "sourceYabaiDisp": String(targetDisplay),
-                "restoredFrame": String(describing: restoredFrame)
+                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))",
+                "sourceSpace": String(record.sourceSpace),
+                "sourceYabaiDisp": String(record.sourceYabaiDisp)
             ]
         )
         engine.clear(windowID: currentWindowID)
@@ -254,9 +119,9 @@ extension WindowManager {
             pid: record.pid,
             sessionID: record.sessionID,
             details: [
-                "sourceSpace": String(targetSpace),
-                "sourceYabaiDisp": String(targetDisplay),
-                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y))",
+                "sourceSpace": String(record.sourceSpace),
+                "sourceYabaiDisp": String(record.sourceYabaiDisp),
+                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
                 "durationMs": String(finalDurationMs)
             ]
         )
