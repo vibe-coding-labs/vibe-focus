@@ -92,6 +92,7 @@ struct SettingsView: View {
     @StateObject var soundManager = SoundManager.shared
     @State var isPreviewPlaying = false
     @State var showFileImporter = false
+    @State var selectedTab: SettingsTab = .general
 
     var appVersionDisplay: String {
         let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
@@ -101,16 +102,6 @@ struct SettingsView: View {
 
     var bundleIdentifier: String {
         Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
-    }
-
-    var loginItemSidebarValue: String {
-        if loginItemManager.isEnabled {
-            return "已启用"
-        }
-        if loginItemManager.requiresApproval {
-            return "待确认"
-        }
-        return "未启用"
     }
 
     var currentAppPath: String {
@@ -127,10 +118,6 @@ struct SettingsView: View {
 
     var resetAccessCommand: String {
         "tccutil reset Accessibility \(bundleIdentifier)"
-    }
-
-    var spaceEffectiveEnabled: Bool {
-        spaceIntegrationEnabled && spaceController.availability == .available
     }
 
     var spaceStatusTitle: String {
@@ -170,23 +157,91 @@ struct SettingsView: View {
         }
     }
 
-    var spaceSidebarValue: String {
-        if spaceEffectiveEnabled {
-            return "已启用"
-        }
-        if spaceIntegrationEnabled {
-            switch spaceController.availability {
-            case .notInstalled:
-                return "未安装"
-            case .unavailable:
-                return "不可用"
-            case .available:
-                return "已关闭"
-            case .unknown:
-                return "未检测"
+    // MARK: - Tab Navigation
+
+    private var headerBar: some View {
+        HStack(spacing: 16) {
+            AppLogoBadge(size: 52)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("VibeFocus")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text(appVersionDisplay)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Text("菜单栏里的窗口流转工具")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
             }
+
+            Spacer()
+
+            SettingsStatusPill(
+                title: hotKeyManager.shortcutStatusIsError ? "需要处理" : "工作正常",
+                tint: hotKeyManager.shortcutStatusIsError ? .red : .green
+            )
         }
-        return "已关闭"
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(SettingsTab.allCases, id: \.self) { tab in
+                SettingsTabButton(
+                    tab: tab,
+                    isSelected: selectedTab == tab
+                ) {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selectedTab = tab
+                    }
+                }
+            }
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selectedTab {
+        case .general:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    hotKeySection
+                    permissionsSection
+                    loginItemSection
+                    shutdownSnapshotSection
+                }
+            }
+            .scrollIndicators(.visible)
+
+        case .workspace:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    workspaceSection
+                    overlaySection
+                }
+            }
+            .scrollIndicators(.visible)
+
+        case .claudeIntegration:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    claudeHookSection
+                    LANSettingsView()
+                }
+            }
+            .scrollIndicators(.visible)
+
+        case .appearance:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    titleEditorSection
+                    soundSection
+                }
+            }
+            .scrollIndicators(.visible)
+        }
     }
 
     var body: some View {
@@ -202,89 +257,23 @@ struct SettingsView: View {
             )
             .ignoresSafeArea()
 
-            GeometryReader { proxy in
-                let inset: CGFloat = 28
-                let contentWidth = max(0, proxy.size.width - inset * 2)
-                let contentHeight = max(0, proxy.size.height - inset * 2)
+            VStack(spacing: 0) {
+                headerBar
+                    .padding(.top, 20)
 
-                HStack(alignment: .top, spacing: 22) {
-                    // MARK: Sidebar
-                    VStack(alignment: .leading, spacing: 22) {
-                    AppLogoBadge()
+                tabBar
+                    .padding(.top, 14)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("VibeFocus")
-                            .font(.system(size: 30, weight: .semibold))
-                        Text("菜单栏里的窗口流转工具")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        Text("把全局快捷键、状态反馈和权限引导，收进一个更接近 macOS 原生偏好设置体验的面板里。")
-                            .font(.system(size: 13))
-                            .lineSpacing(3)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                Divider()
+                    .padding(.top, 10)
 
-                    SettingsStatusPill(
-                        title: hotKeyManager.shortcutStatusIsError ? "需要处理" : "工作正常",
-                        tint: hotKeyManager.shortcutStatusIsError ? .red : .green
-                    )
-
-                    VStack(alignment: .leading, spacing: 14) {
-                        SidebarInfoCard(title: "菜单栏标题", value: "VibeFocus")
-                        SidebarInfoCard(title: "版本", value: appVersionDisplay)
-                        SidebarInfoCard(title: "当前快捷键", value: hotKeyManager.currentHotKey.displayString)
-                        SidebarInfoCard(title: "辅助功能权限", value: hotKeyManager.accessibilityGranted ? "已授权" : "未授权")
-                        SidebarInfoCard(title: "开机启动", value: loginItemSidebarValue)
-                        SidebarInfoCard(title: "跨工作区", value: spaceSidebarValue)
-                        SidebarInfoCard(title: "Claude Hook", value: hookServer.isRunning ? "运行中" : (hookEnabled ? "已关闭" : "未启用"))
-                        SidebarInfoCard(title: "提示音", value: soundManager.preferences.soundType == .none ? "未启用" : soundManager.preferences.soundType.displayName)
-                    }
-
-                    if !hotKeyManager.accessibilityGranted {
-                        Button("打开辅助功能设置") {
-                            hotKeyManager.openAccessibilitySettings()
-                        }
-                        .buttonStyle(.link)
-                    }
-                }
-                .padding(24)
-                .frame(width: 236, height: contentHeight, alignment: .top)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.68))
-                        .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
-                            )
-                    )
-                    .shadow(color: .black.opacity(0.05), radius: 20, y: 12)
-
-                    // MARK: Content
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                    hotKeySection
-                    permissionsSection
-                    loginItemSection
-                    shutdownSnapshotSection
-                    workspaceSection
-                    claudeHookSection
-                    LANSettingsView()
-                    titleEditorSection
-                    overlaySection
-                    soundSection
-                        }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.vertical, 2)
-                    }
-                    .scrollIndicators(.visible)
-                .frame(maxWidth: .infinity, maxHeight: contentHeight, alignment: .topLeading)
-                }
-                .frame(width: contentWidth, height: contentHeight, alignment: .top)
-                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                tabContent
+                    .padding(.top, 16)
+                    .padding(.bottom, 20)
             }
+            .padding(.horizontal, 28)
         }
-        .frame(minWidth: 556, idealWidth: 556, minHeight: 900, idealHeight: 900)
+        .frame(minWidth: 720, idealWidth: 720, minHeight: 680, idealHeight: 680)
         .onAppear {
             let startedAt = Date()
             log("[Settings] view onAppear start")
