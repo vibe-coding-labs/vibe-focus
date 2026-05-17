@@ -110,31 +110,22 @@ extension WindowManager {
               let yabaiFrame = yabaiInfo.frame else {
             return axFrame
         }
-        // yabai 返回 Cocoa 坐标（Y-up, origin at bottom-left of primary）
-        // AX/apply 使用 Quartz 坐标（Y-down, origin at top-left of primary）
-        // 转换: quartzY = mainScreenHeight - cocoaY - cocoaH
-        let cocoaRect = yabaiFrame.cgRect
-        let mainScreenHeight = NSScreen.screens[0].frame.height
-        let quartzRect = CGRect(
-            x: cocoaRect.origin.x,
-            y: mainScreenHeight - cocoaRect.origin.y - cocoaRect.height,
-            width: cocoaRect.width,
-            height: cocoaRect.height
-        )
-        let positionDiff = hypot(quartzRect.midX - axFrame.midX, quartzRect.midY - axFrame.midY)
+        // yabai 返回 Quartz 坐标（Y-down, origin at top-left of primary）
+        // 与 AX/apply 坐标系一致，不需要转换
+        let yabaiRect = yabaiFrame.cgRect
+        let positionDiff = hypot(yabaiRect.midX - axFrame.midX, yabaiRect.midY - axFrame.midY)
         if positionDiff > frameTolerance * 3 {
             log(
-                "[WindowManager] readAccurateFrame: yabai override (converted to Quartz)",
+                "[WindowManager] readAccurateFrame: yabai override (Quartz, no conversion needed)",
                 level: .info,
                 fields: [
                     "windowID": String(windowID),
                     "axFrame": "\(axFrame)",
-                    "yabaiCocoa": "\(cocoaRect)",
-                    "yabaiQuartz": "\(quartzRect)",
+                    "yabaiQuartz": "\(yabaiRect)",
                     "positionDiff": String(format: "%.0f", positionDiff)
                 ]
             )
-            return quartzRect
+            return yabaiRect
         }
         return axFrame
     }

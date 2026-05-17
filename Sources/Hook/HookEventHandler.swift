@@ -410,13 +410,15 @@ final class HookEventHandler {
                     )
                 }
             } else {
-                engine.clear(windowID: identity.windowID)
                 log(
-                    "[HookEventHandler] UserPromptSubmit toggle record corrupted, cleared",
+                    "[HookEventHandler] UserPromptSubmit toggle record failed validation, skipping restore (data preserved)",
                     level: .warn,
                     fields: [
                         "traceID": traceID,
-                        "windowID": String(identity.windowID)
+                        "windowID": String(identity.windowID),
+                        "origFrame": "\(record.origFrame)",
+                        "targetFrame": "\(record.targetFrame)",
+                        "mainScreenFrame": "\(mainScreen.frame)"
                     ]
                 )
             }
