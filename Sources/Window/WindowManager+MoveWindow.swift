@@ -123,7 +123,7 @@ extension WindowManager {
             return false
         }
 
-        guard let origFrame = readAccurateFrame(windowID: identity.windowID, axElement: windowAX) else {
+        guard let origFrame = frame(of: windowAX) else {
             log(
                 "moveWindowToMainScreen failed: cannot read current frame",
                 level: .error,
