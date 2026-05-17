@@ -163,31 +163,27 @@ final class ToggleEngine {
             return false
         }
 
-        // 2. 获取当前 frame（验证用）
-        guard let currentFrame = wm.frame(of: windowAX) else {
-            log("ToggleEngine.restore: cannot get current frame", level: .warn, fields: [
-                "traceID": trace
-            ])
-            return false
+        // 2. 记录当前 frame（日志用，不阻止 restore）
+        // 之前这里会检查 isNearTarget 并在偏移>200px 时拒绝 restore
+        // 但窗口在主屏停留期间 yabai/macOS/用户都可能调整位置，这是正常行为
+        // 只要窗口还在主屏幕上（由 HookEventHandler 的 isOnMain 检查），就应该恢复
+        let currentFrame = wm.frame(of: windowAX)
+        if let cf = currentFrame {
+            let xOffset = abs(cf.origin.x - record.targetFrame.origin.x)
+            let yOffset = abs(cf.origin.y - record.targetFrame.origin.y)
+            if xOffset > 200 || yOffset > 200 {
+                log("ToggleEngine.restore: window drifted from target, proceeding anyway", level: .info, fields: [
+                    "traceID": trace,
+                    "windowID": String(windowID),
+                    "currentFrame": "\(Int(cf.origin.x)),\(Int(cf.origin.y)) \(Int(cf.size.width))x\(Int(cf.size.height))",
+                    "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.size.width))x\(Int(record.targetFrame.size.height))",
+                    "xOffset": String(Int(xOffset)),
+                    "yOffset": String(Int(yOffset))
+                ])
+            }
         }
 
-        // 3. 验证窗口确实在 target 位置附近
-        if !record.isNearTarget(currentFrame: currentFrame) {
-            let xOffset = abs(currentFrame.origin.x - record.targetFrame.origin.x)
-            let yOffset = abs(currentFrame.origin.y - record.targetFrame.origin.y)
-            log("ToggleEngine.restore: window moved from target, skipping restore", level: .warn, fields: [
-                "traceID": trace,
-                "windowID": String(windowID),
-                "currentFrame": "\(Int(currentFrame.origin.x)),\(Int(currentFrame.origin.y)) \(Int(currentFrame.size.width))x\(Int(currentFrame.size.height))",
-                "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.size.width))x\(Int(record.targetFrame.size.height))",
-                "xOffset": String(Int(xOffset)),
-                "yOffset": String(Int(yOffset)),
-                "tolerance": "200"
-            ])
-            return false
-        }
-
-        // 4. 先切换到原始 space（必须在 apply frame 之前，因为坐标是相对于目标屏幕的）
+        // 3. 先切换到原始 space（必须在 apply frame 之前，因为坐标是相对于目标屏幕的）
         switchToOriginalSpace(record: record, windowAX: windowAX, triggerSource: triggerSource, traceID: trace)
 
         // 5. 切换完成后重新获取 AX element（space 切换可能使旧引用失效）
