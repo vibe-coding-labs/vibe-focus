@@ -479,6 +479,16 @@ extension SpaceController {
     func setWindowFloat(_ windowID: UInt32, operationID: String? = nil) {
         let op = operationID ?? "none"
         guard isEnabled else { return }
+
+        // 查询当前浮动状态 — 避免把已经浮动的窗口 toggle 回 bsp（导致 yabai 全屏平铺）
+        if let info = queryWindow(windowID: windowID), info.isFloating {
+            log("setWindowFloat: already floating, skipping toggle", fields: [
+                "op": op,
+                "windowID": String(windowID)
+            ])
+            return
+        }
+
         _ = runYabai(
             arguments: ["-m", "window", "\(windowID)", "--toggle", "float"],
             operation: "setWindowFloat",

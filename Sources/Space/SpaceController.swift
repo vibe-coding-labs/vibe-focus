@@ -413,6 +413,9 @@ struct YabaiWindowInfo: Decodable {
     let space: Int?
     let display: Int?
     let frame: Frame?
+    let floating: Int?
+
+    var isFloating: Bool { floating == 1 }
 
     struct Frame: Decodable {
         let x: Double
