@@ -124,11 +124,18 @@ final class ToggleEngine {
         ])
 
         // 校验 origFrame 坐标是否在已知屏幕范围内
-        // 修复前的旧 record 保存了 yabai Cocoa 坐标（如 Y=-1415），
-        // 不在任何屏幕范围内，需要清除避免错误恢复
+        // origFrame 是 Quartz 坐标，NSScreen.frame 是 Cocoa 坐标，需要转换后再比较
         let origCenter = CGPoint(x: record.origFrame.midX, y: record.origFrame.midY)
+        let mainScreenHeight = NSScreen.screens[0].frame.height
         let onAnyScreen = NSScreen.screens.contains { screen in
-            screen.frame.insetBy(dx: -200, dy: -200).contains(origCenter)
+            let sf = screen.frame
+            let quartzFrame = CGRect(
+                x: sf.origin.x,
+                y: mainScreenHeight - sf.origin.y - sf.height,
+                width: sf.width,
+                height: sf.height
+            )
+            return quartzFrame.insetBy(dx: -200, dy: -200).contains(origCenter)
         }
         if !onAnyScreen {
             log(
@@ -187,46 +194,66 @@ final class ToggleEngine {
         // 5. 切换完成后重新获取 AX element（space 切换可能使旧引用失效）
         let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
 
-        // 5.5 两步恢复：先粗移到目标显示器中心，再精移到 origFrame
-        // macOS 会限制窗口在当前 space 的显示器范围内，直接设副屏坐标会被 clamp
-        // 但把窗口移到目标显示器后，macOS 会自动把它分配到正确的 space
+        // 5.5 恢复窗口到原始位置
+        // 策略：先尝试 AX 直接 apply origFrame（macOS 会自动处理跨显示器移动）
+        // 仅在 AX 坐标被钳制时才回退到 CGEvent 拖拽
         var restored = false
-        let mainScreenFrame = NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? .zero
-        let postSwitchFrame = wm.frame(of: restoreAX)
-        let windowOnMain = postSwitchFrame.map { mainScreenFrame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false
-        let origOnMain = mainScreenFrame.contains(origCenter)
 
-        if windowOnMain && !origOnMain {
-            // 窗口仍在主屏但 origFrame 在副屏 — 尝试粗移
-            let targetScreen = NSScreen.screens.first { $0.frame.origin != .zero }
-            if let screen = targetScreen {
-                let nudgeFrame = CGRect(
-                    x: screen.frame.origin.x + (screen.frame.width - record.origFrame.width) / 2,
-                    y: screen.frame.origin.y + (screen.frame.height - record.origFrame.height) / 2,
-                    width: record.origFrame.width,
-                    height: record.origFrame.height
-                )
-                log(
-                    "[ToggleEngine] restore: nudging window to target display center first",
-                    level: .info,
-                    fields: [
-                        "traceID": trace,
-                        "windowID": String(windowID),
-                        "nudgeFrame": "\(nudgeFrame)",
-                        "origFrame": "\(record.origFrame)"
-                    ]
-                )
-                _ = wm.apply(frame: nudgeFrame, to: restoreAX, operationID: trace, stage: "restore_nudge")
+        restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
 
-                // 粗移后重新获取 AX element，再精移到 origFrame
-                let preciseAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? restoreAX
-                restored = wm.apply(frame: record.origFrame, to: preciseAX, operationID: trace, stage: "restore_orig")
-            } else {
-                restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
-            }
+        if restored {
+            log("[ToggleEngine] restore: direct AX apply succeeded", level: .info, fields: [
+                "traceID": trace,
+                "windowID": String(windowID),
+                "origFrame": "\(record.origFrame)"
+            ])
         } else {
-            // 窗口已在正确显示器或 origFrame 也在主屏 — 直接精移
-            restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
+            // AX apply 失败（坐标被钳制） — 回退到 CGEvent 拖拽
+            let mainScreenFrame = NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? .zero
+            let currentFrame = wm.frame(of: restoreAX)
+            let windowOnMain = currentFrame.map { mainScreenFrame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false
+
+            if windowOnMain && !mainScreenFrame.contains(origCenter) {
+                let targetScreen = NSScreen.screens.first { $0.frame.origin != .zero }
+                if let screen = targetScreen {
+                    log(
+                        "[ToggleEngine] restore: AX apply clamped, trying CGEvent drag fallback",
+                        level: .info,
+                        fields: [
+                            "traceID": trace,
+                            "windowID": String(windowID),
+                            "currentFrame": currentFrame.map { "\($0)" } ?? "nil",
+                            "targetScreen": "\(screen.frame)",
+                            "origFrame": "\(record.origFrame)"
+                        ]
+                    )
+
+                    if let app = NSRunningApplication(processIdentifier: pid_t(record.pid)) {
+                        app.activate(options: .activateIgnoringOtherApps)
+                        usleep(50_000)
+                    }
+
+                    let dragFrame = currentFrame ?? record.origFrame
+                    let dragSucceeded = NativeSpaceBridge.dragWindowToDisplay(
+                        windowFrame: dragFrame,
+                        targetScreen: screen,
+                        operationID: trace
+                    )
+
+                    if dragSucceeded {
+                        usleep(150_000)
+                        let postDragAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? restoreAX
+                        restored = wm.apply(frame: record.origFrame, to: postDragAX, operationID: trace, stage: "restore_orig_after_drag")
+                    }
+                }
+            }
+
+            if !restored {
+                log("ToggleEngine.restore: all restore strategies failed", level: .error, fields: [
+                    "traceID": trace,
+                    "windowID": String(windowID)
+                ])
+            }
         }
 
         if !restored {
