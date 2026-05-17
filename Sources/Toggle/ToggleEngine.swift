@@ -187,27 +187,9 @@ final class ToggleEngine {
         // 5. 切换完成后重新获取 AX element（space 切换可能使旧引用失效）
         let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
 
-        // 5.5 检查窗口是否实际移到了目标屏幕
-        // 如果 space 移动失败，窗口仍在主屏，apply 副屏坐标会被 macOS 限制到主屏底部
-        if let postMoveFrame = wm.frame(of: restoreAX) {
-            let mainScreenFrame = NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? .zero
-            let windowCenter = CGPoint(x: postMoveFrame.midX, y: postMoveFrame.midY)
-            if mainScreenFrame.contains(windowCenter) && !mainScreenFrame.contains(origCenter) {
-                log(
-                    "[ToggleEngine] restore: window stuck on main screen after space move failure, skipping frame apply",
-                    level: .warn,
-                    fields: [
-                        "traceID": trace,
-                        "windowID": String(windowID),
-                        "postMoveFrame": "\(postMoveFrame)",
-                        "origFrame": "\(record.origFrame)"
-                    ]
-                )
-                return false
-            }
-        }
-
-        // 6. 设置恢复 frame（此时窗口已在正确的屏幕/工作区上，坐标系统匹配）
+        // 6. 设置恢复 frame — 即使 space 移动失败也继续 apply
+        // macOS 会在 AX 设位置时自动处理跨显示器移动
+        // 即使位置被限制到当前显示器，也比完全阻断恢复要好
         let restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
         if !restored {
             log("ToggleEngine.restore: frame apply failed", level: .error, fields: [
