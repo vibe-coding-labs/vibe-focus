@@ -476,6 +476,16 @@ extension SpaceController {
         return verified
     }
 
+    func setWindowFloat(_ windowID: UInt32, operationID: String? = nil) {
+        let op = operationID ?? "none"
+        guard isEnabled else { return }
+        _ = runYabai(
+            arguments: ["-m", "window", "\(windowID)", "--toggle", "float"],
+            operation: "setWindowFloat",
+            operationID: op
+        )
+    }
+
     func focusWindow(_ windowID: UInt32, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
         refreshAvailabilityIfNeeded()
