@@ -123,6 +123,16 @@ final class ToggleEngine {
             "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))"
         ])
 
+        log("[ToggleEngine] restore: coordinate context", fields: [
+            "traceID": trace,
+            "windowID": String(windowID),
+            "origFrame": QuartzRect(record.origFrame).description,
+            "sourceYabaiDisp": String(record.sourceYabaiDisp),
+            "sourceSpace": String(record.sourceSpace),
+            "mainScreenFrame": CoordinateKit.mainScreenQuartzFrame.map { "\($0)" } ?? "nil",
+            "currentScreens": NSScreen.screens.map { "\($0.frame)" }.joined(separator: " | ")
+        ])
+
         // 校验 origFrame 坐标是否在已知屏幕范围内
         // origFrame 是 Quartz 坐标，NSScreen.frame 是 Cocoa 坐标，需要转换后再比较
         let origCenter = CGPoint(x: record.origFrame.midX, y: record.origFrame.midY)
@@ -283,6 +293,15 @@ final class ToggleEngine {
             "restoredTo": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
             "success": String(restored)
         ])
+
+        if let finalFrame = wm.frame(of: restoreAX) {
+            log("[ToggleEngine] restore: final frame", fields: [
+                "traceID": trace,
+                "windowID": String(windowID),
+                "finalFrame": QuartzRect(finalFrame).description,
+                "onMainScreen": String(CoordinateKit.isOnMainScreen(finalFrame))
+            ])
+        }
         return restored
     }
 
