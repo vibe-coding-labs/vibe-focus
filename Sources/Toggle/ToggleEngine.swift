@@ -202,12 +202,33 @@ final class ToggleEngine {
         restored = wm.apply(frame: record.origFrame, to: restoreAX, operationID: trace, stage: "restore_orig")
 
         if restored {
-            log("[ToggleEngine] restore: direct AX apply succeeded", level: .info, fields: [
-                "traceID": trace,
-                "windowID": String(windowID),
-                "origFrame": "\(record.origFrame)"
-            ])
-        } else {
+            // 验证窗口确实在目标屏幕上（AX apply 可能因坐标钳制返回 true 但窗口在错误屏幕）
+            if let postFrame = wm.frame(of: restoreAX) {
+                let onExpectedScreen: Bool
+                if record.sourceYabaiDisp == 1 {
+                    onExpectedScreen = CoordinateKit.isOnMainScreen(postFrame)
+                } else {
+                    onExpectedScreen = !CoordinateKit.isOnMainScreen(postFrame)
+                }
+                if !onExpectedScreen {
+                    log("[ToggleEngine] restore: AX apply succeeded but window on WRONG screen, marking as failed", level: .warn, fields: [
+                        "traceID": trace,
+                        "windowID": String(windowID),
+                        "postFrame": "\(postFrame)",
+                        "expectedDisplay": String(record.sourceYabaiDisp)
+                    ])
+                    restored = false
+                } else {
+                    log("[ToggleEngine] restore: direct AX apply succeeded with correct screen", fields: [
+                        "traceID": trace,
+                        "windowID": String(windowID),
+                        "origFrame": "\(record.origFrame)"
+                    ])
+                }
+            }
+        }
+
+        if !restored {
             // AX apply 失败（坐标被钳制） — 回退到 CGEvent 拖拽
             let mainScreenFrame = NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? .zero
             let currentFrame = wm.frame(of: restoreAX)
@@ -254,12 +275,6 @@ final class ToggleEngine {
                     "windowID": String(windowID)
                 ])
             }
-        }
-
-        if !restored {
-            log("ToggleEngine.restore: frame apply failed", level: .error, fields: [
-                "traceID": trace
-            ])
         }
 
         log("ToggleEngine.restore: finished", level: .info, fields: [
