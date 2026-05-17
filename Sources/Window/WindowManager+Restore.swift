@@ -160,60 +160,36 @@ extension WindowManager {
             return
         }
 
-        // 8. Space 预切换（在 apply frame 之前，因为坐标相对于 Display）
-        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
-        log("[WindowManager] restore: pre-apply space check", fields: [
+        // 8. 委托 ToggleEngine 执行 restore（space switch + moveWindow + apply frame）
+        // ToggleEngine 是唯一的 restore 执行入口，避免双路径 drift 导致回归
+        log("[WindowManager] restore: delegating to ToggleEngine.restore", fields: [
             "op": op,
-            "targetSpace": String(targetSpace),
-            "targetDisplay": String(targetDisplay),
-            "displayCurrentSpace": String(describing: displayCurrentSpace)
+            "windowID": String(currentWindowID),
+            "triggerSource": triggerSource
+        ])
+        let restoreSucceeded = engine.restore(
+            windowID: currentWindowID,
+            triggerSource: triggerSource,
+            traceID: op
+        )
+        log("[WindowManager] restore: ToggleEngine.restore returned", fields: [
+            "op": op,
+            "success": String(restoreSucceeded)
         ])
 
-        if let current = displayCurrentSpace, current != targetSpace {
-            log("[WindowManager] restore: switching display from space \(current) to \(targetSpace)", level: .info, fields: [
-                "op": op, "targetDisplay": String(targetDisplay)
-            ])
-            let switched = spaceController.switchDisplayToSpace(targetSpace: targetSpace, operationID: op)
-            if switched {
-                // 轮询等待 display 到达目标 space（替代固定 400ms sleep）
-                let td = targetDisplay
-                let started = Date()
-                while Date().timeIntervalSince(started) < 0.4 {
-                    if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
-                    usleep(30_000)
-                }
-            }
-            log("[WindowManager] restore: space switch result", fields: [
-                "op": op, "switched": String(switched)
-            ])
-        } else {
-            log("[WindowManager] restore: display already on target space, no switch needed", fields: [
-                "op": op
-            ])
-        }
-
-        // 9. Space 切换后重新获取 AX element（引用可能失效）
-        let restoreAX = findWindowByPID(record.pid, windowID: currentWindowID) ?? window
-
-        // 10. Apply frame
-        log("[WindowManager] restore: applying frame", fields: [
-            "op": op,
-            "currentFrame": String(describing: currentFrame),
-            "targetOrigFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-            "targetSpace": String(targetSpace),
-            "targetDisplay": String(targetDisplay)
-        ])
-        guard apply(frame: origFrame, to: restoreAX, operationID: op, stage: "restore_apply_frame") else {
-            log("[WindowManager] restore failed: apply frame failed", level: .error, fields: [
+        guard restoreSucceeded else {
+            log("[WindowManager] restore failed: ToggleEngine.restore returned false", level: .error, fields: [
                 "op": op,
-                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y))",
-                "currentFrame": String(describing: currentFrame)
+                "windowID": String(currentWindowID)
             ])
-            CrashContextRecorder.shared.record("restore_failed_apply_frame op=\(op)")
+            CrashContextRecorder.shared.record("restore_failed_engine op=\(op)")
             return
         }
 
-        // 11. 验证 frame
+        // 9. ToggleEngine 执行后重新获取 AX element（space 切换可能使引用失效）
+        let restoreAX = findWindowByPID(record.pid, windowID: currentWindowID) ?? window
+
+        // 10. 验证 frame
         guard let restoredFrame = self.frame(of: restoreAX) else {
             log("[WindowManager] restore failed: cannot read back frame", level: .error, fields: ["op": op])
             CrashContextRecorder.shared.record("restore_failed_readback op=\(op)")

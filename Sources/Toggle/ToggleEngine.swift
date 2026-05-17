@@ -172,12 +172,13 @@ final class ToggleEngine {
             ])
         }
 
-        log("ToggleEngine.restore: success", level: .info, fields: [
+        log("ToggleEngine.restore: finished", level: .info, fields: [
             "traceID": trace,
             "windowID": String(windowID),
-            "restoredTo": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
+            "restoredTo": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
+            "success": String(restored)
         ])
-        return true
+        return restored
     }
 
     // MARK: - Space Switching

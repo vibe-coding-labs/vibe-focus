@@ -46,6 +46,19 @@ extension WindowManager {
             return nil
         }
 
+        let terminalAppName = NSRunningApplication(processIdentifier: terminalPID)?.localizedName
+            ?? (runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(terminalPID)])?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown")
+
+        log(
+            "[WindowManager] findWindowByTerminalContext: resolved terminal app",
+            level: .debug,
+            fields: [
+                "terminalPID": String(terminalPID),
+                "terminalApp": terminalAppName
+            ]
+        )
+
         // 步骤 2: 通过终端 App PID 查 CGWindowList 获取该 PID 下的所有窗口
         let windows = findWindowsForPID(terminalPID)
         if windows.isEmpty {
@@ -108,6 +121,29 @@ extension WindowManager {
             return match
         }
 
+        log(
+            "[WindowManager] findWindowByTerminalContext: TTY process match failed, trying iTerm2 session ID",
+            level: .debug,
+            fields: ["tty": tty, "terminalApp": terminalAppName, "hasItermSessionID": String(ctx.itermSessionID?.isEmpty == false)]
+        )
+
+        // iTerm2: 用 ITERM_SESSION_ID 通过 AppleScript 精确匹配
+        if let itermSID = ctx.itermSessionID, !itermSID.isEmpty {
+            let iTerm2Start = Date()
+            if let match = matchiTerm2WindowBySessionID(itermSessionID: itermSID, windows: windows) {
+                log(
+                    "[WindowManager] findWindowByTerminalContext: matched iTerm2 window by session ID",
+                    fields: ["itermSessionID": itermSID, "windowID": String(match.windowID), "durationMs": String(elapsedMilliseconds(since: iTerm2Start))]
+                )
+                return match
+            }
+            log(
+                "[WindowManager] findWindowByTerminalContext: iTerm2 AppleScript match failed",
+                level: .debug,
+                fields: ["itermSessionID": itermSID, "durationMs": String(elapsedMilliseconds(since: iTerm2Start))]
+            )
+        }
+
         // Fallback: Terminal.app 的 CGWindowList 无窗口标题，用 AppleScript 按 TTY 查窗口 ID
         if let match = matchTerminalWindowByAppleScript(tty: tty, terminalPID: terminalPID, windows: windows) {
             log(
@@ -120,7 +156,13 @@ extension WindowManager {
         log(
             "[WindowManager] findWindowByTerminalContext: all matching methods failed among \(windows.count) windows",
             level: .warn,
-            fields: ["tty": tty, "terminalPID": String(terminalPID)]
+            fields: [
+                "tty": tty,
+                "terminalPID": String(terminalPID),
+                "terminalApp": terminalAppName,
+                "itermSessionID": ctx.itermSessionID ?? "nil",
+                "strategiesAttempted": "TTY_process,iTerm2_applescript,Terminal_applescript,lsof_tty_ordering"
+            ]
         )
         return nil
     }
@@ -160,6 +202,70 @@ extension WindowManager {
             ))
         }
         return results
+    }
+
+    /// 通过 ITERM_SESSION_ID 用 iTerm2 AppleScript API 查找窗口
+    /// ITERM_SESSION_ID 格式: w{N}t{N}p{N}:{UUID}
+    /// 遍历 iTerm2 所有窗口的 session，匹配 UUID 部分找到目标窗口
+    private func matchiTerm2WindowBySessionID(itermSessionID: String, windows: [WindowIdentity]) -> WindowIdentity? {
+        let uuidPart: String
+        if let colonRange = itermSessionID.range(of: ":") {
+            uuidPart = String(itermSessionID[colonRange.upperBound...])
+        } else {
+            uuidPart = itermSessionID
+        }
+
+        guard !uuidPart.isEmpty else { return nil }
+
+        let escapedUUID = uuidPart
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+
+        let script = """
+        osascript -e 'tell application "iTerm2"
+            set targetUUID to "\(escapedUUID)"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with s in sessions of t
+                        set sid to (id of s) as text
+                        if sid contains targetUUID then
+                            return (id of w) as text
+                        end if
+                    end repeat
+                end repeat
+            end repeat
+            return ""
+        end tell'
+        """
+        let result = runShellCommand("/bin/bash", args: ["-c", script])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if !result.isEmpty, let windowID = UInt32(result) {
+            log(
+                "[WindowManager] matchiTerm2WindowBySessionID: found window by iTerm2 AppleScript",
+                fields: ["itermSessionID": itermSessionID, "windowID": String(windowID)]
+            )
+            if let match = windows.first(where: { $0.windowID == windowID }) {
+                return match
+            }
+            let appName = "iTerm2"
+            let bundleID = "com.googlecode.iterm2"
+            return WindowIdentity(
+                windowID: windowID,
+                pid: windows.first?.pid ?? 0,
+                bundleIdentifier: bundleID,
+                appName: appName,
+                windowNumber: nil,
+                title: nil,
+                capturedAt: Date()
+            )
+        }
+
+        log(
+            "[WindowManager] matchiTerm2WindowBySessionID: AppleScript returned no match",
+            level: .debug,
+            fields: ["itermSessionID": itermSessionID, "result": result.isEmpty ? "(empty)" : result]
+        )
+        return nil
     }
 
     /// 通过 Shell 命令查询 Terminal.app 窗口，按 TTY 精确匹配
@@ -221,7 +327,7 @@ extension WindowManager {
 
         // 获取 Terminal 下所有 TTY
         // Terminal 主进程没有 TTY，用 lsof 找它打开的 tty 设备
-        let lsofOutput = runShellCommand("/usr/sbin/lsof", args: ["-p", String(terminalPID), "-c", "Terminal"])
+        let lsofOutput = runShellCommand("/usr/sbin/lsof", args: ["-p", String(terminalPID)])
 
         // 收集该 PID 的所有 ttys
         var ttys: [String] = []
@@ -289,7 +395,14 @@ extension WindowManager {
 
         // 获取该 TTY 上的进程
         let psOutput = runShellCommand("/bin/ps", args: ["-t", ttyName, "-o", "command="])
-        guard let psOutput else { return nil }
+        guard let psOutput else {
+            log(
+                "[WindowManager] matchWindowByTTYProcess: ps returned no output",
+                level: .debug,
+                fields: ["tty": fullTTY]
+            )
+            return nil
+        }
 
         var commands: [String] = []
         for line in psOutput.components(separatedBy: "\n") {
@@ -309,6 +422,11 @@ extension WindowManager {
             }
         }
 
+        log(
+            "[WindowManager] matchWindowByTTYProcess: no title match found",
+            level: .debug,
+            fields: ["tty": fullTTY, "commands": commands.joined(separator: ","), "windowCount": String(windows.count)]
+        )
         return nil
     }
 
