@@ -93,49 +93,6 @@ extension WindowManager {
         return frame
     }
 
-    /// 读取窗口 frame，优先使用 yabai 交叉校验确保准确性。
-    /// AX API 对非可见 Space 上的窗口返回错误坐标，yabai 始终准确。
-    /// 调用方应优先使用此方法而非 frame(of:)，除非确定窗口可见。
-    func readAccurateFrame(windowID: UInt32, axElement: AXUIElement) -> CGRect? {
-        guard let axFrame = frame(of: axElement) else {
-            return nil
-        }
-        // 主屏窗口 AX frame 准确，不需要 yabai 校验
-        // yabai 使用 Cocoa 坐标（Y-up），AX 使用 Quartz 坐标（Y-down）
-        // 对主屏窗口做 yabai override 会因坐标系不同导致错误
-        if isWindowOnMainScreen(windowID: windowID) {
-            return axFrame
-        }
-        guard let yabaiInfo = spaceController.queryWindow(windowID: windowID),
-              let yabaiFrame = yabaiInfo.frame else {
-            return axFrame
-        }
-        // yabai 返回 Quartz 坐标（Y-down, origin at top-left of primary）
-        // 与 AX/apply 坐标系一致，不需要转换
-        let yabaiRect = yabaiFrame.cgRect
-        let positionDiff = hypot(yabaiRect.midX - axFrame.midX, yabaiRect.midY - axFrame.midY)
-        let sizeDiff = max(abs(yabaiRect.width - axFrame.width), abs(yabaiRect.height - axFrame.height))
-
-        // 位置 OR 尺寸任一偏差过大，都应使用 yabai 的数据
-        // AX 对非可见 Space 窗口可能返回正确的位置但错误的尺寸（如残留主屏尺寸）
-        if positionDiff > frameTolerance * 3 || sizeDiff > frameTolerance * 3 {
-            log(
-                "[WindowManager] readAccurateFrame: yabai override",
-                level: .info,
-                fields: [
-                    "windowID": String(windowID),
-                    "axFrame": "\(axFrame)",
-                    "yabaiFrame": "\(yabaiRect)",
-                    "positionDiff": String(format: "%.0f", positionDiff),
-                    "sizeDiff": String(format: "%.0f", sizeDiff),
-                    "reason": sizeDiff > frameTolerance * 3 ? "size_mismatch" : "position_mismatch"
-                ]
-            )
-            return yabaiRect
-        }
-        return axFrame
-    }
-
     func isAttributeSettable(_ element: AXUIElement, attribute: String) -> Bool {
         var settable = DarwinBoolean(false)
         let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
