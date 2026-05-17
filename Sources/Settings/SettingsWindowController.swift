@@ -20,7 +20,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         let window = FocusableSettingsWindow(
             contentRect: NSRect(x: 0, y: 0, width: 720, height: 680),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -35,7 +35,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.toolbarStyle = .unifiedCompact
-        window.backgroundColor = .clear
+        window.backgroundColor = .windowBackgroundColor
         window.contentViewController = hostingController
         super.init(window: window)
         window.delegate = self
