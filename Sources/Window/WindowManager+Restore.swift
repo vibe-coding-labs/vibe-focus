@@ -238,7 +238,6 @@ extension WindowManager {
             ]
         )
         engine.clear(windowID: currentWindowID)
-        SessionWindowRegistry.shared.clearToggleState(windowID: currentWindowID)
 
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
         log(

@@ -277,8 +277,6 @@ extension WindowManager {
         // 使用实际应用的 frame（可能因 macOS 菜单栏调整而与理想 targetFrame 不同）
         let actualTargetFrame = frame(of: windowAX) ?? targetFrame
 
-        let resolvedWindowNumber = windowNumber(for: windowAX) ?? identity.windowNumber
-        let resolvedTitle = title(of: windowAX) ?? identity.title
         log(
             "[WindowManager] moveWindowToMainScreen captured state",
             fields: [
@@ -294,36 +292,7 @@ extension WindowManager {
                 "actualTargetFrame": String(describing: actualTargetFrame)
             ]
         )
-        // 写入 1: SessionWindowRegistry（session 绑定 + toggle state，写 SQLite）
-        SessionWindowRegistry.shared.updateToggleState(
-            windowID: effectiveWindowID
-        ) { state in
-            state.pid = identity.pid
-            state.appName = identity.appName
-            state.bundleIdentifier = identity.bundleIdentifier
-            state.title = resolvedTitle
-            state.axWindowNumber = resolvedWindowNumber
-            state.origX = origFrame.origin.x
-            state.origY = origFrame.origin.y
-            state.origW = origFrame.width
-            state.origH = origFrame.height
-            state.targetX = actualTargetFrame.origin.x
-            state.targetY = actualTargetFrame.origin.y
-            state.targetW = actualTargetFrame.width
-            state.targetH = actualTargetFrame.height
-            state.sourceSpace = spaceContext.sourceSpaceIndex
-            state.sourceDisplay = sourceContext.index
-            state.sourceYabaiDisp = spaceContext.sourceDisplayIndex
-            state.sourceDispSpace = spaceContext.sourceDisplaySpaceIndex
-            state.targetDisplay = targetDisplayIndex
-            state.toggleReason = reason.rawValue
-            state.toggledAt = Date()
-            if let sid = sessionID {
-                state.sessionID = sid
-            }
-        }
-
-        // 写入 2: ToggleEngine（SQLite 单一事实来源，restore 时直接读这里）
+        // 写入: ToggleEngine（SQLite 单一事实来源，restore 时直接读这里）
         // 如果 space context 全部为 nil（yabai 不可用），不保存 toggle record
         // 因为 sourceSpace=0 是无效的 yabai index，恢复时会发到错误的 space
         if let sourceSpaceIndex = spaceContext.sourceSpaceIndex {
