@@ -42,14 +42,6 @@ extension WindowManager {
         )
 
         let shouldRestore = shouldRestoreCurrentWindow()
-        log(
-            "[WindowManager] toggle shouldRestoreCurrentWindow returned",
-            level: .debug,
-            fields: [
-                "op": op,
-                "shouldRestore": String(shouldRestore)
-            ]
-        )
         let mode = shouldRestore ? "restore" : "move_to_main"
 
         // 采集 toggle record 状态用于决策日志
@@ -79,11 +71,6 @@ extension WindowManager {
         )
 
         if shouldRestore {
-            log(
-                "[WindowManager] toggle branching to restore",
-                level: .debug,
-                fields: ["op": op]
-            )
             restore(operationID: op, triggerSource: triggerSource)
             if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
                 AuditLogger.shared.record(
@@ -109,11 +96,6 @@ extension WindowManager {
                 )
             }
         } else {
-            log(
-                "[WindowManager] toggle branching to moveToMainScreen",
-                level: .debug,
-                fields: ["op": op]
-            )
             moveToMainScreen(operationID: op, triggerSource: triggerSource)
             if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
                 AuditLogger.shared.record(
@@ -124,11 +106,6 @@ extension WindowManager {
             }
         }
 
-        log(
-            "[WindowManager] toggle branch completed, checking frontmost app",
-            level: .debug,
-            fields: ["op": op]
-        )
         let frontAfter = frontmostAppDescriptor()
         let durationMs = logOperationDuration(
             "[WindowManager] toggle finished",
@@ -155,15 +132,6 @@ extension WindowManager {
                 ]
             )
         }
-        log(
-            "[WindowManager] toggle checking slow threshold",
-            level: .debug,
-            fields: [
-                "op": op,
-                "durationMs": String(durationMs),
-                "threshold": "650"
-            ]
-        )
         if durationMs >= 650 {
             CrashContextRecorder.shared.record("toggle_slow op=\(op) durationMs=\(durationMs) mode=\(mode)")
         }
@@ -349,10 +317,6 @@ extension WindowManager {
     }
 
     func shouldRestoreCurrentWindow() -> Bool {
-        log(
-            "[WindowManager] shouldRestoreCurrentWindow called",
-            level: .debug
-        )
         if !hasAccessibilityPermission() {
             log(
                 "[WindowManager] shouldRestoreCurrentWindow: no AX permission, using System Events",
