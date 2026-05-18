@@ -136,29 +136,6 @@ extension WindowStateStore {
         return parseWindowStateRow(stmt!)
     }
 
-    func clearToggleState(windowID: UInt32) {
-        guard let db else {
-            log("[WindowStateStore] clearToggleState: db not available", level: .warn)
-            return
-        }
-        var stmt: OpaquePointer?
-        let sql = """
-            UPDATE windows SET
-                orig_x = NULL, orig_y = NULL, orig_w = NULL, orig_h = NULL,
-                target_x = NULL, target_y = NULL, target_w = NULL, target_h = NULL,
-                source_space = NULL, source_display = NULL, source_yabai_disp = NULL,
-                source_disp_space = NULL, target_display = NULL,
-                toggle_reason = NULL, toggled_at = NULL,
-                updated_at = ?
-            WHERE window_id = ?;
-            """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_double(stmt, 1, Date().timeIntervalSince1970)
-        sqlite3_bind_int64(stmt, 2, Int64(windowID))
-        sqlite3_step(stmt)
-    }
-
     func deleteAllWindowsStates() {
         guard let db else {
             log("[WindowStateStore] deleteAllWindowsStates: db not available", level: .warn)

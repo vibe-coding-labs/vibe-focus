@@ -78,10 +78,7 @@ extension WindowManager {
         if record == nil {
             record = engine.loadByPID(pid: frontApp.processIdentifier)
         }
-        guard let record else {
-            log("[WindowManager] restore: record already cleared after successful restore", level: .debug, fields: ["op": op])
-            return
-        }
+        guard let record else { return }
 
         // 4. 焦点跟随（仅 carbon_hotkey 触发）
         if triggerSource == "carbon_hotkey" {

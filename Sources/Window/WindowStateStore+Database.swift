@@ -31,21 +31,7 @@ extension WindowStateStore {
     }
 
     func createTables() {
-        // window_states: 保留给 WindowManager+State (SavedWindowState toggle snapshots)
-        runSchema("""
-            CREATE TABLE IF NOT EXISTS window_states (
-                id TEXT PRIMARY KEY,
-                data TEXT NOT NULL,
-                window_id INTEGER,
-                pid INTEGER,
-                app_name TEXT,
-                session_id TEXT,
-                saved_at REAL NOT NULL,
-                created_at REAL NOT NULL DEFAULT (strftime('%s','now'))
-            );
-            """)
-
-        // 新宽表：统一会话绑定 + toggle 状态
+        // windows 宽表：统一会话绑定 + toggle 状态
         // PK = window_id (CGWindowNumber)，全局唯一标识窗口
         runSchema("""
             CREATE TABLE IF NOT EXISTS windows (
@@ -191,23 +177,6 @@ extension WindowStateStore {
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_last_seen ON windows(updated_at);")
 
         log("[WindowStateStore] migrate: copied \(copiedRows) rows, PK now (window_id)")
-    }
-
-    func cleanupLegacyTables() {
-        runSchema("DROP TABLE IF EXISTS session_bindings;")
-        // window_states 保留给 WindowManager+State 使用，但清理超过 1 小时的旧记录
-        let cutoff = Date().addingTimeInterval(-3600).timeIntervalSince1970
-        var stmt: OpaquePointer?
-        let sql = "DELETE FROM window_states WHERE saved_at < ?;"
-        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            sqlite3_bind_double(stmt, 1, cutoff)
-            sqlite3_step(stmt)
-            let removed = sqlite3_changes(db)
-            sqlite3_finalize(stmt)
-            if removed > 0 {
-                log("[WindowStateStore] cleanupLegacyTables: removed \(removed) old window_states rows")
-            }
-        }
     }
 
     // MARK: - Schema Helpers

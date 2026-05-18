@@ -5,7 +5,6 @@ import ApplicationServices.HIServices
 import CoreFoundation
 import Foundation
 
-// MARK: - Window Manager
 @MainActor
 class WindowManager {
     static let shared = WindowManager()
@@ -45,28 +44,6 @@ class WindowManager {
         }
     }
 
-    struct SavedWindowState: Codable {
-        let id: String
-        let pid: Int32
-        let bundleIdentifier: String?
-        let appName: String?
-        let windowID: UInt32?
-        let windowNumber: Int?
-        let title: String?
-        let originalFrame: RectPayload
-        let targetFrame: RectPayload
-        let sourceSpaceIndex: Int?
-        let targetSpaceIndex: Int?
-        let sourceYabaiDisplayIndex: Int?
-        let sourceDisplaySpaceIndex: Int?
-        let sourceDisplayIndex: Int?
-        let sourceDisplayID: UInt32?
-        let targetDisplayIndex: Int?
-        let restoreReason: String?
-        let sessionID: String?
-        let savedAt: Date
-    }
-
     struct ScriptWindowSnapshot: Codable {
         let windowID: UInt32?
         let appName: String
@@ -81,85 +58,31 @@ class WindowManager {
         }
     }
 
-    init() {
-        cleanupStaleStatesWithGracePeriod()
-    }
-
-    private func cleanupStaleStatesWithGracePeriod() {
-        let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
-        let existingWindowIDs = Set(windowList.compactMap { $0["kCGWindowNumber"] as? UInt32 })
-
-        let gracePeriod: TimeInterval = 5 * 60
-        let removed = WindowStateStore.shared.cleanupStaleStates(
-            existingWindowIDs: existingWindowIDs,
-            gracePeriod: gracePeriod
-        )
-
-        if removed > 0 {
-            log("[WindowManager] cleanup with grace period: removed \(removed) stale state(s)")
-        }
-    }
+    init() {}
 
     func getMainScreen() -> NSScreen? {
         let mainDisplayID = CGMainDisplayID()
-        log(
-            "[WindowManager] getMainScreen called",
-            level: .debug,
-            fields: [
-                "mainDisplayID": String(mainDisplayID),
-                "screenCount": String(NSScreen.screens.count)
-            ]
-        )
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         for screen in NSScreen.screens {
             if let value = screen.deviceDescription[key] as? NSNumber,
                CGDirectDisplayID(value.uint32Value) == mainDisplayID {
-                log(
-                    "[WindowManager] getMainScreen found match",
-                    level: .debug,
-                    fields: ["screenNumber": String(value.uint32Value)]
-                )
                 return screen
             }
         }
-        log(
-            "[WindowManager] getMainScreen no exact match, using first or main",
-            level: .debug,
-            fields: ["fallback": NSScreen.screens.first != nil ? "first" : "main"]
-        )
         return NSScreen.screens.first ?? NSScreen.main
     }
 
     func hasAccessibilityPermission() -> Bool {
         let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(options)
-        log(
-            "[WindowManager] hasAccessibilityPermission checked",
-            level: .debug,
-            fields: ["trusted": String(trusted)]
-        )
-        return trusted
+        return AXIsProcessTrustedWithOptions(options)
     }
 
     func notifyAccessibilityPermissionRequired() {
-        guard !didPromptForAccessibility else {
-            log(
-                "[WindowManager] notifyAccessibilityPermissionRequired skipped: already prompted",
-                level: .debug
-            )
-            return
-        }
-
-        log(
-            "[WindowManager] notifyAccessibilityPermissionRequired: showing prompt",
-            level: .debug
-        )
+        guard !didPromptForAccessibility else { return }
         didPromptForAccessibility = true
         NSSound.beep()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
     }
-
-
 }

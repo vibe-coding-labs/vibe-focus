@@ -259,7 +259,7 @@ final class SessionWindowRegistry: ObservableObject {
             windowStates[windowID] = state
             persistToDB(windowID: windowID)
         }
-        WindowStateStore.shared.clearToggleState(windowID: windowID)
+        WindowStateStore.shared.clearToggleRecord(windowID: windowID)
     }
 
     // MARK: - Bulk Operations
