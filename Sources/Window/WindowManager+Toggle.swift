@@ -393,9 +393,28 @@ extension WindowManager {
         }
 
         // 聚焦窗口在主屏 → 直接查 SQLite 看有没有 toggle record
-        guard let record = ToggleEngine.shared.load(windowID: currentWindowID) else {
+        var record = ToggleEngine.shared.load(windowID: currentWindowID)
+        if record == nil {
+            // Fallback: CGWindowNumber 可能在跨显示器移动后变化（iTerm2 等应用）
+            // 用 PID 查找最近一条 toggle record
+            let pid = frontApp.processIdentifier
+            record = ToggleEngine.shared.loadByPID(pid: pid)
+            if let pidRecord = record {
+                log(
+                    "[WindowManager] shouldRestoreCurrentWindow: windowID lookup failed, found record by PID fallback",
+                    level: .info,
+                    fields: [
+                        "windowID": String(currentWindowID),
+                        "pid": String(pid),
+                        "storedWindowID": String(pidRecord.windowID)
+                    ]
+                )
+            }
+        }
+
+        guard let record else {
             log(
-                "[WindowManager] shouldRestoreCurrentWindow: no toggle record for window",
+                "[WindowManager] shouldRestoreCurrentWindow: no toggle record for window (windowID + PID both failed)",
                 level: .debug,
                 fields: ["windowID": String(currentWindowID)]
             )
