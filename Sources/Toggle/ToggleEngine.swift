@@ -90,6 +90,11 @@ final class ToggleEngine {
         return store.loadToggleRecord(windowID: windowID)
     }
 
+    /// 按 PID 读取最近的 toggle record（CGWindowNumber 变化时的 fallback）
+    func loadByPID(pid: Int32) -> ToggleRecord? {
+        return store.loadToggleRecordByPID(pid: pid)
+    }
+
     // MARK: - Clear (Restore 后或窗口关闭时)
 
     /// 清除 toggle state
@@ -98,16 +103,42 @@ final class ToggleEngine {
         log("ToggleEngine.clear", fields: ["windowID": String(windowID)])
     }
 
+    /// 按 PID 清除 toggle state（PID fallback 场景）
+    func clearByPID(pid: Int32) {
+        if let record = loadByPID(pid: pid) {
+            store.clearToggleRecord(windowID: record.windowID)
+            log("ToggleEngine.clearByPID", fields: ["pid": String(pid), "windowID": String(record.windowID)])
+        }
+    }
+
     // MARK: - Restore 执行
 
     /// 执行恢复：移动窗口回原始位置 + 切换到原始 space
+    /// fallbackPID: 当 windowID 查不到 record 时，用 PID 回退查找
     @discardableResult
-    func restore(windowID: UInt32, triggerSource: String, traceID: String? = nil) -> Bool {
+    func restore(windowID: UInt32, fallbackPID: Int32? = nil, triggerSource: String, traceID: String? = nil) -> Bool {
         let trace = traceID ?? makeOperationID(prefix: "te")
-        guard let record = load(windowID: windowID) else {
+        var record = load(windowID: windowID)
+        var usedPIDFallback = false
+
+        if record == nil, let pid = fallbackPID {
+            record = loadByPID(pid: pid)
+            if record != nil {
+                usedPIDFallback = true
+                log("[ToggleEngine] restore: windowID lookup failed, found record by PID fallback", level: .info, fields: [
+                    "traceID": trace,
+                    "windowID": String(windowID),
+                    "pid": String(pid),
+                    "storedWindowID": String(record!.windowID)
+                ])
+            }
+        }
+
+        guard let record else {
             log("ToggleEngine.restore: no toggle record found", level: .warn, fields: [
                 "traceID": trace,
-                "windowID": String(windowID)
+                "windowID": String(windowID),
+                "fallbackPID": fallbackPID.map { String($0) } ?? "nil"
             ])
             return false
         }
@@ -164,15 +195,24 @@ final class ToggleEngine {
         let wm = WindowManager.shared
         let spaceController = SpaceController.shared
 
+        // PID fallback 时，record.windowID 是旧的 CGWindowNumber，
+        // 当前窗口的 windowID 是函数参数 windowID，用当前值查找 AX
+        let axLookupWindowID = usedPIDFallback ? windowID : record.windowID
+
         // 1. 找到窗口 AX element
-        guard let windowAX = wm.findWindowByPID(record.pid, windowID: record.windowID) else {
+        guard let windowAX = wm.findWindowByPID(record.pid, windowID: axLookupWindowID) else {
             log("ToggleEngine.restore: window AX element not found", level: .warn, fields: [
                 "traceID": trace,
                 "windowID": String(windowID),
-                "pid": String(record.pid)
+                "axLookupWindowID": String(axLookupWindowID),
+                "pid": String(record.pid),
+                "usedPIDFallback": String(usedPIDFallback)
             ])
             return false
         }
+
+        // PID fallback 时，后续操作使用当前 windowID（AX 层面的真实 ID）
+        let effectiveWindowID = usedPIDFallback ? windowID : record.windowID
 
         // 2. 记录当前 frame（日志用，不阻止 restore）
         // 之前这里会检查 isNearTarget 并在偏移>200px 时拒绝 restore
@@ -196,7 +236,7 @@ final class ToggleEngine {
 
         // 3. 先将窗口设为浮动状态（必须在任何移动之前！）
         // yabai 会在窗口到达新 space 的瞬间 tile 窗口，改变尺寸
-        spaceController.setWindowFloat(record.windowID, operationID: trace)
+        spaceController.setWindowFloat(effectiveWindowID, operationID: trace)
 
         // 3.5 记录所有 display 当前可见 space（用于 restore 后检测意外切换）
         var preRestoreDisplaySpaces: [Int: Int] = [:]
@@ -315,7 +355,7 @@ final class ToggleEngine {
 
                     if dragSucceeded {
                         usleep(150_000)
-                        let postDragAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
+                        let postDragAX = wm.findWindowByPID(record.pid, windowID: effectiveWindowID) ?? windowAX
                         restored = wm.apply(frame: record.origFrame, to: postDragAX, operationID: trace, stage: "restore_orig_after_drag")
                     }
                 }
@@ -332,14 +372,14 @@ final class ToggleEngine {
         // 5. 窗口已到达目标显示器的正确 space → 重新获取 CGWindowNumber + 重新设置 float
         // 跨显示器移动后 iTerm2 等应用可能改变 CGWindowNumber
         if needCrossDisplayMove, restored {
-            let postMoveAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
-            let postMoveWindowID = wm.windowHandle(for: postMoveAX) ?? record.windowID
+            let postMoveAX = wm.findWindowByPID(record.pid, windowID: effectiveWindowID) ?? windowAX
+            let postMoveWindowID = wm.windowHandle(for: postMoveAX) ?? effectiveWindowID
 
-            if postMoveWindowID != record.windowID {
+            if postMoveWindowID != effectiveWindowID {
                 log("[ToggleEngine] restore: CGWindowNumber changed after cross-display move", level: .info, fields: [
                     "traceID": trace,
                     "windowID": String(windowID),
-                    "beforeCrossMoveID": String(record.windowID),
+                    "beforeCrossMoveID": String(effectiveWindowID),
                     "afterCrossMoveID": String(postMoveWindowID)
                 ])
             }
@@ -389,7 +429,7 @@ final class ToggleEngine {
             switchToOriginalSpace(
                 record: record,
                 windowAX: windowAX,
-                effectiveWindowID: record.windowID,
+                effectiveWindowID: effectiveWindowID,
                 triggerSource: triggerSource,
                 traceID: trace
             )
@@ -419,7 +459,7 @@ final class ToggleEngine {
         // yabai 异步 tiling 引擎可能在 restore 完成后撤销操作
         if restored {
             RestoreWatchdog.shared.startMonitoring(target: RestoreWatchdog.MonitorTarget(
-                windowID: windowID,
+                windowID: effectiveWindowID,
                 pid: record.pid,
                 targetDisplay: record.sourceYabaiDisp,
                 targetSpace: record.sourceSpace,

@@ -197,6 +197,61 @@ extension WindowStateStore {
         )
     }
 
+    /// 按 PID 读取最近的 toggle record（CGWindowNumber 变化时的 fallback）
+    func loadToggleRecordByPID(pid: Int32) -> ToggleRecord? {
+        guard let db else { return nil }
+        var stmt: OpaquePointer?
+        let sql = """
+            SELECT window_id, pid, bundle_id, app_name,
+                   orig_x, orig_y, orig_w, orig_h,
+                   target_x, target_y, target_w, target_h,
+                   source_space, source_display, source_yabai_disp, source_disp_space,
+                   target_display, toggled_at, session_id
+            FROM windows
+            WHERE pid = ? AND toggle_reason IS NOT NULL AND orig_x IS NOT NULL
+            ORDER BY toggled_at DESC
+            LIMIT 1
+        """
+
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, pid)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        let wID = UInt32(sqlite3_column_int64(stmt, 0))
+        let rpid = sqlite3_column_int(stmt, 1)
+        let bundleID: String? = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+        let appName: String? = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+
+        let ox = CGFloat(sqlite3_column_double(stmt, 4))
+        let oy = CGFloat(sqlite3_column_double(stmt, 5))
+        let ow = CGFloat(sqlite3_column_double(stmt, 6))
+        let oh = CGFloat(sqlite3_column_double(stmt, 7))
+        let tx = CGFloat(sqlite3_column_double(stmt, 8))
+        let ty = CGFloat(sqlite3_column_double(stmt, 9))
+        let tw = CGFloat(sqlite3_column_double(stmt, 10))
+        let th = CGFloat(sqlite3_column_double(stmt, 11))
+
+        let sourceSpace = Int(sqlite3_column_int(stmt, 12))
+        let sourceDisplay = Int(sqlite3_column_int(stmt, 13))
+        let sourceYabaiDisp = Int(sqlite3_column_int(stmt, 14))
+        let sourceDispSpace = Int(sqlite3_column_int(stmt, 15))
+        let targetDisplay = Int(sqlite3_column_int(stmt, 16))
+        let toggledAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 17))
+        let sessionID: String? = sqlite3_column_text(stmt, 18).map { String(cString: $0) }
+
+        return ToggleRecord(
+            windowID: wID, pid: rpid,
+            bundleIdentifier: bundleID, appName: appName,
+            origFrame: CGRect(x: ox, y: oy, width: ow, height: oh),
+            sourceSpace: sourceSpace, sourceDisplay: sourceDisplay,
+            sourceYabaiDisp: sourceYabaiDisp, sourceDispSpace: sourceDispSpace,
+            targetFrame: CGRect(x: tx, y: ty, width: tw, height: th),
+            targetDisplay: targetDisplay,
+            toggledAt: toggledAt, sessionID: sessionID
+        )
+    }
+
     /// 清除指定窗口的 toggle state
     func clearToggleRecord(windowID: UInt32) {
         guard let db else { return }

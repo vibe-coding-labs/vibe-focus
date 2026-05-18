@@ -59,6 +59,7 @@ extension WindowManager {
         let engine = ToggleEngine.shared
         let restoreSucceeded = engine.restore(
             windowID: currentWindowID,
+            fallbackPID: frontApp.processIdentifier,
             triggerSource: triggerSource,
             traceID: op
         )
@@ -72,8 +73,12 @@ extension WindowManager {
             return
         }
 
-        // 3. 读取 record 用于日志和清理
-        guard let record = engine.load(windowID: currentWindowID) else {
+        // 3. 读取 record 用于日志和清理（尝试 windowID，fallback PID）
+        var record = engine.load(windowID: currentWindowID)
+        if record == nil {
+            record = engine.loadByPID(pid: frontApp.processIdentifier)
+        }
+        guard let record else {
             log("[WindowManager] restore: record already cleared after successful restore", level: .debug, fields: ["op": op])
             return
         }
@@ -102,7 +107,15 @@ extension WindowManager {
                 "sourceYabaiDisp": String(record.sourceYabaiDisp)
             ]
         )
-        engine.clear(windowID: currentWindowID)
+        // 用 record 中存储的 windowID 清除（PID fallback 时可能与当前 windowID 不同）
+        if currentWindowID != record.windowID {
+            log("[WindowManager] restore: clearing stored windowID (differs from current)", level: .info, fields: [
+                "op": op,
+                "currentWindowID": String(currentWindowID),
+                "storedWindowID": String(record.windowID)
+            ])
+        }
+        engine.clear(windowID: record.windowID)
 
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
         log(
