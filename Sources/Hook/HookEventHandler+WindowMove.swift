@@ -201,6 +201,10 @@ extension HookEventHandler {
             )
             Task { @MainActor in
                 SoundManager.shared.playCompletionSound()
+                DockBadgeManager.shared.showBadge(
+                    targetBundleID: binding.bundleIdentifier,
+                    targetAppName: binding.appName
+                )
             }
             return (
                 200,
