@@ -23,7 +23,9 @@ extension WindowManager {
             // AX-safe: focused window is always visible
             let winFrame = frame(of: focusedWin)
             let winID = windowHandle(for: focusedWin)
-            toggleContext["windowID"] = String(describing: winID)
+            if let id = winID {
+                toggleContext["windowID"] = String(id)
+            }
             toggleContext["windowTitle"] = truncateForLog(winTitle, limit: 60)
             toggleContext["windowFrame"] = String(describing: winFrame)
             // 判断窗口在哪个屏幕上
@@ -411,16 +413,8 @@ extension WindowManager {
             return false
         }
 
-        // AX-safe: focused window is always visible
-        if let currentFrame = self.frame(of: focusedWindow),
-           !record.isNearTarget(currentFrame: currentFrame) {
-            log(
-                "[WindowManager] shouldRestoreCurrentWindow: window not at target position",
-                level: .warn,
-                fields: ["windowID": String(currentWindowID)]
-            )
-            return false
-        }
+        // isNearTarget 守卫已移除 — yabai tiling 引擎会移动窗口导致偏移，
+        // 此时恰恰是需要 restore 的场景。isValid 检查已足够防止 corrupted data。
 
         log(
             "[WindowManager] shouldRestoreCurrentWindow: focused window on main, has valid toggle record → restore",

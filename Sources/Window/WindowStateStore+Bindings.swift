@@ -11,7 +11,7 @@ extension WindowStateStore {
         }
         var stmt: OpaquePointer?
         let sql = """
-            INSERT OR REPLACE INTO windows (
+            INSERT INTO windows (
                 window_id, pid, tty, ax_window_number, app_name, bundle_id, title,
                 term_session_id, iterm_session_id, kitty_window_id, wezterm_pane, env_window_id,
                 session_id, cwd, model,
@@ -20,7 +20,25 @@ extension WindowStateStore {
                 source_space, source_display, source_yabai_disp, source_disp_space,
                 target_display, toggle_reason, toggled_at,
                 is_completed, created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(window_id) DO UPDATE SET
+                pid = excluded.pid,
+                tty = excluded.tty,
+                ax_window_number = excluded.ax_window_number,
+                app_name = excluded.app_name,
+                bundle_id = excluded.bundle_id,
+                title = excluded.title,
+                term_session_id = excluded.term_session_id,
+                iterm_session_id = excluded.iterm_session_id,
+                kitty_window_id = excluded.kitty_window_id,
+                wezterm_pane = excluded.wezterm_pane,
+                env_window_id = excluded.env_window_id,
+                session_id = excluded.session_id,
+                cwd = excluded.cwd,
+                model = excluded.model,
+                is_completed = excluded.is_completed,
+                completed_at = excluded.completed_at,
+                updated_at = excluded.updated_at;
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
