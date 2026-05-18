@@ -297,8 +297,21 @@ extension WindowManager {
         // 因为 sourceSpace=0 是无效的 yabai index，恢复时会发到错误的 space
         if let sourceSpaceIndex = spaceContext.sourceSpaceIndex {
             let teSourceDisplay = spaceContext.sourceDisplayIndex ?? sourceContext.index ?? 0
+            // 窗口移动后 CGWindowNumber 可能变化，重新读取 AX element 的 windowID
+            let postMoveWindowID = windowHandle(for: windowAX) ?? effectiveWindowID
+            if postMoveWindowID != effectiveWindowID {
+                log(
+                    "[WindowManager] moveWindowToMainScreen: CGWindowNumber changed after move",
+                    level: .info,
+                    fields: [
+                        "op": op,
+                        "beforeMoveWindowID": String(effectiveWindowID),
+                        "afterMoveWindowID": String(postMoveWindowID)
+                    ]
+                )
+            }
             ToggleEngine.shared.save(
-                windowID: effectiveWindowID,
+                windowID: postMoveWindowID,
                 pid: identity.pid,
                 bundleIdentifier: identity.bundleIdentifier,
                 appName: identity.appName,

@@ -33,11 +33,31 @@ extension SpaceController {
             "op": op, "targetSpace": String(targetSpace)
         ])
 
-        // Strategy 2: CGEvent — 移鼠标到目标 display + Ctrl+Left/Right
+        // Strategy 2: CGEvent — 先用 yabai 激活目标 display，再 Ctrl+Left/Right
         let steps = calculateFocusSteps(targetSpaceIndex: targetSpace)
         log("[SpaceController] switchDisplayToSpace: CGEvent steps=\(steps)", fields: [
             "op": op, "targetSpace": String(targetSpace), "steps": String(steps)
         ])
+
+        // 先用 yabai display --focus 激活目标 display（不需要 SA）
+        // 确保 CGEvent Ctrl+Arrow 只影响目标 display，不会意外切换其他 display
+        if let targetDisplayIdx = querySpaces()?.first(where: { $0.index == targetSpace })?.display {
+            let focusResult = runYabai(
+                arguments: ["-m", "display", "--focus", String(targetDisplayIdx)],
+                operation: "switchDisplayToSpace_display_focus",
+                operationID: op
+            )
+            if let result = focusResult, result.exitCode == 0 {
+                log("[SpaceController] switchDisplayToSpace: yabai display focus succeeded", fields: [
+                    "op": op, "targetDisplay": String(targetDisplayIdx)
+                ])
+                usleep(30_000)
+            } else {
+                log("[SpaceController] switchDisplayToSpace: yabai display focus failed, relying on cursor move", level: .info, fields: [
+                    "op": op, "targetDisplay": String(targetDisplayIdx)
+                ])
+            }
+        }
 
         guard steps != 0 else {
             // 目标 space 已经可见，但可能需要移动活跃 display
