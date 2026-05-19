@@ -52,6 +52,18 @@ extension SpaceController {
                 ]
             )
         }
+        if let spaces {
+            log(
+                "[SpaceController] querySpaces succeeded",
+                level: .debug,
+                fields: [
+                    "caller": caller,
+                    "spaceCount": String(spaces.count),
+                    "durationMs": String(elapsedMilliseconds(since: startedAt)),
+                    "visibleSpaces": spaces.filter { $0.isVisible == true }.map { "s\($0.index ?? 0)@d\($0.display ?? 0)" }.joined(separator: ",")
+                ]
+            )
+        }
         return spaces
     }
 
