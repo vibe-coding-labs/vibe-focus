@@ -90,13 +90,13 @@ extension WindowStateStore {
 
         let insertSQL = """
             INSERT INTO windows (
-                window_id, pid, tty, updated_at,
+                window_id, pid, bundle_id, app_name, tty, updated_at,
                 orig_x, orig_y, orig_w, orig_h,
                 target_x, target_y, target_w, target_h,
                 source_space, source_display, source_yabai_disp, source_disp_space,
                 target_display, toggle_reason, toggled_at,
                 is_completed, created_at
-            ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_hotkey', ?, 0, ?)
+            ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_hotkey', ?, 0, ?)
         """
 
         guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
@@ -108,22 +108,24 @@ extension WindowStateStore {
 
         sqlite3_bind_int64(stmt, 1, Int64(record.windowID))
         sqlite3_bind_int(stmt, 2, record.pid)
-        sqlite3_bind_double(stmt, 3, now)
-        sqlite3_bind_double(stmt, 4, Double(record.origFrame.origin.x))
-        sqlite3_bind_double(stmt, 5, Double(record.origFrame.origin.y))
-        sqlite3_bind_double(stmt, 6, Double(record.origFrame.size.width))
-        sqlite3_bind_double(stmt, 7, Double(record.origFrame.size.height))
-        sqlite3_bind_double(stmt, 8, Double(record.targetFrame.origin.x))
-        sqlite3_bind_double(stmt, 9, Double(record.targetFrame.origin.y))
-        sqlite3_bind_double(stmt, 10, Double(record.targetFrame.size.width))
-        sqlite3_bind_double(stmt, 11, Double(record.targetFrame.size.height))
-        sqlite3_bind_int(stmt, 12, Int32(record.sourceSpace))
-        sqlite3_bind_int(stmt, 13, Int32(record.sourceDisplay))
-        sqlite3_bind_int(stmt, 14, Int32(record.sourceYabaiDisp))
-        sqlite3_bind_int(stmt, 15, Int32(record.sourceDispSpace))
-        sqlite3_bind_int(stmt, 16, Int32(record.targetDisplay))
-        sqlite3_bind_double(stmt, 17, record.toggledAt.timeIntervalSince1970)
-        sqlite3_bind_double(stmt, 18, now)
+        sqlite3_bind_text(stmt, 3, record.bundleIdentifier ?? "", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 4, record.appName ?? "", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 5, now)
+        sqlite3_bind_double(stmt, 6, Double(record.origFrame.origin.x))
+        sqlite3_bind_double(stmt, 7, Double(record.origFrame.origin.y))
+        sqlite3_bind_double(stmt, 8, Double(record.origFrame.size.width))
+        sqlite3_bind_double(stmt, 9, Double(record.origFrame.size.height))
+        sqlite3_bind_double(stmt, 10, Double(record.targetFrame.origin.x))
+        sqlite3_bind_double(stmt, 11, Double(record.targetFrame.origin.y))
+        sqlite3_bind_double(stmt, 12, Double(record.targetFrame.size.width))
+        sqlite3_bind_double(stmt, 13, Double(record.targetFrame.size.height))
+        sqlite3_bind_int(stmt, 14, Int32(record.sourceSpace))
+        sqlite3_bind_int(stmt, 15, Int32(record.sourceDisplay))
+        sqlite3_bind_int(stmt, 16, Int32(record.sourceYabaiDisp))
+        sqlite3_bind_int(stmt, 17, Int32(record.sourceDispSpace))
+        sqlite3_bind_int(stmt, 18, Int32(record.targetDisplay))
+        sqlite3_bind_double(stmt, 19, record.toggledAt.timeIntervalSince1970)
+        sqlite3_bind_double(stmt, 20, now)
 
         let insertResult = sqlite3_step(stmt)
         sqlite3_finalize(stmt)
