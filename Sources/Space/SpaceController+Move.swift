@@ -343,17 +343,26 @@ extension SpaceController {
     }
 
     func verifyWindowMovedToSpaceWithRetry(windowID: UInt32, targetSpace: Int, operationID: String) -> Bool {
+        let startTime = Date()
         let verified = pollUntil(timeout: 300_000, interval: 20_000) {
             self.verifyWindowMovedToSpace(windowID: windowID, targetSpace: targetSpace, operationID: operationID)
         }
-        if !verified {
+        if verified {
+            log("[SpaceController] verifyWindowMovedToSpaceWithRetry: verified", level: .debug, fields: [
+                "op": operationID,
+                "windowID": String(windowID),
+                "targetSpace": String(targetSpace),
+                "elapsedMs": String(elapsedMilliseconds(since: startTime))
+            ])
+        } else {
             log(
                 "[SpaceController] moveWindow verification failed after polling",
                 level: .warn,
                 fields: [
                     "op": operationID,
                     "windowID": String(windowID),
-                    "targetSpace": String(targetSpace)
+                    "targetSpace": String(targetSpace),
+                    "elapsedMs": String(elapsedMilliseconds(since: startTime))
                 ]
             )
         }
@@ -384,11 +393,17 @@ extension SpaceController {
             return
         }
 
-        _ = runYabai(
+        let floatResult = runYabai(
             arguments: ["-m", "window", "\(windowID)", "--toggle", "float"],
             operation: "setWindowFloat",
             operationID: op
         )
+        log("setWindowFloat: toggle result", level: .debug, fields: [
+            "op": op,
+            "windowID": String(windowID),
+            "success": String(floatResult?.exitCode == 0),
+            "exitCode": String(floatResult?.exitCode ?? -1)
+        ])
     }
 
     func focusWindow(_ windowID: UInt32, operationID: String? = nil) -> Bool {
