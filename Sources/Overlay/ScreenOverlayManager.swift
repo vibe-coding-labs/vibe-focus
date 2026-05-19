@@ -28,7 +28,6 @@ class ScreenOverlayManager: ObservableObject {
     var lastSwipeTriggerAt: Date = .distantPast
 
     // Query result caching to prevent redundant yabai calls
-    var cachedSpaceIndices: [UUID: Int] = [:]
     var cachedDisplayIndices: [UUID: Int] = [:]
     var lastQueryTimes: [UUID: Date] = [:]  // Per-screen query time tracking
     let queryDebounceInterval: TimeInterval = 0.05  // 50ms debounce - 减少延迟

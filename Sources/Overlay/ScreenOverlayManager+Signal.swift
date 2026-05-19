@@ -24,8 +24,7 @@ extension ScreenOverlayManager {
     }
 
     func clearSpaceIndexCache() {
-        log("ScreenOverlayManager.clearSpaceIndexCache entry", level: .debug, fields: ["cachedSpaceCount": String(cachedSpaceIndices.count), "lastQueryCount": String(lastQueryTimes.count), "screenSpaceCacheCount": String(screenSpaceCache.count)])
-        cachedSpaceIndices.removeAll()
+        log("ScreenOverlayManager.clearSpaceIndexCache entry", level: .debug, fields: ["lastQueryCount": String(lastQueryTimes.count), "screenSpaceCacheCount": String(screenSpaceCache.count)])
         lastQueryTimes.removeAll()
         // 关键修复：同时清除 screenSpaceCache，确保信号触发时强制刷新
         screenSpaceCache.removeAll()
