@@ -428,7 +428,9 @@ final class ToggleEngine {
         // 6. 检测并修复 CGEvent 意外切换其他 display 的问题
         // CGEvent Ctrl+Arrow 可能影响非目标 display 的 space
         if restored, !preRestoreDisplaySpaces.isEmpty {
+            let intentionallySwitchedDisplay = record.sourceYabaiDisp
             for (disp, preVis) in preRestoreDisplaySpaces {
+                if disp == intentionallySwitchedDisplay { continue }
                 let currentVis = spaceController.displayVisibleSpace(displayIndex: disp)
                 if let cur = currentVis, cur != preVis {
                     log("[ToggleEngine] restore: display \(disp) was accidentally switched from space \(preVis) to \(cur), fixing", level: .warn, fields: [
