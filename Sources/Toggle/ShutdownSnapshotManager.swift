@@ -192,7 +192,7 @@ final class ShutdownSnapshotManager {
             let displayID = WindowManager.shared.displayID(for: appKitFrame)
 
             // 获取 Space 信息
-            let spaceContext = SpaceController.shared.captureSpaceContext(for: windowID)
+            let spaceContext = SpaceController.shared.captureSpaceContext(windowID: windowID)
 
             // 从 SessionWindowRegistry 查找 Claude Code 绑定
             let claudeBinding = SessionWindowRegistry.shared.findBinding(forWindowID: windowID)
