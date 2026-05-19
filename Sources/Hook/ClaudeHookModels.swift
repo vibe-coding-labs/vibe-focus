@@ -26,7 +26,7 @@ struct WindowIdentity: Codable, Equatable {
 /// 合并了原来的 SessionWindowBinding + SavedWindowState
 struct WindowState: Codable, Equatable {
     // MARK: - Primary Key
-    let windowID: UInt32          // CGWindowNumber — 主键，全局唯一标识窗口
+    var windowID: UInt32          // CGWindowNumber — 主键，CGWindowNumber 变化时可重映射
     var pid: Int32
     var tty: String?              // 终端 TTY 路径 (如 /dev/ttys003)，仅用于日志和匹配辅助
 
