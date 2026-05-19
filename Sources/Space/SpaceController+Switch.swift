@@ -78,8 +78,13 @@ extension SpaceController {
 
         if success {
             usleep(30_000)
+            let postSwitchSpace = displayVisibleSpace(displayIndex: querySpaces()?.first(where: { $0.index == targetSpace })?.display)
             log("[SpaceController] switchDisplayToSpace: CGEvent succeeded", fields: [
-                "op": op, "targetSpace": String(targetSpace), "steps": String(steps)
+                "op": op,
+                "targetSpace": String(targetSpace),
+                "steps": String(steps),
+                "postSwitchSpace": String(describing: postSwitchSpace),
+                "reachedTarget": String(postSwitchSpace == targetSpace)
             ])
             return true
         }
@@ -262,6 +267,10 @@ extension SpaceController {
         if let center = targetCenterCG {
             // 用 CGEvent 鼠标移动事件（而非 CGWarpMouseCursorPosition）
             // 这样 WindowServer 会真正更新"活跃显示器"状态
+            log("[SpaceController] focusSpace: CGEvent cursor move to target display", level: .debug, fields: [
+                "op": op,
+                "targetCenter": "\(Int(center.x)),\(Int(center.y))"
+            ])
             if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                         mouseCursorPosition: center, mouseButton: .left) {
                 moveEvent.post(tap: .cghidEventTap)
@@ -398,12 +407,25 @@ extension SpaceController {
     }
 
     private func saveAndMoveCursor(toSpace spaceIndex: Int, operationID: String) -> (savedCursor: CGPoint, savedApp: NSRunningApplication?)? {
+        let op = operationID
         let savedFrontApp = NSWorkspace.shared.frontmostApplication
         let savedCursor = NSEvent.mouseLocation
         let mainScreenHeight = NSScreen.screens[0].frame.height
         let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
 
+        log("[SpaceController] saveAndMoveCursor", level: .debug, fields: [
+            "op": op,
+            "spaceIndex": String(spaceIndex),
+            "savedCursorNS": "\(Int(savedCursor.x)),\(Int(savedCursor.y))",
+            "savedCursorCG": "\(Int(savedCursorCG.x)),\(Int(savedCursorCG.y))",
+            "savedApp": savedFrontApp?.localizedName ?? "nil"
+        ])
+
         if let center = displayCenterCG(spaceIndex: spaceIndex) {
+            log("[SpaceController] saveAndMoveCursor: moving cursor to target display center", level: .debug, fields: [
+                "op": op,
+                "targetCenter": "\(Int(center.x)),\(Int(center.y))"
+            ])
             if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                         mouseCursorPosition: center, mouseButton: .left) {
                 moveEvent.post(tap: .cghidEventTap)
@@ -418,6 +440,10 @@ extension SpaceController {
     }
 
     private func restoreCursor(_ savedCursor: CGPoint, savedApp: NSRunningApplication?) {
+        log("[SpaceController] restoreCursor", level: .debug, fields: [
+            "targetCursorCG": "\(Int(savedCursor.x)),\(Int(savedCursor.y))",
+            "savedApp": savedApp?.localizedName ?? "nil"
+        ])
         if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                        mouseCursorPosition: savedCursor, mouseButton: .left) {
             restoreEvent.post(tap: .cghidEventTap)
