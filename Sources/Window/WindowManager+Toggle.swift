@@ -390,9 +390,13 @@ extension WindowManager {
             log(
                 "[WindowManager] shouldRestoreCurrentWindow: toggle record corrupted, clearing",
                 level: .warn,
-                fields: ["windowID": String(currentWindowID)]
+                fields: [
+                    "windowID": String(currentWindowID),
+                    "storedWindowID": String(record.windowID),
+                    "usedPIDFallback": String(currentWindowID != record.windowID)
+                ]
             )
-            ToggleEngine.shared.clear(windowID: currentWindowID)
+            ToggleEngine.shared.clear(windowID: record.windowID)
             return false
         }
 
