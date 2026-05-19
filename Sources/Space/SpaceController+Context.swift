@@ -108,43 +108,6 @@ extension SpaceController {
         return nil
     }
 
-    func globalSpaceIndex(displayIndex: Int, localSpaceIndex: Int) -> Int? {
-        refreshAvailabilityIfNeeded()
-        guard isEnabled else {
-            log(
-                "[SpaceController] globalSpaceIndex: not enabled",
-                level: .debug
-            )
-            return nil
-        }
-        guard let spaces = querySpaces() else {
-            log(
-                "[SpaceController] globalSpaceIndex: querySpaces failed",
-                level: .debug
-            )
-            return nil
-        }
-
-        log(
-            "[SpaceController] globalSpaceIndex called",
-            level: .debug,
-            fields: [
-                "displayIndex": String(displayIndex),
-                "localSpaceIndex": String(localSpaceIndex)
-            ]
-        )
-
-        let spacesOnDisplay = spaces
-            .filter { $0.display == displayIndex }
-            .sorted { ($0.index ?? Int.max) < ($1.index ?? Int.max) }
-
-        guard localSpaceIndex > 0, localSpaceIndex <= spacesOnDisplay.count else {
-            return nil
-        }
-
-        return spacesOnDisplay[localSpaceIndex - 1].index
-    }
-
     func nativeSpaceID(forYabaiIndex index: Int) -> Int64? {
         guard let spaces = querySpaces() else {
             log(
