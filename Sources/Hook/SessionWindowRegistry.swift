@@ -262,6 +262,36 @@ final class SessionWindowRegistry: ObservableObject {
         WindowStateStore.shared.clearToggleRecord(windowID: windowID)
     }
 
+    /// 将旧 windowID 的绑定重映射到新 windowID（CGWindowNumber 变化时调用）
+    func remapWindowID(oldWindowID: UInt32, newWindowID: UInt32) {
+        guard oldWindowID != newWindowID else { return }
+        guard var state = windowStates[oldWindowID] else {
+            // 旧 windowID 不在内存缓存中 — 尝试从 DB 加载
+            if let dbState = WindowStateStore.shared.findWindowState(windowID: oldWindowID) {
+                var remapped = dbState
+                remapped.windowID = newWindowID
+                windowStates[newWindowID] = remapped
+                persistToDB(windowID: newWindowID)
+                WindowStateStore.shared.deleteWindowState(windowID: oldWindowID)
+                windowStates.removeValue(forKey: oldWindowID)
+                log("[SessionWindowRegistry] remapWindowID: DB remap", fields: [
+                    "oldWindowID": String(oldWindowID),
+                    "newWindowID": String(newWindowID)
+                ])
+            }
+            return
+        }
+        state.windowID = newWindowID
+        windowStates[newWindowID] = state
+        windowStates.removeValue(forKey: oldWindowID)
+        WindowStateStore.shared.deleteWindowState(windowID: oldWindowID)
+        persistToDB(windowID: newWindowID)
+        log("[SessionWindowRegistry] remapWindowID: memory+DB remap", fields: [
+            "oldWindowID": String(oldWindowID),
+            "newWindowID": String(newWindowID)
+        ])
+    }
+
     // MARK: - Bulk Operations
 
     func clearAllBindings() {

@@ -309,6 +309,7 @@ extension WindowManager {
                         "afterMoveWindowID": String(postMoveWindowID)
                     ]
                 )
+                SessionWindowRegistry.shared.remapWindowID(oldWindowID: effectiveWindowID, newWindowID: postMoveWindowID)
             }
             ToggleEngine.shared.save(
                 windowID: postMoveWindowID,
