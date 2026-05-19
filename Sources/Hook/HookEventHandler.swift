@@ -323,6 +323,27 @@ final class HookEventHandler {
             ]
         )
 
+        // 防止与手动热键 toggle 冲突 — 如果用户正在按热键，跳过 auto-restore
+        if HotKeyManager.shared.isToggleInFlight {
+            log(
+                "[HookEventHandler] UserPromptSubmit skipped: toggle already in flight",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "windowID": String(identity.windowID)
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "toggle_in_flight",
+                    message: "Toggle in flight, skipping auto-restore",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
         guard isOnMain else {
             log(
                 "[HookEventHandler] UserPromptSubmit window not on main screen",
@@ -362,6 +383,7 @@ final class HookEventHandler {
                 )
                 let success = engine.restore(
                     windowID: identity.windowID,
+                    fallbackPID: identity.pid,
                     triggerSource: "user_prompt_submit",
                     traceID: traceID
                 )
