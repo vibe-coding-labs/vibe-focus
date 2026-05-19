@@ -29,27 +29,6 @@ enum SpaceIndexResolver {
         return nil
     }
 
-    static func resolveStableIndex(samples: [Int]) -> Int? {
-        guard !samples.isEmpty else { return nil }
-
-        var counts: [Int: Int] = [:]
-        for sample in samples {
-            counts[sample, default: 0] += 1
-        }
-        guard let maxCount = counts.values.max() else { return nil }
-
-        let candidates = Set(counts.compactMap { key, value in
-            value == maxCount ? key : nil
-        })
-
-        for sample in samples.reversed() {
-            if candidates.contains(sample) {
-                return sample
-            }
-        }
-        return samples.last
-    }
-
     private static func activeDisplaySpaceIndex(in spaces: [SpaceSnapshot]) -> Int? {
         if let visible = spaces.first(where: { $0.isVisible }) {
             return visible.index
