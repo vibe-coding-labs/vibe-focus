@@ -311,52 +311,14 @@ final class ToggleEngine {
         }
 
         if !restored {
-            // AX apply 失败（坐标被钳制到主屏） — 回退到 CGEvent 拖拽
-            let mainScreenFrame = NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? .zero
-            let currentFrame = wm.frame(of: windowAX)
-            let windowOnMain = currentFrame.map { mainScreenFrame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false
-
-            if windowOnMain && !mainScreenFrame.contains(origCenter) {
-                let targetScreen = NSScreen.screens.first { $0.frame.origin != .zero }
-                if let screen = targetScreen {
-                    log(
-                        "[ToggleEngine] restore: AX apply clamped, trying CGEvent drag fallback",
-                        level: .info,
-                        fields: [
-                            "traceID": trace,
-                            "windowID": String(windowID),
-                            "currentFrame": currentFrame.map { "\($0)" } ?? "nil",
-                            "targetScreen": "\(screen.frame)",
-                            "origFrame": "\(record.origFrame)"
-                        ]
-                    )
-
-                    if let app = NSRunningApplication(processIdentifier: pid_t(record.pid)) {
-                        app.activate(options: .activateIgnoringOtherApps)
-                        usleep(50_000)
-                    }
-
-                    let dragFrame = currentFrame ?? record.origFrame
-                    let dragSucceeded = NativeSpaceBridge.dragWindowToDisplay(
-                        windowFrame: dragFrame,
-                        targetScreen: screen,
-                        operationID: trace
-                    )
-
-                    if dragSucceeded {
-                        usleep(150_000)
-                        let postDragAX = wm.findWindowByPID(record.pid, windowID: effectiveWindowID) ?? windowAX
-                        restored = wm.apply(frame: record.origFrame, to: postDragAX, operationID: trace, stage: "restore_orig_after_drag")
-                    }
-                }
-            }
-
-            if !restored {
-                log("ToggleEngine.restore: all restore strategies failed", level: .error, fields: [
-                    "traceID": trace,
-                    "windowID": String(windowID)
-                ])
-            }
+            // DISABLED: CGEvent drag fallback — AX apply 几乎总是成功，
+            // 此路径在实践中很少触发，增加了不必要的复杂度。
+            // 如果 AX restore 开始失败，可以重新启用。
+            // 原代码：检测 AX apply 被钳制到主屏时，用 NativeSpaceBridge.dragWindowToDisplay 拖拽到目标显示器
+            log("ToggleEngine.restore: AX apply failed, no fallback available", level: .error, fields: [
+                "traceID": trace,
+                "windowID": String(windowID)
+            ])
         }
 
         // 5. 窗口已到达目标显示器的正确 space → 重新获取 CGWindowNumber + 重新设置 float
