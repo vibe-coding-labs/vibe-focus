@@ -53,21 +53,6 @@ extension SpaceController {
         )
     }
 
-    func captureSpaceContext(for windowID: UInt32) -> SpaceContext {
-        let sourceSpace = windowSpaceIndex(windowID: windowID)
-        let displayIdx = windowDisplayIndex(windowID: windowID)
-        // sourceSpace 为 nil 时不传 0（yabai index 0 不存在），直接传播 nil
-        let displayLocal = displayIdx.flatMap { displayIdxVal in
-            sourceSpace.flatMap { displayLocalSpaceIndex(forGlobalSpaceIndex: $0, displayIndex: displayIdxVal) }
-        }
-        return SpaceContext(
-            sourceSpaceIndex: sourceSpace,
-            targetSpaceIndex: nil,
-            sourceDisplayIndex: displayIdx,
-            sourceDisplaySpaceIndex: displayLocal
-        )
-    }
-
     func displayLocalSpaceIndex(forGlobalSpaceIndex spaceIndex: Int?, displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> Int? {
         log(
             "[SpaceController] displayLocalSpaceIndex called",
