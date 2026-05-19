@@ -413,9 +413,14 @@ struct YabaiWindowInfo: Decodable {
     let space: Int?
     let display: Int?
     let frame: Frame?
-    let floating: Int?
+    let isFloatingRaw: Bool?
 
-    var isFloating: Bool { floating == 1 }
+    enum CodingKeys: String, CodingKey {
+        case id, pid, app, title, space, display, frame
+        case isFloatingRaw = "is-floating"
+    }
+
+    var isFloating: Bool { isFloatingRaw == true }
 
     struct Frame: Decodable {
         let x: Double
