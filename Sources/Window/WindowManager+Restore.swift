@@ -56,6 +56,11 @@ extension WindowManager {
 
         // 2. 委托 ToggleEngine 执行 restore（唯一执行入口）
         // ToggleEngine 内部处理：load record → validate → space switch → apply frame
+        log("[WindowManager+Restore] delegating to ToggleEngine.restore", level: .debug, fields: [
+            "op": op,
+            "windowID": String(currentWindowID),
+            "triggerSource": triggerSource
+        ])
         let engine = ToggleEngine.shared
         let restoreSucceeded = engine.restore(
             windowID: currentWindowID,
