@@ -226,6 +226,11 @@ final class ToggleEngine {
 
         // 3. 先将窗口设为浮动状态（必须在任何移动之前！）
         // yabai 会在窗口到达新 space 的瞬间 tile 窗口，改变尺寸
+        log("[ToggleEngine] restore: setting window float", level: .debug, fields: [
+            "traceID": trace,
+            "effectiveWindowID": String(effectiveWindowID),
+            "preFloatFrame": currentFrame.map { "\($0)" } ?? "nil"
+        ])
         spaceController.setWindowFloat(effectiveWindowID, operationID: trace)
 
         // 3.5 记录所有 display 当前可见 space（用于 restore 后检测意外切换）
@@ -235,13 +240,19 @@ final class ToggleEngine {
                 preRestoreDisplaySpaces[disp] = vis
             }
         }
+        var restored = false
+        let needCrossDisplayMove = record.sourceYabaiDisp != 1
+
+        log("[ToggleEngine] restore: captured pre-restore display spaces", level: .debug, fields: [
+            "traceID": trace,
+            "preRestoreDisplaySpaces": preRestoreDisplaySpaces.map { "d\($0.key)=s\($0.value)" }.joined(separator: ","),
+            "needCrossDisplayMove": String(needCrossDisplayMove)
+        ])
 
         // 4. 跨显示器 restore：先切目标 display 到目标 space，再 AX apply
         // 关键顺序：先 switchDisplayToSpace → 再 apply(frame)
         // 原因：AX apply 把窗口移到目标显示器时，窗口会出现在当前可见 space 上
         // 如果先 apply 再切 space，窗口会落在错误的 space 上并被隐藏，yabai 无法移动隐藏窗口
-        var restored = false
-        let needCrossDisplayMove = record.sourceYabaiDisp != 1
 
         if needCrossDisplayMove {
             // 4a. 先切换目标 display 到原始 space
@@ -265,10 +276,21 @@ final class ToggleEngine {
                 if switched {
                     let td = targetDisplay
                     let started = Date()
+                    var pollCount = 0
                     while Date().timeIntervalSince(started) < 0.4 {
                         if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
                         usleep(30_000)
+                        pollCount += 1
                     }
+                    let finalSpace = spaceController.displayVisibleSpace(displayIndex: td)
+                    log("[ToggleEngine] restore: space poll completed", level: .debug, fields: [
+                        "traceID": trace,
+                        "targetDisplay": String(td),
+                        "targetSpace": String(targetSpace),
+                        "finalSpace": String(describing: finalSpace),
+                        "pollCount": String(pollCount),
+                        "reachedTarget": String(finalSpace == targetSpace)
+                    ])
                     // macOS space switch 动画需要额外时间才能完全提交
                     // 过早 AX apply 会被 macOS 覆盖，把窗口放到错误 space
                     usleep(150_000)
@@ -391,10 +413,12 @@ final class ToggleEngine {
         // CGEvent Ctrl+Arrow 可能影响非目标 display 的 space
         if restored, !preRestoreDisplaySpaces.isEmpty {
             let intentionallySwitchedDisplay = record.sourceYabaiDisp
+            var accidentalSwitches: [String] = []
             for (disp, preVis) in preRestoreDisplaySpaces {
                 if disp == intentionallySwitchedDisplay { continue }
                 let currentVis = spaceController.displayVisibleSpace(displayIndex: disp)
                 if let cur = currentVis, cur != preVis {
+                    accidentalSwitches.append("d\(disp):s\(preVis)->s\(cur)")
                     log("[ToggleEngine] restore: display \(disp) was accidentally switched from space \(preVis) to \(cur), fixing", level: .warn, fields: [
                         "traceID": trace,
                         "display": String(disp),
@@ -406,6 +430,17 @@ final class ToggleEngine {
                         operationID: trace
                     )
                 }
+            }
+            if accidentalSwitches.isEmpty {
+                log("[ToggleEngine] restore: no accidental display switches detected", level: .debug, fields: [
+                    "traceID": trace,
+                    "intentionallySwitchedDisplay": String(intentionallySwitchedDisplay)
+                ])
+            } else {
+                log("[ToggleEngine] restore: fixed accidental switches", fields: [
+                    "traceID": trace,
+                    "accidentalSwitches": accidentalSwitches.joined(separator: ",")
+                ])
             }
         }
 
@@ -422,11 +457,16 @@ final class ToggleEngine {
             ))
         }
 
+        let postDisplaySpaces: [String] = (1...3).compactMap { disp -> String? in
+            guard let vis = spaceController.displayVisibleSpace(displayIndex: disp) else { return nil }
+            return "d\(disp)=s\(vis)"
+        }
         log("ToggleEngine.restore: finished", level: .info, fields: [
             "traceID": trace,
             "windowID": String(windowID),
             "restoredTo": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
-            "success": String(restored)
+            "success": String(restored),
+            "postDisplaySpaces": postDisplaySpaces.joined(separator: ",")
         ])
 
         if let finalFrame = wm.frame(of: windowAX) {
@@ -502,10 +542,20 @@ final class ToggleEngine {
                 // 轮询等待 display 到达目标 space（替代固定 400ms sleep）
                 let td = targetDisplay
                 let started = Date()
+                var pollCount = 0
                 while Date().timeIntervalSince(started) < 0.4 {
                     if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
                     usleep(30_000)
+                    pollCount += 1
                 }
+                let finalSpace = spaceController.displayVisibleSpace(displayIndex: td)
+                log("ToggleEngine.switchToOriginalSpace: space poll result", level: .debug, fields: [
+                    "traceID": traceID,
+                    "targetSpace": String(targetSpace),
+                    "finalSpace": String(describing: finalSpace),
+                    "pollCount": String(pollCount),
+                    "reachedTarget": String(finalSpace == targetSpace)
+                ])
             }
         }
 
@@ -528,10 +578,20 @@ final class ToggleEngine {
         if moved {
             // 快速验证窗口已在目标 space
             let started = Date()
+            var verified = false
             while Date().timeIntervalSince(started) < 0.2 {
-                if let s = spaceController.windowSpaceIndex(windowID: effectiveWindowID), s == targetSpace { break }
+                if let s = spaceController.windowSpaceIndex(windowID: effectiveWindowID), s == targetSpace {
+                    verified = true
+                    break
+                }
                 usleep(20_000)
             }
+            log("ToggleEngine.switchToOriginalSpace: window space verification", level: .debug, fields: [
+                "traceID": traceID,
+                "effectiveWindowID": String(effectiveWindowID),
+                "targetSpace": String(targetSpace),
+                "verified": String(verified)
+            ])
         } else {
             log("ToggleEngine.switchToOriginalSpace: moveWindow failed, window is on correct display but may be on wrong space", level: .warn, fields: [
                 "traceID": traceID,
