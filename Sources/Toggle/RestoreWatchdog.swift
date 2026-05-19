@@ -26,7 +26,7 @@ final class RestoreWatchdog {
     private let tickIntervalMs: UInt64 = 200
     private let maxStableTicks = 5
     private let maxTotalTicks = 15
-    private let maxCorrections = 3
+    private let maxCorrections = 5
 
     private init() {}
 
@@ -155,8 +155,36 @@ final class RestoreWatchdog {
         let spaceController = SpaceController.shared
         let wm = WindowManager.shared
 
+        // 1. 先确保窗口是浮动状态
         spaceController.setWindowFloat(t.windowID, operationID: "watchdog_\(t.traceID)")
 
+        // 2. 检查并修正 space 位置（必须在 AX apply 之前）
+        if let info = spaceController.queryWindow(windowID: t.windowID) {
+            if let space = info.space, space != t.targetSpace {
+                log("[RestoreWatchdog] space mismatch, moving window to target space", level: .warn, fields: [
+                    "traceID": t.traceID,
+                    "currentSpace": String(space),
+                    "targetSpace": String(t.targetSpace),
+                    "correction": String(correctionsApplied)
+                ])
+                let moved = spaceController.moveWindow(
+                    t.windowID,
+                    toSpaceIndex: t.targetSpace,
+                    focus: false,
+                    operationID: "watchdog_\(t.traceID)"
+                )
+                log("[RestoreWatchdog] space move result", level: .debug, fields: [
+                    "traceID": t.traceID,
+                    "moved": String(moved),
+                    "correction": String(correctionsApplied)
+                ])
+                if moved {
+                    usleep(100_000)
+                }
+            }
+        }
+
+        // 3. AX frame apply
         if let windowAX = wm.findWindowByPID(t.pid, windowID: t.windowID) {
             let applyResult = wm.apply(frame: t.targetFrame, to: windowAX, operationID: "watchdog_\(t.traceID)", stage: "watchdog_correction")
             log("[RestoreWatchdog] correction #\(correctionsApplied) AX apply result", level: .debug, fields: [
@@ -170,25 +198,8 @@ final class RestoreWatchdog {
             ])
         }
 
-        if let info = spaceController.queryWindow(windowID: t.windowID) {
-            if let space = info.space, space != t.targetSpace {
-                log("[RestoreWatchdog] attempting space move correction", fields: [
-                    "traceID": t.traceID,
-                    "currentSpace": String(space),
-                    "targetSpace": String(t.targetSpace)
-                ])
-                let moved = spaceController.moveWindow(
-                    t.windowID,
-                    toSpaceIndex: t.targetSpace,
-                    focus: false,
-                    operationID: "watchdog_\(t.traceID)"
-                )
-                log("[RestoreWatchdog] space move correction result", level: .debug, fields: [
-                    "traceID": t.traceID,
-                    "moved": String(moved)
-                ])
-            }
-        }
+        // 4. AX apply 后再设一次 float（yabai 可能在 AX apply 后重新 tile 窗口）
+        spaceController.setWindowFloat(t.windowID, operationID: "watchdog_\(t.traceID)")
     }
 
     private func tick() {

@@ -243,10 +243,15 @@ final class ToggleEngine {
         var restored = false
         let needCrossDisplayMove = record.sourceYabaiDisp != 1
 
+        // 跟踪所有在 restore 过程中被故意切换的 display
+        // 不仅包括 sourceYabaiDisp（目标 display），还包括 switchDisplayToSpace 中切换的其他 display
+        var intentionallySwitchedDisplays: Set<Int> = [record.sourceYabaiDisp]
+
         log("[ToggleEngine] restore: captured pre-restore display spaces", level: .debug, fields: [
             "traceID": trace,
             "preRestoreDisplaySpaces": preRestoreDisplaySpaces.map { "d\($0.key)=s\($0.value)" }.joined(separator: ","),
-            "needCrossDisplayMove": String(needCrossDisplayMove)
+            "needCrossDisplayMove": String(needCrossDisplayMove),
+            "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
         ])
 
         // 4. 跨显示器 restore：先切目标 display 到目标 space，再 AX apply
@@ -269,11 +274,34 @@ final class ToggleEngine {
             ])
 
             if let current = displayCurrentSpace, current != targetSpace {
+                // 记录切换前的 display states，用于检测 switchDisplayToSpace 实际影响了哪些 display
+                var preSwitchSpaces: [Int: Int] = [:]
+                for d in 1...3 {
+                    if let v = spaceController.displayVisibleSpace(displayIndex: d) {
+                        preSwitchSpaces[d] = v
+                    }
+                }
+
                 let switched = spaceController.switchDisplayToSpace(
                     targetSpace: targetSpace,
                     operationID: trace
                 )
+
+                // 检测哪些 display 的 space 被改变了，全部标记为故意切换
                 if switched {
+                    for d in 1...3 {
+                        let postVis = spaceController.displayVisibleSpace(displayIndex: d)
+                        if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
+                            intentionallySwitchedDisplays.insert(d)
+                            log("[ToggleEngine] restore: display \(d) intentionally switched \(pre)->\(post) by switchDisplayToSpace", level: .debug, fields: [
+                                "traceID": trace,
+                                "display": String(d),
+                                "from": String(pre),
+                                "to": String(post)
+                            ])
+                        }
+                    }
+
                     let td = targetDisplay
                     let started = Date()
                     var pollCount = 0
@@ -298,7 +326,8 @@ final class ToggleEngine {
                 log("[ToggleEngine] restore: display switched to target space", fields: [
                     "traceID": trace,
                     "switched": String(switched),
-                    "targetSpace": String(targetSpace)
+                    "targetSpace": String(targetSpace),
+                    "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
                 ])
             }
         }
@@ -405,17 +434,18 @@ final class ToggleEngine {
                 windowAX: windowAX,
                 effectiveWindowID: effectiveWindowID,
                 triggerSource: triggerSource,
-                traceID: trace
+                traceID: trace,
+                intentionallySwitchedDisplays: &intentionallySwitchedDisplays
             )
         }
 
         // 6. 检测并修复 CGEvent 意外切换其他 display 的问题
         // CGEvent Ctrl+Arrow 可能影响非目标 display 的 space
+        // 使用 intentionallySwitchedDisplays 集合跟踪所有 restore 过程中被故意切换的 display
         if restored, !preRestoreDisplaySpaces.isEmpty {
-            let intentionallySwitchedDisplay = record.sourceYabaiDisp
             var accidentalSwitches: [String] = []
             for (disp, preVis) in preRestoreDisplaySpaces {
-                if disp == intentionallySwitchedDisplay { continue }
+                if intentionallySwitchedDisplays.contains(disp) { continue }
                 let currentVis = spaceController.displayVisibleSpace(displayIndex: disp)
                 if let cur = currentVis, cur != preVis {
                     accidentalSwitches.append("d\(disp):s\(preVis)->s\(cur)")
@@ -423,7 +453,8 @@ final class ToggleEngine {
                         "traceID": trace,
                         "display": String(disp),
                         "preRestoreSpace": String(preVis),
-                        "currentSpace": String(cur)
+                        "currentSpace": String(cur),
+                        "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
                     ])
                     _ = spaceController.switchDisplayToSpace(
                         targetSpace: preVis,
@@ -434,7 +465,7 @@ final class ToggleEngine {
             if accidentalSwitches.isEmpty {
                 log("[ToggleEngine] restore: no accidental display switches detected", level: .debug, fields: [
                     "traceID": trace,
-                    "intentionallySwitchedDisplay": String(intentionallySwitchedDisplay)
+                    "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
                 ])
             } else {
                 log("[ToggleEngine] restore: fixed accidental switches", fields: [
@@ -484,7 +515,7 @@ final class ToggleEngine {
 
     /// 切换到窗口的原始 space
     /// effectiveWindowID: 跨显示器移动后可能变化的 CGWindowNumber，用于 yabai 命令
-    private func switchToOriginalSpace(record: ToggleRecord, windowAX: AXUIElement, effectiveWindowID: UInt32, triggerSource: String, traceID: String) {
+    private func switchToOriginalSpace(record: ToggleRecord, windowAX: AXUIElement, effectiveWindowID: UInt32, triggerSource: String, traceID: String, intentionallySwitchedDisplays: inout Set<Int>) {
         let spaceController = SpaceController.shared
         let targetSpace = record.sourceSpace
         let targetDisplay = record.sourceYabaiDisp
@@ -527,6 +558,14 @@ final class ToggleEngine {
 
         // 目标 display 不在正确 space — 需要先切换 display 的 space 再移动窗口
         if let current = displayCurrentSpace, current != targetSpace {
+            // 记录切换前的 display states
+            var preSwitchSpaces: [Int: Int] = [:]
+            for d in 1...3 {
+                if let v = spaceController.displayVisibleSpace(displayIndex: d) {
+                    preSwitchSpaces[d] = v
+                }
+            }
+
             let switchStart = Date()
             let switched = spaceController.switchDisplayToSpace(
                 targetSpace: targetSpace,
@@ -539,6 +578,19 @@ final class ToggleEngine {
                 "switchDisplayMs": String(elapsedMilliseconds(since: switchStart))
             ])
             if switched {
+                // 标记被 switchDisplayToSpace 影响的 display
+                for d in 1...3 {
+                    let postVis = spaceController.displayVisibleSpace(displayIndex: d)
+                    if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
+                        intentionallySwitchedDisplays.insert(d)
+                        log("ToggleEngine.switchToOriginalSpace: display \(d) intentionally switched \(pre)->\(post)", level: .debug, fields: [
+                            "traceID": traceID,
+                            "display": String(d),
+                            "from": String(pre),
+                            "to": String(post)
+                        ])
+                    }
+                }
                 // 轮询等待 display 到达目标 space（替代固定 400ms sleep）
                 let td = targetDisplay
                 let started = Date()
