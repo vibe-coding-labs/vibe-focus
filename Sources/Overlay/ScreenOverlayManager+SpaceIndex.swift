@@ -82,39 +82,6 @@ extension ScreenOverlayManager {
         log("[REFRESH] ====== REFRESH COMPLETE ======")
     }
 
-    func getSpaceIndex(for screen: NSScreen, preferStableSampling: Bool = false) -> Int? {
-        let uuid = uuidForScreen(screen)
-
-        // Check cache to prevent redundant queries within debounce interval (per screen).
-        if !preferStableSampling,
-           let lastQuery = lastQueryTimes[uuid],
-           Date().timeIntervalSince(lastQuery) < queryDebounceInterval,
-           let cached = cachedSpaceIndices[uuid] {
-            log("Using cached space index for screen \(uuid): \(cached)")
-            return cached
-        }
-
-        // Try to get from yabai first
-        let result: Int?
-        log("Querying space index for screen \(uuid)... preferStableSampling=\(preferStableSampling)")
-        if let yabaiIndex = getYabaiSpaceIndex(for: screen, preferStableSampling: preferStableSampling) {
-            log("Got space index from yabai for screen \(uuid): \(yabaiIndex)")
-            result = yabaiIndex
-        } else if let cgIndex = getCGSpaceIndex(for: screen) {
-            log("Got space index from CG for screen \(uuid): \(cgIndex)")
-            result = cgIndex
-        } else {
-            log("Could not get space index for screen \(uuid), returning nil")
-            result = nil
-        }
-
-        // Update cache for this specific screen
-        lastQueryTimes[uuid] = Date()
-        cachedSpaceIndices[uuid] = result
-
-        return result
-    }
-
     func getPerScreenSpaceIndex(for screen: NSScreen) -> Int? {
         log("ScreenOverlayManager.getPerScreenSpaceIndex entry", level: .debug, fields: ["screenFrame": String(describing: screen.frame)])
         guard let yabaiPath = getYabaiPath() else {
