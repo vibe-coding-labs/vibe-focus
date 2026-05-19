@@ -96,14 +96,6 @@ struct WindowState: Codable, Equatable {
         return mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
     }
 
-    /// 窗口当前位置是否在 targetFrame 附近（容差 150px）
-    /// 用于验证被恢复的窗口确实在之前被 toggle 到的位置
-    func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 150) -> Bool {
-        guard let tgt = targetFrame else { return true }
-        return abs(currentFrame.origin.x - tgt.origin.x) <= tolerance &&
-               abs(currentFrame.origin.y - tgt.origin.y) <= tolerance
-    }
-
     var windowToken: WindowManager.WindowToken? {
         return WindowManager.WindowToken(
             stateID: "\(windowID)",
@@ -149,12 +141,6 @@ struct ToggleRecord: Equatable {
         let origCocoaCenter = CGPoint(x: origFrame.midX, y: mainScreenHeight - origFrame.midY)
         let tgtCocoaCenter = CGPoint(x: targetFrame.midX, y: mainScreenHeight - targetFrame.midY)
         return !mainScreenFrame.contains(origCocoaCenter) && mainScreenFrame.contains(tgtCocoaCenter)
-    }
-
-    /// 窗口当前位置是否在 targetFrame 附近
-    func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 200) -> Bool {
-        abs(currentFrame.origin.x - targetFrame.origin.x) <= tolerance &&
-        abs(currentFrame.origin.y - targetFrame.origin.y) <= tolerance
     }
 }
 

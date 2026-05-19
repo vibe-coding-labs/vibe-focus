@@ -177,7 +177,6 @@ final class HookEventHandler {
         // 通过 sessionID 找到窗口状态
         let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
         var identity: WindowIdentity?
-        var usedFallback = false
 
         if let state {
             if SessionWindowRegistry.shared.verifyBinding(state) {
@@ -216,7 +215,6 @@ final class HookEventHandler {
                 )
                 if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
                     identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
-                    usedFallback = identity != nil
                     if let identity {
                         log(
                             "[HookEventHandler] UserPromptSubmit terminal context fallback resolved",
