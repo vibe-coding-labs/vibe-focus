@@ -79,6 +79,13 @@ final class RestoreWatchdog {
         let spaceController = SpaceController.shared
         let windowInfo = spaceController.queryWindow(windowID: t.windowID)
 
+        if windowInfo == nil {
+            log("[RestoreWatchdog] checkStable: queryWindow returned nil", level: .warn, fields: [
+                "traceID": t.traceID,
+                "windowID": String(t.windowID)
+            ])
+        }
+
         if let info = windowInfo {
             if !info.isFloating {
                 log("[RestoreWatchdog] window not floating", level: .warn, fields: [
@@ -131,7 +138,9 @@ final class RestoreWatchdog {
         guard let t = target else { return }
         guard correctionsApplied < maxCorrections else {
             log("[RestoreWatchdog] max corrections reached, stopping", level: .warn, fields: [
-                "traceID": t.traceID, "windowID": String(t.windowID)
+                "traceID": t.traceID,
+                "windowID": String(t.windowID),
+                "maxCorrections": String(maxCorrections)
             ])
             stopMonitoring(reason: "max_corrections_reached")
             return
@@ -139,7 +148,8 @@ final class RestoreWatchdog {
 
         correctionsApplied += 1
         log("[RestoreWatchdog] applying correction #\(correctionsApplied)", fields: [
-            "traceID": t.traceID, "windowID": String(t.windowID)
+            "traceID": t.traceID,
+            "windowID": String(t.windowID)
         ])
 
         let spaceController = SpaceController.shared
@@ -148,7 +158,16 @@ final class RestoreWatchdog {
         spaceController.setWindowFloat(t.windowID, operationID: "watchdog_\(t.traceID)")
 
         if let windowAX = wm.findWindowByPID(t.pid, windowID: t.windowID) {
-            _ = wm.apply(frame: t.targetFrame, to: windowAX, operationID: "watchdog_\(t.traceID)", stage: "watchdog_correction")
+            let applyResult = wm.apply(frame: t.targetFrame, to: windowAX, operationID: "watchdog_\(t.traceID)", stage: "watchdog_correction")
+            log("[RestoreWatchdog] correction #\(correctionsApplied) AX apply result", level: .debug, fields: [
+                "traceID": t.traceID,
+                "success": String(applyResult)
+            ])
+        } else {
+            log("[RestoreWatchdog] correction #\(correctionsApplied): window AX not found", level: .warn, fields: [
+                "traceID": t.traceID,
+                "windowID": String(t.windowID)
+            ])
         }
 
         if let info = spaceController.queryWindow(windowID: t.windowID) {
@@ -158,12 +177,16 @@ final class RestoreWatchdog {
                     "currentSpace": String(space),
                     "targetSpace": String(t.targetSpace)
                 ])
-                _ = spaceController.moveWindow(
+                let moved = spaceController.moveWindow(
                     t.windowID,
                     toSpaceIndex: t.targetSpace,
                     focus: false,
                     operationID: "watchdog_\(t.traceID)"
                 )
+                log("[RestoreWatchdog] space move correction result", level: .debug, fields: [
+                    "traceID": t.traceID,
+                    "moved": String(moved)
+                ])
             }
         }
     }
@@ -189,6 +212,10 @@ final class RestoreWatchdog {
 
         if stable {
             stableCount += 1
+            log("[RestoreWatchdog] tick \(totalTicks): stable (\(stableCount)/\(maxStableTicks))", level: .debug, fields: [
+                "traceID": target?.traceID ?? "nil",
+                "correctionsApplied": String(correctionsApplied)
+            ])
             if stableCount >= maxStableTicks {
                 log("[RestoreWatchdog] restore confirmed stable after \(totalTicks) ticks", fields: [
                     "traceID": target?.traceID ?? "nil",
@@ -199,6 +226,11 @@ final class RestoreWatchdog {
             }
         } else {
             stableCount = 0
+            log("[RestoreWatchdog] tick \(totalTicks): UNSTABLE, applying correction", level: .debug, fields: [
+                "traceID": target?.traceID ?? "nil",
+                "correctionsApplied": String(correctionsApplied),
+                "maxCorrections": String(maxCorrections)
+            ])
             applyCorrection()
         }
     }
