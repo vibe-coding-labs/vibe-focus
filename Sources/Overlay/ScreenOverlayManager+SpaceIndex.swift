@@ -134,117 +134,14 @@ extension ScreenOverlayManager {
     }
 
     func getYabaiPath() -> String? {
-        // First, check if user has configured a custom path
+        // 先检查用户自定义路径
         if let customPath = preferences.yabaiPath,
            !customPath.isEmpty,
            FileManager.default.fileExists(atPath: customPath) {
-            log("Using user-configured yabai path: \(customPath)")
             return customPath
         }
-
-        // Check cached path
-        if let cached = cachedYabaiPath, FileManager.default.fileExists(atPath: cached) {
-            return cached
-        }
-
-        // Try common installation paths
-        let commonPaths = [
-            "/opt/homebrew/bin/yabai",
-            "/usr/local/bin/yabai",
-            "/usr/bin/yabai",
-            "/bin/yabai",
-            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/yabai"),
-            (NSHomeDirectory() as NSString).appendingPathComponent("bin/yabai"),
-            (NSHomeDirectory() as NSString).appendingPathComponent(".nix-profile/bin/yabai")
-        ]
-
-        for path in commonPaths {
-            if FileManager.default.fileExists(atPath: path) {
-                cachedYabaiPath = path
-                log("Found yabai at: \(path)")
-                return path
-            }
-        }
-
-        // Try to find using user's shell
-        if let shellPath = getYabaiPathFromUserShell() {
-            cachedYabaiPath = shellPath
-            log("Found yabai via user shell: \(shellPath)")
-            return shellPath
-        }
-
-        // Try to find using which via bash -l
-        let task = Process()
-        task.launchPath = "/bin/bash"
-        task.arguments = ["-l", "-c", "which yabai"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !path.isEmpty,
-               FileManager.default.fileExists(atPath: path) {
-                cachedYabaiPath = path
-                log("Found yabai via bash -l: \(path)")
-                return path
-            }
-        } catch {
-            log("Failed to locate yabai using bash: \(error)")
-        }
-
-        log("yabai binary not found in any location")
-        return nil
-    }
-
-    func getYabaiPathFromUserShell() -> String? {
-        // Get user's default shell
-        let shellTask = Process()
-        shellTask.launchPath = "/usr/bin/env"
-        shellTask.arguments = ["bash", "-l", "-c", "echo $SHELL"]
-
-        let shellPipe = Pipe()
-        shellTask.standardOutput = shellPipe
-        shellTask.standardError = Pipe()
-
-        do {
-            try shellTask.run()
-            shellTask.waitUntilExit()
-
-            let shellData = shellPipe.fileHandleForReading.readDataToEndOfFile()
-            guard let userShell = String(data: shellData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !userShell.isEmpty else {
-                return nil
-            }
-
-            // Use user's shell to find yabai
-            let whichTask = Process()
-            whichTask.launchPath = userShell
-            whichTask.arguments = ["-l", "-c", "which yabai"]
-
-            let whichPipe = Pipe()
-            whichTask.standardOutput = whichPipe
-            whichTask.standardError = Pipe()
-
-            try whichTask.run()
-            whichTask.waitUntilExit()
-
-            let pathData = whichPipe.fileHandleForReading.readDataToEndOfFile()
-            if let path = String(data: pathData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !path.isEmpty,
-               FileManager.default.fileExists(atPath: path) {
-                return path
-            }
-        } catch {
-            log("Failed to get yabai path from user shell: \(error)")
-        }
-
-        return nil
+        // 委托到 YabaiClient — 共享缓存和完整 fallback 链
+        return YabaiClient.yabaiPath()
     }
 
     func getYabaiDisplayIndex(for screen: NSScreen) -> Int? {
