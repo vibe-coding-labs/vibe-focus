@@ -207,39 +207,14 @@ extension WindowManager {
 
 
     func runJXAScript(_ script: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-l", "JavaScript"]
-
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        do {
-            try process.run()
-        } catch {
-            log("Failed to launch osascript: \(error.localizedDescription)")
+        guard let result = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-l", "JavaScript"], stdin: script) else {
+            log("Failed to launch osascript")
             return nil
         }
-
-        if let data = script.data(using: .utf8) {
-            inputPipe.fileHandleForWriting.write(data)
-        }
-        try? inputPipe.fileHandleForWriting.close()
-        process.waitUntilExit()
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-        if process.terminationStatus != 0 {
-            let errorText = String(data: errorData, encoding: .utf8) ?? "unknown error"
-            log("osascript failed (exit \(process.terminationStatus), scriptLength=\(script.count)): \(errorText.trimmingCharacters(in: .whitespacesAndNewlines))")
+        if result.exitCode != 0 {
+            log("osascript failed (exit \(result.exitCode), scriptLength=\(script.count)): \(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
             return nil
         }
-
-        return String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

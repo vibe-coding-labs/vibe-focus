@@ -31,6 +31,42 @@ enum ShellRunner {
         )
     }
 
+    @discardableResult
+    static func run(executable: String, arguments: [String], stdin: String) -> YabaiClient.YabaiResult? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardInput = inputPipe
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        if let data = stdin.data(using: .utf8) {
+            inputPipe.fileHandleForWriting.write(data)
+        }
+        try? inputPipe.fileHandleForWriting.close()
+
+        process.waitUntilExit()
+
+        let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+        return YabaiClient.YabaiResult(
+            exitCode: process.terminationStatus,
+            stdout: String(data: output, encoding: .utf8) ?? "",
+            stderr: String(data: errorData, encoding: .utf8) ?? ""
+        )
+    }
+
     static func runShell(_ command: String) -> String? {
         guard let result = run(executable: "/bin/bash", arguments: ["-c", command]),
               result.exitCode == 0 else { return nil }
