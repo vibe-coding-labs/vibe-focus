@@ -65,20 +65,20 @@ final class SpaceController: ObservableObject {
     private init() {
         // Delay initial check to ensure log function is available
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            NSLog("[SpaceController] Initializing...")
+            log("[SpaceController] Initializing...")
             self?.refreshAvailability(force: true)
         }
     }
 
     deinit {
-        NSLog("[SpaceController] Deinit called")
+        log("[SpaceController] Deinit called")
     }
 
     func updateEnabledState() {
         let newValue = SpacePreferences.integrationEnabled && availability == .available
         if isEnabled != newValue {
             isEnabled = newValue
-            NSLog("[SpaceController] isEnabled changed to: \(newValue)")
+            log("[SpaceController] isEnabled changed", fields: ["newValue": String(newValue)])
         }
     }
 
