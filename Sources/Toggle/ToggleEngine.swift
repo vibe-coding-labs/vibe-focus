@@ -492,12 +492,17 @@ final class ToggleEngine {
             guard let vis = spaceController.displayVisibleSpace(displayIndex: disp) else { return nil }
             return "d\(disp)=s\(vis)"
         }
+        let windowActualSpace = spaceController.windowSpaceIndex(windowID: effectiveWindowID)
+        let spaceMatch = windowActualSpace == record.sourceSpace
         log("ToggleEngine.restore: finished", level: .info, fields: [
             "traceID": trace,
             "windowID": String(windowID),
             "restoredTo": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
             "success": String(restored),
-            "postDisplaySpaces": postDisplaySpaces.joined(separator: ",")
+            "postDisplaySpaces": postDisplaySpaces.joined(separator: ","),
+            "windowActualSpace": String(describing: windowActualSpace),
+            "targetSourceSpace": String(record.sourceSpace),
+            "spaceMatch": String(spaceMatch)
         ])
 
         if let finalFrame = wm.frame(of: windowAX) {

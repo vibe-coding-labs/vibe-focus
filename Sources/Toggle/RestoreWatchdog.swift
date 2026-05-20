@@ -38,11 +38,14 @@ final class RestoreWatchdog {
         self.totalTicks = 0
         self.correctionsApplied = 0
 
+        let spaceController = SpaceController.shared
+        let windowSpace = spaceController.windowSpaceIndex(windowID: target.windowID)
         log("[RestoreWatchdog] started", fields: [
             "traceID": target.traceID,
             "windowID": String(target.windowID),
             "targetDisplay": String(target.targetDisplay),
             "targetSpace": String(target.targetSpace),
+            "windowActualSpace": String(describing: windowSpace),
             "targetFrame": "\(Int(target.targetFrame.origin.x)),\(Int(target.targetFrame.origin.y)) \(Int(target.targetFrame.width))x\(Int(target.targetFrame.height))"
         ])
 
