@@ -78,12 +78,7 @@ extension WindowManager {
             return
         }
 
-        // 3. 读取 record 用于日志和清理（尝试 windowID，fallback PID）
-        var record = engine.load(windowID: currentWindowID)
-        if record == nil {
-            record = engine.loadByPID(pid: frontApp.processIdentifier)
-        }
-        guard let record else { return }
+        // 3. ToggleEngine.restore() 已自动清除 toggle record，无需手动 clear
 
         // 4. 焦点跟随（仅 carbon_hotkey 触发）
         if triggerSource == "carbon_hotkey" {
@@ -97,28 +92,6 @@ extension WindowManager {
             }
         }
 
-        // 5. 清理 — 清除 SQLite toggle record
-        log(
-            "[WindowManager] restore: clearing toggle record",
-            level: .debug,
-            fields: [
-                "op": op,
-                "windowID": String(currentWindowID),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))",
-                "sourceSpace": String(record.sourceSpace),
-                "sourceYabaiDisp": String(record.sourceYabaiDisp)
-            ]
-        )
-        // 用 record 中存储的 windowID 清除（PID fallback 时可能与当前 windowID 不同）
-        if currentWindowID != record.windowID {
-            log("[WindowManager] restore: clearing stored windowID (differs from current)", level: .info, fields: [
-                "op": op,
-                "currentWindowID": String(currentWindowID),
-                "storedWindowID": String(record.windowID)
-            ])
-        }
-        engine.clear(windowID: record.windowID)
-
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
         log(
             "[WindowManager] restore finished",
@@ -131,12 +104,8 @@ extension WindowManager {
         AuditLogger.shared.record(
             eventType: "restore_success",
             windowID: currentWindowID,
-            pid: record.pid,
-            sessionID: record.sessionID,
+            pid: frontApp.processIdentifier,
             details: [
-                "sourceSpace": String(record.sourceSpace),
-                "sourceYabaiDisp": String(record.sourceYabaiDisp),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
                 "durationMs": String(finalDurationMs)
             ]
         )
