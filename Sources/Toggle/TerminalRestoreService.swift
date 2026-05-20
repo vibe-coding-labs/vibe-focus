@@ -272,7 +272,7 @@ final class TerminalRestoreService {
                     AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue)
                 }
                 // 转换 Quartz Y → AppKit Y：appKitY = mainScreenHeight - quartzY - height
-                let mainScreenHeight = NSScreen.screens[0].frame.height
+                let mainScreenHeight = CoordinateKit.mainScreenHeight
                 var origin = CGPoint(x: targetFrame.origin.x, y: mainScreenHeight - targetFrame.origin.y - targetFrame.height)
                 if let originValue = AXValueCreate(.cgPoint, &origin) {
                     AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, originValue)

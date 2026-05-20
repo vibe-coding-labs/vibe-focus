@@ -179,7 +179,7 @@ final class ShutdownSnapshotManager {
             // CGWindowListCopyWindowInfo 返回 Quartz 坐标（原点在主屏幕左上角，Y 向下）
             // NSScreen 使用 AppKit 坐标（原点在主屏幕左下角，Y 向上）
             // 需要转换 Y 坐标才能正确匹配屏幕
-            let mainScreenHeight = NSScreen.screens.first?.frame.height ?? 0
+            let mainScreenHeight = CoordinateKit.mainScreenHeight
             let appKitFrame = CGRect(
                 x: frame.origin.x,
                 y: mainScreenHeight - frame.origin.y - frame.height,
