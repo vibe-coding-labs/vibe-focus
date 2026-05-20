@@ -33,15 +33,7 @@ class WindowManager {
     init() {}
 
     func getMainScreen() -> NSScreen? {
-        let mainDisplayID = CGMainDisplayID()
-        let key = NSDeviceDescriptionKey("NSScreenNumber")
-        for screen in NSScreen.screens {
-            if let value = screen.deviceDescription[key] as? NSNumber,
-               CGDirectDisplayID(value.uint32Value) == mainDisplayID {
-                return screen
-            }
-        }
-        return NSScreen.screens.first ?? NSScreen.main
+        return NSScreen.screens.first { $0.isMainScreen } ?? NSScreen.main
     }
 
     func hasAccessibilityPermission() -> Bool {
