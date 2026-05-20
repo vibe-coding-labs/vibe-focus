@@ -37,7 +37,7 @@ extension WindowManager {
             return nil
         }
 
-        guard let terminalPID = TerminalAppRegistry.findTerminalPID(from: startPID) else {
+        guard let terminalPID = TerminalRegistry.findTerminalPID(from: startPID) else {
             log(
                 "[WindowManager] findWindowByTerminalContext: no terminal app found in process tree",
                 level: .warn,

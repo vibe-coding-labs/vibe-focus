@@ -126,15 +126,10 @@ extension WindowManager {
             .last?
             .lowercased()
 
-        // Claude Code 常用的终端/IDE 的 bundleIdentifier
-        let claudeHostApps: Set<String> = [
-            "com.apple.Terminal",
-            "com.googlecode.iterm2",
-            "com.microsoft.VSCode",
-            "com.todesktop.230313mzl4w4u92", // Cursor
-            "dev.warp.Warp-Stable",
-            "com.mitchellh.ghostty",
-        ]
+        // Claude Code 常用的终端/IDE — 通过 TerminalRegistry 统一判断
+        let isHostApp = { (c: WindowCandidate) in
+            TerminalRegistry.isTerminalOrIDEApp(appName: c.appName, bundleIdentifier: c.bundleIdentifier)
+        }
 
         // 构建候选窗口列表
         var candidates: [WindowCandidate] = []
@@ -172,10 +167,7 @@ extension WindowManager {
         // 策略 1：Claude Host App 窗口中标题包含 cwd 项目名
         if let projectName, !projectName.isEmpty {
             let match = candidates.first(where: { c in
-                let isHostApp = (c.bundleIdentifier.map { claudeHostApps.contains($0) } ?? false)
-                    || c.appName == "Terminal" || c.appName == "iTerm2" || c.appName == "Cursor"
-                    || c.appName == "Warp" || c.appName == "Ghostty" || c.appName == "Alacritty"
-                return isHostApp && c.title.lowercased().contains(projectName)
+                return isHostApp(c) && c.title.lowercased().contains(projectName)
             })
             if let match {
                 log(
@@ -193,10 +185,7 @@ extension WindowManager {
 
         // 策略 2：Claude Host App 窗口中标题包含 "Claude Code" 且在非主屏幕
         let claudeMatch = candidates.first(where: { c in
-            let isHostApp = (c.bundleIdentifier.map { claudeHostApps.contains($0) } ?? false)
-                || c.appName == "Terminal" || c.appName == "iTerm2" || c.appName == "Cursor"
-                || c.appName == "Warp" || c.appName == "Ghostty" || c.appName == "Alacritty"
-            return isHostApp && c.title.lowercased().contains("claude code")
+            return isHostApp(c) && c.title.lowercased().contains("claude code")
         })
         if let claudeMatch {
             log(

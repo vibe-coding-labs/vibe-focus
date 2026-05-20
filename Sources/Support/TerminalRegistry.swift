@@ -65,6 +65,10 @@ enum TerminalRegistry {
         return false
     }
 
+    static func isTerminalBundleID(_ bundleID: String) -> Bool {
+        return terminalBundleIDs.contains(bundleID)
+    }
+
     static func findTerminalPID(from startPID: Int32) -> Int32? {
         var currentPID = startPID
         for _ in 0..<10 {

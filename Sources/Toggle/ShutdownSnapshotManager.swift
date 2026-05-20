@@ -120,12 +120,9 @@ final class ShutdownSnapshotManager {
         var terminalWindows: [TerminalWindowSnapshot] = []
 
         // 获取所有终端类 App 的窗口
-        let terminalBundleIDs: Set<String> = [
-            "com.apple.Terminal",
-            "com.googlecode.iterm2",
-            "dev.warp.Warp-Stable",
-            "com.mitchellh.ghostty",
-        ]
+        let isTerminalApp = { (bundleID: String?) in
+            bundleID.map { TerminalRegistry.isTerminalBundleID($0) } ?? false
+        }
 
         guard let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else {
             log("[ShutdownSnapshot] failed to enumerate windows", level: .error)
@@ -141,7 +138,7 @@ final class ShutdownSnapshotManager {
         var pidToBundleID: [pid_t: String] = [:]
         var pidToAppName: [pid_t: String] = [:]
         for app in NSWorkspace.shared.runningApplications {
-            if let bundleID = app.bundleIdentifier, terminalBundleIDs.contains(bundleID) {
+            if let bundleID = app.bundleIdentifier, isTerminalApp(bundleID) {
                 pidToBundleID[app.processIdentifier] = bundleID
                 pidToAppName[app.processIdentifier] = app.localizedName ?? bundleID
             }
