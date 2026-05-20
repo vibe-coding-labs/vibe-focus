@@ -1,5 +1,7 @@
 import Foundation
 
 enum AppVersion {
-    static let current = "0.0.19"
+    static var current: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+    }
 }
