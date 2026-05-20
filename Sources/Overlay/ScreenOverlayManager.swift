@@ -150,86 +150,48 @@ class ScreenOverlayManager: ObservableObject {
 
 
     func queryYabaiSpaces(forDisplayIndex displayIndex: Int, yabaiPath: String) -> [SpaceSnapshot]? {
-        let task = Process()
-        task.launchPath = yabaiPath
-        task.arguments = ["-m", "query", "--spaces", "--display", "\(displayIndex)"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-
-        do {
-            try task.run()
-            let semaphore = DispatchSemaphore(value: 0)
-            task.terminationHandler = { _ in
-                semaphore.signal()
-            }
-            let result = semaphore.wait(timeout: .now() + yabaiCommandTimeout)
-            if result == .timedOut {
-                log("yabai spaces query timed out")
-                task.terminate()
-                return nil
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                log("[DEBUG] Failed to parse yabai spaces JSON")
-                return nil
-            }
-
-            log("[DEBUG] yabai --spaces --display \(displayIndex) returned \(json.count) spaces")
-            let snapshots: [SpaceSnapshot] = json.compactMap { space in
-                guard let index = space["index"] as? Int else {
-                    return nil
-                }
-                let visible = (space["is-visible"] as? Bool) ?? ((space["is-visible"] as? Int ?? 0) == 1)
-                let hasFocus = (space["has-focus"] as? Bool) ?? ((space["has-focus"] as? Int ?? 0) == 1)
-                return SpaceSnapshot(index: index, isVisible: visible, hasFocus: hasFocus)
-            }
-
-            for (i, snapshot) in snapshots.enumerated() {
-                log("[DEBUG]   Space \(i): index=\(snapshot.index), is-visible=\(snapshot.isVisible), has-focus=\(snapshot.hasFocus)")
-            }
-
-            return snapshots
-        } catch {
-            log("Failed to query yabai spaces for display: \(error)")
+        guard let result = YabaiClient.run(arguments: ["-m", "query", "--spaces", "--display", "\(displayIndex)"]),
+              result.exitCode == 0 else {
+            log("queryYabaiSpaces: yabai query failed")
             return nil
         }
+
+        guard let data = result.stdout.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            log("[DEBUG] Failed to parse yabai spaces JSON")
+            return nil
+        }
+
+        log("[DEBUG] yabai --spaces --display \(displayIndex) returned \(json.count) spaces")
+        let snapshots: [SpaceSnapshot] = json.compactMap { space in
+            guard let index = space["index"] as? Int else {
+                return nil
+            }
+            let visible = (space["is-visible"] as? Bool) ?? ((space["is-visible"] as? Int ?? 0) == 1)
+            let hasFocus = (space["has-focus"] as? Bool) ?? ((space["has-focus"] as? Int ?? 0) == 1)
+            return SpaceSnapshot(index: index, isVisible: visible, hasFocus: hasFocus)
+        }
+
+        for (i, snapshot) in snapshots.enumerated() {
+            log("[DEBUG]   Space \(i): index=\(snapshot.index), is-visible=\(snapshot.isVisible), has-focus=\(snapshot.hasFocus)")
+        }
+
+        return snapshots
     }
 
     func queryFocusedSpaceIndex(yabaiPath: String) -> Int? {
-        let task = Process()
-        task.launchPath = yabaiPath
-        task.arguments = ["-m", "query", "--spaces", "--space"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-
-        do {
-            try task.run()
-            let semaphore = DispatchSemaphore(value: 0)
-            task.terminationHandler = { _ in
-                semaphore.signal()
-            }
-            let result = semaphore.wait(timeout: .now() + yabaiCommandTimeout)
-            if result == .timedOut {
-                log("yabai focused space query timed out")
-                task.terminate()
-                return nil
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let index = json["index"] as? Int else {
-                return nil
-            }
-            return index
-        } catch {
-            log("Failed to query yabai focused space: \(error)")
+        guard let result = YabaiClient.run(arguments: ["-m", "query", "--spaces", "--space"]),
+              result.exitCode == 0 else {
+            log("queryFocusedSpaceIndex: yabai query failed")
             return nil
         }
+
+        guard let data = result.stdout.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let index = json["index"] as? Int else {
+            return nil
+        }
+        return index
     }
 
     deinit {
@@ -241,13 +203,7 @@ class ScreenOverlayManager: ObservableObject {
 
     // MARK: - Cleanup
     func unregisterYabaiSignals() {
-        guard let yabaiPath = getYabaiPath() else { return }
-
-        let task = Process()
-        task.launchPath = yabaiPath
-        task.arguments = ["-m", "signal", "--remove", "vibefocus-space-changed"]
-        task.launch()
-        task.waitUntilExit()
+        let _ = YabaiClient.run(arguments: ["-m", "signal", "--remove", "vibefocus-space-changed"])
 
         log("Unregistered yabai signals")
     }
