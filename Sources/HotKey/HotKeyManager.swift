@@ -44,12 +44,12 @@ final class HotKeyManager: ObservableObject {
     nonisolated static func triggerTitleEditor() {
         let enabled = TitleEditorPreferences.isEnabled
         let hotKeyEnabled = TitleEditorPreferences.isHotKeyEnabled
-        NSLog("[HotKey] Title editor Ctrl+T matched enabled=%d hotKeyEnabled=%d", enabled, hotKeyEnabled)
+        log("[HotKey] Title editor Ctrl+T matched", fields: ["enabled": String(enabled), "hotKeyEnabled": String(hotKeyEnabled)])
         guard enabled && hotKeyEnabled else {
-            NSLog("[HotKey] Title editor disabled, passing event through")
+            log("[HotKey] Title editor disabled, passing event through")
             return
         }
-        NSLog("[HotKey] Title editor hotkey detected, dispatching editTitle")
+        log("[HotKey] Title editor hotkey detected, dispatching editTitle")
         DispatchQueue.main.async {
             TitleEditorService.shared.editTitle()
         }
