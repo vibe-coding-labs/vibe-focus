@@ -180,8 +180,6 @@ class ScreenOverlayManager: ObservableObject {
     // MARK: - Per-Screen Space Indexing
 
 
-    var cachedYabaiPath: String? = nil
-
 
     func queryYabaiSpaces(forDisplayIndex displayIndex: Int, yabaiPath: String) -> [SpaceSnapshot]? {
         let task = Process()
