@@ -210,6 +210,12 @@ extension SpaceController {
     func locateYabai() -> String? {
         NSLog("[SpaceController] locateYabai called")
 
+        // 先检查 YabaiClient 的缓存（两个模块共享路径缓存）
+        if let clientPath = YabaiClient.yabaiPath() {
+            cachedYabaiPath = clientPath
+            return clientPath
+        }
+
         if let cachedYabaiPath, !cachedYabaiPath.isEmpty {
             log("Using cached yabai path: \(cachedYabaiPath)")
             return cachedYabaiPath
