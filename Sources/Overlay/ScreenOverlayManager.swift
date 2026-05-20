@@ -22,10 +22,7 @@ class ScreenOverlayManager: ObservableObject {
     var pendingSignalRefreshWorkItems: [DispatchWorkItem] = []
     var pendingPreferenceRefreshWorkItem: DispatchWorkItem?
     var pendingPreferenceSaveWorkItem: DispatchWorkItem?
-    var workspaceSpaceChangeObserver: NSObjectProtocol?
-    var swipeEventMonitor: Any?
     var lastForceRefreshTriggerAt: Date = .distantPast
-    var lastSwipeTriggerAt: Date = .distantPast
 
     // Query result caching to prevent redundant yabai calls
     var cachedDisplayIndices: [UUID: Int] = [:]
@@ -36,7 +33,6 @@ class ScreenOverlayManager: ObservableObject {
     let preferenceSaveDebounceInterval: TimeInterval = 0.2
     let yabaiCommandTimeout: TimeInterval = 0.22
     let minForceRefreshTriggerInterval: TimeInterval = 0.06
-    let minSwipeTriggerInterval: TimeInterval = 0.12
     let singleScreenFallbackRefreshInterval: TimeInterval = 0.35
     let multiScreenFallbackRefreshInterval: TimeInterval = 0.8
     var automaticRefreshSuspended = false
@@ -46,7 +42,6 @@ class ScreenOverlayManager: ObservableObject {
         self.preferences = ScreenIndexPreferences.load()
         log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
         log("ScreenOverlayManager.init entry", level: .debug, fields: ["isEnabled": String(preferences.isEnabled), "position": preferences.position.rawValue])
-        // setupScreenNotifications() - DISABLED: causing crashes
         setupSignalHandler()
         registerYabaiSignals()
         startRefreshTimer()
@@ -57,33 +52,6 @@ class ScreenOverlayManager: ObservableObject {
 
 
     // MARK: - Setup
-    func setupScreenNotifications() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleScreenChange),
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-
-        workspaceSpaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.activeSpaceDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else {
-                return
-            }
-            log("[SPACE_NOTIFY] NSWorkspace activeSpaceDidChangeNotification")
-            Task { @MainActor [weak self] in
-                self?.triggerForceRefresh(reason: "nsworkspace_active_space")
-            }
-        }
-
-        // DISABLED: Swipe event monitor causing crashes
-        // swipeEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.swipe]) { [weak self] event in
-        //     ...
-        // }
-    }
 
     func startRefreshTimer() {
         if automaticRefreshSuspended {
@@ -262,22 +230,6 @@ class ScreenOverlayManager: ObservableObject {
             log("Failed to query yabai focused space: \(error)")
             return nil
         }
-    }
-
-    func getCGSpaceIndex(for screen: NSScreen) -> Int? {
-        log("ScreenOverlayManager.getCGSpaceIndex entry", level: .debug, fields: ["screenFrame": String(describing: screen.frame)])
-        // Try to get space info from Core Graphics
-        guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
-            log("ScreenOverlayManager.getCGSpaceIndex no screen number", level: .debug)
-            return nil
-        }
-
-        _ = screenNumber
-
-        // This is a simplified approach - full implementation would need more complex CG API usage
-        // For now, return nil to indicate we couldn't get system index
-        log("ScreenOverlayManager.getCGSpaceIndex returning nil (not implemented)", level: .debug)
-        return nil
     }
 
     deinit {

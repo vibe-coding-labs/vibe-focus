@@ -95,18 +95,6 @@ struct WindowState: Codable, Equatable {
         let tgtCenter = CGPoint(x: tgt.midX, y: tgt.midY)
         return mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
     }
-
-    var windowToken: WindowManager.WindowToken? {
-        return WindowManager.WindowToken(
-            stateID: "\(windowID)",
-            pid: pid,
-            bundleIdentifier: bundleIdentifier,
-            appName: appName,
-            windowID: windowID,
-            windowNumber: axWindowNumber,
-            title: title
-        )
-    }
 }
 
 /// Toggle 操作的完整快照 — 单一事实来源

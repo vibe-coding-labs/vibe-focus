@@ -21,36 +21,7 @@ extension WindowManager {
         return windowID
     }
 
-    /// 验证 AXUIElement 是否仍然有效（底层窗口未被销毁）
-    func isValidAXElement(_ element: AXUIElement) -> Bool {
-        var windowID: CGWindowID = 0
-        let status = _AXUIElementGetWindow(element, &windowID)
-        guard status == .success, windowID != 0 else {
-            log(
-                "[WindowManager] isValidAXElement: _AXUIElementGetWindow failed",
-                level: .debug,
-                fields: ["axStatus": String(status.rawValue)]
-            )
-            return false
-        }
-        let valid = validateWindowExists(windowID: windowID)
-        log(
-            "[WindowManager] isValidAXElement result",
-            level: .debug,
-            fields: ["windowID": String(windowID), "valid": String(valid)]
-        )
-        return valid
-    }
-
-    struct CGWindowSnapshot {
-        let windowID: UInt32
-        let title: String?
-        let frame: CGRect
-        let ownerPID: pid_t
-        let layer: Int
-    }
-
-
+    
     func windowNumber(for window: AXUIElement) -> Int? {
         var numberRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(window, axWindowNumberAttribute as CFString, &numberRef)

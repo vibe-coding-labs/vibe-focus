@@ -16,34 +16,6 @@ class WindowManager {
     let axWindowNumberAttribute = "AXWindowNumber"
     let axFrameAttribute = "AXFrame"
 
-    struct WindowToken {
-        let stateID: String
-        let pid: pid_t
-        let bundleIdentifier: String?
-        let appName: String?
-        let windowID: UInt32?
-        let windowNumber: Int?
-        let title: String?
-    }
-
-    struct RectPayload: Codable {
-        let x: CGFloat
-        let y: CGFloat
-        let width: CGFloat
-        let height: CGFloat
-
-        init(_ rect: CGRect) {
-            x = rect.origin.x
-            y = rect.origin.y
-            width = rect.width
-            height = rect.height
-        }
-
-        var cgRect: CGRect {
-            CGRect(x: x, y: y, width: width, height: height)
-        }
-    }
-
     struct ScriptWindowSnapshot: Codable {
         let windowID: UInt32?
         let appName: String
