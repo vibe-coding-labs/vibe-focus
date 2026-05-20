@@ -1,8 +1,6 @@
 import SwiftUI
 import AppKit
-import Carbon
 import ApplicationServices.HIServices
-import CoreFoundation
 import Foundation
 
 // MARK: - Window Move Operations
