@@ -13,24 +13,9 @@ extension WindowManager {
     private static let cgPollTimeoutMs: useconds_t = 80_000
     private static let heightTolerance: CGFloat = 100
 
-    /// 执行 shell 命令并返回输出
+    /// 执行 shell 命令并返回输出 — 委托到 ShellRunner
     func runShellCommand(_ executable: String, args: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)
-        } catch {
-            return nil
-        }
+        return ShellRunner.run(executable: executable, arguments: args)?.stdout
     }
 
     func resolveWindow(identity: WindowIdentity) -> AXUIElement? {

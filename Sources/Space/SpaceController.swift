@@ -321,32 +321,7 @@ final class SpaceController: ObservableObject {
     }
 
     func runProcess(executable: String, arguments: [String]) -> ShellResult? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        do {
-            try process.run()
-        } catch {
-            log("Failed to run \(executable): \(error.localizedDescription)")
-            return nil
-        }
-
-        process.waitUntilExit()
-
-        let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-        return ShellResult(
-            exitCode: process.terminationStatus,
-            stdout: String(data: output, encoding: .utf8) ?? "",
-            stderr: String(data: errorData, encoding: .utf8) ?? ""
-        )
+        return ShellRunner.run(executable: executable, arguments: arguments)
     }
 
     func decodeSingleOrFirst<T: Decodable>(_ type: T.Type, from text: String) -> T? {
