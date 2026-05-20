@@ -513,6 +513,15 @@ final class ToggleEngine {
                 "onMainScreen": String(CoordinateKit.isOnMainScreen(finalFrame))
             ])
         }
+
+        // restore 成功后自动清除 toggle record — 调用者无需手动 clear
+        if restored {
+            clear(windowID: record.windowID)
+            log("[ToggleEngine] restore: auto-cleared toggle record", fields: [
+                "traceID": trace,
+                "recordWindowID": String(record.windowID)
+            ])
+        }
         return restored
     }
 

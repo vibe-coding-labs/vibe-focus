@@ -407,24 +407,7 @@ final class HookEventHandler {
                     ]
                 )
                 if success {
-                    // 清除 toggle record — 与 WindowManager.restore() 对齐
-                    // 必须用 record 中存储的 windowID（可能与 identity.windowID 不同，CGWindowNumber 变化后）
-                    var record = engine.load(windowID: identity.windowID)
-                    if record == nil {
-                        record = engine.loadByPID(pid: identity.pid)
-                    }
-                    if let record {
-                        engine.clear(windowID: record.windowID)
-                        log(
-                            "[HookEventHandler] UserPromptSubmit cleared toggle record",
-                            fields: [
-                                "traceID": traceID,
-                                "windowID": String(record.windowID),
-                                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))",
-                                "sourceSpace": String(record.sourceSpace)
-                            ]
-                        )
-                    }
+                    // ToggleEngine.restore() 已自动清除 toggle record，无需手动 clear
                     return (
                         200,
                         ClaudeHookResponse(

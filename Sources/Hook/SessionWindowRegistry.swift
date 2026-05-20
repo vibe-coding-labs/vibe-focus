@@ -224,44 +224,7 @@ final class SessionWindowRegistry: ObservableObject {
         lastEventDescription = message
     }
 
-    // MARK: - Toggle State
-
-    /// 按 windowID 更新 toggle state（由 WindowManager 调用）
-    func updateToggleState(windowID: UInt32, toggleUpdater: (inout WindowState) -> Void) {
-        if var state = windowStates[windowID] {
-            toggleUpdater(&state)
-            state.updatedAt = Date()
-            windowStates[windowID] = state
-            persistToDB(windowID: windowID)
-        } else {
-            var state = WindowState(
-                windowID: windowID,
-                pid: 0,
-                isCompleted: false,
-                createdAt: Date(),
-                updatedAt: Date()
-            )
-            toggleUpdater(&state)
-            windowStates[windowID] = state
-            persistToDB(windowID: windowID)
-        }
-    }
-
-    /// 清除指定窗口的 toggle state
-    func clearToggleState(windowID: UInt32) {
-        if var state = windowStates[windowID] {
-            state.origX = nil; state.origY = nil; state.origW = nil; state.origH = nil
-            state.targetX = nil; state.targetY = nil; state.targetW = nil; state.targetH = nil
-            state.sourceSpace = nil; state.sourceDisplay = nil; state.sourceYabaiDisp = nil
-            state.sourceDispSpace = nil; state.targetDisplay = nil
-            state.toggleReason = nil; state.toggledAt = nil
-            state.updatedAt = Date()
-            windowStates[windowID] = state
-            persistToDB(windowID: windowID)
-        }
-        WindowStateStore.shared.clearToggleRecord(windowID: windowID)
-    }
-
+    
     /// 将旧 windowID 的绑定重映射到新 windowID（CGWindowNumber 变化时调用）
     func remapWindowID(oldWindowID: UInt32, newWindowID: UInt32) {
         guard oldWindowID != newWindowID else { return }
