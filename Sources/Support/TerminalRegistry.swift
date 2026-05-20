@@ -82,30 +82,14 @@ enum TerminalRegistry {
     // MARK: - Private
 
     private static func getProcessComm(_ pid: Int32) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-o", "comm=", "-p", String(pid)]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let output = ShellRunner.run(executable: "/bin/ps", arguments: ["-o", "comm=", "-p", String(pid)])?
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return output.isEmpty ? nil : output
     }
 
     private static func getParentPID(_ pid: Int32) -> Int32? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-o", "ppid=", "-p", String(pid)]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let output = ShellRunner.run(executable: "/bin/ps", arguments: ["-o", "ppid=", "-p", String(pid)])?
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return Int32(output)
     }
 }
