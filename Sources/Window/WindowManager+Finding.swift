@@ -19,34 +19,6 @@ extension WindowManager {
         let isOnMainScreen: Bool
     }
 
-    func candidateApplications(for token: WindowToken) -> [NSRunningApplication] {
-        var applications: [NSRunningApplication] = []
-
-        func appendIfNeeded(_ app: NSRunningApplication?) {
-            guard let app else { return }
-            if !applications.contains(where: { $0.processIdentifier == app.processIdentifier }) {
-                applications.append(app)
-            }
-        }
-
-        appendIfNeeded(NSRunningApplication(processIdentifier: token.pid))
-
-        if let bundleIdentifier = token.bundleIdentifier {
-            for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier) {
-                appendIfNeeded(app)
-            }
-        }
-
-        if let appName = token.appName {
-            for app in NSWorkspace.shared.runningApplications where app.localizedName == appName {
-                appendIfNeeded(app)
-            }
-        }
-
-        appendIfNeeded(NSWorkspace.shared.frontmostApplication)
-        return applications
-    }
-
     func captureFocusedWindowIdentity() -> WindowIdentity? {
         log(
             "[WindowManager] captureFocusedWindowIdentity called",
