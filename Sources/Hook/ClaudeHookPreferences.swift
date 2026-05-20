@@ -1,8 +1,8 @@
 import Foundation
 
 enum ClaudeHookPreferences {
-    /// 防止 hook 安装被频繁重复调用
-    nonisolated(unsafe) private static var lastInstallAt: Date = .distantPast
+    /// 防止 hook 安装被频繁重复调用 — UserDefaults 是线程安全的
+    private static let lastInstallAtKey = "claudeHookLastInstallAt"
     private static let installCooldown: TimeInterval = 3.0
 
     static let enabledKey = "claudeHookEnabled"
@@ -544,11 +544,12 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
     static func installHookToClaudeSettings() -> (Bool, String) {
         // 防止 3 秒内重复调用
         let now = Date()
-        guard now.timeIntervalSince(lastInstallAt) >= installCooldown else {
+        let lastInstall = UserDefaults.standard.object(forKey: lastInstallAtKey) as? Date ?? .distantPast
+        guard now.timeIntervalSince(lastInstall) >= installCooldown else {
             log("[ClaudeHookPreferences] install skipped: cooldown active")
             return (true, "安装冷却中，请稍候")
         }
-        lastInstallAt = now
+        UserDefaults.standard.set(now, forKey: lastInstallAtKey)
 
         ensureTokenGenerated()
         let path = claudeSettingsPath
