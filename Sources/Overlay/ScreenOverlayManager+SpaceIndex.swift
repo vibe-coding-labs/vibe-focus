@@ -156,51 +156,26 @@ extension ScreenOverlayManager {
         }
         let targetDisplayID = screenNumber.uint32Value
 
-        guard let yabaiPath = getYabaiPath() else {
+        guard let result = YabaiClient.run(arguments: ["-m", "query", "--displays"]),
+              result.exitCode == 0 else {
+            log("getYabaiDisplayIndex: yabai query failed")
             return nil
         }
 
-        let task = Process()
-        task.launchPath = yabaiPath
-        task.arguments = ["-m", "query", "--displays"]
+        guard let data = result.stdout.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
 
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-
-        do {
-            try task.run()
-            // Use waitUntilExit with timeout to prevent blocking
-            let semaphore = DispatchSemaphore(value: 0)
-            task.terminationHandler = { _ in
-                semaphore.signal()
+        if let display = json.first(where: {
+            let id = $0["id"] as? UInt32 ?? UInt32($0["id"] as? Int ?? 0)
+            return id == targetDisplayID
+        }) {
+            let displayIndex = display["index"] as? Int
+            if let displayIndex {
+                cachedDisplayIndices[screenUUID] = displayIndex
             }
-            let result = semaphore.wait(timeout: .now() + yabaiCommandTimeout)
-            if result == .timedOut {
-                log("yabai displays query timed out")
-                task.terminate()
-                return nil
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                return nil
-            }
-
-            // Find the display with matching CGDirectDisplayID
-            if let display = json.first(where: {
-                let id = $0["id"] as? UInt32 ?? UInt32($0["id"] as? Int ?? 0)
-                return id == targetDisplayID
-            }) {
-                let displayIndex = display["index"] as? Int
-                if let displayIndex {
-                    cachedDisplayIndices[screenUUID] = displayIndex
-                }
-                return displayIndex
-            }
-        } catch {
-            log("Failed to get yabai display index: \(error)")
+            return displayIndex
         }
 
         return nil

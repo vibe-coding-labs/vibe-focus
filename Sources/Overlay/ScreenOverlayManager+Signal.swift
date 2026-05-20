@@ -80,23 +80,12 @@ extension ScreenOverlayManager {
     }
 
     func registerYabaiSignals() {
-        guard let yabaiPath = getYabaiPath() else { return }
-
         // 检查是否已注册信号
-        let checkTask = Process()
-        checkTask.launchPath = yabaiPath
-        checkTask.arguments = ["-m", "signal", "--list"]
-
-        let pipe = Pipe()
-        checkTask.standardOutput = pipe
-        checkTask.launch()
-        checkTask.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return }
+        guard let checkResult = YabaiClient.run(arguments: ["-m", "signal", "--list"]),
+              checkResult.exitCode == 0 else { return }
 
         // 如果已经注册了 vibefocus 信号，跳过
-        if output.contains("vibefocus-space-changed") {
+        if checkResult.stdout.contains("vibefocus-space-changed") {
             return
         }
 
@@ -105,7 +94,6 @@ extension ScreenOverlayManager {
         if let bundlePath = Bundle.main.path(forResource: "yabai-space-changed", ofType: "sh") {
             scriptPath = bundlePath
         } else if FileManager.default.fileExists(atPath: "Resources/yabai-space-changed.sh") {
-            // 开发模式：从项目根目录查找
             scriptPath = (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent("Resources/yabai-space-changed.sh")
         } else {
             log("Could not find yabai-space-changed.sh script in Bundle or project directory")
@@ -114,16 +102,12 @@ extension ScreenOverlayManager {
         log("Using yabai-space-changed script at: \(scriptPath)")
 
         // 注册信号: 空间切换时触发
-        let registerTask = Process()
-        registerTask.launchPath = yabaiPath
-        registerTask.arguments = [
+        let _ = YabaiClient.run(arguments: [
             "-m", "signal", "--add",
             "event=space_changed",
             "action=\"\(scriptPath)\"",
             "label=vibefocus-space-changed"
-        ]
-        registerTask.launch()
-        registerTask.waitUntilExit()
+        ])
 
         log("Registered yabai signal for space changes")
     }
