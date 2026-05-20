@@ -25,7 +25,7 @@ final class SessionWindowRegistry: ObservableObject {
         let loaded = WindowStateStore.shared.loadAllWindowStates()
         var prunedCount = 0
         for state in loaded {
-            if TerminalAppRegistry.isTerminalPID(state.pid) {
+            if TerminalRegistry.isTerminalPID(state.pid) {
                 windowStates[state.windowID] = state
             } else {
                 WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
@@ -43,7 +43,7 @@ final class SessionWindowRegistry: ObservableObject {
         let now = Date()
         let wid = windowIdentity.windowID
 
-        guard TerminalAppRegistry.isTerminalPID(windowIdentity.pid) else {
+        guard TerminalRegistry.isTerminalPID(windowIdentity.pid) else {
             log("[SessionWindowRegistry] bind rejected: PID is not a terminal app", level: .warn, fields: [
                 "windowID": String(wid),
                 "pid": String(windowIdentity.pid),
@@ -106,14 +106,14 @@ final class SessionWindowRegistry: ObservableObject {
     /// 优先返回 PID 有效的绑定，避免返回损坏数据
     func binding(for sessionID: String) -> WindowState? {
         let candidates = windowStates.values.filter { $0.sessionID == sessionID }
-        if let valid = candidates.first(where: { TerminalAppRegistry.isTerminalPID($0.pid) }) {
+        if let valid = candidates.first(where: { TerminalRegistry.isTerminalPID($0.pid) }) {
             return valid
         }
         if let first = candidates.first {
             return first
         }
         if let state = WindowStateStore.shared.findWindowStateBySession(sessionID: sessionID) {
-            if !TerminalAppRegistry.isTerminalPID(state.pid) {
+            if !TerminalRegistry.isTerminalPID(state.pid) {
                 log("[SessionWindowRegistry] binding(for:) loaded corrupt binding from DB, cleaning up", level: .warn, fields: [
                     "windowID": String(state.windowID),
                     "pid": String(state.pid),
