@@ -22,33 +22,6 @@ extension WindowManager {
         return unsafeBitCast(windowRef, to: AXUIElement.self)
     }
 
-    func validateWindowExists(windowID: UInt32?) -> Bool {
-        guard let windowID else { return false }
-        log(
-            "[WindowManager] validateWindowExists called",
-            level: .debug,
-            fields: ["windowID": String(windowID)]
-        )
-        let options = CGWindowListOption(arrayLiteral: .optionAll)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            log(
-                "[WindowManager] validateWindowExists: CGWindowList returned nil",
-                level: .debug,
-                fields: ["windowID": String(windowID)]
-            )
-            return false
-        }
-        let exists = windowList.contains { window in
-            (window[kCGWindowNumber as String] as? UInt32) == windowID
-        }
-        log(
-            "[WindowManager] validateWindowExists result",
-            level: .debug,
-            fields: ["windowID": String(windowID), "exists": String(exists)]
-        )
-        return exists
-    }
-
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? {
         guard let windowID else { return nil }
         log(
