@@ -174,124 +174,8 @@ final class HookEventHandler {
             )
         }
 
-        // 通过 sessionID 找到窗口状态
-        let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
-        var identity: WindowIdentity?
-
-        if let state {
-            if SessionWindowRegistry.shared.verifyBinding(state) {
-                // 绑定验证通过 — 使用绑定中的 identity
-                identity = WindowIdentity(
-                    windowID: state.windowID,
-                    pid: state.pid,
-                    bundleIdentifier: state.bundleIdentifier,
-                    appName: state.appName,
-                    windowNumber: state.axWindowNumber,
-                    title: state.title,
-                    capturedAt: state.createdAt
-                )
-                log(
-                    "[HookEventHandler] UserPromptSubmit binding resolved",
-                    level: .debug,
-                    fields: [
-                        "traceID": traceID,
-                        "sessionID": payload.sessionID,
-                        "windowID": String(state.windowID),
-                        "resolveDurationMs": String(elapsedMilliseconds(since: handleStartedAt))
-                    ]
-                )
-            } else {
-                // 绑定验证失败 — 降级到 terminal context
-                log(
-                    "[HookEventHandler] UserPromptSubmit binding verification failed, trying terminal context fallback",
-                    level: .warn,
-                    fields: [
-                        "traceID": traceID,
-                        "sessionID": payload.sessionID,
-                        "boundWindowID": String(state.windowID),
-                        "boundPID": String(state.pid),
-                        "hasTerminalCtx": String(payload.terminalCtx?.hasUsefulContext ?? false)
-                    ]
-                )
-                if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
-                    identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
-                    if let identity {
-                        log(
-                            "[HookEventHandler] UserPromptSubmit terminal context fallback resolved",
-                            fields: [
-                                "traceID": traceID,
-                                "sessionID": payload.sessionID,
-                                "fallbackWindowID": String(identity.windowID),
-                                "originalBoundWindowID": String(state.windowID)
-                            ]
-                        )
-                    }
-                }
-                if identity == nil {
-                    log(
-                        "[HookEventHandler] UserPromptSubmit binding verification failed and terminal context fallback also failed",
-                        level: .warn,
-                        fields: [
-                            "traceID": traceID,
-                            "sessionID": payload.sessionID
-                        ]
-                    )
-                    return (
-                        200,
-                        ClaudeHookResponse(
-                            ok: true, code: "binding_verification_failed",
-                            message: "Binding verification and terminal context fallback both failed",
-                            sessionID: payload.sessionID, handled: false
-                        )
-                    )
-                }
-            }
-        } else if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
-            let terminalResolveStart = Date()
-            identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
-            let terminalResolveMs = elapsedMilliseconds(since: terminalResolveStart)
-            if let identity {
-                log(
-                    "[HookEventHandler] UserPromptSubmit resolved via terminal context",
-                    fields: [
-                        "traceID": traceID,
-                        "sessionID": payload.sessionID,
-                        "resolvedWindowID": String(identity.windowID),
-                        "app": identity.appName ?? "unknown",
-                        "terminalResolveMs": String(terminalResolveMs)
-                    ]
-                )
-            } else {
-                log(
-                    "[HookEventHandler] UserPromptSubmit terminal context resolve returned nil",
-                    level: .warn,
-                    fields: [
-                        "traceID": traceID,
-                        "sessionID": payload.sessionID,
-                        "terminalResolveMs": String(terminalResolveMs)
-                    ]
-                )
-            }
-        } else {
-            log(
-                "[HookEventHandler] UserPromptSubmit no binding and no terminal context",
-                level: .warn,
-                fields: [
-                    "traceID": traceID,
-                    "sessionID": payload.sessionID
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "no_binding_skip",
-                    message: "No session binding, skipping restore",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        guard let identity else {
+        // 1. 解析窗口身份
+        guard let identity = resolveWindowIdentity(payload: payload, traceID: traceID, startedAt: handleStartedAt) else {
             return (
                 200,
                 ClaudeHookResponse(
@@ -302,168 +186,174 @@ final class HookEventHandler {
             )
         }
 
-        let wm = WindowManager.shared
-        let isOnMain = wm.isWindowOnMainScreen(windowID: identity.windowID)
-
-        log(
-            "[HookEventHandler] UserPromptSubmit binding resolved, checking window state",
-            fields: [
-                "traceID": traceID,
-                "sessionID": payload.sessionID,
-                "windowID": String(identity.windowID),
-                "pid": String(identity.pid),
-                "app": identity.appName ?? "unknown",
-                "title": truncateForLog(identity.title ?? "", limit: 60),
-                "isOnMainScreen": String(isOnMain),
-                "hasBinding": String(state != nil),
-                "hasTerminalCtx": String(payload.terminalCtx?.hasUsefulContext ?? false),
-                "resolveDurationMs": String(elapsedMilliseconds(since: handleStartedAt))
-            ]
-        )
-
-        // 防止与手动热键 toggle 冲突 — 如果用户正在按热键，跳过 auto-restore
-        if HotKeyManager.shared.isToggleInFlight {
-            log(
-                "[HookEventHandler] UserPromptSubmit skipped: toggle already in flight",
-                level: .info,
-                fields: [
-                    "traceID": traceID,
-                    "sessionID": payload.sessionID,
-                    "windowID": String(identity.windowID)
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "toggle_in_flight",
-                    message: "Toggle in flight, skipping auto-restore",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        guard isOnMain else {
-            log(
-                "[HookEventHandler] UserPromptSubmit window not on main screen",
-                fields: [
-                    "traceID": traceID,
-                    "sessionID": payload.sessionID,
-                    "windowID": String(identity.windowID)
-                ]
-            )
+        // 2. 验证是否应该 restore
+        guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
             return (
                 200,
                 ClaudeHookResponse(
                     ok: true, code: "no_action_needed",
-                    message: "Window not on main screen",
+                    message: "Window not eligible for restore",
                     sessionID: payload.sessionID, handled: false
                 )
             )
         }
 
-        // 新路径：ToggleEngine 直接查 SQLite，不走内存缓存
-        let engine = ToggleEngine.shared
-        if let record = engine.load(windowID: identity.windowID) {
-            guard let mainScreen = wm.getMainScreen() else {
-                return (200, ClaudeHookResponse(ok: true, code: "no_main_screen", message: "No main screen", sessionID: payload.sessionID, handled: false))
-            }
+        // 3. 执行 restore
+        let success = executeRestore(identity: identity, validation: validation, traceID: traceID, startedAt: handleStartedAt, sessionID: payload.sessionID)
 
-            if record.isValid(mainScreenFrame: mainScreen.frame) {
-                let restoreStart = Date()
-                log(
-                    "[HookEventHandler] UserPromptSubmit calling ToggleEngine.restore",
-                    level: .info,
-                    fields: [
-                        "traceID": traceID,
-                        "windowID": String(identity.windowID),
-                        "preRestoreMs": String(elapsedMilliseconds(since: handleStartedAt))
-                    ]
-                )
-                let success = engine.restore(
-                    windowID: identity.windowID,
-                    fallbackPID: identity.pid,
-                    triggerSource: "user_prompt_submit",
-                    traceID: traceID
-                )
-                let restoreMs = elapsedMilliseconds(since: restoreStart)
-                log(
-                    "[HookEventHandler] UserPromptSubmit restore completed",
-                    level: success ? .info : .warn,
-                    fields: [
-                        "traceID": traceID,
-                        "success": String(success),
-                        "restoreMs": String(restoreMs),
-                        "totalMs": String(elapsedMilliseconds(since: handleStartedAt))
-                    ]
-                )
-                AuditLogger.shared.record(
-                    eventType: success ? "user_prompt_restore" : "user_prompt_restore_failed",
-                    windowID: identity.windowID,
-                    pid: identity.pid,
-                    sessionID: payload.sessionID,
-                    details: [
-                        "restoreMs": String(restoreMs),
-                        "totalMs": String(elapsedMilliseconds(since: handleStartedAt))
-                    ]
-                )
-                if success {
-                    // ToggleEngine.restore() 已自动清除 toggle record，无需手动 clear
-                    return (
-                        200,
-                        ClaudeHookResponse(
-                            ok: true,
-                            code: "restored",
-                            message: "Window restored to original position",
-                            sessionID: payload.sessionID,
-                            handled: true
-                        )
-                    )
-                } else {
-                    return (
-                        200,
-                        ClaudeHookResponse(
-                            ok: true,
-                            code: "restore_failed",
-                            message: "Restore attempt failed",
-                            sessionID: payload.sessionID,
-                            handled: false
-                        )
-                    )
-                }
-            } else {
-                log(
-                    "[HookEventHandler] UserPromptSubmit toggle record failed validation, skipping restore (data preserved)",
-                    level: .warn,
-                    fields: [
-                        "traceID": traceID,
-                        "windowID": String(identity.windowID),
-                        "origFrame": "\(record.origFrame)",
-                        "targetFrame": "\(record.targetFrame)",
-                        "mainScreenFrame": "\(mainScreen.frame)"
-                    ]
-                )
-            }
-        }
-
-        log(
-            "[HookEventHandler] UserPromptSubmit no toggle state found",
-            fields: [
-                "traceID": traceID,
-                "sessionID": payload.sessionID,
-                "windowID": String(identity.windowID),
-                "totalMs": String(elapsedMilliseconds(since: handleStartedAt))
-            ]
-        )
         return (
             200,
             ClaudeHookResponse(
-                ok: true, code: "no_action_needed",
-                message: "No toggle state found for window",
-                sessionID: payload.sessionID, handled: false
+                ok: true,
+                code: success ? "restored" : "restore_failed",
+                message: success ? "Window restored to original position" : "Restore attempt failed",
+                sessionID: payload.sessionID,
+                handled: success
             )
         )
     }
 
+    // MARK: - UserPromptSubmit Sub-steps
+
+    private func resolveWindowIdentity(
+        payload: ClaudeHookPayload,
+        traceID: String,
+        startedAt: Date
+    ) -> WindowIdentity? {
+        let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
+
+        if let state {
+            if SessionWindowRegistry.shared.verifyBinding(state) {
+                return WindowIdentity(
+                    windowID: state.windowID,
+                    pid: state.pid,
+                    bundleIdentifier: state.bundleIdentifier,
+                    appName: state.appName,
+                    windowNumber: state.axWindowNumber,
+                    title: state.title,
+                    capturedAt: state.createdAt
+                )
+            }
+            // 绑定验证失败 — 降级到 terminal context
+            log(
+                "[HookEventHandler] binding verification failed, trying terminal context fallback",
+                level: .warn,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "boundWindowID": String(state.windowID)
+                ]
+            )
+            if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+                if let identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) {
+                    return identity
+                }
+            }
+            return nil
+        }
+
+        // 无绑定 — 尝试 terminal context
+        if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
+            return WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+        }
+
+        return nil
+    }
+
+    private struct RestoreValidation {
+        let record: ToggleRecord
+        let mainScreen: NSScreen
+    }
+
+    private func validateRestoreEligibility(
+        identity: WindowIdentity,
+        traceID: String
+    ) -> RestoreValidation? {
+        // 防止与手动热键 toggle 冲突
+        if HotKeyManager.shared.isToggleInFlight {
+            return nil
+        }
+
+        // 窗口必须在主屏上
+        guard WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) else {
+            return nil
+        }
+
+        // 必须有有效的 toggle record
+        let engine = ToggleEngine.shared
+        guard let record = engine.load(windowID: identity.windowID) else {
+            return nil
+        }
+
+        // record 必须通过验证
+        guard let mainScreen = WindowManager.shared.getMainScreen(),
+              record.isValid(mainScreenFrame: mainScreen.frame) else {
+            log(
+                "[HookEventHandler] toggle record failed validation",
+                level: .warn,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID)
+                ]
+            )
+            return nil
+        }
+
+        return RestoreValidation(record: record, mainScreen: mainScreen)
+    }
+
+    @discardableResult
+    private func executeRestore(
+        identity: WindowIdentity,
+        validation: RestoreValidation,
+        traceID: String,
+        startedAt: Date,
+        sessionID: String
+    ) -> Bool {
+        let engine = ToggleEngine.shared
+        let restoreStart = Date()
+
+        log(
+            "[HookEventHandler] UserPromptSubmit calling ToggleEngine.restore",
+            level: .info,
+            fields: [
+                "traceID": traceID,
+                "windowID": String(identity.windowID),
+                "preRestoreMs": String(elapsedMilliseconds(since: startedAt))
+            ]
+        )
+
+        let success = engine.restore(
+            windowID: identity.windowID,
+            fallbackPID: identity.pid,
+            triggerSource: "user_prompt_submit",
+            traceID: traceID
+        )
+
+        let restoreMs = elapsedMilliseconds(since: restoreStart)
+        log(
+            "[HookEventHandler] UserPromptSubmit restore completed",
+            level: success ? .info : .warn,
+            fields: [
+                "traceID": traceID,
+                "success": String(success),
+                "restoreMs": String(restoreMs),
+                "totalMs": String(elapsedMilliseconds(since: startedAt))
+            ]
+        )
+        AuditLogger.shared.record(
+            eventType: success ? "user_prompt_restore" : "user_prompt_restore_failed",
+            windowID: identity.windowID,
+            pid: identity.pid,
+            sessionID: sessionID,
+            details: [
+                "restoreMs": String(restoreMs),
+                "totalMs": String(elapsedMilliseconds(since: startedAt))
+            ]
+        )
+
+        return success
+    }
     // MARK: - Stop
 
     func handleStop(
