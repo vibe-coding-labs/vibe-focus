@@ -96,16 +96,16 @@ enum NativeSpaceBridge {
         return result == 0
     }
 
-    // MARK: - Space Switching (NSAppleScript via System Events)
+    // MARK: - Space Switching (CGEvent direct)
 
-    /// 通过 NSAppleScript 调用 System Events 发送 Ctrl+Left/Right 键盘事件
-    /// System Events 是 macOS 原生的自动化方式，比 CGEvent 更可靠
+    /// 通过 CGEvent 直接发送 Ctrl+Left/Right 键盘事件切换空间
+    /// 比 AppleScript 更低延迟，避免 AppleScript runtime 开销
     /// steps > 0 = 向右切（Ctrl+Right），steps < 0 = 向左切（Ctrl+Left）
     static func focusSpace(steps: Int, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
         guard steps != 0 else { return true }
 
-        let keyCode: Int
+        let keyCode: CGKeyCode
         let direction: String
         if steps > 0 {
             keyCode = 124 // Right arrow
@@ -117,7 +117,7 @@ enum NativeSpaceBridge {
         let absSteps = abs(steps)
 
         log(
-            "[NativeSpaceBridge] focusSpace via AppleScript",
+            "[NativeSpaceBridge] focusSpace via CGEvent",
             fields: [
                 "op": op,
                 "direction": direction,
@@ -126,20 +126,14 @@ enum NativeSpaceBridge {
         )
 
         for i in 0..<absSteps {
-            let script = NSAppleScript(source: """
-            tell application "System Events" to key code \(keyCode) using control down
-            """)
-            var error: NSDictionary?
-            script?.executeAndReturnError(&error)
-            if let error {
-                let msg = error[NSAppleScript.errorMessage] as? String ?? "unknown"
-                log(
-                    "[NativeSpaceBridge] focusSpace AppleScript error at step \(i)",
-                    level: .error,
-                    fields: ["op": op, "error": msg]
-                )
-                return false
-            }
+            // Key down
+            let downEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)
+            downEvent?.flags = .maskControl
+            downEvent?.post(tap: .cghidEventTap)
+            // Key up
+            let upEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)
+            upEvent?.flags = .maskControl
+            upEvent?.post(tap: .cghidEventTap)
             // 间隔，防止 macOS 丢失事件
             if i < absSteps - 1 {
                 usleep(80_000) // 80ms
@@ -147,7 +141,7 @@ enum NativeSpaceBridge {
         }
 
         log(
-            "[NativeSpaceBridge] focusSpace via AppleScript completed",
+            "[NativeSpaceBridge] focusSpace via CGEvent completed",
             fields: ["op": op, "direction": direction, "steps": String(absSteps)]
         )
         return true

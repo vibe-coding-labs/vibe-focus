@@ -430,7 +430,7 @@ extension SpaceController {
                                         mouseCursorPosition: center, mouseButton: .left) {
                 moveEvent.post(tap: .cghidEventTap)
             }
-            usleep(50_000)
+            usleep(100_000)
             return (savedCursorCG, savedFrontApp)
         }
         log("[SpaceController] saveAndMoveCursor: cannot determine display center", level: .warn, fields: [
