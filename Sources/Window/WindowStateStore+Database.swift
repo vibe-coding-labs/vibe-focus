@@ -1,7 +1,25 @@
 import Foundation
-import SQLite3
+import Csqlite3
 
 let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+@MainActor
+final class WindowStateStore {
+    static let shared = WindowStateStore()
+
+    var db: OpaquePointer?
+    let dbPath: String
+
+    private init() {
+        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus")
+        if !FileManager.default.fileExists(atPath: dir) {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        }
+        dbPath = (dir as NSString).appendingPathComponent("vibefocus.db")
+        openDatabase()
+        createTables()
+    }
+}
 
 extension WindowStateStore {
     // MARK: - Database Setup
