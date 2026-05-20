@@ -343,9 +343,9 @@ final class SpaceController: ObservableObject {
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
 
         return ShellResult(
+            exitCode: process.terminationStatus,
             stdout: String(data: output, encoding: .utf8) ?? "",
-            stderr: String(data: errorData, encoding: .utf8) ?? "",
-            exitCode: process.terminationStatus
+            stderr: String(data: errorData, encoding: .utf8) ?? ""
         )
     }
 
@@ -385,11 +385,7 @@ final class SpaceController: ObservableObject {
 
 }
 
-struct ShellResult {
-    let stdout: String
-    let stderr: String
-    let exitCode: Int32
-}
+typealias ShellResult = YabaiClient.YabaiResult
 
 struct YabaiSpaceInfo: Decodable {
     let id: Int?
