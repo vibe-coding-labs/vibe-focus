@@ -165,7 +165,7 @@ enum NativeSpaceBridge {
         operationID: String? = nil
     ) -> Bool {
         let op = operationID ?? "none"
-        let mainScreenHeight = NSScreen.screens[0].frame.height
+        let mainScreenHeight = NSScreen.screens.first?.frame.height ?? 0
 
         // windowFrame 是 AX/Quartz 坐标，不需要转换
         // 标题栏在窗口顶部往下 15px（Quartz 坐标，Y 向下）

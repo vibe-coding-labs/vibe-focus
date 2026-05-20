@@ -219,7 +219,7 @@ extension SpaceController {
             let savedFrontApp = NSWorkspace.shared.frontmostApplication
 
             let savedCursor = NSEvent.mouseLocation
-            let mainScreenHeight = NSScreen.screens[0].frame.height
+            let mainScreenHeight = CoordinateKit.mainScreenHeight
             let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
 
             if let center = displayCenterCG(spaceIndex: spaceIndex) {
@@ -260,7 +260,7 @@ extension SpaceController {
         let savedFrontApp = NSWorkspace.shared.frontmostApplication
 
         let savedCursor = NSEvent.mouseLocation
-        let mainScreenHeight = NSScreen.screens[0].frame.height
+        let mainScreenHeight = CoordinateKit.mainScreenHeight
         let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
 
         let targetCenterCG = displayCenterCG(spaceIndex: spaceIndex)
@@ -410,7 +410,7 @@ extension SpaceController {
         let op = operationID
         let savedFrontApp = NSWorkspace.shared.frontmostApplication
         let savedCursor = NSEvent.mouseLocation
-        let mainScreenHeight = NSScreen.screens[0].frame.height
+        let mainScreenHeight = CoordinateKit.mainScreenHeight
         let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
 
         log("[SpaceController] saveAndMoveCursor", level: .debug, fields: [
