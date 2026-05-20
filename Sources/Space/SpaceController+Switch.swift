@@ -426,9 +426,22 @@ extension SpaceController {
                 "op": op,
                 "targetCenter": "\(Int(center.x)),\(Int(center.y))"
             ])
+            // Move cursor to target display
             if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                         mouseCursorPosition: center, mouseButton: .left) {
                 moveEvent.post(tap: .cghidEventTap)
+            }
+            usleep(50_000)
+            // Click to activate the target display — macOS only processes Ctrl+Arrow
+            // for the display that has focus, not the one the cursor is hovering over
+            if let downClick = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
+                                        mouseCursorPosition: center, mouseButton: .left) {
+                downClick.post(tap: .cghidEventTap)
+            }
+            usleep(20_000)
+            if let upClick = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
+                                      mouseCursorPosition: center, mouseButton: .left) {
+                upClick.post(tap: .cghidEventTap)
             }
             usleep(100_000)
             return (savedCursorCG, savedFrontApp)
