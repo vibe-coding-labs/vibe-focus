@@ -6,17 +6,7 @@ import Foundation
 class TitleEditorService {
     static let shared = TitleEditorService()
 
-    private let terminalBundleIDs: Set<String> = [
-        "com.apple.Terminal",
-        "com.googlecode.iterm2",
-        "dev.warp.Warp-Stable",
-        "com.mitchellh.ghostty",
-        "io.alacritty",
-        "net.kovidgoyal.kitty",
-        "com.github.wez.wezterm",
-        "com.electron.hyper",
-        "org.tabby"
-    ]
+    private var terminalBundleIDs: Set<String> { TerminalRegistry.terminalBundleIDs }
 
     private var isEditing = false
 

@@ -7,12 +7,7 @@ final class DockBadgeManager {
 
     private var pendingCount = 0
 
-    private static let terminalBundleIDs: Set<String> = [
-        "com.googlecode.iterm2",
-        "com.apple.Terminal",
-        "com.microsoft.VSCode",
-        "com.todesktop.230313mzl4w4u92"
-    ]
+    private static var terminalBundleIDs: Set<String> { TerminalRegistry.allTerminalAndIDEBundleIDs }
 
     private init() {
         NotificationCenter.default.addObserver(
