@@ -116,13 +116,21 @@ extension SettingsView {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("对话完成（Stop 事件，推荐）", isOn: Binding(
                         get: { triggerOnStop },
-                        set: { newValue in triggerOnStop = newValue; ClaudeHookPreferences.triggerOnStop = newValue }
+                        set: { newValue in
+                            triggerOnStop = newValue
+                            ClaudeHookPreferences.triggerOnStop = newValue
+                            if hookEnabled { hookServer.applyPreferences() }
+                        }
                     ))
                     .toggleStyle(.checkbox)
 
                     Toggle("会话结束（SessionEnd 事件）", isOn: Binding(
                         get: { triggerOnSessionEnd },
-                        set: { newValue in triggerOnSessionEnd = newValue; ClaudeHookPreferences.triggerOnSessionEnd = newValue }
+                        set: { newValue in
+                            triggerOnSessionEnd = newValue
+                            ClaudeHookPreferences.triggerOnSessionEnd = newValue
+                            if hookEnabled { hookServer.applyPreferences() }
+                        }
                     ))
                     .toggleStyle(.checkbox)
                 }
@@ -143,6 +151,7 @@ extension SettingsView {
                     set: { newValue in
                         autoRestoreOnPromptSubmit = newValue
                         ClaudeHookPreferences.autoRestoreOnPromptSubmit = newValue
+                        if hookEnabled { hookServer.applyPreferences() }
                     }
                 ))
                 .labelsHidden()
