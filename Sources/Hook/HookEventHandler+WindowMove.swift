@@ -100,8 +100,10 @@ extension HookEventHandler {
             )
         }
 
-        // 预检：如果窗口已在主屏幕上，跳过移动
         let windowID = binding.windowID
+        let bindingAge = Date().timeIntervalSince(binding.createdAt)
+
+        // 预检：如果窗口已在主屏幕上，跳过移动
         if WindowManager.shared.isWindowOnMainScreen(windowID: windowID) {
             SessionWindowRegistry.shared.setLastEventDescription(
                 "\(triggerName) 窗口已在主屏幕，跳过移动"
@@ -122,6 +124,38 @@ extension HookEventHandler {
                     sessionID: payload.sessionID, handled: false
                 )
             )
+        }
+
+        // 绑定年龄校验：超过 30 分钟的绑定可能已过期（CGWindowNumber 被回收）
+        // 验证 windowID 的当前 owner PID 是否与绑定时一致
+        if bindingAge > 1800 {
+            let options: CGWindowListOption = [.optionAll]
+            if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]],
+               let matchedWindow = windowList.first(where: { ($0[kCGWindowNumber as String] as? UInt32) == windowID }) {
+                let actualPID = matchedWindow[kCGWindowOwnerPID as String] as? Int32
+                if actualPID != binding.pid {
+                    log(
+                        "[HookEventHandler] \(triggerName) stale binding: window PID mismatch (binding age: \(Int(bindingAge))s)",
+                        level: .warn,
+                        fields: [
+                            "sessionID": payload.sessionID,
+                            "windowID": String(windowID),
+                            "boundPID": String(binding.pid),
+                            "actualPID": String(describing: actualPID),
+                            "bindingAge": String(Int(bindingAge))
+                        ]
+                    )
+                    SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
+                    return (
+                        200,
+                        ClaudeHookResponse(
+                            ok: true, code: "stale_binding_pid_mismatch",
+                            message: "Stale binding: window PID no longer matches",
+                            sessionID: payload.sessionID, handled: false
+                        )
+                    )
+                }
+            }
         }
 
         // 安全检查：确保绑定的是终端/IDE 窗口
@@ -161,7 +195,9 @@ extension HookEventHandler {
                 "app": binding.appName ?? "unknown",
                 "title": binding.title ?? "untitled",
                 "windowID": String(windowID),
-                "pid": String(binding.pid)
+                "pid": String(binding.pid),
+                "cwd": payload.cwd ?? "nil",
+                "bindingAge": String(Int(bindingAge))
             ]
         )
 
