@@ -319,9 +319,25 @@ final class ToggleEngine {
                         "pollCount": String(pollCount),
                         "reachedTarget": String(finalSpace == targetSpace)
                     ])
-                    // macOS space switch 动画需要额外时间才能完全提交
-                    // 过早 AX apply 会被 macOS 覆盖，把窗口放到错误 space
                     usleep(150_000)
+                } else {
+                    // space switch 失败 — fallback 到目标 display 的 visible space
+                    // AX apply 会把窗口放到 visible space，至少回到正确的显示器
+                    let visibleSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+                    log("[ToggleEngine] restore: target space switch failed, falling back to visible space", level: .warn, fields: [
+                        "traceID": trace,
+                        "targetSpace": String(targetSpace),
+                        "visibleSpace": String(describing: visibleSpace),
+                        "targetDisplay": String(targetDisplay)
+                    ])
+                    if let vis = visibleSpace, vis != current {
+                        _ = spaceController.switchDisplayToSpace(
+                            targetSpace: vis,
+                            operationID: trace
+                        )
+                        intentionallySwitchedDisplays.insert(targetDisplay)
+                        usleep(100_000)
+                    }
                 }
                 log("[ToggleEngine] restore: display switched to target space", fields: [
                     "traceID": trace,

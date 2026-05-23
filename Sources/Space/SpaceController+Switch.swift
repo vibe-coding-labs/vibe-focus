@@ -77,16 +77,24 @@ extension SpaceController {
         }
 
         if success {
-            usleep(30_000)
+            usleep(80_000)
             let postSwitchSpace = displayVisibleSpace(displayIndex: querySpaces()?.first(where: { $0.index == targetSpace })?.display)
-            log("[SpaceController] switchDisplayToSpace: CGEvent succeeded", fields: [
+            let reachedTarget = postSwitchSpace == targetSpace
+            log("[SpaceController] switchDisplayToSpace: CGEvent result", fields: [
                 "op": op,
                 "targetSpace": String(targetSpace),
                 "steps": String(steps),
                 "postSwitchSpace": String(describing: postSwitchSpace),
-                "reachedTarget": String(postSwitchSpace == targetSpace)
+                "reachedTarget": String(reachedTarget)
             ])
-            return true
+            if reachedTarget {
+                return true
+            }
+            log("[SpaceController] switchDisplayToSpace: CGEvent sent but space didn't change", level: .warn, fields: [
+                "op": op,
+                "targetSpace": String(targetSpace),
+                "postSwitchSpace": String(describing: postSwitchSpace)
+            ])
         }
 
         log("[SpaceController] switchDisplayToSpace: all strategies failed", level: .error, fields: [
