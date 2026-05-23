@@ -124,7 +124,7 @@ enum ClaudeHookPreferences {
     }
 
     static var autoRestoreOnPromptSubmit: Bool {
-        get { UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? false }
+        get { UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? true }
         set {
             UserDefaults.standard.set(newValue, forKey: autoRestoreOnPromptSubmitKey)
             PreferencesSync.persistToDisk()

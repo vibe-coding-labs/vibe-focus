@@ -21,7 +21,7 @@ enum PreferencesSync {
         ClaudeHookPreferences.autoFocusOnSessionEndKey: true,
         ClaudeHookPreferences.triggerOnStopKey: true,
         ClaudeHookPreferences.triggerOnSessionEndKey: false,
-        ClaudeHookPreferences.autoRestoreOnPromptSubmitKey: false,
+        ClaudeHookPreferences.autoRestoreOnPromptSubmitKey: true,
 
         // SpacePreferences
         SpacePreferences.integrationEnabledKey: true,
