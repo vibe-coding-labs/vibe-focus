@@ -54,11 +54,7 @@ struct HotKeyConfiguration: Codable, Equatable {
     func matches(event: NSEvent) -> Bool {
         let eventKeyCode = UInt32(event.keyCode)
         let eventModifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
-        let matches = eventKeyCode == keyCode && eventModifiers == modifiers
-        if !matches {
-            log("HotKey match failed: eventKeyCode=\(eventKeyCode) expected=\(keyCode), eventMods=\(eventModifiers) expected=\(modifiers)")
-        }
-        return matches
+        return eventKeyCode == keyCode && eventModifiers == modifiers
     }
 
     static func from(event: NSEvent) -> HotKeyConfiguration? {

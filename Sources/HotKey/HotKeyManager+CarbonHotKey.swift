@@ -92,7 +92,6 @@ extension HotKeyManager {
     }
 
     func handleHotKeyEvent(_ eventRef: EventRef) -> OSStatus {
-        log("[HotKey] handleHotKeyEvent called")
         var hotKeyID = EventHotKeyID()
         let status = GetEventParameter(
             eventRef,
@@ -104,38 +103,26 @@ extension HotKeyManager {
             &hotKeyID
         )
 
-        log(
-            "[handleHotKeyEvent] GetEventParameter returned",
-            level: .debug,
-            fields: ["status": String(status)]
-        )
-
         guard status == noErr else {
             log("[HotKey] Get event parameter failed: \(status)")
             return status
         }
 
-        log("[HotKey] Got hotKeyID: signature=\(hotKeyID.signature), id=\(hotKeyID.id), expected: signature=\(hotkeySignature), id=\(hotkeyIdentifier)")
-
         guard hotKeyID.signature == hotkeySignature else {
-            log("[HotKey] ID mismatch, ignoring")
             return noErr
         }
 
         if hotKeyID.id == hotkeyIdentifier {
-            log("[HotKey] Hotkey \(currentHotKey.displayString) triggered")
+            log("[HotKey] Carbon hotkey \(currentHotKey.displayString) triggered")
             triggerToggleIfNeeded(source: "carbon_hotkey")
-            log("[HotKey] handleHotKeyEvent finished")
             return noErr
         }
 
         if hotKeyID.id == 2 {
-            log("[HotKey] Title editor Carbon hotkey triggered")
             HotKeyManager.triggerTitleEditor()
             return noErr
         }
 
-        log("[HotKey] Unknown hotkey id=\(hotKeyID.id), ignoring")
         return noErr
     }
 }

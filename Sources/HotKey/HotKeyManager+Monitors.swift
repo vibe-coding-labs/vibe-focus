@@ -46,40 +46,17 @@ extension HotKeyManager {
         let now = Date()
         let hotkey = currentHotKey.displayString
 
-        log(
-            "[triggerToggleIfNeeded] called",
-            level: .debug,
-            fields: [
-                "source": source,
-                "isToggleInFlight": String(isToggleInFlight)
-            ]
-        )
-
         if isToggleInFlight {
             log(
                 "[HotKey] Ignored trigger: toggle already in flight",
                 level: .warn,
-                fields: [
-                    "source": source,
-                    "key": hotkey
-                ]
+                fields: ["source": source, "key": hotkey]
             )
             return
         }
 
         let sinceLastTrigger = now.timeIntervalSince(lastToggleTriggeredAt)
         let sinceLastCompletion = now.timeIntervalSince(lastToggleCompletedAt)
-        log(
-            "[triggerToggleIfNeeded] debounce check",
-            level: .debug,
-            fields: [
-                "source": source,
-                "sinceLastTriggerMs": String(Int((sinceLastTrigger * 1000).rounded())),
-                "sinceLastCompletionMs": String(Int((sinceLastCompletion * 1000).rounded())),
-                "dedupIntervalMs": String(Int(toggleDedupInterval * 1000)),
-                "cooldownIntervalMs": String(Int(toggleCooldownInterval * 1000))
-            ]
-        )
         if sinceLastTrigger < toggleDedupInterval || sinceLastCompletion < toggleCooldownInterval {
             log(
                 "[HotKey] Ignored duplicate trigger",
@@ -98,34 +75,14 @@ extension HotKeyManager {
         let startedAt = Date()
         isToggleInFlight = true
         lastToggleTriggeredAt = now
-        log(
-            "[triggerToggleIfNeeded] toggle accepted, dispatching to WindowManager",
-            level: .debug,
-            fields: [
-                "op": operationID,
-                "source": source
-            ]
-        )
         defer {
             lastToggleCompletedAt = Date()
             isToggleInFlight = false
-            log(
-                "[triggerToggleIfNeeded] toggle defer completed",
-                level: .debug,
-                fields: [
-                    "op": operationID,
-                    "source": source
-                ]
-            )
         }
 
         log(
             "[HotKey] Trigger accepted",
-            fields: [
-                "op": operationID,
-                "source": source,
-                "key": hotkey
-            ]
+            fields: ["op": operationID, "source": source, "key": hotkey]
         )
         CrashContextRecorder.shared.record("hotkey_trigger_accepted op=\(operationID) source=\(source) key=\(hotkey)")
 
@@ -134,11 +91,7 @@ extension HotKeyManager {
         let duration = elapsedMilliseconds(since: startedAt)
         log(
             "[HotKey] Toggle completed",
-            fields: [
-                "op": operationID,
-                "source": source,
-                "durationMs": String(duration)
-            ]
+            fields: ["op": operationID, "source": source, "durationMs": String(duration)]
         )
         CrashContextRecorder.shared.record("hotkey_toggle_completed op=\(operationID) durationMs=\(duration)")
     }
