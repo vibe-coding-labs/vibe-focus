@@ -85,7 +85,7 @@ final class TerminalRestoreService {
 
         for win in windows {
             // 去重：检查是否已有匹配的窗口（Terminal.app 自身恢复的）
-            if let _ = findExistingMatch(for: win, in: existingWindows) {
+            if matchWindow(snapshot: win, candidates: existingWindows, usedWindowIDs: [])?.1 ?? 0 >= 30 {
                 log("[TerminalRestore] skipping duplicate window for \(win.claudeProjectDir ?? "?") — matched existing window")
                 result.skipped += 1
                 continue
@@ -195,27 +195,6 @@ final class TerminalRestoreService {
         }
     }
 
-    /// 检查快照窗口是否已在现有窗口中存在（去重）
-    private func findExistingMatch(for snapshot: TerminalWindowSnapshot, in existing: [ExistingWindow]) -> ExistingWindow? {
-        for win in existing {
-            // 匹配策略 1：标题包含项目路径
-            if let projectDir = snapshot.claudeProjectDir,
-               !projectDir.isEmpty,
-               win.title.contains(projectDir) || win.title.contains(URL(fileURLWithPath: projectDir).lastPathComponent) {
-                return win
-            }
-            // 匹配策略 2：位置接近（容差 100px）
-            let snapshotFrame = snapshot.frame.cgRect
-            if abs(win.frame.origin.x - snapshotFrame.origin.x) < 100 &&
-               abs(win.frame.origin.y - snapshotFrame.origin.y) < 100 &&
-               abs(win.frame.width - snapshotFrame.width) < 100 &&
-               abs(win.frame.height - snapshotFrame.height) < 100 {
-                return win
-            }
-        }
-        return nil
-    }
-
     // MARK: - Window Wait & Reposition
 
     /// 轮询等待 Terminal 窗口就绪（最多 10 秒）
@@ -239,11 +218,11 @@ final class TerminalRestoreService {
         var usedWindowIDs = Set<UInt32>()
 
         for snapshot in windows {
-            guard let target = findBestMatch(
+            guard let target = matchWindow(
                 snapshot: snapshot,
                 candidates: existingWindows,
                 usedWindowIDs: usedWindowIDs
-            ) else {
+            )?.0 else {
                 log("[TerminalRestore] no match found for snapshot window \(snapshot.windowID)", level: .debug)
                 continue
             }
@@ -282,12 +261,12 @@ final class TerminalRestoreService {
         }
     }
 
-    /// 智能匹配：用多维度评分找最佳匹配窗口
-    private func findBestMatch(
+    /// 匹配快照窗口到现有窗口 — 返回 (match, score) 或 nil
+    private func matchWindow(
         snapshot: TerminalWindowSnapshot,
         candidates: [ExistingWindow],
         usedWindowIDs: Set<UInt32>
-    ) -> ExistingWindow? {
+    ) -> (ExistingWindow, Int)? {
         var bestMatch: ExistingWindow?
         var bestScore = 0
 
@@ -297,13 +276,11 @@ final class TerminalRestoreService {
             var score = 0
             let snapshotFrame = snapshot.frame.cgRect
 
-            // 位置接近度（越高越好）
             let distX = abs(candidate.frame.origin.x - snapshotFrame.origin.x)
             let distY = abs(candidate.frame.origin.y - snapshotFrame.origin.y)
             if distX < 100 && distY < 100 { score += 50 }
             else if distX < 200 && distY < 200 { score += 20 }
 
-            // 标题匹配
             if let projectDir = snapshot.claudeProjectDir,
                !projectDir.isEmpty {
                 let dirName = URL(fileURLWithPath: projectDir).lastPathComponent
@@ -311,7 +288,6 @@ final class TerminalRestoreService {
                 if candidate.title.contains(projectDir) { score += 20 }
             }
 
-            // 大小接近
             let sizeDiff = abs(candidate.frame.width - snapshotFrame.width) + abs(candidate.frame.height - snapshotFrame.height)
             if sizeDiff < 100 { score += 10 }
 
@@ -321,7 +297,8 @@ final class TerminalRestoreService {
             }
         }
 
-        return bestMatch
+        guard let match = bestMatch else { return nil }
+        return (match, bestScore)
     }
 
     // MARK: - Helpers
