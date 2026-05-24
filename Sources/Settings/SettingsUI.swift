@@ -10,8 +10,8 @@ struct SettingsView: View {
     @StateObject var spaceController = SpaceController.shared
     @StateObject var loginItemManager = LoginItemManager.shared
     @StateObject var overlayManager = ScreenOverlayManager.shared
-    @AppStorage(SpacePreferences.integrationEnabledKey) var spaceIntegrationEnabled = true
-    @AppStorage(SpacePreferences.restoreStrategyKey) var restoreStrategyRaw = SpaceRestoreStrategy.switchToOriginal.rawValue
+    @AppStorage(SpacePreferences.integrationEnabledKey) var spaceIntegrationEnabled = SpacePreferences.defaultIntegrationEnabled
+    @AppStorage(SpacePreferences.restoreStrategyKey) var restoreStrategyRaw = SpacePreferences.defaultRestoreStrategy.rawValue
     @State var duplicateAppPaths: [String] = []
     @State var isCheckingInstallations = false
 

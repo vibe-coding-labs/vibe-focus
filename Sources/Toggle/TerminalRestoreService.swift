@@ -30,7 +30,7 @@ final class TerminalRestoreService {
         log("[TerminalRestore] found snapshot from previous boot with \(snapshot.terminalWindows.count) terminal windows")
 
         // 检查是否启用自动恢复
-        let autoRestore = UserDefaults.standard.object(forKey: "autoRestoreOnBoot") as? Bool ?? true
+        let autoRestore = UserDefaults.standard.object(forKey: "autoRestoreOnBoot") as? Bool ?? ShutdownSnapshotManager.defaultAutoRestoreOnBoot
         if autoRestore {
             performRestore(snapshot)
         } else {

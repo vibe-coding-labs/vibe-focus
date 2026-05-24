@@ -4,8 +4,10 @@ enum LANHookPreferences {
     static let lanModeKey = "claudeHookLanMode"
     static let remoteBindingsKey = "claudeHookRemoteBindings"
 
+    static let defaultLanMode = false
+
     static var lanMode: Bool {
-        get { UserDefaults.standard.bool(forKey: lanModeKey) }
+        get { UserDefaults.standard.object(forKey: lanModeKey) as? Bool ?? defaultLanMode }
         set {
             UserDefaults.standard.set(newValue, forKey: lanModeKey)
             PreferencesSync.persistToDisk()
