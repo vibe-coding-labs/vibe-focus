@@ -270,51 +270,14 @@ final class ToggleEngine {
             ])
 
             if let current = displayCurrentSpace, current != targetSpace {
-                // 记录切换前的 display states，用于检测 switchDisplayToSpace 实际影响了哪些 display
-                var preSwitchSpaces: [Int: Int] = [:]
-                for d in 1...displayCount {
-                    if let v = spaceController.displayVisibleSpace(displayIndex: d) {
-                        preSwitchSpaces[d] = v
-                    }
-                }
-
-                let switched = spaceController.switchDisplayToSpace(
+                let switched = performSpaceSwitch(
+                    targetDisplay: targetDisplay,
                     targetSpace: targetSpace,
-                    operationID: trace
+                    traceID: trace,
+                    intentionallySwitchedDisplays: &intentionallySwitchedDisplays
                 )
 
-                // 检测哪些 display 的 space 被改变了，全部标记为故意切换
                 if switched {
-                    for d in 1...displayCount {
-                        let postVis = spaceController.displayVisibleSpace(displayIndex: d)
-                        if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
-                            intentionallySwitchedDisplays.insert(d)
-                            log("[ToggleEngine] restore: display \(d) intentionally switched \(pre)->\(post) by switchDisplayToSpace", level: .debug, fields: [
-                                "traceID": trace,
-                                "display": String(d),
-                                "from": String(pre),
-                                "to": String(post)
-                            ])
-                        }
-                    }
-
-                    let td = targetDisplay
-                    let started = Date()
-                    var pollCount = 0
-                    while Date().timeIntervalSince(started) < 0.4 {
-                        if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
-                        usleep(30_000)
-                        pollCount += 1
-                    }
-                    let finalSpace = spaceController.displayVisibleSpace(displayIndex: td)
-                    log("[ToggleEngine] restore: space poll completed", level: .debug, fields: [
-                        "traceID": trace,
-                        "targetDisplay": String(td),
-                        "targetSpace": String(targetSpace),
-                        "finalSpace": String(describing: finalSpace),
-                        "pollCount": String(pollCount),
-                        "reachedTarget": String(finalSpace == targetSpace)
-                    ])
                     usleep(150_000)
                 } else {
                     // space switch 失败 — fallback 到目标 display 的 visible space
@@ -327,11 +290,12 @@ final class ToggleEngine {
                         "targetDisplay": String(targetDisplay)
                     ])
                     if let vis = visibleSpace, vis != current {
-                        _ = spaceController.switchDisplayToSpace(
+                        _ = performSpaceSwitch(
+                            targetDisplay: targetDisplay,
                             targetSpace: vis,
-                            operationID: trace
+                            traceID: trace,
+                            intentionallySwitchedDisplays: &intentionallySwitchedDisplays
                         )
-                        intentionallySwitchedDisplays.insert(targetDisplay)
                         usleep(100_000)
                     }
                 }
@@ -537,6 +501,69 @@ final class ToggleEngine {
         return restored
     }
 
+    // MARK: - Space Switch Helper
+
+    /// 封装空间切换 + 轮询等待 + display 追踪的通用逻辑
+    /// 被 restore() 和 switchToOriginalSpace() 共用
+    private func performSpaceSwitch(
+        targetDisplay: Int,
+        targetSpace: Int,
+        traceID: String,
+        intentionallySwitchedDisplays: inout Set<Int>
+    ) -> Bool {
+        let spaceController = SpaceController.shared
+
+        // 1. 记录切换前的 display states
+        var preSwitchSpaces: [Int: Int] = [:]
+        for d in 1...displayCount {
+            if let v = spaceController.displayVisibleSpace(displayIndex: d) {
+                preSwitchSpaces[d] = v
+            }
+        }
+
+        // 2. 执行切换
+        let switched = spaceController.switchDisplayToSpace(
+            targetSpace: targetSpace,
+            operationID: traceID
+        )
+
+        guard switched else { return false }
+
+        // 3. 追踪被 switchDisplayToSpace 影响的所有 display
+        for d in 1...displayCount {
+            let postVis = spaceController.displayVisibleSpace(displayIndex: d)
+            if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
+                intentionallySwitchedDisplays.insert(d)
+                log("[ToggleEngine] display \(d) intentionally switched \(pre)->\(post)", level: .debug, fields: [
+                    "traceID": traceID,
+                    "display": String(d),
+                    "from": String(pre),
+                    "to": String(post)
+                ])
+            }
+        }
+
+        // 4. 轮询等待目标 display 到达目标 space
+        let started = Date()
+        var pollCount = 0
+        while Date().timeIntervalSince(started) < 0.4 {
+            if spaceController.displayVisibleSpace(displayIndex: targetDisplay) == targetSpace { break }
+            usleep(30_000)
+            pollCount += 1
+        }
+        let finalSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+        log("[ToggleEngine] space poll completed", level: .debug, fields: [
+            "traceID": traceID,
+            "targetDisplay": String(targetDisplay),
+            "targetSpace": String(targetSpace),
+            "finalSpace": String(describing: finalSpace),
+            "pollCount": String(pollCount),
+            "reachedTarget": String(finalSpace == targetSpace)
+        ])
+
+        return true
+    }
+
     // MARK: - Space Switching
 
     /// 切换到窗口的原始 space
@@ -583,19 +610,13 @@ final class ToggleEngine {
         ])
 
         // 目标 display 不在正确 space — 需要先切换 display 的 space 再移动窗口
-        if let current = displayCurrentSpace, current != targetSpace {
-            // 记录切换前的 display states
-            var preSwitchSpaces: [Int: Int] = [:]
-            for d in 1...displayCount {
-                if let v = spaceController.displayVisibleSpace(displayIndex: d) {
-                    preSwitchSpaces[d] = v
-                }
-            }
-
+        if displayCurrentSpace != targetSpace {
             let switchStart = Date()
-            let switched = spaceController.switchDisplayToSpace(
+            let switched = performSpaceSwitch(
+                targetDisplay: targetDisplay,
                 targetSpace: targetSpace,
-                operationID: traceID
+                traceID: traceID,
+                intentionallySwitchedDisplays: &intentionallySwitchedDisplays
             )
             log("ToggleEngine.switchToOriginalSpace: switchDisplayToSpace result", fields: [
                 "traceID": traceID,
@@ -603,38 +624,6 @@ final class ToggleEngine {
                 "targetSpace": String(targetSpace),
                 "switchDisplayMs": String(elapsedMilliseconds(since: switchStart))
             ])
-            if switched {
-                // 标记被 switchDisplayToSpace 影响的 display
-                for d in 1...displayCount {
-                    let postVis = spaceController.displayVisibleSpace(displayIndex: d)
-                    if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
-                        intentionallySwitchedDisplays.insert(d)
-                        log("ToggleEngine.switchToOriginalSpace: display \(d) intentionally switched \(pre)->\(post)", level: .debug, fields: [
-                            "traceID": traceID,
-                            "display": String(d),
-                            "from": String(pre),
-                            "to": String(post)
-                        ])
-                    }
-                }
-                // 轮询等待 display 到达目标 space（替代固定 400ms sleep）
-                let td = targetDisplay
-                let started = Date()
-                var pollCount = 0
-                while Date().timeIntervalSince(started) < 0.4 {
-                    if spaceController.displayVisibleSpace(displayIndex: td) == targetSpace { break }
-                    usleep(30_000)
-                    pollCount += 1
-                }
-                let finalSpace = spaceController.displayVisibleSpace(displayIndex: td)
-                log("ToggleEngine.switchToOriginalSpace: space poll result", level: .debug, fields: [
-                    "traceID": traceID,
-                    "targetSpace": String(targetSpace),
-                    "finalSpace": String(describing: finalSpace),
-                    "pollCount": String(pollCount),
-                    "reachedTarget": String(finalSpace == targetSpace)
-                ])
-            }
         }
 
         // 移动窗口到目标 space（使用 effectiveWindowID，可能是跨显示器移动后的新 ID）
