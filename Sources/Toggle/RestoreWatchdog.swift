@@ -176,11 +176,6 @@ final class RestoreWatchdog {
                     focus: false,
                     operationID: "watchdog_\(t.traceID)"
                 )
-                log("[RestoreWatchdog] space move result", level: .debug, fields: [
-                    "traceID": t.traceID,
-                    "moved": String(moved),
-                    "correction": String(correctionsApplied)
-                ])
                 if moved {
                     usleep(100_000)
                 }
@@ -189,11 +184,7 @@ final class RestoreWatchdog {
 
         // 3. AX frame apply
         if let windowAX = wm.findWindowByPID(t.pid, windowID: t.windowID) {
-            let applyResult = wm.apply(frame: t.targetFrame, to: windowAX, operationID: "watchdog_\(t.traceID)", stage: "watchdog_correction")
-            log("[RestoreWatchdog] correction #\(correctionsApplied) AX apply result", level: .debug, fields: [
-                "traceID": t.traceID,
-                "success": String(applyResult)
-            ])
+            _ = wm.apply(frame: t.targetFrame, to: windowAX, operationID: "watchdog_\(t.traceID)", stage: "watchdog_correction")
         } else {
             log("[RestoreWatchdog] correction #\(correctionsApplied): window AX not found", level: .warn, fields: [
                 "traceID": t.traceID,
@@ -226,10 +217,6 @@ final class RestoreWatchdog {
 
         if stable {
             stableCount += 1
-            log("[RestoreWatchdog] tick \(totalTicks): stable (\(stableCount)/\(maxStableTicks))", level: .debug, fields: [
-                "traceID": target?.traceID ?? "nil",
-                "correctionsApplied": String(correctionsApplied)
-            ])
             if stableCount >= maxStableTicks {
                 log("[RestoreWatchdog] restore confirmed stable after \(totalTicks) ticks", fields: [
                     "traceID": target?.traceID ?? "nil",
@@ -240,11 +227,6 @@ final class RestoreWatchdog {
             }
         } else {
             stableCount = 0
-            log("[RestoreWatchdog] tick \(totalTicks): UNSTABLE, applying correction", level: .debug, fields: [
-                "traceID": target?.traceID ?? "nil",
-                "correctionsApplied": String(correctionsApplied),
-                "maxCorrections": String(maxCorrections)
-            ])
             applyCorrection()
         }
     }
