@@ -36,10 +36,6 @@ enum PreferencesSync {
         // LANHookPreferences
         LANHookPreferences.lanModeKey: LANHookPreferences.defaultLanMode,
 
-        // ShutdownSnapshotManager
-        "autoRestoreOnBoot": ShutdownSnapshotManager.defaultAutoRestoreOnBoot,
-        "shutdownSnapshotEnabled": ShutdownSnapshotManager.defaultShutdownSnapshotEnabled,
-
         // SessionWindowRegistry and WindowManager savedWindowStates
         // migrated to SQLite — no longer in UserDefaults
     ]

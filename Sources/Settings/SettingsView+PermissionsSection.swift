@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - 权限 & 安装 & 登录项 & 关机快照
+// MARK: - 权限 & 安装 & 登录项
 extension SettingsView {
 
     var permissionsSection: some View {
@@ -197,62 +197,6 @@ extension SettingsView {
                         loginItemManager.refresh()
                     }
                     .buttonStyle(.bordered)
-                }
-            }
-        }
-    }
-
-    var shutdownSnapshotSection: some View {
-        SettingsCard(
-            title: "关机快照",
-            subtitle: "关机时自动保存所有终端窗口的位置和 Claude Code 会话，下次开机时可一键恢复。"
-        ) {
-            SettingsRow(
-                title: "关机时保存终端状态",
-                detail: "关机或退出时自动保存所有终端窗口状态。"
-            ) {
-                Toggle("", isOn: Binding(
-                    get: { ShutdownSnapshotManager.shared.isEnabled },
-                    set: { ShutdownSnapshotManager.shared.isEnabled = $0 }
-                ))
-                .labelsHidden()
-                .toggleStyle(.checkbox)
-            }
-
-            SettingsRow(
-                title: "开机时自动恢复",
-                detail: "检测到上次关机快照时自动恢复终端窗口和 Claude 会话。"
-            ) {
-                Toggle("", isOn: Binding(
-                    get: { UserDefaults.standard.object(forKey: "autoRestoreOnBoot") as? Bool ?? ShutdownSnapshotManager.defaultAutoRestoreOnBoot },
-                    set: { UserDefaults.standard.set($0, forKey: "autoRestoreOnBoot"); PreferencesSync.persistToDisk() }
-                ))
-                .labelsHidden()
-                .toggleStyle(.checkbox)
-            }
-
-            if ShutdownSnapshotManager.shared.hasPendingSnapshot {
-                Divider()
-
-                SettingsRow(
-                    title: "待恢复快照",
-                    detail: "检测到上次关机时保存的终端窗口状态。"
-                ) {
-                    HStack(spacing: 10) {
-                        Button("立即恢复") {
-                            if let snapshot = ShutdownSnapshotManager.shared.loadSnapshot() {
-                                TerminalRestoreService.shared.performRestore(snapshot)
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-
-                        Button("清除快照") {
-                            ShutdownSnapshotManager.shared.clearSnapshot()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
                 }
             }
         }
