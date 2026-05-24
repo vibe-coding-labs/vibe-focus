@@ -79,14 +79,7 @@ extension WindowManager {
             level: .debug,
             fields: ["cwd": cwd ?? "nil"]
         )
-        let options = CGWindowListOption(arrayLiteral: .optionAll)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            log(
-                "[WindowManager] findClaudeCodeWindow: CGWindowList returned nil",
-                level: .debug
-            )
-            return nil
-        }
+        let windows = cgWindowListAll()
 
         // 从 cwd 中提取项目名（最后一段路径）
         let projectName = cwd?
@@ -102,30 +95,23 @@ extension WindowManager {
 
         // 构建候选窗口列表
         var candidates: [WindowCandidate] = []
-        for info in windowList {
-            let layer = info[kCGWindowLayer as String] as? Int ?? 0
-            guard layer == 0 else { continue } // 只看普通窗口
+        for entry in windows {
+            guard entry.layer == 0 else { continue }
 
-            guard let windowID = info[kCGWindowNumber as String] as? UInt32,
-                  let pid = info[kCGWindowOwnerPID as String] as? pid_t else {
-                continue
-            }
+            let appName = entry.ownerName ?? ""
+            let title = entry.name ?? ""
+            let isOnMainScreen = isWindowOnMainScreen(windowID: entry.windowID)
 
-            let appName = info[kCGWindowOwnerName as String] as? String ?? ""
-            let title = info["kCGWindowName"] as? String ?? info["name"] as? String ?? ""
-            let isOnMainScreen = isWindowOnMainScreen(windowID: windowID)
-
-            // 获取 bundleIdentifier
             let bundleIdentifier: String?
-            if let app = NSRunningApplication(processIdentifier: pid) {
+            if let app = NSRunningApplication(processIdentifier: entry.ownerPID) {
                 bundleIdentifier = app.bundleIdentifier
             } else {
                 bundleIdentifier = nil
             }
 
             candidates.append(WindowCandidate(
-                windowID: windowID,
-                pid: pid,
+                windowID: entry.windowID,
+                pid: entry.ownerPID,
                 appName: appName,
                 bundleIdentifier: bundleIdentifier,
                 title: title,
@@ -194,29 +180,19 @@ extension WindowManager {
 
     /// 通过 CGWindowID 查找窗口 — 遍历 CGWindowList 按 PID+bounds 匹配到 AXUIElement
     func findWindowByCGWindowID(_ targetWindowID: UInt32) -> WindowIdentity? {
-        let windowListOption = CGWindowListOption(arrayLiteral: .optionAll)
-        guard let windowList = CGWindowListCopyWindowInfo(windowListOption, kCGNullWindowID) as? [[String: Any]] else {
+        let windows = cgWindowListAll()
+        guard let entry = windows.first(where: { $0.windowID == targetWindowID }) else {
             return nil
         }
+        let bundleID: String? = NSRunningApplication(processIdentifier: entry.ownerPID)?.bundleIdentifier
 
-        for windowInfo in windowList {
-            guard let cgID = windowInfo[kCGWindowNumber as String] as? UInt32, cgID == targetWindowID else {
-                continue
-            }
-            guard let pid = windowInfo[kCGWindowOwnerPID as String] as? Int32 else { return nil }
-            let appName = windowInfo[kCGWindowOwnerName as String] as? String
-            let title = windowInfo["kCGWindowName"] as? String ?? windowInfo["name"] as? String
-            let bundleID: String? = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
-
-            return WindowIdentity(
-                windowID: targetWindowID,
-                pid: pid,
-                bundleIdentifier: bundleID,
-                appName: appName,
-                windowNumber: Int(targetWindowID),
-                title: title
-            )
-        }
-        return nil
+        return WindowIdentity(
+            windowID: targetWindowID,
+            pid: entry.ownerPID,
+            bundleIdentifier: bundleID,
+            appName: entry.ownerName,
+            windowNumber: Int(targetWindowID),
+            title: entry.name
+        )
     }
 }
