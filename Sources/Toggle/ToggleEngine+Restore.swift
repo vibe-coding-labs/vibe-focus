@@ -185,40 +185,13 @@ extension ToggleEngine {
             }
         }
 
-        // 6. 检测并修复 CGEvent 意外切换其他 display 的问题
-        // CGEvent Ctrl+Arrow 可能影响非目标 display 的 space
-        // 使用 intentionallySwitchedDisplays 集合跟踪所有 restore 过程中被故意切换的 display
+        // 6. 检测并修复 CGEvent 意外切换其他 display
         if restored, !preRestoreDisplaySpaces.isEmpty {
-            var accidentalSwitches: [String] = []
-            for (disp, preVis) in preRestoreDisplaySpaces {
-                if intentionallySwitchedDisplays.contains(disp) { continue }
-                let currentVis = spaceController.displayVisibleSpace(displayIndex: disp)
-                if let cur = currentVis, cur != preVis {
-                    accidentalSwitches.append("d\(disp):s\(preVis)->s\(cur)")
-                    log("[ToggleEngine] restore: display \(disp) was accidentally switched from space \(preVis) to \(cur), fixing", level: .warn, fields: [
-                        "traceID": trace,
-                        "display": String(disp),
-                        "preRestoreSpace": String(preVis),
-                        "currentSpace": String(cur),
-                        "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
-                    ])
-                    _ = spaceController.switchDisplayToSpace(
-                        targetSpace: preVis,
-                        operationID: trace
-                    )
-                }
-            }
-            if accidentalSwitches.isEmpty {
-                log("[ToggleEngine] restore: no accidental display switches detected", level: .debug, fields: [
-                    "traceID": trace,
-                    "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
-                ])
-            } else {
-                log("[ToggleEngine] restore: fixed accidental switches", fields: [
-                    "traceID": trace,
-                    "accidentalSwitches": accidentalSwitches.joined(separator: ",")
-                ])
-            }
+            fixAccidentalDisplaySwitches(
+                preRestoreDisplaySpaces: preRestoreDisplaySpaces,
+                intentionallySwitchedDisplays: intentionallySwitchedDisplays,
+                traceID: trace
+            )
         }
 
         // 启动 post-restore watchdog
@@ -269,6 +242,49 @@ extension ToggleEngine {
             ])
         }
         return restored
+    }
+
+    // MARK: - Accidental Switch Detection
+
+    /// 检测并修复 CGEvent 意外切换非目标 display 的问题
+    private func fixAccidentalDisplaySwitches(
+        preRestoreDisplaySpaces: [Int: Int],
+        intentionallySwitchedDisplays: Set<Int>,
+        traceID: String
+    ) {
+        let spaceController = SpaceController.shared
+        var accidentalSwitches: [String] = []
+
+        for (disp, preVis) in preRestoreDisplaySpaces {
+            if intentionallySwitchedDisplays.contains(disp) { continue }
+            let currentVis = spaceController.displayVisibleSpace(displayIndex: disp)
+            if let cur = currentVis, cur != preVis {
+                accidentalSwitches.append("d\(disp):s\(preVis)->s\(cur)")
+                log("[ToggleEngine] restore: display \(disp) was accidentally switched from space \(preVis) to \(cur), fixing", level: .warn, fields: [
+                    "traceID": traceID,
+                    "display": String(disp),
+                    "preRestoreSpace": String(preVis),
+                    "currentSpace": String(cur),
+                    "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
+                ])
+                _ = spaceController.switchDisplayToSpace(
+                    targetSpace: preVis,
+                    operationID: traceID
+                )
+            }
+        }
+
+        if accidentalSwitches.isEmpty {
+            log("[ToggleEngine] restore: no accidental display switches detected", level: .debug, fields: [
+                "traceID": traceID,
+                "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
+            ])
+        } else {
+            log("[ToggleEngine] restore: fixed accidental switches", fields: [
+                "traceID": traceID,
+                "accidentalSwitches": accidentalSwitches.joined(separator: ",")
+            ])
+        }
     }
 
     // MARK: - Cross-Display Restore
