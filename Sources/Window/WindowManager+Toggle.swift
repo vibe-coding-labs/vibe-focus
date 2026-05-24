@@ -264,6 +264,7 @@ extension WindowManager {
             sessionID: nil,
             operationID: op
         )
+        HookEventHandler.shared.clearAutoRestoreCooldown(windowID: identity.windowID)
         if moved {
             // 移动窗口后 macOS 可能丢失焦点，重新 focus 被移动的窗口
             _ = spaceController.focusWindow(identity.windowID, operationID: op)
