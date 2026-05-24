@@ -62,13 +62,8 @@ final class ShutdownSnapshotManager {
             object: nil
         )
 
-        nc.addObserver(
-            self,
-            selector: #selector(handlePowerOff(_:)),
-            name: NSApplication.willTerminateNotification,
-            object: nil
-        )
-
+        // NSApplication.willTerminateNotification 必须通过 NotificationCenter.default 注册
+        // NSWorkspace.shared.notificationCenter 不会分发 NSApplication 通知
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handlePowerOff(_:)),

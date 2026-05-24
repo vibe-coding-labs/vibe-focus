@@ -103,14 +103,6 @@ final class ToggleEngine {
         log("ToggleEngine.clear", fields: ["windowID": String(windowID)])
     }
 
-    /// 按 PID 清除 toggle state（PID fallback 场景）
-    func clearByPID(pid: Int32) {
-        if let record = loadByPID(pid: pid) {
-            store.clearToggleRecord(windowID: record.windowID)
-            log("ToggleEngine.clearByPID", fields: ["pid": String(pid), "windowID": String(record.windowID)])
-        }
-    }
-
     // MARK: - Restore 执行
 
     /// 执行恢复：移动窗口回原始位置 + 切换到原始 space
