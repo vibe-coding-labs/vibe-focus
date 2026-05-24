@@ -165,38 +165,7 @@ extension WindowStateStore {
         sqlite3_bind_int64(stmt, 1, Int64(windowID))
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
 
-        let wID = UInt32(sqlite3_column_int64(stmt, 0))
-        let pid = sqlite3_column_int(stmt, 1)
-        let bundleID: String? = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
-        let appName: String? = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
-
-        let ox = CGFloat(sqlite3_column_double(stmt, 4))
-        let oy = CGFloat(sqlite3_column_double(stmt, 5))
-        let ow = CGFloat(sqlite3_column_double(stmt, 6))
-        let oh = CGFloat(sqlite3_column_double(stmt, 7))
-        let tx = CGFloat(sqlite3_column_double(stmt, 8))
-        let ty = CGFloat(sqlite3_column_double(stmt, 9))
-        let tw = CGFloat(sqlite3_column_double(stmt, 10))
-        let th = CGFloat(sqlite3_column_double(stmt, 11))
-
-        let sourceSpace = Int(sqlite3_column_int(stmt, 12))
-        let sourceDisplay = Int(sqlite3_column_int(stmt, 13))
-        let sourceYabaiDisp = Int(sqlite3_column_int(stmt, 14))
-        let sourceDispSpace = Int(sqlite3_column_int(stmt, 15))
-        let targetDisplay = Int(sqlite3_column_int(stmt, 16))
-        let toggledAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 17))
-        let sessionID: String? = sqlite3_column_text(stmt, 18).map { String(cString: $0) }
-
-        return ToggleRecord(
-            windowID: wID, pid: pid,
-            bundleIdentifier: bundleID, appName: appName,
-            origFrame: CGRect(x: ox, y: oy, width: ow, height: oh),
-            sourceSpace: sourceSpace, sourceDisplay: sourceDisplay,
-            sourceYabaiDisp: sourceYabaiDisp, sourceDispSpace: sourceDispSpace,
-            targetFrame: CGRect(x: tx, y: ty, width: tw, height: th),
-            targetDisplay: targetDisplay,
-            toggledAt: toggledAt, sessionID: sessionID
-        )
+        return parseToggleRecord(stmt!)
     }
 
     /// 按 PID 读取最近的 toggle record（CGWindowNumber 变化时的 fallback）
@@ -220,38 +189,7 @@ extension WindowStateStore {
         sqlite3_bind_int(stmt, 1, pid)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
 
-        let wID = UInt32(sqlite3_column_int64(stmt, 0))
-        let rpid = sqlite3_column_int(stmt, 1)
-        let bundleID: String? = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
-        let appName: String? = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
-
-        let ox = CGFloat(sqlite3_column_double(stmt, 4))
-        let oy = CGFloat(sqlite3_column_double(stmt, 5))
-        let ow = CGFloat(sqlite3_column_double(stmt, 6))
-        let oh = CGFloat(sqlite3_column_double(stmt, 7))
-        let tx = CGFloat(sqlite3_column_double(stmt, 8))
-        let ty = CGFloat(sqlite3_column_double(stmt, 9))
-        let tw = CGFloat(sqlite3_column_double(stmt, 10))
-        let th = CGFloat(sqlite3_column_double(stmt, 11))
-
-        let sourceSpace = Int(sqlite3_column_int(stmt, 12))
-        let sourceDisplay = Int(sqlite3_column_int(stmt, 13))
-        let sourceYabaiDisp = Int(sqlite3_column_int(stmt, 14))
-        let sourceDispSpace = Int(sqlite3_column_int(stmt, 15))
-        let targetDisplay = Int(sqlite3_column_int(stmt, 16))
-        let toggledAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 17))
-        let sessionID: String? = sqlite3_column_text(stmt, 18).map { String(cString: $0) }
-
-        return ToggleRecord(
-            windowID: wID, pid: rpid,
-            bundleIdentifier: bundleID, appName: appName,
-            origFrame: CGRect(x: ox, y: oy, width: ow, height: oh),
-            sourceSpace: sourceSpace, sourceDisplay: sourceDisplay,
-            sourceYabaiDisp: sourceYabaiDisp, sourceDispSpace: sourceDispSpace,
-            targetFrame: CGRect(x: tx, y: ty, width: tw, height: th),
-            targetDisplay: targetDisplay,
-            toggledAt: toggledAt, sessionID: sessionID
-        )
+        return parseToggleRecord(stmt!)
     }
 
     /// 清除指定窗口的 toggle state
@@ -346,6 +284,43 @@ extension WindowStateStore {
             completedAt: completedAt,
             createdAt: createdAt,
             updatedAt: updatedAt
+        )
+    }
+
+    // MARK: - Toggle Record Row Parser
+
+    private func parseToggleRecord(_ stmt: OpaquePointer) -> ToggleRecord? {
+        let wID = UInt32(sqlite3_column_int64(stmt, 0))
+        let pid = sqlite3_column_int(stmt, 1)
+        let bundleID: String? = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+        let appName: String? = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+
+        let ox = CGFloat(sqlite3_column_double(stmt, 4))
+        let oy = CGFloat(sqlite3_column_double(stmt, 5))
+        let ow = CGFloat(sqlite3_column_double(stmt, 6))
+        let oh = CGFloat(sqlite3_column_double(stmt, 7))
+        let tx = CGFloat(sqlite3_column_double(stmt, 8))
+        let ty = CGFloat(sqlite3_column_double(stmt, 9))
+        let tw = CGFloat(sqlite3_column_double(stmt, 10))
+        let th = CGFloat(sqlite3_column_double(stmt, 11))
+
+        let sourceSpace = Int(sqlite3_column_int(stmt, 12))
+        let sourceDisplay = Int(sqlite3_column_int(stmt, 13))
+        let sourceYabaiDisp = Int(sqlite3_column_int(stmt, 14))
+        let sourceDispSpace = Int(sqlite3_column_int(stmt, 15))
+        let targetDisplay = Int(sqlite3_column_int(stmt, 16))
+        let toggledAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 17))
+        let sessionID: String? = sqlite3_column_text(stmt, 18).map { String(cString: $0) }
+
+        return ToggleRecord(
+            windowID: wID, pid: pid,
+            bundleIdentifier: bundleID, appName: appName,
+            origFrame: CGRect(x: ox, y: oy, width: ow, height: oh),
+            sourceSpace: sourceSpace, sourceDisplay: sourceDisplay,
+            sourceYabaiDisp: sourceYabaiDisp, sourceDispSpace: sourceDispSpace,
+            targetFrame: CGRect(x: tx, y: ty, width: tw, height: th),
+            targetDisplay: targetDisplay,
+            toggledAt: toggledAt, sessionID: sessionID
         )
     }
 
