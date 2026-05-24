@@ -128,10 +128,10 @@ struct ToggleRecord: Equatable {
 
     // MARK: - 原始位置（恢复目标）
     let origFrame: CGRect
-    let sourceSpace: Int          // yabai 全局 space index
-    let sourceDisplay: Int        // NSScreen display index
-    let sourceYabaiDisp: Int      // yabai display index
-    let sourceDispSpace: Int      // display-local space index
+    let sourceSpace: Int          // yabai 全局 space index (1-based)
+    let sourceDisplay: Int        // ⚠️ 历史遗留：可能为 NSScreen 0-based 或 yabai 1-based
+    let sourceYabaiDisp: Int      // yabai display index (1-based, 1=主屏)
+    let sourceDispSpace: Int      // display-local space index (1-based)
 
     // MARK: - 目标位置（用于验证窗口确实被 toggle 了）
     let targetFrame: CGRect       // 主屏上的 frame

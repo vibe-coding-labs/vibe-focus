@@ -343,6 +343,10 @@ final class SpaceController: ObservableObject {
 
 typealias ShellResult = YabaiClient.YabaiResult
 
+/// yabai space 查询结果
+/// - `id`: macOS native space ID (CGS)，用于 NativeSpaceBridge.moveWindow
+/// - `index`: yabai 全局 space 索引 (1-based)，用于 yabai space 命令
+/// - `display`: yabai display 索引 (1-based, 1=主屏)
 struct YabaiSpaceInfo: Decodable {
     let id: Int?
     let index: Int?
@@ -357,6 +361,9 @@ struct YabaiSpaceInfo: Decodable {
     }
 }
 
+/// yabai window 查询结果
+/// - `space`: 窗口所在的 yabai 全局 space 索引 (1-based)
+/// - `display`: 窗口所在的 yabai display 索引 (1-based)
 struct YabaiWindowInfo: Decodable {
     let id: Int?
     let pid: Int?
