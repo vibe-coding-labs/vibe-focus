@@ -194,40 +194,8 @@ extension SpaceController {
                 }
             }
             // yabai + NativeSpaceBridge 都失败 — 尝试 focus 目标 space 再重试
-            log(
-                "[SpaceController] trying focus-then-move strategy (yabai unverified branch)",
-                fields: [
-                    "op": op,
-                    "windowID": String(windowID),
-                    "targetSpace": String(spaceIndex)
-                ]
-            )
-            let focusResult = runYabai(
-                arguments: ["-m", "space", "--focus", "\(spaceIndex)"],
-                operation: "moveWindow_focusTargetSpace_unverified",
-                operationID: op
-            )
-            if let result = focusResult, result.exitCode == 0 {
-                pollUntil(timeout: 200_000, interval: 20_000) {
-                    self.windowSpaceIndex(windowID: windowID) == spaceIndex
-                }
-                let retryResult = runYabai(
-                    arguments: ["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"],
-                    operation: "moveWindow_focusRetry_unverified",
-                    operationID: op
-                )
-                if let retry = retryResult, retry.exitCode == 0 {
-                    if verifyWindowMovedToSpaceWithRetry(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
-                        log(
-                            "[SpaceController] focus-then-move succeeded (unverified branch)",
-                            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(spaceIndex)]
-                        )
-                        if focus {
-                            _ = focusWindow(windowID, operationID: op)
-                        }
-                        return true
-                    }
-                }
+            if focusThenMoveRetry(windowID: windowID, targetSpace: spaceIndex, focus: focus, operationID: op, label: "unverified") {
+                return true
             }
 
             log(
@@ -279,41 +247,8 @@ extension SpaceController {
         }
 
         // 策略 4：先 focus 目标 space，再重试 yabai move
-        // 窗口跨 display 移动时，yabai 需要目标 space 是当前焦点才能成功移动窗口
-        log(
-            "[SpaceController] trying focus-then-move strategy: focus target space then retry yabai",
-            fields: [
-                "op": op,
-                "windowID": String(windowID),
-                "targetSpace": String(spaceIndex)
-            ]
-        )
-        let focusResult = runYabai(
-            arguments: ["-m", "space", "--focus", "\(spaceIndex)"],
-            operation: "moveWindow_focusTargetSpace",
-            operationID: op
-        )
-        if let result = focusResult, result.exitCode == 0 {
-            pollUntil(timeout: 200_000, interval: 20_000) {
-                self.windowSpaceIndex(windowID: windowID) == spaceIndex
-            }
-            let retryResult = runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"],
-                operation: "moveWindow_focusRetry",
-                operationID: op
-            )
-            if let retry = retryResult, retry.exitCode == 0 {
-                if verifyWindowMovedToSpaceWithRetry(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
-                    log(
-                        "[SpaceController] focus-then-move strategy succeeded",
-                        fields: ["op": op, "windowID": String(windowID), "targetSpace": String(spaceIndex)]
-                    )
-                    if focus {
-                        _ = focusWindow(windowID, operationID: op)
-                    }
-                    return true
-                }
-            }
+        if focusThenMoveRetry(windowID: windowID, targetSpace: spaceIndex, focus: focus, operationID: op, label: "fallback") {
+            return true
         }
 
         markOperationError(
@@ -321,6 +256,45 @@ extension SpaceController {
             fallback: "Failed to move window \(windowID) to space \(spaceIndex)",
             operationID: op
         )
+        return false
+    }
+
+    // MARK: - Focus-Then-Move Retry
+
+    /// 先 focus 目标 space，再重试 yabai move — 用于 yabai 直接 move 失败时的 fallback
+    private func focusThenMoveRetry(
+        windowID: UInt32,
+        targetSpace: Int,
+        focus: Bool,
+        operationID: String,
+        label: String
+    ) -> Bool {
+        let focusResult = runYabai(
+            arguments: ["-m", "space", "--focus", "\(targetSpace)"],
+            operation: "moveWindow_focusTargetSpace_\(label)",
+            operationID: operationID
+        )
+        guard let result = focusResult, result.exitCode == 0 else { return false }
+
+        _ = pollUntil(timeout: 200_000, interval: 20_000) {
+            self.windowSpaceIndex(windowID: windowID) == targetSpace
+        }
+        let retryResult = runYabai(
+            arguments: ["-m", "window", "\(windowID)", "--space", "\(targetSpace)"],
+            operation: "moveWindow_focusRetry_\(label)",
+            operationID: operationID
+        )
+        guard let retry = retryResult, retry.exitCode == 0 else { return false }
+
+        if verifyWindowMovedToSpaceWithRetry(windowID: windowID, targetSpace: targetSpace, operationID: operationID) {
+            log("[SpaceController] focus-then-move succeeded (\(label))", fields: [
+                "op": operationID, "windowID": String(windowID), "targetSpace": String(targetSpace)
+            ])
+            if focus {
+                _ = focusWindow(windowID, operationID: operationID)
+            }
+            return true
+        }
         return false
     }
 
