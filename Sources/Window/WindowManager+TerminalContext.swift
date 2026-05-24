@@ -167,10 +167,7 @@ extension WindowManager {
 
     /// 通过 PID 查询 CGWindowList 中属于该 PID 的所有窗口
     private func findWindowsForPID(_ pid: Int32) -> [WindowIdentity] {
-        let options = CGWindowListOption(arrayLiteral: .optionAll)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return []
-        }
+        let windows = cgWindowListAll()
 
         let appName = NSRunningApplication(processIdentifier: pid)?.localizedName
             ?? (runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(pid)])?
@@ -178,23 +175,16 @@ extension WindowManager {
         let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
 
         var results: [WindowIdentity] = []
-        for info in windowList {
-            let layer = info[kCGWindowLayer as String] as? Int ?? 0
-            guard layer == 0 else { continue }
+        for entry in windows {
+            guard entry.layer == 0 else { continue }
+            guard entry.ownerPID == pid else { continue }
 
-            guard let windowPID = info[kCGWindowOwnerPID as String] as? pid_t,
-                  windowPID == pid,
-                  let windowID = info[kCGWindowNumber as String] as? UInt32 else {
-                continue
-            }
-
-            let title = info["kCGWindowName"] as? String ?? info["name"] as? String ?? ""
             results.append(WindowIdentity(
-                windowID: windowID,
-                pid: pid,
+                windowID: entry.windowID,
+                pid: entry.ownerPID,
                 bundleIdentifier: bundleID,
                 appName: appName,
-                title: title
+                title: entry.name
             ))
         }
         return results

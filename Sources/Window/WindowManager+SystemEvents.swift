@@ -142,25 +142,8 @@ extension WindowManager {
 
     /// 通过 CGWindowList 获取窗口 ID（备用方案）
     private func systemEventsGetWindowID(forPID pid: pid_t) -> UInt32? {
-        // 获取该 PID 的所有窗口
-        let options = CGWindowListOption(arrayLiteral: .optionAll)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
-
-        // 找到属于该 PID 且是可见的普通窗口
-        for windowInfo in windowList {
-            if let windowPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-               windowPID == pid,
-               let windowID = windowInfo[kCGWindowNumber as String] as? UInt32 {
-                // 过滤掉系统 UI 元素（如菜单栏、Dock）
-                let layer = windowInfo[kCGWindowLayer as String] as? Int ?? 0
-                if layer == 0 {
-                    return windowID
-                }
-            }
-        }
-        return nil
+        let windows = cgWindowListAll()
+        return windows.first(where: { $0.ownerPID == pid && $0.layer == 0 })?.windowID
     }
 
     func systemEventsApply(frame targetFrame: CGRect, toPID pid: pid_t) -> Bool {

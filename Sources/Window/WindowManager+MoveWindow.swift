@@ -330,55 +330,40 @@ extension WindowManager {
         targetFrame: CGRect,
         operationID: String
     ) -> Bool {
-        let options = CGWindowListOption(arrayLiteral: .optionAll)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        let windows = cgWindowListAll()
+        guard let entry = windows.first(where: { $0.windowID == windowID }) else {
+            log(
+                "[WindowManager] CGWindowList verification: window not found in list",
+                level: .warn,
+                fields: [
+                    "op": operationID,
+                    "windowID": String(windowID)
+                ]
+            )
+            return false
+        }
+        guard let actualFrame = entry.bounds else {
             return false
         }
 
-        for info in windowList {
-            guard let id = info[kCGWindowNumber as String] as? UInt32,
-                  id == windowID else { continue }
-
-            guard let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else {
-                return false
-            }
-
-            let actualFrame = CGRect(
-                x: bounds["X"] ?? 0,
-                y: bounds["Y"] ?? 0,
-                width: bounds["Width"] ?? 0,
-                height: bounds["Height"] ?? 0
-            )
-
-            let positionMatches = abs(actualFrame.origin.x - targetFrame.origin.x) <= frameTolerance &&
-                                 abs(actualFrame.origin.y - targetFrame.origin.y) <= frameTolerance
-            let sizeClose = abs(actualFrame.width - targetFrame.width) <= frameTolerance * 2 &&
-                           abs(actualFrame.height - targetFrame.height) <= Self.heightTolerance
-
-            log(
-                "[WindowManager] CGWindowList frame verification",
-                fields: [
-                    "op": operationID,
-                    "windowID": String(windowID),
-                    "actualFrame": String(describing: actualFrame),
-                    "targetFrame": String(describing: targetFrame),
-                    "positionMatches": String(positionMatches),
-                    "sizeClose": String(sizeClose)
-                ]
-            )
-
-            return positionMatches && sizeClose
-        }
+        let positionMatches = abs(actualFrame.origin.x - targetFrame.origin.x) <= frameTolerance &&
+                             abs(actualFrame.origin.y - targetFrame.origin.y) <= frameTolerance
+        let sizeClose = abs(actualFrame.width - targetFrame.width) <= frameTolerance * 2 &&
+                       abs(actualFrame.height - targetFrame.height) <= Self.heightTolerance
 
         log(
-            "[WindowManager] CGWindowList verification: window not found in list",
-            level: .warn,
+            "[WindowManager] CGWindowList frame verification",
             fields: [
                 "op": operationID,
-                "windowID": String(windowID)
+                "windowID": String(windowID),
+                "actualFrame": String(describing: actualFrame),
+                "targetFrame": String(describing: targetFrame),
+                "positionMatches": String(positionMatches),
+                "sizeClose": String(sizeClose)
             ]
         )
-        return false
+
+        return positionMatches && sizeClose
     }
 
     /// 轮询验证窗口 frame 是否已到达目标（通过 CGWindowList）
