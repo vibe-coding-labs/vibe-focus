@@ -3,7 +3,6 @@ import ApplicationServices.HIServices
 import Foundation
 
 // MARK: - AX Helpers
-// AXUIElement 工具方法：windowHandle、title、frame、apply
 @MainActor
 extension WindowManager {
 
@@ -11,17 +10,11 @@ extension WindowManager {
         var windowID: CGWindowID = 0
         let status = _AXUIElementGetWindow(window, &windowID)
         guard status == .success, windowID != 0 else {
-            log(
-                "[WindowManager] windowHandle: _AXUIElementGetWindow failed",
-                level: .debug,
-                fields: ["axStatus": String(status.rawValue)]
-            )
             return nil
         }
         return windowID
     }
 
-    
     func windowNumber(for window: AXUIElement) -> Int? {
         var numberRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(window, axWindowNumberAttribute as CFString, &numberRef)
@@ -44,21 +37,12 @@ extension WindowManager {
         var frameRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(window, axFrameAttribute as CFString, &frameRef)
         guard status == .success, let frameRef else {
-            log(
-                "[WindowManager] frame: AX read failed",
-                level: .debug,
-                fields: ["axStatus": String(status.rawValue)]
-            )
             return nil
         }
 
         let axValue = unsafeBitCast(frameRef, to: AXValue.self)
         var frame = CGRect.zero
         guard AXValueGetValue(axValue, .cgRect, &frame) else {
-            log(
-                "[WindowManager] frame: AXValueGetValue failed",
-                level: .debug
-            )
             return nil
         }
         return frame
@@ -86,27 +70,7 @@ extension WindowManager {
         let maxAttempts = 3
         let settleDelayMicros: useconds_t = 25_000
 
-        log(
-            "[apply] starting frame application",
-            level: .debug,
-            fields: [
-                "op": op,
-                "stage": stage,
-                "targetFrame": String(describing: targetFrame),
-                "maxAttempts": String(maxAttempts)
-            ]
-        )
-
         for attempt in 1...maxAttempts {
-            log(
-                "[apply] attempt started",
-                level: .debug,
-                fields: [
-                    "op": op,
-                    "stage": stage,
-                    "attempt": String(attempt)
-                ]
-            )
             var targetSize = CGSize(width: targetFrame.width, height: targetFrame.height)
             guard let sizeValue = AXValueCreate(.cgSize, &targetSize) else {
                 log(
@@ -124,15 +88,6 @@ extension WindowManager {
             }
 
             let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
-            log(
-                "[WindowManager] set size result",
-                fields: [
-                    "op": op,
-                    "stage": stage,
-                    "attempt": String(attempt),
-                    "status": String(sizeResult.rawValue)
-                ]
-            )
             guard sizeResult == .success else {
                 log(
                     "[apply] AXUIElementSetAttributeValue for size failed",
@@ -146,16 +101,6 @@ extension WindowManager {
                 )
                 return false
             }
-
-            log(
-                "[apply] size set OK, setting position",
-                level: .debug,
-                fields: [
-                    "op": op,
-                    "stage": stage,
-                    "attempt": String(attempt)
-                ]
-            )
 
             var targetOrigin = CGPoint(x: targetFrame.origin.x, y: targetFrame.origin.y)
             guard let originValue = AXValueCreate(.cgPoint, &targetOrigin) else {
@@ -174,15 +119,6 @@ extension WindowManager {
             }
 
             let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, originValue)
-            log(
-                "[WindowManager] set position result",
-                fields: [
-                    "op": op,
-                    "stage": stage,
-                    "attempt": String(attempt),
-                    "status": String(positionResult.rawValue)
-                ]
-            )
             guard positionResult == .success else {
                 log(
                     "[apply] AXUIElementSetAttributeValue for position failed",
@@ -197,59 +133,14 @@ extension WindowManager {
                 return false
             }
 
-            log(
-                "[apply] position set OK, waiting settle delay",
-                level: .debug,
-                fields: [
-                    "op": op,
-                    "stage": stage,
-                    "attempt": String(attempt),
-                    "settleDelayMs": String(settleDelayMicros / 1000)
-                ]
-            )
-
             usleep(settleDelayMicros)
 
-            log(
-                "[apply] reading back frame after settle",
-                level: .debug,
-                fields: ["op": op, "stage": stage, "attempt": String(attempt)]
-            )
             // AX-safe: verifying frame after apply — window was just manipulated
             if let appliedFrame = frame(of: window) {
-                log(
-                    "[WindowManager] applied frame snapshot",
-                    fields: [
-                        "op": op,
-                        "stage": stage,
-                        "attempt": String(attempt),
-                        "frame": String(describing: appliedFrame)
-                    ]
-                )
                 lastAppliedFrame = appliedFrame
                 if framesMatch(appliedFrame, targetFrame) {
-                    log(
-                        "[apply] frame matched on attempt, returning true",
-                        level: .debug,
-                        fields: [
-                            "op": op,
-                            "stage": stage,
-                            "attempt": String(attempt)
-                        ]
-                    )
                     return true
                 }
-                log(
-                    "[apply] frame did not match on attempt, checking tolerance",
-                    level: .debug,
-                    fields: [
-                        "op": op,
-                        "stage": stage,
-                        "attempt": String(attempt),
-                        "appliedFrame": String(describing: appliedFrame),
-                        "targetFrame": String(describing: targetFrame)
-                    ]
-                )
             } else {
                 log(
                     "[apply] could not read back frame on attempt",
@@ -263,20 +154,8 @@ extension WindowManager {
             }
         }
 
-        log(
-            "[apply] all attempts exhausted, checking tolerance as final fallback",
-            level: .debug,
-            fields: [
-                "op": op,
-                "stage": stage,
-                "hasLastAppliedFrame": String(lastAppliedFrame != nil)
-            ]
-        )
-
         // 如果精确匹配失败，但窗口已成功应用了接近的尺寸（可能是窗口有最小尺寸限制）
-        // 我们也认为是成功的
         if let lastFrame = lastAppliedFrame {
-            // 检查是否在合理范围内（位置正确，大小接近）
             let positionMatches = abs(lastFrame.origin.x - targetFrame.origin.x) <= frameTolerance &&
                                  abs(lastFrame.origin.y - targetFrame.origin.y) <= frameTolerance
             let sizeCloseEnough = abs(lastFrame.width - targetFrame.width) <= frameTolerance * 2 &&
