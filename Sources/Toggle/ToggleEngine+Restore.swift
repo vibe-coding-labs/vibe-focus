@@ -401,34 +401,56 @@ extension ToggleEngine {
 
         if let actualSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID),
            actualSpace != record.sourceSpace {
-            log("[ToggleEngine] restore: window on wrong space after AX apply, trying moveWindow fallback", level: .warn, fields: [
+            log("[ToggleEngine] restore: window on wrong space after AX apply, starting space correction", level: .warn, fields: [
                 "traceID": traceID,
                 "effectiveWindowID": String(postMoveWindowID),
                 "actualSpace": String(actualSpace),
                 "targetSpace": String(record.sourceSpace)
             ])
-            let moved = spaceController.moveWindow(
-                postMoveWindowID,
-                toSpaceIndex: record.sourceSpace,
-                focus: triggerSource == "carbon_hotkey",
-                operationID: traceID
-            )
 
-            if !moved {
-                log("[ToggleEngine] restore: moveWindow failed, switching display to window's actual space for visibility", level: .warn, fields: [
+            // 尝试 1: 直接 moveWindow (yabai + NativeSpaceBridge)
+            if spaceController.moveWindow(postMoveWindowID, toSpaceIndex: record.sourceSpace, focus: false, operationID: traceID) {
+                if spaceController.windowSpaceIndex(windowID: postMoveWindowID) == record.sourceSpace {
+                    log("[ToggleEngine] restore: moveWindow correction succeeded", fields: [
+                        "traceID": traceID, "windowID": String(postMoveWindowID), "targetSpace": String(record.sourceSpace)
+                    ])
+                } else {
+                    log("[ToggleEngine] restore: moveWindow reported success but window still on wrong space", level: .warn, fields: [
+                        "traceID": traceID, "windowID": String(postMoveWindowID)
+                    ])
+                }
+            }
+
+            // 验证是否修正成功
+            let correctedSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID)
+            if correctedSpace == record.sourceSpace {
+                // 成功
+            } else {
+                // 尝试 2: 切换到目标 space 再移动
+                log("[ToggleEngine] restore: trying switchDisplayToSpace + moveWindow combo", level: .warn, fields: [
+                    "traceID": traceID,
+                    "targetSpace": String(record.sourceSpace),
+                    "currentSpace": String(describing: correctedSpace)
+                ])
+                _ = spaceController.switchDisplayToSpace(targetSpace: record.sourceSpace, operationID: traceID)
+                usleep(100_000)
+                _ = spaceController.moveWindow(postMoveWindowID, toSpaceIndex: record.sourceSpace, focus: false, operationID: traceID)
+            }
+
+            // 最终验证
+            let finalSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID)
+            if let final = finalSpace, final != record.sourceSpace {
+                log("[ToggleEngine] restore: all space corrections failed, switching display to actual space for visibility", level: .warn, fields: [
                     "traceID": traceID,
                     "effectiveWindowID": String(postMoveWindowID),
-                    "actualSpace": String(actualSpace),
+                    "actualSpace": String(final),
                     "targetSpace": String(record.sourceSpace)
                 ])
-                let switched = spaceController.switchDisplayToSpace(
-                    targetSpace: actualSpace,
-                    operationID: traceID
-                )
+                let switched = spaceController.switchDisplayToSpace(targetSpace: final, operationID: traceID)
                 log("[ToggleEngine] restore: display switch to actual space result", fields: [
                     "traceID": traceID,
                     "switched": String(switched),
-                    "actualSpace": String(actualSpace)
+                    "actualSpace": String(final)
                 ])
             }
         }
