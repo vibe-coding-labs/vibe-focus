@@ -22,6 +22,23 @@ extension SpaceController {
             return true
         }
 
+        // 检测 Mission Control 阻塞 — 如果 MC 活跃则先关闭再重试
+        let stderr = yabaiResult?.stderr ?? ""
+        let isMCBlocking = stderr.contains("mission-control")
+        if isMCBlocking {
+            log("[SpaceController] switchDisplayToSpace: Mission Control blocking, dismissing", level: .info, fields: ["op": op])
+            NativeSpaceBridge.dismissMissionControl(operationID: op)
+            // 重试 yabai
+            let retryResult = runYabai(
+                arguments: ["-m", "space", "--focus", String(targetSpace)],
+                operation: "switchDisplayToSpace_yabai_after_mc_dismiss",
+                operationID: op
+            )
+            if let result = retryResult, result.exitCode == 0 {
+                return true
+            }
+        }
+
         log("[SpaceController] switchDisplayToSpace: yabai failed, trying CGEvent fallback", level: .info, fields: [
             "op": op, "targetSpace": String(targetSpace)
         ])
