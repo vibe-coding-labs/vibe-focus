@@ -17,6 +17,10 @@ final class ToggleEngine {
 
     private var store: WindowStateStore { WindowStateStore.shared }
 
+    private var displayCount: Int {
+        max(NSScreen.screens.count, 1)
+    }
+
     // MARK: - Save (Ctrl+Q 触发)
 
     /// 保存 toggle 快照 — 在 moveWindowToMainScreen 成功后调用
@@ -227,7 +231,7 @@ final class ToggleEngine {
 
         // 3.5 记录所有 display 当前可见 space（用于 restore 后检测意外切换）
         var preRestoreDisplaySpaces: [Int: Int] = [:]
-        for disp in 1...3 {
+        for disp in 1...displayCount {
             if let vis = spaceController.displayVisibleSpace(displayIndex: disp) {
                 preRestoreDisplaySpaces[disp] = vis
             }
@@ -268,7 +272,7 @@ final class ToggleEngine {
             if let current = displayCurrentSpace, current != targetSpace {
                 // 记录切换前的 display states，用于检测 switchDisplayToSpace 实际影响了哪些 display
                 var preSwitchSpaces: [Int: Int] = [:]
-                for d in 1...3 {
+                for d in 1...displayCount {
                     if let v = spaceController.displayVisibleSpace(displayIndex: d) {
                         preSwitchSpaces[d] = v
                     }
@@ -281,7 +285,7 @@ final class ToggleEngine {
 
                 // 检测哪些 display 的 space 被改变了，全部标记为故意切换
                 if switched {
-                    for d in 1...3 {
+                    for d in 1...displayCount {
                         let postVis = spaceController.displayVisibleSpace(displayIndex: d)
                         if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
                             intentionallySwitchedDisplays.insert(d)
@@ -496,7 +500,7 @@ final class ToggleEngine {
             ))
         }
 
-        let postDisplaySpaces: [String] = (1...3).compactMap { disp -> String? in
+        let postDisplaySpaces: [String] = (1...displayCount).compactMap { disp -> String? in
             guard let vis = spaceController.displayVisibleSpace(displayIndex: disp) else { return nil }
             return "d\(disp)=s\(vis)"
         }
@@ -582,7 +586,7 @@ final class ToggleEngine {
         if let current = displayCurrentSpace, current != targetSpace {
             // 记录切换前的 display states
             var preSwitchSpaces: [Int: Int] = [:]
-            for d in 1...3 {
+            for d in 1...displayCount {
                 if let v = spaceController.displayVisibleSpace(displayIndex: d) {
                     preSwitchSpaces[d] = v
                 }
@@ -601,7 +605,7 @@ final class ToggleEngine {
             ])
             if switched {
                 // 标记被 switchDisplayToSpace 影响的 display
-                for d in 1...3 {
+                for d in 1...displayCount {
                     let postVis = spaceController.displayVisibleSpace(displayIndex: d)
                     if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
                         intentionallySwitchedDisplays.insert(d)
