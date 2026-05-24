@@ -51,8 +51,7 @@ extension WindowManager {
             bundleIdentifier: frontApp.bundleIdentifier,
             appName: frontApp.localizedName,
             windowNumber: windowNumber(for: windowAX),
-            title: title(of: windowAX),
-            capturedAt: Date()
+            title: title(of: windowAX)
         )
         log(
             "[WindowManager] captureFocusedWindowIdentity result",
@@ -189,9 +188,7 @@ extension WindowManager {
             pid: candidate.pid,
             bundleIdentifier: bundleID,
             appName: candidate.appName,
-            windowNumber: nil,
-            title: candidate.title,
-            capturedAt: Date()
+            title: candidate.title
         )
     }
 
@@ -217,8 +214,7 @@ extension WindowManager {
                 bundleIdentifier: bundleID,
                 appName: appName,
                 windowNumber: Int(targetWindowID),
-                title: title,
-                capturedAt: Date()
+                title: title
             )
         }
         return nil

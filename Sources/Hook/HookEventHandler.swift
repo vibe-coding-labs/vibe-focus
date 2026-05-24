@@ -224,15 +224,7 @@ final class HookEventHandler {
 
         if let state {
             if SessionWindowRegistry.shared.verifyBinding(state) {
-                return WindowIdentity(
-                    windowID: state.windowID,
-                    pid: state.pid,
-                    bundleIdentifier: state.bundleIdentifier,
-                    appName: state.appName,
-                    windowNumber: state.axWindowNumber,
-                    title: state.title,
-                    capturedAt: state.createdAt
-                )
+                return WindowIdentity(from: state)
             }
             // 绑定验证失败 — 降级到 terminal context
             log(

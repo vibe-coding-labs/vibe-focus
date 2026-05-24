@@ -194,9 +194,7 @@ extension WindowManager {
                 pid: pid,
                 bundleIdentifier: bundleID,
                 appName: appName,
-                windowNumber: nil,
-                title: title,
-                capturedAt: Date()
+                title: title
             ))
         }
         return results
@@ -252,9 +250,7 @@ extension WindowManager {
                 pid: windows.first?.pid ?? 0,
                 bundleIdentifier: bundleID,
                 appName: appName,
-                windowNumber: nil,
-                title: nil,
-                capturedAt: Date()
+                title: nil
             )
         }
 
@@ -308,9 +304,7 @@ extension WindowManager {
                 pid: terminalPID,
                 bundleIdentifier: bundleID,
                 appName: appName,
-                windowNumber: nil,
-                title: nil,
-                capturedAt: Date()
+                title: nil
             )
         }
 

@@ -20,6 +20,26 @@ struct WindowIdentity: Codable, Equatable {
     let windowNumber: Int?
     let title: String?
     let capturedAt: Date
+
+    init(windowID: UInt32, pid: Int32, bundleIdentifier: String?, appName: String?, windowNumber: Int? = nil, title: String?) {
+        self.windowID = windowID
+        self.pid = pid
+        self.bundleIdentifier = bundleIdentifier
+        self.appName = appName
+        self.windowNumber = windowNumber
+        self.title = title
+        self.capturedAt = Date()
+    }
+
+    init(from state: WindowState) {
+        self.windowID = state.windowID
+        self.pid = state.pid
+        self.bundleIdentifier = state.bundleIdentifier
+        self.appName = state.appName
+        self.windowNumber = state.axWindowNumber
+        self.title = state.title
+        self.capturedAt = state.createdAt
+    }
 }
 
 /// 统一的窗口状态记录 — 对应 SQLite `windows` 表的一行
