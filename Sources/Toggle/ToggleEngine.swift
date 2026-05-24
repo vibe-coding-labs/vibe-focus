@@ -151,18 +151,10 @@ final class ToggleEngine {
         ])
 
         // 校验 origFrame 坐标是否在已知屏幕范围内
-        // origFrame 是 Quartz 坐标，NSScreen.frame 是 Cocoa 坐标，需要转换后再比较
+        // origFrame 是 AppKit 坐标（来自 AX API），直接用 NSScreen.frame（也是 AppKit）比较
         let origCenter = CGPoint(x: record.origFrame.midX, y: record.origFrame.midY)
-        let mainScreenHeight = CoordinateKit.mainScreenHeight
         let onAnyScreen = NSScreen.screens.contains { screen in
-            let sf = screen.frame
-            let quartzFrame = CGRect(
-                x: sf.origin.x,
-                y: mainScreenHeight - sf.origin.y - sf.height,
-                width: sf.width,
-                height: sf.height
-            )
-            return quartzFrame.insetBy(dx: -200, dy: -200).contains(origCenter)
+            screen.frame.insetBy(dx: -200, dy: -200).contains(origCenter)
         }
         if !onAnyScreen {
             log(
