@@ -12,10 +12,6 @@ extension SpaceController {
             return false
         }
 
-        log("[SpaceController] switchDisplayToSpace", fields: [
-            "op": op, "targetSpace": String(targetSpace)
-        ])
-
         // Strategy 1: yabai -m space --focus (需要 SA)
         let yabaiResult = runYabai(
             arguments: ["-m", "space", "--focus", String(targetSpace)],
@@ -23,9 +19,6 @@ extension SpaceController {
             operationID: op
         )
         if let result = yabaiResult, result.exitCode == 0 {
-            log("[SpaceController] switchDisplayToSpace: yabai succeeded", fields: [
-                "op": op, "targetSpace": String(targetSpace)
-            ])
             return true
         }
 
@@ -35,12 +28,8 @@ extension SpaceController {
 
         // Strategy 2: CGEvent — 先用 yabai 激活目标 display，再 Ctrl+Left/Right
         let steps = calculateFocusSteps(targetSpaceIndex: targetSpace)
-        log("[SpaceController] switchDisplayToSpace: CGEvent steps=\(steps)", fields: [
-            "op": op, "targetSpace": String(targetSpace), "steps": String(steps)
-        ])
 
         // 先用 yabai display --focus 激活目标 display（不需要 SA）
-        // 确保 CGEvent Ctrl+Arrow 只影响目标 display，不会意外切换其他 display
         if let targetDisplayIdx = querySpaces()?.first(where: { $0.index == targetSpace })?.display {
             let focusResult = runYabai(
                 arguments: ["-m", "display", "--focus", String(targetDisplayIdx)],
@@ -48,9 +37,6 @@ extension SpaceController {
                 operationID: op
             )
             if let result = focusResult, result.exitCode == 0 {
-                log("[SpaceController] switchDisplayToSpace: yabai display focus succeeded", fields: [
-                    "op": op, "targetDisplay": String(targetDisplayIdx)
-                ])
                 usleep(30_000)
             } else {
                 log("[SpaceController] switchDisplayToSpace: yabai display focus failed, relying on cursor move", level: .info, fields: [
@@ -60,7 +46,6 @@ extension SpaceController {
         }
 
         guard steps != 0 else {
-            // 目标 space 已经可见，但可能需要移动活跃 display
             if let (savedCursor, savedApp) = saveAndMoveCursor(toSpace: targetSpace, operationID: op) {
                 restoreCursor(savedCursor, savedApp: savedApp)
             }
@@ -105,21 +90,8 @@ extension SpaceController {
 
     func focusSpace(_ spaceIndex: Int, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
-        log(
-            "[focusSpace] called",
-            level: .debug,
-            fields: [
-                "op": op,
-                "targetSpace": String(spaceIndex)
-            ]
-        )
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
-            log(
-                "[focusSpace] aborted: not enabled",
-                level: .debug,
-                fields: ["op": op]
-            )
             return false
         }
         guard canControlSpaces else {
@@ -127,102 +99,32 @@ extension SpaceController {
             return false
         }
 
-        // 记录 focusSpace 调用的完整上下文
         let preFocusSpace = queryFocusedSpace()?.index
-        log(
-            "[focusSpace] current space resolved",
-            level: .debug,
-            fields: [
-                "op": op,
-                "preFocusSpace": String(describing: preFocusSpace),
-                "targetSpace": String(spaceIndex)
-            ]
-        )
         let targetDisplay = querySpaces()?.first(where: { $0.index == spaceIndex })?.display
-        log(
-            "[SpaceController] focusSpace called",
-            fields: [
-                "op": op,
-                "targetSpace": String(spaceIndex),
-                "targetDisplay": String(describing: targetDisplay),
-                "currentSpace": String(describing: preFocusSpace),
-                "canControlSpaces": String(canControlSpaces)
-            ]
-        )
 
         let variants = [["-m", "space", "--focus", "\(spaceIndex)"]]
         let result = runYabaiVariants(variants: variants, operation: "focusSpace(\(spaceIndex))", operationID: op)
-        log(
-            "[focusSpace] yabai runYabaiVariants returned",
-            level: .debug,
-            fields: [
-                "op": op,
-                "success": String(result.success),
-                "targetSpace": String(spaceIndex)
-            ]
-        )
         if result.success {
-            log(
-                "[focusSpace] yabai succeeded",
-                level: .debug,
-                fields: ["op": op, "targetSpace": String(spaceIndex)]
-            )
             return true
         }
 
         // yabai 失败，使用 CGEvent 键盘事件 fallback
-        log(
-            "[focusSpace] yabai failed, calculating CGEvent fallback steps",
-            level: .debug,
-            fields: ["op": op, "targetSpace": String(spaceIndex)]
-        )
         let steps = calculateFocusSteps(targetSpaceIndex: spaceIndex)
-        log(
-            "[focusSpace] calculateFocusSteps returned",
-            level: .debug,
-            fields: [
-                "op": op,
-                "steps": String(steps),
-                "targetSpace": String(spaceIndex)
-            ]
-        )
         log(
             "[SpaceController] yabai focusSpace failed, trying CGEvent fallback",
             fields: [
                 "op": op,
                 "yabaiIndex": String(spaceIndex),
                 "targetDisplay": String(describing: targetDisplay),
-                "steps": String(steps),
-                "hasDisplayCenter": String(displayCenterCG(spaceIndex: spaceIndex) != nil)
+                "steps": String(steps)
             ]
         )
 
         if steps == 0 {
-            // steps=0 表示目标 space 在目标显示器上已经是可见的
-            // 但全局焦点可能在另一个显示器上，仍需移动光标以切换活跃显示器
             let currentGlobalSpace = queryFocusedSpace()?.index
             if currentGlobalSpace == spaceIndex {
-                log(
-                    "[SpaceController] CGEvent fallback skipped: global space matches target",
-                    fields: [
-                        "op": op,
-                        "targetSpace": String(spaceIndex),
-                        "currentGlobalSpace": String(describing: currentGlobalSpace)
-                    ]
-                )
-                return true // 全局焦点已在目标 space
+                return true
             }
-
-            // 全局焦点不在目标 space — 移动光标到目标显示器以切换活跃显示器
-            log(
-                "[SpaceController] steps=0 but global space differs, moving cursor to target display",
-                fields: [
-                    "op": op,
-                    "targetSpace": String(spaceIndex),
-                    "currentGlobalSpace": String(describing: currentGlobalSpace),
-                    "hasDisplayCenter": String(displayCenterCG(spaceIndex: spaceIndex) != nil)
-                ]
-            )
 
             if let (savedCursor, savedApp) = saveAndMoveCursor(toSpace: spaceIndex, operationID: op, click: false) {
                 restoreCursor(savedCursor, savedApp: savedApp)
@@ -252,8 +154,7 @@ extension SpaceController {
         }
 
         if success {
-            usleep(100_000) // 等空间切换动画
-            // 验证 space 是否真正切换成功
+            usleep(100_000)
             let postFallbackSpace = queryFocusedSpace()?.index
             let reachedTarget = postFallbackSpace == spaceIndex
             log(
@@ -274,40 +175,25 @@ extension SpaceController {
     }
 
     func calculateFocusSteps(targetSpaceIndex: Int) -> Int {
-        log(
-            "[calculateFocusSteps] called",
-            level: .debug,
-            fields: ["targetSpaceIndex": String(targetSpaceIndex)]
-        )
         guard let spaces = querySpaces() else {
             log("[SpaceController] calculateFocusSteps: querySpaces returned nil", level: .warn, fields: ["target": String(targetSpaceIndex)])
             return 0
         }
 
-        // 找到目标空间所在的显示器
         guard let targetSpace = spaces.first(where: { $0.index == targetSpaceIndex }) else {
             log("[SpaceController] calculateFocusSteps: target space not found", level: .warn, fields: ["target": String(targetSpaceIndex)])
             return 0
         }
-        log(
-            "[calculateFocusSteps] found target space",
-            level: .debug,
-            fields: [
-                "targetSpaceIndex": String(targetSpaceIndex),
-                "targetDisplay": String(describing: targetSpace.display)
-            ]
-        )
+
         guard let displayIndex = targetSpace.display else {
             log("[SpaceController] calculateFocusSteps: target space has no display", level: .warn, fields: ["target": String(targetSpaceIndex)])
             return 0
         }
 
-        // 找到该显示器上所有空间（按 index 排序）
         let displaySpaces = spaces
             .filter { $0.display == displayIndex }
             .sorted { ($0.index ?? 0) < ($1.index ?? 0) }
 
-        // 找到该显示器上当前可见空间
         guard let currentSpace = displaySpaces.first(where: { $0.isVisible == true }) else {
             log("[SpaceController] calculateFocusSteps: no visible space on display", level: .warn, fields: ["display": String(displayIndex)])
             return 0
@@ -335,7 +221,6 @@ extension SpaceController {
               let targetSpace = spaces.first(where: { $0.index == spaceIndex }),
               let displayIndex = targetSpace.display else { return nil }
 
-        // 查询 yabai 获取 display frame（不需要 scripting-addition）
         guard let result = runYabai(arguments: ["-m", "query", "--displays", "--display", String(displayIndex)]),
               result.exitCode == 0 else {
             log("[SpaceController] displayCenterCG: yabai display query failed", level: .warn, fields: [
@@ -352,7 +237,6 @@ extension SpaceController {
             return nil
         }
 
-        // yabai frame 使用 CG 坐标系（原点在主屏左上角，Y 向下），与 CGEvent 一致
         return CGPoint(
             x: frame.x + frame.w / 2,
             y: frame.y + frame.h / 2
@@ -360,34 +244,18 @@ extension SpaceController {
     }
 
     private func saveAndMoveCursor(toSpace spaceIndex: Int, operationID: String, click: Bool = true) -> (savedCursor: CGPoint, savedApp: NSRunningApplication?)? {
-        let op = operationID
         let savedFrontApp = NSWorkspace.shared.frontmostApplication
         let savedCursor = NSEvent.mouseLocation
         let mainScreenHeight = CoordinateKit.mainScreenHeight
         let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
 
-        log("[SpaceController] saveAndMoveCursor", level: .debug, fields: [
-            "op": op,
-            "spaceIndex": String(spaceIndex),
-            "savedCursorNS": "\(Int(savedCursor.x)),\(Int(savedCursor.y))",
-            "savedCursorCG": "\(Int(savedCursorCG.x)),\(Int(savedCursorCG.y))",
-            "savedApp": savedFrontApp?.localizedName ?? "nil"
-        ])
-
         if let center = displayCenterCG(spaceIndex: spaceIndex) {
-            log("[SpaceController] saveAndMoveCursor: moving cursor to target display center", level: .debug, fields: [
-                "op": op,
-                "targetCenter": "\(Int(center.x)),\(Int(center.y))"
-            ])
-            // Move cursor to target display
             if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                         mouseCursorPosition: center, mouseButton: .left) {
                 moveEvent.post(tap: .cghidEventTap)
             }
             usleep(50_000)
             if click {
-                // Click to activate the target display — macOS only processes Ctrl+Arrow
-                // for the display that has focus, not the one the cursor is hovering over
                 if let downClick = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
                                             mouseCursorPosition: center, mouseButton: .left) {
                     downClick.post(tap: .cghidEventTap)
@@ -408,10 +276,6 @@ extension SpaceController {
     }
 
     private func restoreCursor(_ savedCursor: CGPoint, savedApp: NSRunningApplication?) {
-        log("[SpaceController] restoreCursor", level: .debug, fields: [
-            "targetCursorCG": "\(Int(savedCursor.x)),\(Int(savedCursor.y))",
-            "savedApp": savedApp?.localizedName ?? "nil"
-        ])
         if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                        mouseCursorPosition: savedCursor, mouseButton: .left) {
             restoreEvent.post(tap: .cghidEventTap)
