@@ -6,16 +6,6 @@ extension SpaceController {
 
     func moveWindow(_ windowID: UInt32, toSpaceIndex spaceIndex: Int, focus: Bool, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
-        log(
-            "[moveWindow] called",
-            level: .debug,
-            fields: [
-                "op": op,
-                "windowID": String(windowID),
-                "targetSpace": String(spaceIndex),
-                "focus": String(focus)
-            ]
-        )
         AuditLogger.shared.record(
             eventType: "space_move",
             windowID: windowID,
@@ -27,11 +17,6 @@ extension SpaceController {
         )
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
-            log(
-                "[moveWindow] aborted: space integration not enabled",
-                level: .debug,
-                fields: ["op": op]
-            )
             return false
         }
         guard canControlSpaces else {
@@ -39,12 +24,7 @@ extension SpaceController {
             return false
         }
 
-        // 安全检查 + 上下文记录合并为一次 queryWindow 调用
-        log(
-            "[moveWindow] querying window info for safety check",
-            level: .debug,
-            fields: ["op": op, "windowID": String(windowID)]
-        )
+        // 安全检查：验证窗口存在
         let windowInfo = queryWindow(windowID: windowID)
         if windowInfo == nil {
             log(
@@ -73,15 +53,6 @@ extension SpaceController {
 
         let nativeAvailable = NativeSpaceBridge.isAvailable
 
-        log(
-            "[moveWindow] checking NativeSpaceBridge availability",
-            level: .debug,
-            fields: [
-                "op": op,
-                "nativeAvailable": String(nativeAvailable)
-            ]
-        )
-
         // 策略 1：使用 NativeSpaceBridge (CGS API) 直接移动
         // 这比 yabai 更可靠，不依赖 scripting-addition
         // 清除失败缓存，给本次操作全新机会
@@ -97,11 +68,6 @@ extension SpaceController {
                 ]
             )
             if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                log(
-                    "[moveWindow] NativeSpaceBridge moveWindow returned true, waiting 200ms",
-                    level: .debug,
-                    fields: ["op": op, "spaceID": String(spaceID)]
-                )
                 usleep(80_000) // 等待移动生效
                 if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
                     log(
@@ -130,27 +96,10 @@ extension SpaceController {
         }
 
         // 策略 2：yabai 命令（带后置验证重试）
-        log(
-            "[moveWindow] strategy 2: trying yabai command",
-            level: .debug,
-            fields: [
-                "op": op,
-                "windowID": String(windowID),
-                "targetSpace": String(spaceIndex)
-            ]
-        )
         let moveResult = runYabaiVariants(
             variants: [["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"]],
             operation: "moveWindow(windowID=\(windowID), space=\(spaceIndex))",
             operationID: op
-        )
-        log(
-            "[moveWindow] yabai runYabaiVariants returned",
-            level: .debug,
-            fields: [
-                "op": op,
-                "success": String(moveResult.success)
-            ]
         )
         if moveResult.success {
             if verifyWindowMovedToSpaceWithRetry(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
