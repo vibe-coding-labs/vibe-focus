@@ -26,16 +26,6 @@ extension ToggleEngine {
             return false
         }
 
-        // 2. Validate origFrame is on a known screen
-        let origCenter = CGPoint(x: record.origFrame.midX, y: record.origFrame.midY)
-        let onScreen = NSScreen.screens.contains { $0.frame.insetBy(dx: -200, dy: -200).contains(origCenter) }
-        guard onScreen else {
-            log("[ToggleEngine] restore: origFrame off-screen", level: .warn, fields: [
-                "traceID": trace, "origFrame": "\(record.origFrame)"
-            ])
-            return false
-        }
-
         let wm = WindowManager.shared
         let sc = SpaceController.shared
 
