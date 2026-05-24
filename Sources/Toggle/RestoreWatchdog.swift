@@ -177,7 +177,9 @@ final class RestoreWatchdog {
                     operationID: "watchdog_\(t.traceID)"
                 )
                 if moved {
-                    usleep(100_000)
+                    usleep(150_000)
+                    // moveWindow 后在目标 space 上重新设 float
+                    spaceController.setWindowFloat(t.windowID, operationID: "watchdog_\(t.traceID)")
                 }
             }
         }

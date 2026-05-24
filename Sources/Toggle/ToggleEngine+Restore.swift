@@ -122,16 +122,9 @@ extension ToggleEngine {
             spaceController.refreshAvailability(force: true)
         }
 
-        // 3. 先将窗口设为浮动状态（必须在任何移动之前！）
-        // yabai 会在窗口到达新 space 的瞬间 tile 窗口，改变尺寸
-        log("[ToggleEngine] restore: setting window float", level: .debug, fields: [
-            "traceID": trace,
-            "effectiveWindowID": String(effectiveWindowID),
-            "preFloatFrame": currentFrame.map { "\($0)" } ?? "nil"
-        ])
-        spaceController.setWindowFloat(effectiveWindowID, operationID: trace)
-
         // 3.5 记录所有 display 当前可见 space（用于 restore 后检测意外切换）
+        // 注意：setWindowFloat 必须在 moveWindow 之后调用（在目标 Space 上设 float），
+        // 不能在这里提前调用——yabai 的 float 状态不会跨 Space 传递
         var preRestoreDisplaySpaces: [Int: Int] = [:]
         for disp in 1...displayCount {
             if let vis = spaceController.displayVisibleSpace(displayIndex: .yabai(disp)) {
@@ -419,6 +412,8 @@ extension ToggleEngine {
 
             // 尝试 1: 直接 moveWindow (yabai + NativeSpaceBridge)
             if spaceController.moveWindow(postMoveWindowID, toSpace: .yabai(record.sourceSpace), focus: false, operationID: traceID) {
+                usleep(100_000)
+                spaceController.setWindowFloat(postMoveWindowID, operationID: traceID)
                 if spaceController.windowSpaceIndex(windowID: postMoveWindowID)?.yabaiIndex == record.sourceSpace {
                     log("[ToggleEngine] restore: moveWindow correction succeeded", fields: [
                         "traceID": traceID, "windowID": String(postMoveWindowID), "targetSpace": String(record.sourceSpace)
@@ -444,6 +439,8 @@ extension ToggleEngine {
                 _ = spaceController.switchDisplayToSpace(targetSpace: .yabai(record.sourceSpace), operationID: traceID)
                 usleep(100_000)
                 _ = spaceController.moveWindow(postMoveWindowID, toSpace: .yabai(record.sourceSpace), focus: false, operationID: traceID)
+                usleep(100_000)
+                spaceController.setWindowFloat(postMoveWindowID, operationID: traceID)
             }
 
             // 最终验证
@@ -557,12 +554,16 @@ extension ToggleEngine {
                 "space": String(targetSpace)
             ])
             // display 已经在正确 space，只需移动窗口到该 space
-            _ = spaceController.moveWindow(
+            let earlyMoved = spaceController.moveWindow(
                 effectiveWindowID,
                 toSpace: .yabai(targetSpace),
                 focus: false,
                 operationID: traceID
             )
+            if earlyMoved {
+                usleep(100_000)
+                spaceController.setWindowFloat(effectiveWindowID, operationID: traceID)
+            }
             return
         }
 
@@ -609,6 +610,10 @@ extension ToggleEngine {
         ])
 
         if moved {
+            // 窗口已到达目标 space — 在目标 space 上设 float，防止 yabai 重新 tile
+            usleep(100_000)
+            spaceController.setWindowFloat(effectiveWindowID, operationID: traceID)
+
             // 快速验证窗口已在目标 space
             let started = Date()
             var verified = false
