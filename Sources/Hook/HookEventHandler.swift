@@ -8,6 +8,9 @@ final class HookEventHandler {
     private var lastActivityBySession: [String: Date] = [:]
     private let stopDebounceInterval: TimeInterval = 30.0
 
+    private static let autoRestoreCooldownSeconds: TimeInterval = 30
+    private var lastAutoRestoreByWindowID: [UInt32: Date] = [:]
+
     private init() {}
 
     // MARK: - Session Start
@@ -186,7 +189,30 @@ final class HookEventHandler {
             )
         }
 
-        // 2. 验证是否应该 restore
+        // 2. 冷却检查：同一窗口在冷却期内不重复 auto-restore
+        if let lastRestore = lastAutoRestoreByWindowID[identity.windowID],
+           Date().timeIntervalSince(lastRestore) < Self.autoRestoreCooldownSeconds {
+            let remaining = Int(Self.autoRestoreCooldownSeconds - Date().timeIntervalSince(lastRestore))
+            log(
+                "[HookEventHandler] UserPromptSubmit: auto-restore cooldown active, skipping",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "cooldownRemaining": String(remaining) + "s"
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "cooldown_active",
+                    message: "Auto-restore cooldown active (\(remaining)s remaining)",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
             return (
                 200,
@@ -198,8 +224,12 @@ final class HookEventHandler {
             )
         }
 
-        // 3. 执行 restore
+        // 4. 执行 restore
         let success = executeRestore(identity: identity, validation: validation, traceID: traceID, startedAt: handleStartedAt, sessionID: payload.sessionID)
+
+        if success {
+            lastAutoRestoreByWindowID[identity.windowID] = Date()
+        }
 
         return (
             200,
@@ -398,6 +428,10 @@ final class HookEventHandler {
 
         lastActivityBySession.removeValue(forKey: payload.sessionID)
         return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
+    }
+
+    func clearAutoRestoreCooldown(windowID: UInt32) {
+        lastAutoRestoreByWindowID.removeValue(forKey: windowID)
     }
 
 }
