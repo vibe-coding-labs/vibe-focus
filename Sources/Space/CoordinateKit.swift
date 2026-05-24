@@ -40,6 +40,23 @@ enum SpaceIdentifier: Equatable, CustomStringConvertible {
     }
 }
 
+// MARK: - DisplayIdentifier Convenience
+
+extension DisplayIdentifier {
+    var yabaiIndex: Int? { if case .yabaiIndex(let i) = self { return i } else { return nil } }
+    static func yabai(_ index: Int) -> DisplayIdentifier { .yabaiIndex(index) }
+    static func screenArray(_ index: Int) -> DisplayIdentifier { .screenArrayIndex(index) }
+    static func cgDisplay(_ id: UInt32) -> DisplayIdentifier { .cgDirectDisplayID(id) }
+}
+
+// MARK: - SpaceIdentifier Convenience
+
+extension SpaceIdentifier {
+    var yabaiIndex: Int? { if case .yabaiIndex(let i) = self { return i } else { return nil } }
+    static func yabai(_ index: Int) -> SpaceIdentifier { .yabaiIndex(index) }
+    static func native(_ id: Int64) -> SpaceIdentifier { .nativeID(id) }
+}
+
 /// 窗口坐标矩形 — 始终使用 Quartz 坐标系（原点在主屏左上角，Y 向下）
 struct QuartzRect: Equatable, CustomStringConvertible {
     let origin: CGPoint
