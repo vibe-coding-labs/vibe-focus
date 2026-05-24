@@ -23,7 +23,7 @@ extension SpaceController {
         let visibleSpaceOnDisplay = visibleSpaceIndex(forDisplayIndex: windowDisplay, spaces: spaces)
         let sourceSpace = preferredSourceSpace(
             windowSpace: windowSpace,
-            visibleSpace: visibleSpaceOnDisplay,
+            visibleSpace: visibleSpaceOnDisplay?.yabaiIndex,
             fallbackSpace: nil
         )
         let localSpace = displayLocalSpaceIndex(
@@ -46,9 +46,9 @@ extension SpaceController {
         )
 
         return SpaceContext(
-            sourceSpaceIndex: sourceSpace,
+            sourceSpaceIndex: sourceSpace.map { .yabai($0) },
             targetSpaceIndex: visibleSpaceOnDisplay,
-            sourceDisplayIndex: windowDisplay,
+            sourceDisplayIndex: windowDisplay.map { .yabai($0) },
             sourceDisplaySpaceIndex: localSpace
         )
     }

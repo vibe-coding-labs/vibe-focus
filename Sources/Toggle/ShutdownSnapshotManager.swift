@@ -178,7 +178,7 @@ final class ShutdownSnapshotManager {
                 title: title,
                 frame: SnapshotRect(frame),
                 displayID: displayID ?? 0,
-                spaceIndex: spaceContext.sourceSpaceIndex,
+                spaceIndex: spaceContext.sourceSpaceIndex?.yabaiIndex,
                 displayLocalSpaceIndex: spaceContext.sourceDisplaySpaceIndex,
                 tty: claudeBinding?.tty,
                 termSessionID: claudeBinding?.termSessionID,

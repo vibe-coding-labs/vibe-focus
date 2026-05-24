@@ -4,8 +4,12 @@ import Foundation
 @MainActor
 extension SpaceController {
 
-    func switchDisplayToSpace(targetSpace: Int, operationID: String?) -> Bool {
+    func switchDisplayToSpace(targetSpace: SpaceIdentifier, operationID: String?) -> Bool {
         let op = operationID ?? "none"
+        guard let targetSpaceIndex = targetSpace.yabaiIndex else {
+            log("[SpaceController] switchDisplayToSpace: unsupported space identifier", level: .warn, fields: ["op": op])
+            return false
+        }
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
             log("[SpaceController] switchDisplayToSpace: not enabled", level: .warn, fields: ["op": op])
@@ -14,7 +18,7 @@ extension SpaceController {
 
         // Strategy 1: yabai -m space --focus (需要 SA)
         let yabaiResult = runYabai(
-            arguments: ["-m", "space", "--focus", String(targetSpace)],
+            arguments: ["-m", "space", "--focus", String(targetSpaceIndex)],
             operation: "switchDisplayToSpace_yabai",
             operationID: op
         )
@@ -30,7 +34,7 @@ extension SpaceController {
             NativeSpaceBridge.dismissMissionControl(operationID: op)
             // 重试 yabai
             let retryResult = runYabai(
-                arguments: ["-m", "space", "--focus", String(targetSpace)],
+                arguments: ["-m", "space", "--focus", String(targetSpaceIndex)],
                 operation: "switchDisplayToSpace_yabai_after_mc_dismiss",
                 operationID: op
             )
@@ -40,14 +44,14 @@ extension SpaceController {
         }
 
         log("[SpaceController] switchDisplayToSpace: yabai failed, trying CGEvent fallback", level: .info, fields: [
-            "op": op, "targetSpace": String(targetSpace)
+            "op": op, "targetSpace": String(targetSpaceIndex)
         ])
 
         // Strategy 2: CGEvent — 先用 yabai 激活目标 display，再 Ctrl+Left/Right
-        let steps = calculateFocusSteps(targetSpaceIndex: targetSpace)
+        let steps = calculateFocusSteps(targetSpaceIndex: targetSpaceIndex)
 
         // 先用 yabai display --focus 激活目标 display（不需要 SA）
-        if let targetDisplayIdx = querySpaces()?.first(where: { $0.index == targetSpace })?.display {
+        if let targetDisplayIdx = querySpaces()?.first(where: { $0.index == targetSpaceIndex })?.display {
             let focusResult = runYabai(
                 arguments: ["-m", "display", "--focus", String(targetDisplayIdx)],
                 operation: "switchDisplayToSpace_display_focus",
@@ -63,14 +67,14 @@ extension SpaceController {
         }
 
         guard steps != 0 else {
-            if let (savedCursor, savedApp) = saveAndMoveCursor(toSpace: targetSpace, operationID: op) {
+            if let (savedCursor, savedApp) = saveAndMoveCursor(toSpace: targetSpaceIndex, operationID: op) {
                 restoreCursor(savedCursor, savedApp: savedApp)
             }
             return true
         }
 
         // 移鼠标到目标 display，发送 Ctrl+Left/Right，恢复鼠标
-        let saved = saveAndMoveCursor(toSpace: targetSpace, operationID: op)
+        let saved = saveAndMoveCursor(toSpace: targetSpaceIndex, operationID: op)
 
         let success = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
 
@@ -80,11 +84,11 @@ extension SpaceController {
 
         if success {
             usleep(80_000)
-            let postSwitchSpace = displayVisibleSpace(displayIndex: querySpaces()?.first(where: { $0.index == targetSpace })?.display)
-            let reachedTarget = postSwitchSpace == targetSpace
+            let postSwitchSpace = displayVisibleSpace(displayIndex: querySpaces()?.first(where: { $0.index == targetSpaceIndex })?.display.map { .yabai($0) })
+            let reachedTarget = postSwitchSpace?.yabaiIndex == targetSpaceIndex
             log("[SpaceController] switchDisplayToSpace: CGEvent result", fields: [
                 "op": op,
-                "targetSpace": String(targetSpace),
+                "targetSpace": String(targetSpaceIndex),
                 "steps": String(steps),
                 "postSwitchSpace": String(describing: postSwitchSpace),
                 "reachedTarget": String(reachedTarget)
@@ -94,19 +98,23 @@ extension SpaceController {
             }
             log("[SpaceController] switchDisplayToSpace: CGEvent sent but space didn't change", level: .warn, fields: [
                 "op": op,
-                "targetSpace": String(targetSpace),
+                "targetSpace": String(targetSpaceIndex),
                 "postSwitchSpace": String(describing: postSwitchSpace)
             ])
         }
 
         log("[SpaceController] switchDisplayToSpace: all strategies failed", level: .error, fields: [
-            "op": op, "targetSpace": String(targetSpace)
+            "op": op, "targetSpace": String(targetSpaceIndex)
         ])
         return false
     }
 
-    func focusSpace(_ spaceIndex: Int, operationID: String? = nil) -> Bool {
+    func focusSpace(_ space: SpaceIdentifier, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
+        guard let spaceIndex = space.yabaiIndex else {
+            log("[SpaceController] focusSpace: unsupported space identifier", level: .warn, fields: ["op": op])
+            return false
+        }
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
             return false

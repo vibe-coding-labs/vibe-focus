@@ -158,10 +158,10 @@ extension WindowManager {
         if let secondaryScreen,
            let secDisplayID = displayID(for: secondaryScreen),
            let secDisplayIndex = displayIndex(forDisplayID: secDisplayID),
-           let targetSpace = spaceController.displayVisibleSpace(displayIndex: secDisplayIndex) {
+           let targetSpace = spaceController.displayVisibleSpace(displayIndex: .yabai(secDisplayIndex)) {
             let moved = spaceController.moveWindow(
                 windowID,
-                toSpaceIndex: targetSpace,
+                toSpace: targetSpace,
                 focus: false,
                 operationID: operationID
             )
@@ -170,7 +170,7 @@ extension WindowManager {
                 fields: [
                     "op": operationID,
                     "windowID": String(windowID),
-                    "targetSpace": String(targetSpace),
+                    "targetSpace": String(describing: targetSpace),
                     "moved": String(moved)
                 ]
             )

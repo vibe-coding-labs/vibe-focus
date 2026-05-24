@@ -134,8 +134,8 @@ extension ToggleEngine {
         // 3.5 记录所有 display 当前可见 space（用于 restore 后检测意外切换）
         var preRestoreDisplaySpaces: [Int: Int] = [:]
         for disp in 1...displayCount {
-            if let vis = spaceController.displayVisibleSpace(displayIndex: disp) {
-                preRestoreDisplaySpaces[disp] = vis
+            if let vis = spaceController.displayVisibleSpace(displayIndex: .yabai(disp)) {
+                preRestoreDisplaySpaces[disp] = vis.yabaiIndex ?? 0
             }
         }
         var restored = false
@@ -217,10 +217,10 @@ extension ToggleEngine {
         }
 
         let postDisplaySpaces: [String] = (1...displayCount).compactMap { disp -> String? in
-            guard let vis = spaceController.displayVisibleSpace(displayIndex: disp) else { return nil }
-            return "d\(disp)=s\(vis)"
+            guard let vis = spaceController.displayVisibleSpace(displayIndex: .yabai(disp)) else { return nil }
+            return "d\(disp)=s\(vis.yabaiIndex ?? 0)"
         }
-        let windowActualSpace = spaceController.windowSpaceIndex(windowID: effectiveWindowID)
+        let windowActualSpace = spaceController.windowSpaceIndex(windowID: effectiveWindowID)?.yabaiIndex
         let spaceMatch = windowActualSpace == record.sourceSpace
         log("ToggleEngine.restore: finished", level: .info, fields: [
             "traceID": trace,
@@ -266,18 +266,18 @@ extension ToggleEngine {
 
         for (disp, preVis) in preRestoreDisplaySpaces {
             if intentionallySwitchedDisplays.contains(disp) { continue }
-            let currentVis = spaceController.displayVisibleSpace(displayIndex: disp)
-            if let cur = currentVis, cur != preVis {
-                accidentalSwitches.append("d\(disp):s\(preVis)->s\(cur)")
-                log("[ToggleEngine] restore: display \(disp) was accidentally switched from space \(preVis) to \(cur), fixing", level: .warn, fields: [
+            let currentVis = spaceController.displayVisibleSpace(displayIndex: .yabai(disp))
+            if let cur = currentVis, cur.yabaiIndex != preVis {
+                accidentalSwitches.append("d\(disp):s\(preVis)->s\(cur.yabaiIndex ?? 0)")
+                log("[ToggleEngine] restore: display \(disp) was accidentally switched from space \(preVis) to \(cur.yabaiIndex ?? 0), fixing", level: .warn, fields: [
                     "traceID": traceID,
                     "display": String(disp),
                     "preRestoreSpace": String(preVis),
-                    "currentSpace": String(cur),
+                    "currentSpace": String(cur.yabaiIndex ?? 0),
                     "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
                 ])
                 _ = spaceController.switchDisplayToSpace(
-                    targetSpace: preVis,
+                    targetSpace: .yabai(preVis),
                     operationID: traceID
                 )
             }
@@ -312,7 +312,7 @@ extension ToggleEngine {
 
         let targetDisplay = record.sourceYabaiDisp
         let targetSpace = record.sourceSpace
-        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: .yabai(targetDisplay))
 
         log("[ToggleEngine] restore: pre-apply space switch", fields: [
             "traceID": traceID,
@@ -322,7 +322,7 @@ extension ToggleEngine {
             "displayCurrentSpace": String(describing: displayCurrentSpace)
         ])
 
-        if let current = displayCurrentSpace, current != targetSpace {
+        if let current = displayCurrentSpace, current.yabaiIndex != targetSpace {
             let switched = performSpaceSwitch(
                 targetDisplay: targetDisplay,
                 targetSpace: targetSpace,
@@ -333,17 +333,17 @@ extension ToggleEngine {
             if switched {
                 usleep(150_000)
             } else {
-                let visibleSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+                let visibleSpace = spaceController.displayVisibleSpace(displayIndex: .yabai(targetDisplay))
                 log("[ToggleEngine] restore: target space switch failed, falling back to visible space", level: .warn, fields: [
                     "traceID": traceID,
                     "targetSpace": String(targetSpace),
-                    "visibleSpace": String(describing: visibleSpace),
+                    "visibleSpace": String(describing: visibleSpace?.yabaiIndex),
                     "targetDisplay": String(targetDisplay)
                 ])
-                if let vis = visibleSpace, vis != current {
+                if let vis = visibleSpace, vis.yabaiIndex != current.yabaiIndex {
                     _ = performSpaceSwitch(
                         targetDisplay: targetDisplay,
-                        targetSpace: vis,
+                        targetSpace: vis.yabaiIndex ?? targetSpace,
                         traceID: traceID,
                         intentionallySwitchedDisplays: &intentionallySwitchedDisplays
                     )
@@ -408,7 +408,7 @@ extension ToggleEngine {
 
         spaceController.setWindowFloat(postMoveWindowID, operationID: traceID)
 
-        if let actualSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID),
+        if let actualSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID)?.yabaiIndex,
            actualSpace != record.sourceSpace {
             log("[ToggleEngine] restore: window on wrong space after AX apply, starting space correction", level: .warn, fields: [
                 "traceID": traceID,
@@ -418,8 +418,8 @@ extension ToggleEngine {
             ])
 
             // 尝试 1: 直接 moveWindow (yabai + NativeSpaceBridge)
-            if spaceController.moveWindow(postMoveWindowID, toSpaceIndex: record.sourceSpace, focus: false, operationID: traceID) {
-                if spaceController.windowSpaceIndex(windowID: postMoveWindowID) == record.sourceSpace {
+            if spaceController.moveWindow(postMoveWindowID, toSpace: .yabai(record.sourceSpace), focus: false, operationID: traceID) {
+                if spaceController.windowSpaceIndex(windowID: postMoveWindowID)?.yabaiIndex == record.sourceSpace {
                     log("[ToggleEngine] restore: moveWindow correction succeeded", fields: [
                         "traceID": traceID, "windowID": String(postMoveWindowID), "targetSpace": String(record.sourceSpace)
                     ])
@@ -431,7 +431,7 @@ extension ToggleEngine {
             }
 
             // 验证是否修正成功
-            let correctedSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID)
+            let correctedSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID)?.yabaiIndex
             if correctedSpace == record.sourceSpace {
                 // 成功
             } else {
@@ -441,13 +441,13 @@ extension ToggleEngine {
                     "targetSpace": String(record.sourceSpace),
                     "currentSpace": String(describing: correctedSpace)
                 ])
-                _ = spaceController.switchDisplayToSpace(targetSpace: record.sourceSpace, operationID: traceID)
+                _ = spaceController.switchDisplayToSpace(targetSpace: .yabai(record.sourceSpace), operationID: traceID)
                 usleep(100_000)
-                _ = spaceController.moveWindow(postMoveWindowID, toSpaceIndex: record.sourceSpace, focus: false, operationID: traceID)
+                _ = spaceController.moveWindow(postMoveWindowID, toSpace: .yabai(record.sourceSpace), focus: false, operationID: traceID)
             }
 
             // 最终验证
-            let finalSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID)
+            let finalSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID)?.yabaiIndex
             if let final = finalSpace, final != record.sourceSpace {
                 log("[ToggleEngine] restore: all space corrections failed, switching display to actual space for visibility", level: .warn, fields: [
                     "traceID": traceID,
@@ -455,7 +455,7 @@ extension ToggleEngine {
                     "actualSpace": String(final),
                     "targetSpace": String(record.sourceSpace)
                 ])
-                let switched = spaceController.switchDisplayToSpace(targetSpace: final, operationID: traceID)
+                let switched = spaceController.switchDisplayToSpace(targetSpace: .yabai(final), operationID: traceID)
                 log("[ToggleEngine] restore: display switch to actual space result", fields: [
                     "traceID": traceID,
                     "switched": String(switched),
@@ -482,14 +482,14 @@ extension ToggleEngine {
         // 1. 记录切换前的 display states
         var preSwitchSpaces: [Int: Int] = [:]
         for d in 1...displayCount {
-            if let v = spaceController.displayVisibleSpace(displayIndex: d) {
+            if let v = spaceController.displayVisibleSpace(displayIndex: .yabai(d))?.yabaiIndex {
                 preSwitchSpaces[d] = v
             }
         }
 
         // 2. 执行切换
         let switched = spaceController.switchDisplayToSpace(
-            targetSpace: targetSpace,
+            targetSpace: .yabai(targetSpace),
             operationID: traceID
         )
 
@@ -497,7 +497,7 @@ extension ToggleEngine {
 
         // 3. 追踪被 switchDisplayToSpace 影响的所有 display
         for d in 1...displayCount {
-            let postVis = spaceController.displayVisibleSpace(displayIndex: d)
+            let postVis = spaceController.displayVisibleSpace(displayIndex: .yabai(d))?.yabaiIndex
             if let pre = preSwitchSpaces[d], let post = postVis, pre != post {
                 intentionallySwitchedDisplays.insert(d)
                 log("[ToggleEngine] display \(d) intentionally switched \(pre)->\(post)", level: .debug, fields: [
@@ -513,11 +513,11 @@ extension ToggleEngine {
         let started = Date()
         var pollCount = 0
         while Date().timeIntervalSince(started) < 0.4 {
-            if spaceController.displayVisibleSpace(displayIndex: targetDisplay) == targetSpace { break }
+            if spaceController.displayVisibleSpace(displayIndex: .yabai(targetDisplay))?.yabaiIndex == targetSpace { break }
             usleep(30_000)
             pollCount += 1
         }
-        let finalSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+        let finalSpace = spaceController.displayVisibleSpace(displayIndex: .yabai(targetDisplay))?.yabaiIndex
         log("[ToggleEngine] space poll completed", level: .debug, fields: [
             "traceID": traceID,
             "targetDisplay": String(targetDisplay),
@@ -540,7 +540,7 @@ extension ToggleEngine {
         let targetDisplay = record.sourceYabaiDisp
 
         // 查询目标 display 当前显示的 space（不是窗口所在的 space）
-        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: .yabai(targetDisplay))
 
         log("ToggleEngine.switchToOriginalSpace: space check", fields: [
             "traceID": traceID,
@@ -551,7 +551,7 @@ extension ToggleEngine {
             "triggerSource": triggerSource
         ])
 
-        if let current = displayCurrentSpace, current == targetSpace {
+        if let current = displayCurrentSpace, current.yabaiIndex == targetSpace {
             log("ToggleEngine.switchToOriginalSpace: target display already on correct space, skipping switch", fields: [
                 "traceID": traceID,
                 "space": String(targetSpace)
@@ -559,7 +559,7 @@ extension ToggleEngine {
             // display 已经在正确 space，只需移动窗口到该 space
             _ = spaceController.moveWindow(
                 effectiveWindowID,
-                toSpaceIndex: targetSpace,
+                toSpace: .yabai(targetSpace),
                 focus: false,
                 operationID: traceID
             )
@@ -568,7 +568,7 @@ extension ToggleEngine {
 
         log("ToggleEngine.switchToOriginalSpace: need space switch", fields: [
             "traceID": traceID,
-            "displayCurrentSpace": String(describing: displayCurrentSpace),
+            "displayCurrentSpace": String(describing: displayCurrentSpace?.yabaiIndex),
             "targetSpace": String(targetSpace),
             "targetDisplay": String(describing: targetDisplay),
             "sourceYabaiDisp": String(record.sourceYabaiDisp),
@@ -576,7 +576,7 @@ extension ToggleEngine {
         ])
 
         // 目标 display 不在正确 space — 需要先切换 display 的 space 再移动窗口
-        if displayCurrentSpace != targetSpace {
+        if displayCurrentSpace?.yabaiIndex != targetSpace {
             let switchStart = Date()
             let switched = performSpaceSwitch(
                 targetDisplay: targetDisplay,
@@ -596,7 +596,7 @@ extension ToggleEngine {
         let moveStart = Date()
         let moved = spaceController.moveWindow(
             effectiveWindowID,
-            toSpaceIndex: targetSpace,
+            toSpace: .yabai(targetSpace),
             focus: triggerSource == "carbon_hotkey",
             operationID: traceID
         )
@@ -613,7 +613,7 @@ extension ToggleEngine {
             let started = Date()
             var verified = false
             while Date().timeIntervalSince(started) < 0.2 {
-                if let s = spaceController.windowSpaceIndex(windowID: effectiveWindowID), s == targetSpace {
+                if let s = spaceController.windowSpaceIndex(windowID: effectiveWindowID)?.yabaiIndex, s == targetSpace {
                     verified = true
                     break
                 }
