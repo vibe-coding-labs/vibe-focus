@@ -159,30 +159,23 @@ final class SessionWindowRegistry: ObservableObject {
             }
         }
 
-        let options: CGWindowListOption = [.optionAll]
-        if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
-            if let matchedWindow = windowList.first(where: { ($0[kCGWindowNumber as String] as? UInt32) == windowID }) {
-                let actualPID = matchedWindow[kCGWindowOwnerPID as String] as? Int32
-                if actualPID != expectedPID {
-                    log("[SessionWindowRegistry] verifyBinding failed: window owner PID mismatch", level: .warn, fields: [
-                        "windowID": String(windowID),
-                        "expectedPID": String(expectedPID),
-                        "actualPID": String(describing: actualPID)
-                    ])
-                }
-                return actualPID == expectedPID
-            } else {
-                log("[SessionWindowRegistry] verifyBinding failed: windowID \(windowID) not found in CGWindowList", level: .warn, fields: [
+        let windows = cgWindowListAll()
+        if let matchedEntry = windows.first(where: { $0.windowID == windowID }) {
+            if matchedEntry.ownerPID != expectedPID {
+                log("[SessionWindowRegistry] verifyBinding failed: window owner PID mismatch", level: .warn, fields: [
                     "windowID": String(windowID),
-                    "expectedPID": String(expectedPID)
+                    "expectedPID": String(expectedPID),
+                    "actualPID": String(matchedEntry.ownerPID)
                 ])
-                return false
             }
+            return matchedEntry.ownerPID == expectedPID
+        } else {
+            log("[SessionWindowRegistry] verifyBinding failed: windowID \(windowID) not found in CGWindowList", level: .warn, fields: [
+                "windowID": String(windowID),
+                "expectedPID": String(expectedPID)
+            ])
+            return false
         }
-        log("[SessionWindowRegistry] verifyBinding failed: CGWindowListCopyWindowInfo returned nil", level: .warn, fields: [
-            "windowID": String(windowID)
-        ])
-        return false
     }
 
     // MARK: - State Updates
@@ -264,16 +257,8 @@ final class SessionWindowRegistry: ObservableObject {
     }
 
     func purgeClosedWindows() {
-        let options: CGWindowListOption = [.optionAll]
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return
-        }
-        var activeWindowIDs: Set<UInt32> = []
-        for info in windowList {
-            if let wid = info[kCGWindowNumber as String] as? UInt32 {
-                activeWindowIDs.insert(wid)
-            }
-        }
+        let windows = cgWindowListAll()
+        let activeWindowIDs = Set(windows.map { $0.windowID })
 
         let keysToRemove = windowStates.filter { _, state in
             guard !state.isCompleted else { return false }

@@ -137,11 +137,9 @@ extension HookEventHandler {
 
         // 绑定年龄校验：超过 30 分钟的绑定可能已过期（CGWindowNumber 被回收）
         if bindingAge > 1800 {
-            let options: CGWindowListOption = [.optionAll]
-            if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]],
-               let matchedWindow = windowList.first(where: { ($0[kCGWindowNumber as String] as? UInt32) == windowID }) {
-                let actualPID = matchedWindow[kCGWindowOwnerPID as String] as? Int32
-                if actualPID != binding.pid {
+            let windows = cgWindowListAll()
+            if let matchedEntry = windows.first(where: { $0.windowID == windowID }) {
+                if matchedEntry.ownerPID != binding.pid {
                     log(
                         "[HookEventHandler] \(triggerName) stale binding: window PID mismatch (binding age: \(Int(bindingAge))s)",
                         level: .warn,
@@ -149,7 +147,7 @@ extension HookEventHandler {
                             "sessionID": payload.sessionID,
                             "windowID": String(windowID),
                             "boundPID": String(binding.pid),
-                            "actualPID": String(describing: actualPID),
+                            "actualPID": String(matchedEntry.ownerPID),
                             "bindingAge": String(Int(bindingAge))
                         ]
                     )

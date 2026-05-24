@@ -123,15 +123,7 @@ final class ShutdownSnapshotManager {
             bundleID.map { TerminalRegistry.isTerminalBundleID($0) } ?? false
         }
 
-        guard let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else {
-            log("[ShutdownSnapshot] failed to enumerate windows", level: .error)
-            return ShutdownSnapshot(
-                capturedAt: Date(),
-                systemUptimeAtCapture: ProcessInfo.processInfo.systemUptime,
-                terminalWindows: [],
-                runningTerminalApps: []
-            )
-        }
+        let windowList = cgWindowListAll()
 
         // 按 PID 分组，过滤终端 App
         var pidToBundleID: [pid_t: String] = [:]
@@ -146,33 +138,18 @@ final class ShutdownSnapshotManager {
         let runningTerminalApps = Set(pidToBundleID.values)
 
         // 逐窗口采集
-        for info in windowList {
-            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
-                  let bundleID = pidToBundleID[pid],
-                  let appName = pidToAppName[pid] else {
+        for entry in windowList {
+            guard let bundleID = pidToBundleID[entry.ownerPID],
+                  let appName = pidToAppName[entry.ownerPID] else {
                 continue
             }
 
-            // 跳过不可见窗口（layer != 0）
-            let layer = info[kCGWindowLayer as String] as? Int ?? 0
-            guard layer == 0 else { continue }
+            guard entry.layer == 0 else { continue }
 
-            guard let windowID = info[kCGWindowNumber as String] as? UInt32 else { continue }
-
-            // 窗口位置
-            var frame = CGRect.zero
-            if let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] {
-                frame = CGRect(
-                    x: bounds["X"] ?? 0,
-                    y: bounds["Y"] ?? 0,
-                    width: bounds["Width"] ?? 0,
-                    height: bounds["Height"] ?? 0
-                )
-            }
+            guard let frame = entry.bounds else { continue }
             guard frame.width > 200, frame.height > 150 else { continue }
 
-            let title = info[kCGWindowName as String] as? String
-                ?? info["kCGWindowName" as String] as? String
+            let title = entry.name
 
             // 获取屏幕 ID
             // CGWindowListCopyWindowInfo 返回 Quartz 坐标（原点在主屏幕左上角，Y 向下）
@@ -188,14 +165,14 @@ final class ShutdownSnapshotManager {
             let displayID = WindowManager.shared.displayID(for: appKitFrame)
 
             // 获取 Space 信息
-            let spaceContext = SpaceController.shared.captureSpaceContext(windowID: windowID)
+            let spaceContext = SpaceController.shared.captureSpaceContext(windowID: entry.windowID)
 
             // 从 SessionWindowRegistry 查找 Claude Code 绑定
-            let claudeBinding = SessionWindowRegistry.shared.findBinding(forWindowID: windowID)
+            let claudeBinding = SessionWindowRegistry.shared.findBinding(forWindowID: entry.windowID)
 
             let snapshot = TerminalWindowSnapshot(
-                windowID: windowID,
-                pid: pid,
+                windowID: entry.windowID,
+                pid: entry.ownerPID,
                 appName: appName,
                 bundleIdentifier: bundleID,
                 title: title,

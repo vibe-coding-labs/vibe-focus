@@ -172,26 +172,16 @@ final class TerminalRestoreService {
 
     /// 枚举当前已有的 Terminal 窗口
     private func enumerateExistingTerminalWindows() -> [ExistingWindow] {
-        guard let windowList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else {
-            return []
-        }
+        let windows = cgWindowListAll()
 
-        return windowList.compactMap { info in
-            guard let name = info[kCGWindowOwnerName as String] as? String,
-                  name == "Terminal",
-                  let wid = info[kCGWindowNumber as String] as? UInt32,
-                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
-                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
-                  (info[kCGWindowLayer as String] as? Int ?? 0) == 0 else {
+        return windows.compactMap { entry in
+            guard entry.ownerName == "Terminal",
+                  entry.layer == 0,
+                  let frame = entry.bounds else {
                 return nil
             }
-            let frame = CGRect(
-                x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0,
-                width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0
-            )
             guard frame.width > 50, frame.height > 50 else { return nil }
-            let title = info[kCGWindowName as String] as? String ?? ""
-            return ExistingWindow(windowID: wid, pid: pid, frame: frame, title: title)
+            return ExistingWindow(windowID: entry.windowID, pid: entry.ownerPID, frame: frame, title: entry.name ?? "")
         }
     }
 
