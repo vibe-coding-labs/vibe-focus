@@ -24,7 +24,6 @@ extension SpaceController {
             return false
         }
 
-        // 安全检查：验证窗口存在
         let windowInfo = queryWindow(windowID: windowID)
         if windowInfo == nil {
             log(
@@ -39,45 +38,14 @@ extension SpaceController {
             return false
         }
 
-        log(
-            "[SpaceController] moveWindow called",
-            fields: [
-                "op": op,
-                "windowID": String(windowID),
-                "targetSpace": String(spaceIndex),
-                "windowCurrentSpace": String(describing: windowInfo?.space),
-                "windowCurrentDisplay": String(describing: windowInfo?.display),
-                "focus": String(focus)
-            ]
-        )
-
         let nativeAvailable = NativeSpaceBridge.isAvailable
 
         // 策略 1：使用 NativeSpaceBridge (CGS API) 直接移动
-        // 这比 yabai 更可靠，不依赖 scripting-addition
-        // 清除失败缓存，给本次操作全新机会
         NativeSpaceBridge.resetFailureCache()
         if nativeAvailable, let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
-            log(
-                "[SpaceController] trying NativeSpaceBridge first",
-                fields: [
-                    "op": op,
-                    "windowID": String(windowID),
-                    "yabaiIndex": String(spaceIndex),
-                    "nativeSpaceID": String(spaceID)
-                ]
-            )
             if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                usleep(80_000) // 等待移动生效
+                usleep(80_000)
                 if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
-                    log(
-                        "[SpaceController] NativeSpaceBridge move succeeded and verified",
-                        fields: [
-                            "op": op,
-                            "windowID": String(windowID),
-                            "targetSpace": String(spaceIndex)
-                        ]
-                    )
                     if focus {
                         _ = focusWindow(windowID, operationID: op)
                     }
@@ -120,19 +88,13 @@ extension SpaceController {
                     ]
                 )
                 if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                    // 等待更长时间让 CGS API 生效（最多 1200ms）
                     var verified = false
-                    for attempt in 1...8 {
-                        usleep(150_000) // 150ms per attempt
+                    for _ in 1...8 {
+                        usleep(150_000)
                         if verifyWindowMovedToSpace(windowID: windowID, targetSpace: spaceIndex, operationID: op) {
                             verified = true
                             break
                         }
-                        log(
-                            "[SpaceController] NativeSpaceBridge fallback verification attempt \(attempt) failed",
-                            level: .debug,
-                            fields: ["op": op, "windowID": String(windowID), "targetSpace": String(spaceIndex)]
-                        )
                     }
                     if verified {
                         if focus {
@@ -210,7 +172,6 @@ extension SpaceController {
 
     // MARK: - Focus-Then-Move Retry
 
-    /// 先 focus 目标 space，再重试 yabai move — 用于 yabai 直接 move 失败时的 fallback
     private func focusThenMoveRetry(
         windowID: UInt32,
         targetSpace: Int,
@@ -270,14 +231,7 @@ extension SpaceController {
         let verified = pollUntil(timeout: 300_000, interval: 20_000) {
             self.verifyWindowMovedToSpace(windowID: windowID, targetSpace: targetSpace, operationID: operationID)
         }
-        if verified {
-            log("[SpaceController] verifyWindowMovedToSpaceWithRetry: verified", level: .debug, fields: [
-                "op": operationID,
-                "windowID": String(windowID),
-                "targetSpace": String(targetSpace),
-                "elapsedMs": String(elapsedMilliseconds(since: startTime))
-            ])
-        } else {
+        if !verified {
             log(
                 "[SpaceController] moveWindow verification failed after polling",
                 level: .warn,
@@ -296,37 +250,23 @@ extension SpaceController {
         let op = operationID ?? "none"
         guard isEnabled else { return }
 
-        // 查询当前浮动状态
-        // - 已经浮动 → 跳过
-        // - 查询失败（yabai 不可用/窗口不可见）→ 跳过（安全默认：不 toggle）
-        // - 未浮动 → toggle float
         if let info = queryWindow(windowID: windowID) {
             if info.isFloating {
-                log("setWindowFloat: already floating, skipping toggle", fields: [
-                    "op": op,
-                    "windowID": String(windowID)
-                ])
                 return
             }
         } else {
-            log("setWindowFloat: queryWindow returned nil, skipping toggle (safe default)", level: .warn, fields: [
+            log("setWindowFloat: queryWindow returned nil, skipping toggle", level: .warn, fields: [
                 "op": op,
                 "windowID": String(windowID)
             ])
             return
         }
 
-        let floatResult = runYabai(
+        _ = runYabai(
             arguments: ["-m", "window", "\(windowID)", "--toggle", "float"],
             operation: "setWindowFloat",
             operationID: op
         )
-        log("setWindowFloat: toggle result", level: .debug, fields: [
-            "op": op,
-            "windowID": String(windowID),
-            "success": String(floatResult?.exitCode == 0),
-            "exitCode": String(floatResult?.exitCode ?? -1)
-        ])
     }
 
     func focusWindow(_ windowID: UInt32, operationID: String? = nil) -> Bool {
@@ -336,9 +276,6 @@ extension SpaceController {
             return false
         }
 
-        let beforeApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil"
-
-        // 安全检查：验证窗口是否存在
         let windowCheck = queryWindow(windowID: windowID)
         if windowCheck == nil {
             log(
@@ -357,17 +294,6 @@ extension SpaceController {
         ]
         let result = runYabaiVariants(variants: variants, operation: "focusWindow(\(windowID))", operationID: op)
         if result.success {
-            let afterApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil"
-            log(
-                "[SpaceController] focusWindow completed",
-                fields: [
-                    "op": op,
-                    "windowID": String(windowID),
-                    "beforeApp": beforeApp,
-                    "afterApp": afterApp,
-                    "focusChanged": String(beforeApp != afterApp)
-                ]
-            )
             return true
         }
         markOperationError(from: result.failure, fallback: "Failed to focus window \(windowID)", operationID: op)
