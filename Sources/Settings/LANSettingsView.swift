@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct LANSettingsView: View {
-    @AppStorage(LANHookPreferences.lanModeKey) var lanMode = false
+    @AppStorage(LANHookPreferences.lanModeKey) var lanMode = LANHookPreferences.defaultLanMode
     @State var remoteBindings: [String: UInt32?] = LANHookPreferences.remoteBindings
     @State var newMachineLabel = ""
     @State var remoteInstallMessage: String?

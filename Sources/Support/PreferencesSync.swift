@@ -24,14 +24,21 @@ enum PreferencesSync {
         ClaudeHookPreferences.autoRestoreOnPromptSubmitKey: ClaudeHookPreferences.defaultAutoRestoreOnPromptSubmit,
 
         // SpacePreferences
-        SpacePreferences.integrationEnabledKey: true,
-        SpacePreferences.restoreStrategyKey: SpaceRestoreStrategy.switchToOriginal.rawValue,
+        SpacePreferences.integrationEnabledKey: SpacePreferences.defaultIntegrationEnabled,
+        SpacePreferences.restoreStrategyKey: SpacePreferences.defaultRestoreStrategy.rawValue,
 
         // HotKeyConfiguration
         HotKeyConfiguration.userDefaultsKey: HotKeyConfiguration.default,
 
         // ScreenIndexPreferences — 整体 Codable 对象存为 String
         ScreenIndexPreferences.userDefaultsKey: "",
+
+        // LANHookPreferences
+        LANHookPreferences.lanModeKey: LANHookPreferences.defaultLanMode,
+
+        // ShutdownSnapshotManager
+        "autoRestoreOnBoot": ShutdownSnapshotManager.defaultAutoRestoreOnBoot,
+        "shutdownSnapshotEnabled": ShutdownSnapshotManager.defaultShutdownSnapshotEnabled,
 
         // SessionWindowRegistry and WindowManager savedWindowStates
         // migrated to SQLite — no longer in UserDefaults

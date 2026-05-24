@@ -224,7 +224,7 @@ extension SettingsView {
                 detail: "检测到上次关机快照时自动恢复终端窗口和 Claude 会话。"
             ) {
                 Toggle("", isOn: Binding(
-                    get: { UserDefaults.standard.object(forKey: "autoRestoreOnBoot") as? Bool ?? false },
+                    get: { UserDefaults.standard.object(forKey: "autoRestoreOnBoot") as? Bool ?? ShutdownSnapshotManager.defaultAutoRestoreOnBoot },
                     set: { UserDefaults.standard.set($0, forKey: "autoRestoreOnBoot"); PreferencesSync.persistToDisk() }
                 ))
                 .labelsHidden()

@@ -18,9 +18,12 @@ struct SpacePreferences {
     static let integrationEnabledKey = "spaceIntegrationEnabled"
     static let restoreStrategyKey = "spaceRestoreStrategy"
 
+    static let defaultIntegrationEnabled = true
+    static let defaultRestoreStrategy = SpaceRestoreStrategy.switchToOriginal
+
     static var integrationEnabled: Bool {
         get {
-            UserDefaults.standard.object(forKey: integrationEnabledKey) as? Bool ?? true
+            UserDefaults.standard.object(forKey: integrationEnabledKey) as? Bool ?? defaultIntegrationEnabled
         }
         set {
             UserDefaults.standard.set(newValue, forKey: integrationEnabledKey)

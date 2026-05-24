@@ -13,9 +13,13 @@ final class ShutdownSnapshotManager {
     private let periodicInterval: TimeInterval = 10 * 60 // 10 分钟
     private var periodicTimer: Timer?
 
+    /// 统一默认值（唯一源）
+    static let defaultAutoRestoreOnBoot = true
+    static let defaultShutdownSnapshotEnabled = true
+
     /// 是否已启用关机快照
     var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "shutdownSnapshotEnabled") as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: "shutdownSnapshotEnabled") as? Bool ?? Self.defaultShutdownSnapshotEnabled }
         set {
             UserDefaults.standard.set(newValue, forKey: "shutdownSnapshotEnabled")
             PreferencesSync.persistToDisk()
