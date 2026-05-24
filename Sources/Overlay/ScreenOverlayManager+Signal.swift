@@ -5,8 +5,7 @@ import Foundation
 extension ScreenOverlayManager {
 
     func setupSignalHandler() {
-        // 设置 SIGUSR1 信号处理
-        signal(SIGUSR1, SIG_IGN)  // 忽略默认处理
+        signal(SIGUSR1, SIG_IGN)
 
         let source = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
         source.setEventHandler { [weak self] in
@@ -20,24 +19,18 @@ extension ScreenOverlayManager {
         source.resume()
 
         ScreenOverlayManager.signalSource = source
-        log("Signal handler setup complete")
     }
 
     func clearSpaceIndexCache() {
-        log("ScreenOverlayManager.clearSpaceIndexCache entry", level: .debug, fields: ["lastQueryCount": String(lastQueryTimes.count), "screenSpaceCacheCount": String(screenSpaceCache.count)])
         lastQueryTimes.removeAll()
-        // 关键修复：同时清除 screenSpaceCache，确保信号触发时强制刷新
         screenSpaceCache.removeAll()
-        log("Cleared all caches including screenSpaceCache")
     }
 
     func cancelPendingSignalRefreshes() {
-        log("ScreenOverlayManager.cancelPendingSignalRefreshes entry", level: .debug, fields: ["pendingCount": String(pendingSignalRefreshWorkItems.count)])
         for workItem in pendingSignalRefreshWorkItems {
             workItem.cancel()
         }
         pendingSignalRefreshWorkItems.removeAll()
-        log("ScreenOverlayManager.cancelPendingSignalRefreshes exit", level: .debug)
     }
 
     func scheduleSignalFollowUpRefreshes() {
@@ -73,23 +66,18 @@ extension ScreenOverlayManager {
         log("[FORCE_REFRESH] Triggered by reason=\(reason), clearing caches and refreshing")
         cancelPendingSignalRefreshes()
         clearSpaceIndexCache()
-
-        log("[FORCE_REFRESH] Immediate refresh starting...")
         refreshSpaceIndices(force: true)
         scheduleSignalFollowUpRefreshes()
     }
 
     func registerYabaiSignals() {
-        // 检查是否已注册信号
         guard let checkResult = YabaiClient.run(arguments: ["-m", "signal", "--list"]),
               checkResult.exitCode == 0 else { return }
 
-        // 如果已经注册了 vibefocus 信号，跳过
         if checkResult.stdout.contains("vibefocus-space-changed") {
             return
         }
 
-        // 获取脚本路径 - 优先从 Bundle 查找，如果不存在则从项目目录查找
         let scriptPath: String
         if let bundlePath = Bundle.main.path(forResource: "yabai-space-changed", ofType: "sh") {
             scriptPath = bundlePath
@@ -99,16 +87,12 @@ extension ScreenOverlayManager {
             log("Could not find yabai-space-changed.sh script in Bundle or project directory")
             return
         }
-        log("Using yabai-space-changed script at: \(scriptPath)")
 
-        // 注册信号: 空间切换时触发
         let _ = YabaiClient.run(arguments: [
             "-m", "signal", "--add",
             "event=space_changed",
             "action=\"\(scriptPath)\"",
             "label=vibefocus-space-changed"
         ])
-
-        log("Registered yabai signal for space changes")
     }
 }
