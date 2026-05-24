@@ -23,10 +23,10 @@ final class RestoreWatchdog {
     private var totalTicks = 0
     private var correctionsApplied = 0
 
-    private let tickIntervalMs: UInt64 = 200
-    private let maxStableTicks = 5
-    private let maxTotalTicks = 15
-    private let maxCorrections = 5
+    private let tickIntervalMs: UInt64 = 800
+    private let maxStableTicks = 3
+    private let maxTotalTicks = 8
+    private let maxCorrections = 3
 
     private init() {}
 
@@ -50,7 +50,7 @@ final class RestoreWatchdog {
         ])
 
         let t = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
-        t.schedule(deadline: .now() + .milliseconds(Int(tickIntervalMs)), repeating: .milliseconds(Int(tickIntervalMs)))
+        t.schedule(deadline: .now() + .milliseconds(500), repeating: .milliseconds(Int(tickIntervalMs)))
         t.setEventHandler { [weak self] in
             Task { @MainActor in
                 self?.tick()
