@@ -84,8 +84,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         PreferencesSync.persistToDisk()
         ClaudeHookServer.shared.applyPreferences()
         ScreenOverlayManager.shared.refreshOverlays()
-        ShutdownSnapshotManager.shared.start()
-        TerminalRestoreService.shared.checkAndRestore()
         promptAccessibilityIfNeeded()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             Task { @MainActor in

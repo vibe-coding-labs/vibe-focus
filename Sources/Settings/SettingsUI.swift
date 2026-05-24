@@ -210,7 +210,6 @@ struct SettingsView: View {
                     hotKeySection
                     permissionsSection
                     loginItemSection
-                    shutdownSnapshotSection
                 }
             }
             .scrollIndicators(.visible)
