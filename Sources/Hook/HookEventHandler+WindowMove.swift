@@ -136,7 +136,6 @@ extension HookEventHandler {
         }
 
         // 绑定年龄校验：超过 30 分钟的绑定可能已过期（CGWindowNumber 被回收）
-        // 验证 windowID 的当前 owner PID 是否与绑定时一致
         if bindingAge > 1800 {
             let options: CGWindowListOption = [.optionAll]
             if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]],
@@ -167,49 +166,6 @@ extension HookEventHandler {
             }
         }
 
-        // 安全检查：确保绑定的是终端/IDE 窗口
-        let isTerminalBinding = Self.isTerminalOrIDEApp(
-            appName: binding.appName,
-            bundleIdentifier: binding.bundleIdentifier
-        )
-
-        if !isTerminalBinding {
-            SessionWindowRegistry.shared.setLastEventDescription(
-                "\(triggerName) 绑定窗口非终端应用：\(binding.appName ?? "Unknown")"
-            )
-            log(
-                "[HookEventHandler] \(triggerName) bound window is non-terminal app, skipping",
-                level: .warn,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "app": binding.appName ?? "unknown",
-                    "bundleID": binding.bundleIdentifier ?? "nil",
-                    "windowID": String(windowID)
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "non_terminal_binding",
-                    message: "Bound window is not a terminal/IDE app, skipping",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        log(
-            "[HookEventHandler] \(triggerName) moving window",
-            fields: [
-                "sessionID": payload.sessionID,
-                "app": binding.appName ?? "unknown",
-                "title": binding.title ?? "untitled",
-                "windowID": String(windowID),
-                "pid": String(binding.pid),
-                "cwd": payload.cwd ?? "nil",
-                "bindingAge": String(Int(bindingAge))
-            ]
-        )
-
         let identity = WindowIdentity(
             windowID: windowID,
             pid: binding.pid,
@@ -220,58 +176,13 @@ extension HookEventHandler {
             capturedAt: binding.createdAt
         )
 
-        let moved = WindowManager.shared.moveWindowToMainScreen(
+        return moveWindowToMainScreenAndRespond(
             identity: identity,
-            reason: .claudeSessionEnd,
-            sessionID: payload.sessionID
-        )
-        if moved {
-            SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
-            log(
-                "[HookEventHandler] \(triggerName) window moved successfully",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "app": binding.appName ?? "unknown",
-                    "title": binding.title ?? "untitled"
-                ]
-            )
-            Task { @MainActor in
-                SoundManager.shared.playCompletionSound()
-                DockBadgeManager.shared.showBadge(
-                    targetBundleID: binding.bundleIdentifier,
-                    targetAppName: binding.appName
-                )
-            }
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "window_focused",
-                    message: "Window moved to main screen and maximized",
-                    sessionID: payload.sessionID, handled: true
-                )
-            )
-        }
-
-        SessionWindowRegistry.shared.touch(
-            sessionID: payload.sessionID,
-            message: "\(triggerName) 命中绑定，但移动窗口失败"
-        )
-        log(
-            "[HookEventHandler] \(triggerName) window move failed",
-            level: .error,
-            fields: [
-                "sessionID": payload.sessionID,
-                "app": binding.appName ?? "unknown",
-                "windowID": String(windowID)
-            ]
-        )
-        return (
-            409,
-            ClaudeHookResponse(
-                ok: false, code: "window_move_failed",
-                message: "Found session binding but failed to move window",
-                sessionID: payload.sessionID, handled: false
-            )
+            payload: payload,
+            triggerName: triggerName,
+            source: "binding",
+            bindingAge: bindingAge,
+            onComplete: { SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID) }
         )
     }
 
@@ -282,10 +193,28 @@ extension HookEventHandler {
         payload: ClaudeHookPayload,
         triggerName: String
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        return moveWindowToMainScreenAndRespond(
+            identity: identity,
+            payload: payload,
+            triggerName: triggerName,
+            source: "terminalCtx"
+        )
+    }
+
+    // MARK: - Shared Move + Respond
+
+    private func moveWindowToMainScreenAndRespond(
+        identity: WindowIdentity,
+        payload: ClaudeHookPayload,
+        triggerName: String,
+        source: String,
+        bindingAge: TimeInterval? = nil,
+        onComplete: (() -> Void)? = nil
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // 预检：如果窗口已在主屏幕上，跳过移动
         if WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
             log(
-                "[HookEventHandler] \(triggerName) [terminalCtx] window already on main screen, skipping",
+                "[HookEventHandler] \(triggerName) [\(source)] window already on main screen, skipping",
                 fields: [
                     "sessionID": payload.sessionID,
                     "windowID": String(identity.windowID),
@@ -309,7 +238,7 @@ extension HookEventHandler {
         )
         if !isTerminal {
             log(
-                "[HookEventHandler] \(triggerName) [terminalCtx] resolved window is non-terminal, skipping",
+                "[HookEventHandler] \(triggerName) [\(source)] window is non-terminal, skipping",
                 level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
@@ -328,7 +257,7 @@ extension HookEventHandler {
         }
 
         log(
-            "[HookEventHandler] \(triggerName) [terminalCtx] moving window to main screen",
+            "[HookEventHandler] \(triggerName) [\(source)] moving window",
             fields: [
                 "sessionID": payload.sessionID,
                 "app": identity.appName ?? "unknown",
@@ -343,8 +272,9 @@ extension HookEventHandler {
             sessionID: payload.sessionID
         )
         if moved {
+            onComplete?()
             log(
-                "[HookEventHandler] \(triggerName) [terminalCtx] window moved successfully",
+                "[HookEventHandler] \(triggerName) [\(source)] window moved successfully",
                 fields: [
                     "sessionID": payload.sessionID,
                     "app": identity.appName ?? "unknown"
@@ -361,14 +291,18 @@ extension HookEventHandler {
                 200,
                 ClaudeHookResponse(
                     ok: true, code: "window_focused",
-                    message: "Window moved to main screen via terminal context",
+                    message: "Window moved to main screen",
                     sessionID: payload.sessionID, handled: true
                 )
             )
         }
 
+        SessionWindowRegistry.shared.touch(
+            sessionID: payload.sessionID,
+            message: "\(triggerName) 命中绑定，但移动窗口失败"
+        )
         log(
-            "[HookEventHandler] \(triggerName) [terminalCtx] window move failed",
+            "[HookEventHandler] \(triggerName) [\(source)] window move failed",
             level: .error,
             fields: [
                 "sessionID": payload.sessionID,
@@ -380,7 +314,7 @@ extension HookEventHandler {
             409,
             ClaudeHookResponse(
                 ok: false, code: "window_move_failed",
-                message: "Found window via terminal context but failed to move",
+                message: "Failed to move window to main screen",
                 sessionID: payload.sessionID, handled: false
             )
         )
