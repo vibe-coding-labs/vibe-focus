@@ -121,14 +121,14 @@ extension WindowManager {
         // 使用 yabai display 信息作为主要判断依据
         // AX frame 对非可见工作区的窗口不可靠（macOS 会报告错误的坐标）
         let yabaiDisplay = spaceController.windowDisplayIndex(windowID: identity.windowID)
-        if let display = yabaiDisplay, display != 1 {
+        if let display = yabaiDisplay?.yabaiIndex, display != 1 {
             // yabai 报告窗口在副显示器上，即使 AX frame 看起来在主屏也继续移动
             log(
                 "[WindowManager] yabai reports window on secondary display, proceeding with move",
                 fields: [
                     "op": op,
                     "windowID": String(identity.windowID),
-                    "yabaiDisplay": String(display),
+                    "yabaiDisplay": String(describing: yabaiDisplay),
                     "axFrame": "\(origFrame)"
                 ]
             )
@@ -279,7 +279,7 @@ extension WindowManager {
         // 如果 space context 全部为 nil（yabai 不可用），不保存 toggle record
         // 因为 sourceSpace=0 是无效的 yabai index，恢复时会发到错误的 space
         if let sourceSpaceIndex = spaceContext.sourceSpaceIndex {
-            let teSourceDisplay = spaceContext.sourceDisplayIndex ?? sourceContext.index ?? 0
+            let teSourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.index.map { .yabai($0) } ?? .yabai(0)
             // 窗口移动后 CGWindowNumber 可能变化，重新读取 AX element 的 windowID
             let postMoveWindowID = windowHandle(for: windowAX) ?? effectiveWindowID
             if postMoveWindowID != effectiveWindowID {
@@ -302,7 +302,7 @@ extension WindowManager {
                 origFrame: origFrame,
                 sourceSpace: sourceSpaceIndex,
                 sourceDisplay: teSourceDisplay,
-                sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? 0,
+                sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? .yabai(0),
                 sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
                 targetFrame: actualTargetFrame,
                 targetDisplay: targetDisplayIndex ?? 0,

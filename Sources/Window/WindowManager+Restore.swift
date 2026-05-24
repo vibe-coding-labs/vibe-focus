@@ -82,7 +82,7 @@ extension WindowManager {
 
         // 4. 焦点跟随（仅 carbon_hotkey 触发）
         if triggerSource == "carbon_hotkey" {
-            if let postApplySpace = spaceController.windowSpaceIndex(windowID: currentWindowID),
+            if let postApplySpace = spaceController.windowSpaceIndex(windowID: currentWindowID)?.yabaiIndex,
                let currentSpace = spaceController.currentSpaceIndex(),
                postApplySpace != currentSpace {
                 log("[WindowManager] restore: following window to Space \(postApplySpace)", fields: [

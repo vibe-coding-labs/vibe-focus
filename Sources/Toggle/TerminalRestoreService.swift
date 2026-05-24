@@ -224,7 +224,7 @@ final class TerminalRestoreService {
             if let spaceIndex = snapshot.spaceIndex {
                 let moved = SpaceController.shared.moveWindow(
                     target.windowID,
-                    toSpaceIndex: spaceIndex,
+                    toSpace: .yabai(spaceIndex),
                     focus: false
                 )
                 log("[TerminalRestore] move window \(target.windowID) to space \(spaceIndex): \(moved)")

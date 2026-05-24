@@ -4,8 +4,12 @@ import Foundation
 @MainActor
 extension SpaceController {
 
-    func moveWindow(_ windowID: UInt32, toSpaceIndex spaceIndex: Int, focus: Bool, operationID: String? = nil) -> Bool {
+    func moveWindow(_ windowID: UInt32, toSpace space: SpaceIdentifier, focus: Bool, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
+        guard let spaceIndex = space.yabaiIndex else {
+            log("[SpaceController] moveWindow: unsupported space identifier", level: .warn, fields: ["op": op])
+            return false
+        }
         AuditLogger.shared.record(
             eventType: "space_move",
             windowID: windowID,
@@ -187,7 +191,7 @@ extension SpaceController {
         guard let result = focusResult, result.exitCode == 0 else { return false }
 
         _ = pollUntil(timeout: 200_000, interval: 20_000) {
-            self.windowSpaceIndex(windowID: windowID) == targetSpace
+            self.windowSpaceIndex(windowID: windowID)?.yabaiIndex == targetSpace
         }
         let retryResult = runYabai(
             arguments: ["-m", "window", "\(windowID)", "--space", "\(targetSpace)"],
@@ -314,7 +318,8 @@ extension SpaceController {
         return condition()
     }
 
-    func displayVisibleSpace(displayIndex: Int?) -> Int? {
-        return visibleSpaceIndex(forDisplayIndex: displayIndex)
+    func displayVisibleSpace(displayIndex: DisplayIdentifier?) -> SpaceIdentifier? {
+        guard let idx = displayIndex?.yabaiIndex else { return nil }
+        return visibleSpaceIndex(forDisplayIndex: idx)
     }
 }

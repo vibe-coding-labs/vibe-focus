@@ -172,7 +172,7 @@ final class RestoreWatchdog {
                 ])
                 let moved = spaceController.moveWindow(
                     t.windowID,
-                    toSpaceIndex: t.targetSpace,
+                    toSpace: .yabai(t.targetSpace),
                     focus: false,
                     operationID: "watchdog_\(t.traceID)"
                 )

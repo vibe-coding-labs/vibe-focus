@@ -76,28 +76,28 @@ extension SpaceController {
         return match
     }
 
-    func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> Int? {
+    func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> SpaceIdentifier? {
         guard let displayIndex else {
             return nil
         }
         let resolvedSpaces = spaces ?? querySpaces()
-        return resolvedSpaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index
+        return resolvedSpaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index.map { .yabai($0) }
     }
 
-    func windowSpaceIndex(windowID: UInt32) -> Int? {
+    func windowSpaceIndex(windowID: UInt32) -> SpaceIdentifier? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let window = queryWindow(windowID: windowID) else {
             return nil
         }
-        return window.space
+        return window.space.map { .yabai($0) }
     }
 
-    func windowDisplayIndex(windowID: UInt32) -> Int? {
+    func windowDisplayIndex(windowID: UInt32) -> DisplayIdentifier? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let window = queryWindow(windowID: windowID) else {
             return nil
         }
-        return window.display
+        return window.display.map { .yabai($0) }
     }
 
     func currentSpaceIndex() -> Int? {

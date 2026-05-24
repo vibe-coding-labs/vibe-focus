@@ -44,9 +44,9 @@ struct SpacePreferences {
 }
 
 struct SpaceContext {
-    let sourceSpaceIndex: Int?
-    let targetSpaceIndex: Int?
-    let sourceDisplayIndex: Int?
+    let sourceSpaceIndex: SpaceIdentifier?
+    let targetSpaceIndex: SpaceIdentifier?
+    let sourceDisplayIndex: DisplayIdentifier?
     let sourceDisplaySpaceIndex: Int?
 }
 
