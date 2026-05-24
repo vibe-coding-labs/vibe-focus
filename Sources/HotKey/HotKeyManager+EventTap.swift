@@ -90,27 +90,11 @@ extension HotKeyManager {
         }
 
         if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
-            log(
-                "[handleCGEvent] ignoring auto-repeat key event",
-                level: .debug
-            )
             return Unmanaged.passUnretained(event)
         }
 
         let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
-
-        log(
-            "[handleCGEvent] keyDown event received",
-            level: .debug,
-            fields: [
-                "keyCode": String(keyCode),
-                "hasControl": String(flags.contains(.maskControl)),
-                "hasCommand": String(flags.contains(.maskCommand)),
-                "hasAlt": String(flags.contains(.maskAlternate)),
-                "hasShift": String(flags.contains(.maskShift))
-            ]
-        )
 
         var modifiers: UInt32 = 0
         if flags.contains(.maskControl) { modifiers |= UInt32(controlKey) }
@@ -118,30 +102,10 @@ extension HotKeyManager {
         if flags.contains(.maskAlternate) { modifiers |= UInt32(optionKey) }
         if flags.contains(.maskShift) { modifiers |= UInt32(shiftKey) }
 
-        log(
-            "[handleCGEvent] converted modifiers",
-            level: .debug,
-            fields: [
-                "keyCode": String(keyCode),
-                "modifiers": String(modifiers),
-                "expectedKeyCode": String(currentHotKey.keyCode),
-                "expectedModifiers": String(currentHotKey.modifiers)
-            ]
-        )
-
-        if keyCode == 12 || keyCode == 49 {
-            log("[CGEventTap DEBUG] keyCode=\(keyCode) modifiers=\(modifiers) expected=\(currentHotKey.keyCode)/\(currentHotKey.modifiers)")
-        }
-
         if keyCode == currentHotKey.keyCode && modifiers == currentHotKey.modifiers {
             log(
                 "[HotKey] CGEventTap hotkey match",
-                level: .debug,
-                fields: [
-                    "keyCode": String(keyCode),
-                    "modifiers": String(modifiers),
-                    "displayString": currentHotKey.displayString
-                ]
+                fields: ["displayString": currentHotKey.displayString]
             )
             DispatchQueue.main.async { [weak self] in
                 self?.triggerToggleIfNeeded(source: "cg_event_tap")
