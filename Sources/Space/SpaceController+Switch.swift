@@ -224,30 +224,9 @@ extension SpaceController {
                 ]
             )
 
-            let savedFrontApp = NSWorkspace.shared.frontmostApplication
-
-            let savedCursor = NSEvent.mouseLocation
-            let mainScreenHeight = CoordinateKit.mainScreenHeight
-            let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
-
-            if let center = displayCenterCG(spaceIndex: spaceIndex) {
-                if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                                            mouseCursorPosition: center, mouseButton: .left) {
-                    moveEvent.post(tap: .cghidEventTap)
-                }
-                usleep(50_000)
+            if let (savedCursor, savedApp) = saveAndMoveCursor(toSpace: spaceIndex, operationID: op, click: false) {
+                restoreCursor(savedCursor, savedApp: savedApp)
             }
-
-            // 恢复鼠标位置
-            if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                                           mouseCursorPosition: savedCursorCG, mouseButton: .left) {
-                restoreEvent.post(tap: .cghidEventTap)
-            }
-
-            usleep(50_000) // 等待显示器切换
-
-            // 恢复前台应用焦点 — CGEvent 鼠标移动会激活副屏上的应用（通常是 Chrome）
-            savedFrontApp?.activate(options: .activateIgnoringOtherApps)
 
             let postSwitchSpace = queryFocusedSpace()?.index
             log(
@@ -264,47 +243,13 @@ extension SpaceController {
         }
 
         // 关键：Ctrl+Left/Right 只影响鼠标所在显示器的空间
-        // 用 CGEvent 发送鼠标移动事件（非 CGWarp，后者不更新系统活跃显示器状态）
-        let savedFrontApp = NSWorkspace.shared.frontmostApplication
-
-        let savedCursor = NSEvent.mouseLocation
-        let mainScreenHeight = CoordinateKit.mainScreenHeight
-        let savedCursorCG = CGPoint(x: savedCursor.x, y: mainScreenHeight - savedCursor.y)
-
-        let targetCenterCG = displayCenterCG(spaceIndex: spaceIndex)
-        if let center = targetCenterCG {
-            // 用 CGEvent 鼠标移动事件（而非 CGWarpMouseCursorPosition）
-            // 这样 WindowServer 会真正更新"活跃显示器"状态
-            log("[SpaceController] focusSpace: CGEvent cursor move to target display", level: .debug, fields: [
-                "op": op,
-                "targetCenter": "\(Int(center.x)),\(Int(center.y))"
-            ])
-            if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                                        mouseCursorPosition: center, mouseButton: .left) {
-                moveEvent.post(tap: .cghidEventTap)
-            }
-            usleep(50_000) // 50ms 等系统处理鼠标移动
-        } else {
-            log(
-                "[SpaceController] CGEvent fallback: could not determine display center",
-                level: .warn,
-                fields: [
-                    "op": op,
-                    "targetSpace": String(spaceIndex)
-                ]
-            )
-        }
+        let saved = saveAndMoveCursor(toSpace: spaceIndex, operationID: op, click: false)
 
         let success = NativeSpaceBridge.focusSpace(steps: steps, operationID: op)
 
-        // 恢复鼠标位置（用 CGEvent 以确保系统状态同步）
-        if let restoreEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                                       mouseCursorPosition: savedCursorCG, mouseButton: .left) {
-            restoreEvent.post(tap: .cghidEventTap)
+        if let (savedCursor, savedApp) = saved {
+            restoreCursor(savedCursor, savedApp: savedApp)
         }
-
-        // 恢复前台应用焦点 — CGEvent 鼠标移动会激活副屏上的应用（通常是 Chrome）
-        savedFrontApp?.activate(options: .activateIgnoringOtherApps)
 
         if success {
             usleep(100_000) // 等空间切换动画
@@ -414,7 +359,7 @@ extension SpaceController {
         )
     }
 
-    private func saveAndMoveCursor(toSpace spaceIndex: Int, operationID: String) -> (savedCursor: CGPoint, savedApp: NSRunningApplication?)? {
+    private func saveAndMoveCursor(toSpace spaceIndex: Int, operationID: String, click: Bool = true) -> (savedCursor: CGPoint, savedApp: NSRunningApplication?)? {
         let op = operationID
         let savedFrontApp = NSWorkspace.shared.frontmostApplication
         let savedCursor = NSEvent.mouseLocation
@@ -440,18 +385,20 @@ extension SpaceController {
                 moveEvent.post(tap: .cghidEventTap)
             }
             usleep(50_000)
-            // Click to activate the target display — macOS only processes Ctrl+Arrow
-            // for the display that has focus, not the one the cursor is hovering over
-            if let downClick = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
-                                        mouseCursorPosition: center, mouseButton: .left) {
-                downClick.post(tap: .cghidEventTap)
+            if click {
+                // Click to activate the target display — macOS only processes Ctrl+Arrow
+                // for the display that has focus, not the one the cursor is hovering over
+                if let downClick = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown,
+                                            mouseCursorPosition: center, mouseButton: .left) {
+                    downClick.post(tap: .cghidEventTap)
+                }
+                usleep(20_000)
+                if let upClick = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
+                                          mouseCursorPosition: center, mouseButton: .left) {
+                    upClick.post(tap: .cghidEventTap)
+                }
+                usleep(100_000)
             }
-            usleep(20_000)
-            if let upClick = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp,
-                                      mouseCursorPosition: center, mouseButton: .left) {
-                upClick.post(tap: .cghidEventTap)
-            }
-            usleep(100_000)
             return (savedCursorCG, savedFrontApp)
         }
         log("[SpaceController] saveAndMoveCursor: cannot determine display center", level: .warn, fields: [
