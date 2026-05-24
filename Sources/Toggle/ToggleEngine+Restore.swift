@@ -130,11 +130,12 @@ extension ToggleEngine {
             }
         }
         var restored = false
-        let needCrossDisplayMove = record.sourceYabaiDisp != 1
 
         // 跟踪所有在 restore 过程中被故意切换的 display
         // 不仅包括 sourceYabaiDisp（目标 display），还包括 switchDisplayToSpace 中切换的其他 display
         var intentionallySwitchedDisplays: Set<Int> = [record.sourceYabaiDisp]
+
+        let needCrossDisplayMove = record.sourceYabaiDisp != 1
 
         log("[ToggleEngine] restore: captured pre-restore display spaces", level: .debug, fields: [
             "traceID": trace,
@@ -143,162 +144,9 @@ extension ToggleEngine {
             "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
         ])
 
-        // 4. 跨显示器 restore：先切目标 display 到目标 space，再 AX apply
-        // 关键顺序：先 switchDisplayToSpace → 再 apply(frame)
-        // 原因：AX apply 把窗口移到目标显示器时，窗口会出现在当前可见 space 上
-        // 如果先 apply 再切 space，窗口会落在错误的 space 上并被隐藏，yabai 无法移动隐藏窗口
-
+        // 4. 执行 restore
         if needCrossDisplayMove {
-            // 4a. 先切换目标 display 到原始 space
-            let targetDisplay = record.sourceYabaiDisp
-            let targetSpace = record.sourceSpace
-            let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
-
-            log("[ToggleEngine] restore: pre-apply space switch", fields: [
-                "traceID": trace,
-                "windowID": String(windowID),
-                "targetDisplay": String(describing: targetDisplay),
-                "targetSpace": String(targetSpace),
-                "displayCurrentSpace": String(describing: displayCurrentSpace)
-            ])
-
-            if let current = displayCurrentSpace, current != targetSpace {
-                let switched = performSpaceSwitch(
-                    targetDisplay: targetDisplay,
-                    targetSpace: targetSpace,
-                    traceID: trace,
-                    intentionallySwitchedDisplays: &intentionallySwitchedDisplays
-                )
-
-                if switched {
-                    usleep(150_000)
-                } else {
-                    // space switch 失败 — fallback 到目标 display 的 visible space
-                    // AX apply 会把窗口放到 visible space，至少回到正确的显示器
-                    let visibleSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
-                    log("[ToggleEngine] restore: target space switch failed, falling back to visible space", level: .warn, fields: [
-                        "traceID": trace,
-                        "targetSpace": String(targetSpace),
-                        "visibleSpace": String(describing: visibleSpace),
-                        "targetDisplay": String(targetDisplay)
-                    ])
-                    if let vis = visibleSpace, vis != current {
-                        _ = performSpaceSwitch(
-                            targetDisplay: targetDisplay,
-                            targetSpace: vis,
-                            traceID: trace,
-                            intentionallySwitchedDisplays: &intentionallySwitchedDisplays
-                        )
-                        usleep(100_000)
-                    }
-                }
-                log("[ToggleEngine] restore: display switched to target space", fields: [
-                    "traceID": trace,
-                    "switched": String(switched),
-                    "targetSpace": String(targetSpace),
-                    "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
-                ])
-            }
-        }
-
-        // 4b. AX apply — 窗口到达目标显示器时，会出现在已切换好的正确 space 上
-        restored = wm.apply(frame: record.origFrame, to: windowAX, operationID: trace, stage: "restore_orig")
-
-        if restored {
-            if let postFrame = wm.frame(of: windowAX) {
-                let onExpectedScreen: Bool
-                if record.sourceYabaiDisp == 1 {
-                    onExpectedScreen = CoordinateKit.isOnMainScreen(postFrame)
-                } else {
-                    onExpectedScreen = !CoordinateKit.isOnMainScreen(postFrame)
-                }
-                if !onExpectedScreen {
-                    log("[ToggleEngine] restore: AX apply succeeded but window on WRONG screen, marking as failed", level: .warn, fields: [
-                        "traceID": trace,
-                        "windowID": String(windowID),
-                        "postFrame": "\(postFrame)",
-                        "expectedDisplay": String(record.sourceYabaiDisp)
-                    ])
-                    restored = false
-                } else {
-                    log("[ToggleEngine] restore: AX apply moved window to correct screen", fields: [
-                        "traceID": trace,
-                        "windowID": String(windowID),
-                        "origFrame": "\(record.origFrame)"
-                    ])
-                }
-            }
-        }
-
-        if !restored {
-            // DISABLED: CGEvent drag fallback — AX apply 几乎总是成功，
-            // 此路径在实践中很少触发，增加了不必要的复杂度。
-            // 如果 AX restore 开始失败，可以重新启用。
-            // 原代码：检测 AX apply 被钳制到主屏时，用 NativeSpaceBridge.dragWindowToDisplay 拖拽到目标显示器
-            log("ToggleEngine.restore: AX apply failed, no fallback available", level: .error, fields: [
-                "traceID": trace,
-                "windowID": String(windowID)
-            ])
-        }
-
-        // 5. 窗口已到达目标显示器的正确 space → 重新获取 CGWindowNumber + 重新设置 float
-        // 跨显示器移动后 iTerm2 等应用可能改变 CGWindowNumber
-        if needCrossDisplayMove, restored {
-            let postMoveAX = wm.findWindowByPID(record.pid, windowID: effectiveWindowID) ?? windowAX
-            let postMoveWindowID = wm.windowHandle(for: postMoveAX) ?? effectiveWindowID
-
-            if postMoveWindowID != effectiveWindowID {
-                log("[ToggleEngine] restore: CGWindowNumber changed after cross-display move", level: .info, fields: [
-                    "traceID": trace,
-                    "windowID": String(windowID),
-                    "beforeCrossMoveID": String(effectiveWindowID),
-                    "afterCrossMoveID": String(postMoveWindowID)
-                ])
-            }
-
-            // 重新设置浮动 + 验证 space 位置
-            spaceController.setWindowFloat(postMoveWindowID, operationID: trace)
-
-            // 验证窗口确实在目标 space（如果不在，尝试修复）
-            if let actualSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID),
-               actualSpace != record.sourceSpace {
-                log("[ToggleEngine] restore: window on wrong space after AX apply, trying moveWindow fallback", level: .warn, fields: [
-                    "traceID": trace,
-                    "effectiveWindowID": String(postMoveWindowID),
-                    "actualSpace": String(actualSpace),
-                    "targetSpace": String(record.sourceSpace)
-                ])
-                let moved = spaceController.moveWindow(
-                    postMoveWindowID,
-                    toSpaceIndex: record.sourceSpace,
-                    focus: triggerSource == "carbon_hotkey",
-                    operationID: trace
-                )
-
-                if !moved {
-                    // moveWindow 失败（yabai scripting addition 通常损坏） — 切换 display 到窗口实际 space
-                    // 不能让窗口留在非可见 space 上完全不可见
-                    log("[ToggleEngine] restore: moveWindow failed, switching display to window's actual space for visibility", level: .warn, fields: [
-                        "traceID": trace,
-                        "effectiveWindowID": String(postMoveWindowID),
-                        "actualSpace": String(actualSpace),
-                        "targetSpace": String(record.sourceSpace),
-                        "note": "window at correct position but on different space than original"
-                    ])
-                    let switched = spaceController.switchDisplayToSpace(
-                        targetSpace: actualSpace,
-                        operationID: trace
-                    )
-                    log("[ToggleEngine] restore: display switch to actual space result", fields: [
-                        "traceID": trace,
-                        "switched": String(switched),
-                        "actualSpace": String(actualSpace)
-                    ])
-                }
-            }
-        } else if restored {
-            // 主屏到主屏的 restore，只需切换 space
-            switchToOriginalSpace(
+            restored = performCrossDisplayRestore(
                 record: record,
                 windowAX: windowAX,
                 effectiveWindowID: effectiveWindowID,
@@ -306,6 +154,35 @@ extension ToggleEngine {
                 traceID: trace,
                 intentionallySwitchedDisplays: &intentionallySwitchedDisplays
             )
+        } else {
+            restored = wm.apply(frame: record.origFrame, to: windowAX, operationID: trace, stage: "restore_orig")
+
+            if restored {
+                if let postFrame = wm.frame(of: windowAX) {
+                    let onMainScreen = CoordinateKit.isOnMainScreen(postFrame)
+                    if onMainScreen {
+                        log("[ToggleEngine] restore: AX apply moved window to correct screen", fields: [
+                            "traceID": trace,
+                            "windowID": String(windowID),
+                            "origFrame": "\(record.origFrame)"
+                        ])
+                    }
+                }
+
+                switchToOriginalSpace(
+                    record: record,
+                    windowAX: windowAX,
+                    effectiveWindowID: effectiveWindowID,
+                    triggerSource: triggerSource,
+                    traceID: trace,
+                    intentionallySwitchedDisplays: &intentionallySwitchedDisplays
+                )
+            } else {
+                log("ToggleEngine.restore: AX apply failed, no fallback available", level: .error, fields: [
+                    "traceID": trace,
+                    "windowID": String(windowID)
+                ])
+            }
         }
 
         // 6. 检测并修复 CGEvent 意外切换其他 display 的问题
@@ -392,6 +269,155 @@ extension ToggleEngine {
             ])
         }
         return restored
+    }
+
+    // MARK: - Cross-Display Restore
+
+    /// 跨显示器 restore：切目标 display 到目标 space → AX apply → 验证 post-move 位置
+    private func performCrossDisplayRestore(
+        record: ToggleRecord,
+        windowAX: AXUIElement,
+        effectiveWindowID: UInt32,
+        triggerSource: String,
+        traceID: String,
+        intentionallySwitchedDisplays: inout Set<Int>
+    ) -> Bool {
+        let wm = WindowManager.shared
+        let spaceController = SpaceController.shared
+
+        let targetDisplay = record.sourceYabaiDisp
+        let targetSpace = record.sourceSpace
+        let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+
+        log("[ToggleEngine] restore: pre-apply space switch", fields: [
+            "traceID": traceID,
+            "windowID": String(effectiveWindowID),
+            "targetDisplay": String(describing: targetDisplay),
+            "targetSpace": String(targetSpace),
+            "displayCurrentSpace": String(describing: displayCurrentSpace)
+        ])
+
+        if let current = displayCurrentSpace, current != targetSpace {
+            let switched = performSpaceSwitch(
+                targetDisplay: targetDisplay,
+                targetSpace: targetSpace,
+                traceID: traceID,
+                intentionallySwitchedDisplays: &intentionallySwitchedDisplays
+            )
+
+            if switched {
+                usleep(150_000)
+            } else {
+                let visibleSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
+                log("[ToggleEngine] restore: target space switch failed, falling back to visible space", level: .warn, fields: [
+                    "traceID": traceID,
+                    "targetSpace": String(targetSpace),
+                    "visibleSpace": String(describing: visibleSpace),
+                    "targetDisplay": String(targetDisplay)
+                ])
+                if let vis = visibleSpace, vis != current {
+                    _ = performSpaceSwitch(
+                        targetDisplay: targetDisplay,
+                        targetSpace: vis,
+                        traceID: traceID,
+                        intentionallySwitchedDisplays: &intentionallySwitchedDisplays
+                    )
+                    usleep(100_000)
+                }
+            }
+            log("[ToggleEngine] restore: display switched to target space", fields: [
+                "traceID": traceID,
+                "targetSpace": String(targetSpace),
+                "intentionallySwitchedDisplays": intentionallySwitchedDisplays.sorted().map { "d\($0)" }.joined(separator: ",")
+            ])
+        }
+
+        // AX apply
+        var restored = wm.apply(frame: record.origFrame, to: windowAX, operationID: traceID, stage: "restore_orig")
+
+        if restored {
+            if let postFrame = wm.frame(of: windowAX) {
+                let onExpectedScreen: Bool
+                if record.sourceYabaiDisp == 1 {
+                    onExpectedScreen = CoordinateKit.isOnMainScreen(postFrame)
+                } else {
+                    onExpectedScreen = !CoordinateKit.isOnMainScreen(postFrame)
+                }
+                if !onExpectedScreen {
+                    log("[ToggleEngine] restore: AX apply succeeded but window on WRONG screen, marking as failed", level: .warn, fields: [
+                        "traceID": traceID,
+                        "windowID": String(effectiveWindowID),
+                        "postFrame": "\(postFrame)",
+                        "expectedDisplay": String(record.sourceYabaiDisp)
+                    ])
+                    restored = false
+                } else {
+                    log("[ToggleEngine] restore: AX apply moved window to correct screen", fields: [
+                        "traceID": traceID,
+                        "windowID": String(effectiveWindowID),
+                        "origFrame": "\(record.origFrame)"
+                    ])
+                }
+            }
+        }
+
+        if !restored {
+            log("ToggleEngine.restore: AX apply failed, no fallback available", level: .error, fields: [
+                "traceID": traceID,
+                "windowID": String(effectiveWindowID)
+            ])
+            return false
+        }
+
+        // Post-move verification
+        let postMoveAX = wm.findWindowByPID(record.pid, windowID: effectiveWindowID) ?? windowAX
+        let postMoveWindowID = wm.windowHandle(for: postMoveAX) ?? effectiveWindowID
+
+        if postMoveWindowID != effectiveWindowID {
+            log("[ToggleEngine] restore: CGWindowNumber changed after cross-display move", level: .info, fields: [
+                "traceID": traceID,
+                "beforeCrossMoveID": String(effectiveWindowID),
+                "afterCrossMoveID": String(postMoveWindowID)
+            ])
+        }
+
+        spaceController.setWindowFloat(postMoveWindowID, operationID: traceID)
+
+        if let actualSpace = spaceController.windowSpaceIndex(windowID: postMoveWindowID),
+           actualSpace != record.sourceSpace {
+            log("[ToggleEngine] restore: window on wrong space after AX apply, trying moveWindow fallback", level: .warn, fields: [
+                "traceID": traceID,
+                "effectiveWindowID": String(postMoveWindowID),
+                "actualSpace": String(actualSpace),
+                "targetSpace": String(record.sourceSpace)
+            ])
+            let moved = spaceController.moveWindow(
+                postMoveWindowID,
+                toSpaceIndex: record.sourceSpace,
+                focus: triggerSource == "carbon_hotkey",
+                operationID: traceID
+            )
+
+            if !moved {
+                log("[ToggleEngine] restore: moveWindow failed, switching display to window's actual space for visibility", level: .warn, fields: [
+                    "traceID": traceID,
+                    "effectiveWindowID": String(postMoveWindowID),
+                    "actualSpace": String(actualSpace),
+                    "targetSpace": String(record.sourceSpace)
+                ])
+                let switched = spaceController.switchDisplayToSpace(
+                    targetSpace: actualSpace,
+                    operationID: traceID
+                )
+                log("[ToggleEngine] restore: display switch to actual space result", fields: [
+                    "traceID": traceID,
+                    "switched": String(switched),
+                    "actualSpace": String(actualSpace)
+                ])
+            }
+        }
+
+        return true
     }
 
     // MARK: - Space Switch Helper
