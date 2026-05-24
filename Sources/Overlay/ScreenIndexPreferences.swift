@@ -41,10 +41,10 @@ struct ScreenIndexPreferences: Codable {
     var opacity: CGFloat
     var textColor: CodableColor
     var backgroundColor: CodableColor
-    var panelScale: CGFloat  // 新增：面板缩放比例
-    var panelMargin: CGFloat  // 新增：面板到屏幕边缘的边距
+    var panelScale: CGFloat
+    var panelMargin: CGFloat
     var yabaiPath: String?
-    var usePerScreenSpaceIndexing: Bool  // 新增：使用屏幕级别的工作区索引
+    var usePerScreenSpaceIndexing: Bool
 
     static let `default` = ScreenIndexPreferences(
         isEnabled: false,
@@ -53,19 +53,16 @@ struct ScreenIndexPreferences: Codable {
         opacity: 0.8,
         textColor: CodableColor(.white),
         backgroundColor: CodableColor(.black.opacity(0.6)),
-        panelScale: 1.0,  // 默认不缩放
-        panelMargin: 20,  // 默认边距 20pt
+        panelScale: 1.0,
+        panelMargin: 20,
         yabaiPath: nil,
-        usePerScreenSpaceIndexing: true  // 默认使用屏幕级别空间索引
+        usePerScreenSpaceIndexing: true
     )
 
     static let userDefaultsKey = "screenIndexPreferences"
 
     static func load() -> ScreenIndexPreferences {
-        log("ScreenIndexPreferences.load() entered", level: .debug)
-        // 使用 CFPreferences API 读取设置
         let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
-        log("ScreenIndexPreferences.load() reading from CFPreferences", level: .debug, fields: ["bundleId": bundleId])
         if let value = CFPreferencesCopyAppValue(userDefaultsKey as CFString, bundleId as CFString),
            let jsonString = value as? String,
            let data = jsonString.data(using: .utf8) {
@@ -73,15 +70,9 @@ struct ScreenIndexPreferences: Codable {
                 let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
                 let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
                 log("ScreenIndexPreferences loaded: isEnabled=\(prefs.isEnabled)")
-                log("ScreenIndexPreferences.load() decoded from CFPreferences", level: .debug, fields: [
-                    "isEnabled": String(prefs.isEnabled),
-                    "position": prefs.position.rawValue
-                ])
                 return migrated
             } catch {
                 log("ScreenIndexPreferences decode error: \(error)")
-                log("ScreenIndexPreferences.load() CFPreferences decode failed, trying legacy", level: .debug, fields: ["error": error.localizedDescription])
-                // 尝试加载旧版本设置（向后兼容）
                 if let oldPrefs = loadLegacyPreferences(from: data) {
                     log("ScreenIndexPreferences: Loaded legacy preferences with migration")
                     oldPrefs.save()
@@ -89,37 +80,25 @@ struct ScreenIndexPreferences: Codable {
                 }
             }
         }
-        // 回退到 UserDefaults.standard
-        log("ScreenIndexPreferences.load() falling back to UserDefaults.standard", level: .debug)
         if let data = UserDefaults.standard.data(forKey: userDefaultsKey) {
             do {
                 let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
                 let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
-                log("ScreenIndexPreferences loaded from standard: isEnabled=\(prefs.isEnabled)")
-                log("ScreenIndexPreferences.load() decoded from UserDefaults", level: .debug, fields: [
-                    "isEnabled": String(prefs.isEnabled),
-                    "position": prefs.position.rawValue
-                ])
+                log("ScreenIndexPreferences loaded from UserDefaults: isEnabled=\(prefs.isEnabled)")
                 return migrated
             } catch {
-                log("ScreenIndexPreferences decode error from standard: \(error)")
-                log("ScreenIndexPreferences.load() UserDefaults decode failed, trying legacy", level: .debug, fields: ["error": error.localizedDescription])
-                // 尝试加载旧版本设置（向后兼容）
+                log("ScreenIndexPreferences decode error from UserDefaults: \(error)")
                 if let oldPrefs = loadLegacyPreferences(from: data) {
-                    log("ScreenIndexPreferences: Loaded legacy preferences from standard with migration")
+                    log("ScreenIndexPreferences: Loaded legacy preferences from UserDefaults with migration")
                     oldPrefs.save()
                     return oldPrefs
                 }
             }
         }
-        log("ScreenIndexPreferences: Using defaults (isEnabled=false)")
-        log("ScreenIndexPreferences.load() returning defaults", level: .debug)
         return .default
     }
 
-    // 向后兼容：加载旧版本设置并迁移到新版本
     private static func loadLegacyPreferences(from data: Data) -> ScreenIndexPreferences? {
-        log("ScreenIndexPreferences.loadLegacyPreferences() entered", level: .debug)
         struct LegacyPreferences: Codable {
             var isEnabled: Bool
             var position: IndexPosition
@@ -134,12 +113,6 @@ struct ScreenIndexPreferences: Codable {
 
         do {
             let legacy = try JSONDecoder().decode(LegacyPreferences.self, from: data)
-            log("ScreenIndexPreferences.loadLegacyPreferences() decoded legacy format", level: .debug, fields: [
-                "isEnabled": String(legacy.isEnabled),
-                "position": legacy.position.rawValue,
-                "hasPanelScale": String(legacy.panelScale != nil),
-                "hasPanelMargin": String(legacy.panelMargin != nil)
-            ])
             return ScreenIndexPreferences(
                 isEnabled: legacy.isEnabled,
                 position: legacy.position,
@@ -159,11 +132,7 @@ struct ScreenIndexPreferences: Codable {
     }
 
     private static func enforcePerScreenSpaceIndexingIfNeeded(_ preferences: ScreenIndexPreferences) -> ScreenIndexPreferences {
-        log("ScreenIndexPreferences.enforcePerScreenSpaceIndexingIfNeeded() checking", level: .debug, fields: [
-            "usePerScreenSpaceIndexing": String(preferences.usePerScreenSpaceIndexing)
-        ])
         guard !preferences.usePerScreenSpaceIndexing else {
-            log("ScreenIndexPreferences.enforcePerScreenSpaceIndexingIfNeeded() already per-screen, no migration needed", level: .debug)
             return preferences
         }
 
@@ -171,15 +140,10 @@ struct ScreenIndexPreferences: Codable {
         migrated.usePerScreenSpaceIndexing = true
         log("ScreenIndexPreferences: Migrating global workspace index mode to per-screen mode")
         migrated.save()
-        log("ScreenIndexPreferences.enforcePerScreenSpaceIndexingIfNeeded() migration completed", level: .debug)
         return migrated
     }
 
     func save() {
-        log("ScreenIndexPreferences.save() entered", level: .debug, fields: [
-            "isEnabled": String(isEnabled),
-            "position": position.rawValue
-        ])
         guard let data = try? JSONEncoder().encode(self),
               let jsonString = String(data: data, encoding: .utf8) else {
             log("ScreenIndexPreferences: Failed to encode")
@@ -190,7 +154,6 @@ struct ScreenIndexPreferences: Codable {
         CFPreferencesAppSynchronize(bundleId as CFString)
         UserDefaults.standard.set(jsonString, forKey: Self.userDefaultsKey)
         PreferencesSync.persistToDisk()
-        log("ScreenIndexPreferences: Saved successfully")
     }
 }
 
