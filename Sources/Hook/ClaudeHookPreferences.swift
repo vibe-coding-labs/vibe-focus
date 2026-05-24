@@ -16,6 +16,16 @@ enum ClaudeHookPreferences {
     static let endpointPath = "/claude/hook"
     static let defaultPort = 39277
 
+    // MARK: - 统一默认值（唯一源）
+    // 所有默认值只在这里定义一次，SettingsUI 和 PreferencesSync 引用这些常量，
+    // 编译器保证一致性，防止默认值漂移导致 app 重启后配置被重置。
+
+    static let defaultEnabled = false
+    static let defaultAutoFocusOnSessionEnd = true
+    static let defaultTriggerOnStop = true
+    static let defaultTriggerOnSessionEnd = false
+    static let defaultAutoRestoreOnPromptSubmit = true
+
     static var helperScriptDir: String {
         (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus")
     }
@@ -30,7 +40,7 @@ enum ClaudeHookPreferences {
 
     static var isEnabled: Bool {
         get {
-            let value = UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
+            let value = UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? defaultEnabled
             log("ClaudeHookPreferences.isEnabled read", level: .debug, fields: ["value": String(value)])
             return value
         }
@@ -99,7 +109,7 @@ enum ClaudeHookPreferences {
 
     static var autoFocusOnSessionEnd: Bool {
         get {
-            UserDefaults.standard.object(forKey: autoFocusOnSessionEndKey) as? Bool ?? true
+            UserDefaults.standard.object(forKey: autoFocusOnSessionEndKey) as? Bool ?? defaultAutoFocusOnSessionEnd
         }
         set {
             UserDefaults.standard.set(newValue, forKey: autoFocusOnSessionEndKey)
@@ -108,7 +118,7 @@ enum ClaudeHookPreferences {
     }
 
     static var triggerOnStop: Bool {
-        get { UserDefaults.standard.object(forKey: triggerOnStopKey) as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: triggerOnStopKey) as? Bool ?? defaultTriggerOnStop }
         set {
             UserDefaults.standard.set(newValue, forKey: triggerOnStopKey)
             PreferencesSync.persistToDisk()
@@ -116,7 +126,7 @@ enum ClaudeHookPreferences {
     }
 
     static var triggerOnSessionEnd: Bool {
-        get { UserDefaults.standard.object(forKey: triggerOnSessionEndKey) as? Bool ?? false }
+        get { UserDefaults.standard.object(forKey: triggerOnSessionEndKey) as? Bool ?? defaultTriggerOnSessionEnd }
         set {
             UserDefaults.standard.set(newValue, forKey: triggerOnSessionEndKey)
             PreferencesSync.persistToDisk()
@@ -124,7 +134,7 @@ enum ClaudeHookPreferences {
     }
 
     static var autoRestoreOnPromptSubmit: Bool {
-        get { UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? defaultAutoRestoreOnPromptSubmit }
         set {
             UserDefaults.standard.set(newValue, forKey: autoRestoreOnPromptSubmitKey)
             PreferencesSync.persistToDisk()
