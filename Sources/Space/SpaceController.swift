@@ -66,16 +66,12 @@ final class SpaceController: ObservableObject {
     private let checkInterval: TimeInterval = 20
 
     private init() {
-        // Delay initial check to ensure log function is available
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            log("[SpaceController] Initializing...")
             self?.refreshAvailability(force: true)
         }
     }
 
-    deinit {
-        log("[SpaceController] Deinit called")
-    }
+    deinit {}
 
     func updateEnabledState() {
         let newValue = SpacePreferences.integrationEnabled && availability == .available
@@ -90,31 +86,23 @@ final class SpaceController: ObservableObject {
     }
 
     func refreshAvailability(force: Bool) {
-        log("refreshAvailability called, force=\(force), lastCheckAt=\(String(describing: lastCheckAt))")
-
         if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < checkInterval {
-            log("Skipping refresh - within check interval")
             return
         }
 
         lastCheckAt = Date()
         lastErrorMessage = nil
 
-        log("Looking for yabai...")
         guard let yabaiPath = locateYabai() else {
-            log("yabai not found - setting availability to .notInstalled")
             availability = .notInstalled
             canControlSpaces = false
             updateEnabledState()
             return
         }
 
-        log("Found yabai at: \(yabaiPath)")
         cachedYabaiPath = yabaiPath
 
-        log("Running yabai query...")
         guard let result = runYabai(arguments: ["-m", "query", "--spaces"]) else {
-            log("Failed to run yabai - setting availability to .unavailable")
             availability = .unavailable
             canControlSpaces = false
             lastErrorMessage = "Unable to launch yabai"
@@ -122,30 +110,20 @@ final class SpaceController: ObservableObject {
             return
         }
 
-        log("yabai query result: exitCode=\(result.exitCode), stdout=\(result.stdout.prefix(100)), stderr=\(result.stderr)")
-
         if result.exitCode == 0 {
-            log("yabai available - checking scripting-addition status")
             availability = .available
-            // yabai 恢复可用，重置 focusSpaceKnownBroken 标记
             WindowManager.shared.focusSpaceKnownBroken = false
-            // yabai query --spaces 不需要 scripting-addition，但窗口操作需要
-            // 检测 SA 是否已加载：尝试一个需要 SA 的操作
             let saLoaded = checkScriptingAdditionLoaded(yabaiPath: yabaiPath)
             if saLoaded {
                 canControlSpaces = true
                 lastErrorMessage = nil
-                log("yabai available with scripting-addition loaded")
             } else {
                 canControlSpaces = false
                 lastErrorMessage = "yabai scripting-addition 未加载，跨工作区恢复功能受限。请在设置中加载 scripting-addition。"
-                log("yabai available but scripting-addition NOT loaded - auto-attempting recovery")
-                // 自动尝试无密码方式加载（不弹管理员权限窗口）
                 attemptSilentSARecovery(yabaiPath: yabaiPath)
             }
             updateEnabledState()
         } else {
-            log("yabai query failed - setting availability to .unavailable")
             availability = .unavailable
             canControlSpaces = false
             lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)

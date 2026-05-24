@@ -4,23 +4,16 @@ import Foundation
 
 extension SettingsView {
 
-
     func refreshInstallations() {
         guard !isCheckingInstallations else { return }
         isCheckingInstallations = true
         let bundleID = bundleIdentifier
         let startedAt = Date()
-        log(
-            "[Settings] refresh installations start",
-            fields: [
-                "bundleID": bundleID
-            ]
-        )
         DispatchQueue.global(qos: .userInitiated).async {
             let paths = findAppBundlePaths(bundleIdentifier: bundleID)
             DispatchQueue.main.async {
-                duplicateAppPaths = paths
-                isCheckingInstallations = false
+                self.duplicateAppPaths = paths
+                self.isCheckingInstallations = false
                 logOperationDuration(
                     "[Settings] refresh installations finished",
                     startedAt: startedAt,
@@ -34,16 +27,12 @@ extension SettingsView {
         }
     }
 
-
     func showDuplicateInFinder(path: String) {
-        log("SettingsView.showDuplicateInFinder entry", level: .debug, fields: ["path": path])
         let url = URL(fileURLWithPath: path)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-
     func moveDuplicateToTrash(path: String) {
-        log("SettingsView.moveDuplicateToTrash entry", level: .debug, fields: ["path": path])
         let alert = NSAlert()
         alert.messageText = "确认删除"
         alert.informativeText = "确定要将以下应用移到废纸篓吗？\n\n\(path)\n\n此操作不可撤销。"
@@ -53,15 +42,12 @@ extension SettingsView {
 
         let response = alert.runModal()
         guard response == .alertFirstButtonReturn else {
-            log("SettingsView.moveDuplicateToTrash user cancelled", level: .debug)
             return
         }
 
         do {
             let url = URL(fileURLWithPath: path)
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-            log("Moved duplicate to trash: \(path)")
-            log("SettingsView.moveDuplicateToTrash success", level: .debug, fields: ["path": path])
             refreshInstallations()
         } catch {
             let errorAlert = NSAlert()
@@ -73,9 +59,7 @@ extension SettingsView {
         }
     }
 
-
     func moveAllDuplicatesToTrash() {
-        log("SettingsView.moveAllDuplicatesToTrash entry", level: .debug, fields: ["count": String(otherInstallations.count)])
         let pathsToDelete = otherInstallations
         guard !pathsToDelete.isEmpty else { return }
 
@@ -88,7 +72,6 @@ extension SettingsView {
 
         let response = alert.runModal()
         guard response == .alertFirstButtonReturn else {
-            log("SettingsView.moveAllDuplicatesToTrash user cancelled", level: .debug)
             return
         }
 
@@ -97,7 +80,6 @@ extension SettingsView {
             do {
                 let url = URL(fileURLWithPath: path)
                 try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                log("Moved duplicate to trash: \(path)")
             } catch {
                 failedPaths.append(path)
             }
@@ -115,13 +97,11 @@ extension SettingsView {
         }
     }
 
-
     // MARK: - Claude Hook Test Helpers
 
     func sendTestHookEvent() {
         let port = hookPort
         let testSessionID = "test-\(UUID().uuidString.prefix(8))"
-        // 确保 token 已生成
         if hookToken.isEmpty {
             ClaudeHookPreferences.ensureTokenGenerated()
             hookToken = ClaudeHookPreferences.authToken ?? ""
@@ -148,15 +128,7 @@ extension SettingsView {
             token: token
         ) { result in
             switch result {
-            case .success(let data):
-                log(
-                    "[Settings] test SessionStart response",
-                    fields: [
-                        "sessionID": testSessionID,
-                        "response": String(data: data, encoding: .utf8) ?? "nil"
-                    ]
-                )
-                // 1 秒后发送 SessionEnd
+            case .success:
                 let endPort = port
                 let endToken = token
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -177,16 +149,7 @@ extension SettingsView {
                         ],
                         token: endToken
                     ) { endResult in
-                        switch endResult {
-                        case .success(let endData):
-                            log(
-                                "[Settings] test SessionEnd response",
-                                fields: [
-                                    "sessionID": testSessionID,
-                                    "response": String(data: endData, encoding: .utf8) ?? "nil"
-                                ]
-                            )
-                        case .failure(let endError):
+                        if case .failure(let endError) = endResult {
                             log(
                                 "[Settings] test SessionEnd failed",
                                 level: .error,
@@ -211,7 +174,6 @@ extension SettingsView {
         }
     }
 
-
     static func sendHookRequest(
         port: Int,
         endpoint: String,
@@ -219,7 +181,6 @@ extension SettingsView {
         token: String?,
         completion: @escaping (Result<Data, Error>) -> Void
     ) {
-        log("SettingsView.sendHookRequest entry", level: .debug, fields: ["port": String(port), "endpoint": endpoint, "hasToken": String(token != nil)])
         guard let url = URL(string: "http://127.0.0.1:\(port)\(endpoint)") else {
             completion(.failure(NSError(domain: "VibeFocus", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
@@ -237,18 +198,9 @@ extension SettingsView {
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         } catch {
-            log("SettingsView.sendHookRequest JSON serialization failed", level: .debug, fields: ["error": error.localizedDescription])
             completion(.failure(error))
             return
         }
-
-        log(
-            "[Settings] sending HTTP request",
-            fields: [
-                "url": url.absoluteString,
-                "payload": String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "nil"
-            ]
-        )
 
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
@@ -259,13 +211,6 @@ extension SettingsView {
                 completion(.failure(NSError(domain: "VibeFocus", code: -2, userInfo: [NSLocalizedDescriptionKey: "Not HTTP response"])))
                 return
             }
-            log(
-                "[Settings] HTTP response received",
-                fields: [
-                    "statusCode": String(httpResponse.statusCode),
-                    "url": url.absoluteString
-                ]
-            )
             if httpResponse.statusCode >= 400 {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "nil"
                 completion(.failure(NSError(
