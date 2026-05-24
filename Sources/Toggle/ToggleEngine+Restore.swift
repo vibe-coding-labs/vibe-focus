@@ -113,6 +113,15 @@ extension ToggleEngine {
             }
         }
 
+        // 2.5 检测 SA 可用性 — 如果上次操作遇到 SA 错误，刷新状态
+        // 避免 restore 过程中反复尝试已经失败的 yabai SA 命令
+        if !spaceController.canControlSpaces {
+            log("[ToggleEngine] restore: SA not available, forcing refresh before restore", level: .warn, fields: [
+                "traceID": trace, "windowID": String(windowID)
+            ])
+            spaceController.refreshAvailability(force: true)
+        }
+
         // 3. 先将窗口设为浮动状态（必须在任何移动之前！）
         // yabai 会在窗口到达新 space 的瞬间 tile 窗口，改变尺寸
         log("[ToggleEngine] restore: setting window float", level: .debug, fields: [
