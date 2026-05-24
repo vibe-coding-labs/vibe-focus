@@ -25,10 +25,6 @@ extension WindowManager {
         }
 
         let targetFrame = axFrame(forVisibleFrameOf: mainScreen)
-        let origFrame = snapshot.frame
-
-        log("System Events snapshot frame: \(origFrame)")
-        log("System Events target frame: \(targetFrame)")
 
         guard systemEventsApply(frame: targetFrame, toPID: frontApp.processIdentifier) else {
             log("System Events fallback failed to move window")
@@ -61,15 +57,6 @@ extension WindowManager {
             log("No toggle record for window \(windowID) in System Events restore")
             return
         }
-
-        log(
-            "[restoreViaSystemEvents] matched window, applying frame",
-            level: .debug,
-            fields: [
-                "windowID": String(windowID),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
-            ]
-        )
 
         guard systemEventsApply(frame: record.origFrame, toPID: frontApp.processIdentifier) else {
             log("[restoreViaSystemEvents] systemEventsApply failed", level: .error)
