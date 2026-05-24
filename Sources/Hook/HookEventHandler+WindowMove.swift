@@ -34,16 +34,25 @@ extension HookEventHandler {
         }
 
         guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+            // 无绑定 — 尝试 terminal context 降级（app 重启后绑定丢失的场景）
             log(
-                "[HookEventHandler] \(triggerName) no binding found, skipping",
+                "[HookEventHandler] \(triggerName) no binding found, trying terminal context fallback",
                 level: .warn,
                 fields: ["sessionID": payload.sessionID]
             )
+
+            if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext,
+               let identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) {
+                return moveTerminalContextWindowToMainScreen(
+                    identity: identity, payload: payload, triggerName: triggerName
+                )
+            }
+
             return (
                 200,
                 ClaudeHookResponse(
                     ok: true, code: "no_binding_skip",
-                    message: "No session binding, skipping window move",
+                    message: "No session binding or terminal context, skipping window move",
                     sessionID: payload.sessionID, handled: false
                 )
             )
@@ -261,6 +270,117 @@ extension HookEventHandler {
             ClaudeHookResponse(
                 ok: false, code: "window_move_failed",
                 message: "Found session binding but failed to move window",
+                sessionID: payload.sessionID, handled: false
+            )
+        )
+    }
+
+    // MARK: - Terminal Context Fallback（无绑定时通过终端上下文定位窗口）
+
+    private func moveTerminalContextWindowToMainScreen(
+        identity: WindowIdentity,
+        payload: ClaudeHookPayload,
+        triggerName: String
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        // 预检：如果窗口已在主屏幕上，跳过移动
+        if WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
+            log(
+                "[HookEventHandler] \(triggerName) [terminalCtx] window already on main screen, skipping",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "windowID": String(identity.windowID),
+                    "app": identity.appName ?? "unknown"
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "already_on_main_screen",
+                    message: "Window already on main screen, no action needed",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 安全检查：确保是终端/IDE 窗口
+        let isTerminal = Self.isTerminalOrIDEApp(
+            appName: identity.appName,
+            bundleIdentifier: identity.bundleIdentifier
+        )
+        if !isTerminal {
+            log(
+                "[HookEventHandler] \(triggerName) [terminalCtx] resolved window is non-terminal, skipping",
+                level: .warn,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "app": identity.appName ?? "unknown",
+                    "bundleID": identity.bundleIdentifier ?? "nil"
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "non_terminal_window",
+                    message: "Resolved window is not a terminal/IDE app, skipping",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        log(
+            "[HookEventHandler] \(triggerName) [terminalCtx] moving window to main screen",
+            fields: [
+                "sessionID": payload.sessionID,
+                "app": identity.appName ?? "unknown",
+                "windowID": String(identity.windowID),
+                "pid": String(identity.pid)
+            ]
+        )
+
+        let moved = WindowManager.shared.moveWindowToMainScreen(
+            identity: identity,
+            reason: .claudeSessionEnd,
+            sessionID: payload.sessionID
+        )
+        if moved {
+            log(
+                "[HookEventHandler] \(triggerName) [terminalCtx] window moved successfully",
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "app": identity.appName ?? "unknown"
+                ]
+            )
+            Task { @MainActor in
+                SoundManager.shared.playCompletionSound()
+                DockBadgeManager.shared.showBadge(
+                    targetBundleID: identity.bundleIdentifier,
+                    targetAppName: identity.appName
+                )
+            }
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "window_focused",
+                    message: "Window moved to main screen via terminal context",
+                    sessionID: payload.sessionID, handled: true
+                )
+            )
+        }
+
+        log(
+            "[HookEventHandler] \(triggerName) [terminalCtx] window move failed",
+            level: .error,
+            fields: [
+                "sessionID": payload.sessionID,
+                "app": identity.appName ?? "unknown",
+                "windowID": String(identity.windowID)
+            ]
+        )
+        return (
+            409,
+            ClaudeHookResponse(
+                ok: false, code: "window_move_failed",
+                message: "Found window via terminal context but failed to move",
                 sessionID: payload.sessionID, handled: false
             )
         )
