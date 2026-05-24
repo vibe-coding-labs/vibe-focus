@@ -233,13 +233,6 @@ extension WindowManager {
         )
 
         let axTrusted = hasAccessibilityPermission()
-        log(
-            "[WindowManager] accessibility check",
-            fields: [
-                "op": op,
-                "axTrusted": String(axTrusted)
-            ]
-        )
 
         if !axTrusted {
             log(
@@ -254,11 +247,6 @@ extension WindowManager {
             moveToMainScreenViaSystemEvents()
             return
         }
-        log(
-            "[WindowManager] move_to_main AX OK, capturing focused window identity",
-            level: .debug,
-            fields: ["op": op]
-        )
         guard let identity = captureFocusedWindowIdentity() else {
             log(
                 "[WindowManager] move_to_main failed: focused window identity missing",
@@ -270,28 +258,11 @@ extension WindowManager {
             CrashContextRecorder.shared.record("move_to_main_failed_identity_missing op=\(op)")
             return
         }
-        log(
-            "[WindowManager] move_to_main captured identity",
-            level: .debug,
-            fields: [
-                "op": op,
-                "windowID": String(identity.windowID),
-                "pid": String(identity.pid)
-            ]
-        )
         let moved = moveWindowToMainScreen(
             identity: identity,
             reason: .manualHotkey,
             sessionID: nil,
             operationID: op
-        )
-        log(
-            "[WindowManager] move_to_main moveWindowToMainScreen returned",
-            level: .debug,
-            fields: [
-                "op": op,
-                "moved": String(moved)
-            ]
         )
         if moved {
             // 移动窗口后 macOS 可能丢失焦点，重新 focus 被移动的窗口
