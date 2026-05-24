@@ -166,15 +166,7 @@ extension HookEventHandler {
             }
         }
 
-        let identity = WindowIdentity(
-            windowID: windowID,
-            pid: binding.pid,
-            bundleIdentifier: binding.bundleIdentifier,
-            appName: binding.appName,
-            windowNumber: binding.axWindowNumber,
-            title: binding.title,
-            capturedAt: binding.createdAt
-        )
+        let identity = WindowIdentity(from: binding)
 
         return moveWindowToMainScreenAndRespond(
             identity: identity,
