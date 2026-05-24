@@ -147,6 +147,21 @@ enum NativeSpaceBridge {
         return true
     }
 
+    // MARK: - Mission Control Dismissal
+
+    /// 发送 Escape 键关闭 Mission Control
+    /// 当 yabai 报 "mission-control is active" 错误时，Mission Control 正在显示中
+    /// 此时所有 space 切换命令（yabai + CGEvent Ctrl+Arrow）都会失败
+    static func dismissMissionControl(operationID: String? = nil) {
+        let op = operationID ?? "none"
+        log("[NativeSpaceBridge] dismissing Mission Control via Escape key", fields: ["op": op])
+        let escapeDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: true)
+        escapeDown?.post(tap: .cghidEventTap)
+        let escapeUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: false)
+        escapeUp?.post(tap: .cghidEventTap)
+        usleep(150_000) // 等待 Mission Control 动画结束
+    }
+
     // MARK: - Window Drag (CGEvent Mouse Simulation)
 
     /// 通过 CGEvent 模拟鼠标拖拽，将窗口从当前显示器移到目标显示器。
