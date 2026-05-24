@@ -15,13 +15,13 @@ enum PreferencesSync {
     /// 注册表：每个 key 对应其默认值。缺失 key 在 restore 时用默认值填充。
     /// 注意：token 不持久化到磁盘（安全性考虑，每次安装重新生成）
     private static let preferenceRegistry: [String: Any] = [
-        // ClaudeHookPreferences
-        ClaudeHookPreferences.enabledKey: false,
+        // ClaudeHookPreferences — 默认值引用 ClaudeHookPreferences.defaultXxx 常量
+        ClaudeHookPreferences.enabledKey: ClaudeHookPreferences.defaultEnabled,
         ClaudeHookPreferences.portKey: ClaudeHookPreferences.defaultPort,
-        ClaudeHookPreferences.autoFocusOnSessionEndKey: true,
-        ClaudeHookPreferences.triggerOnStopKey: true,
-        ClaudeHookPreferences.triggerOnSessionEndKey: false,
-        ClaudeHookPreferences.autoRestoreOnPromptSubmitKey: true,
+        ClaudeHookPreferences.autoFocusOnSessionEndKey: ClaudeHookPreferences.defaultAutoFocusOnSessionEnd,
+        ClaudeHookPreferences.triggerOnStopKey: ClaudeHookPreferences.defaultTriggerOnStop,
+        ClaudeHookPreferences.triggerOnSessionEndKey: ClaudeHookPreferences.defaultTriggerOnSessionEnd,
+        ClaudeHookPreferences.autoRestoreOnPromptSubmitKey: ClaudeHookPreferences.defaultAutoRestoreOnPromptSubmit,
 
         // SpacePreferences
         SpacePreferences.integrationEnabledKey: true,

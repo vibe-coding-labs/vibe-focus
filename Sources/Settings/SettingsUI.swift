@@ -18,7 +18,7 @@ struct SettingsView: View {
     // Claude Hook 集成
     @StateObject var hookServer = ClaudeHookServer.shared
     @StateObject var sessionRegistry = SessionWindowRegistry.shared
-    @AppStorage(ClaudeHookPreferences.enabledKey) var hookEnabled = false
+    @AppStorage(ClaudeHookPreferences.enabledKey) var hookEnabled = ClaudeHookPreferences.defaultEnabled
     @AppStorage(ClaudeHookPreferences.portKey) var hookPort = ClaudeHookPreferences.defaultPort
 
     var activeSessionList: some View {
@@ -81,10 +81,10 @@ struct SettingsView: View {
         })
     }
     @State var hookToken: String = ""
-    @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) var autoFocusOnSessionEnd = true
-    @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = true
-    @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) var triggerOnSessionEnd = false
-    @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) var autoRestoreOnPromptSubmit = true
+    @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) var autoFocusOnSessionEnd = ClaudeHookPreferences.defaultAutoFocusOnSessionEnd
+    @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop
+    @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) var triggerOnSessionEnd = ClaudeHookPreferences.defaultTriggerOnSessionEnd
+    @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) var autoRestoreOnPromptSubmit = ClaudeHookPreferences.defaultAutoRestoreOnPromptSubmit
     @State var hookInstallMessage: String?
     @State var hookInstallSucceeded = false
 
