@@ -45,6 +45,13 @@ struct WindowIdentity: Codable, Equatable {
 /// 统一的窗口状态记录 — 对应 SQLite `windows` 表的一行
 /// 合并了原来的 SessionWindowBinding + SavedWindowState
 struct WindowState: Codable, Equatable {
+
+    // MARK: - Binding Type
+    enum BindingType: String, Equatable, Codable {
+        case local       // Local terminal (TTY/PPID match)
+        case remote      // Remote SSH (machine_label mapping)
+    }
+
     // MARK: - Primary Key
     var windowID: UInt32          // CGWindowNumber — 主键，CGWindowNumber 变化时可重映射
     var pid: Int32
@@ -67,6 +74,9 @@ struct WindowState: Codable, Equatable {
     var sessionID: String?
     var cwd: String?
     var model: String?
+
+    // MARK: - Binding Origin (in-memory only, not persisted to SQLite)
+    var bindingType: BindingType = .local
 
     // MARK: - Toggle State (窗口位置信息)
     var origX: CGFloat?
