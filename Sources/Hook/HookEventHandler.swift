@@ -13,6 +13,19 @@ final class HookEventHandler {
 
     private init() {}
 
+    // MARK: - Pure Decision Helpers (extracted for testability)
+
+    /// Pure: should a Stop event be debounced because the session was recently active?
+    static func shouldDebounceStop(elapsed: TimeInterval, threshold: TimeInterval = 30.0) -> Bool {
+        elapsed < threshold
+    }
+
+    /// Pure: is a window still in the auto-restore cooldown period?
+    static func isInCooldown(lastRestore: Date?, now: Date = Date(), cooldownSeconds: TimeInterval = 30) -> Bool {
+        guard let lastRestore else { return false }
+        return now.timeIntervalSince(lastRestore) < cooldownSeconds
+    }
+
     // MARK: - Session Start
 
     func handleSessionStart(
@@ -214,6 +227,35 @@ final class HookEventHandler {
 
         // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
+            // 无 ToggleRecord（如远程 session 从未被 toggle 过）→ fallback: 直接移到主屏
+            if !WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
+                log(
+                    "[HookEventHandler] UserPromptSubmit: no toggle record, falling back to moveWindowToMainScreen",
+                    fields: [
+                        "traceID": traceID,
+                        "sessionID": payload.sessionID,
+                        "windowID": String(identity.windowID)
+                    ]
+                )
+                let moved = WindowManager.shared.moveWindowToMainScreen(
+                    identity: identity,
+                    reason: .claudeSessionEnd,
+                    sessionID: payload.sessionID
+                )
+                if moved {
+                    lastAutoRestoreByWindowID[identity.windowID] = Date()
+                }
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true,
+                        code: moved ? "window_moved" : "window_move_failed",
+                        message: moved ? "Window moved to main screen (no toggle record)" : "Move to main screen failed",
+                        sessionID: payload.sessionID,
+                        handled: moved
+                    )
+                )
+            }
             return (
                 200,
                 ClaudeHookResponse(
@@ -244,6 +286,39 @@ final class HookEventHandler {
     }
 
     // MARK: - UserPromptSubmit Sub-steps
+
+    /// Window identity resolution decision — extracted for testability.
+    enum WindowResolutionSource {
+        case binding(WindowIdentity)
+        case terminalContext(WindowIdentity)
+        case bindingFailedTerminalFallback(WindowIdentity)
+    }
+
+    /// Pure decision logic for resolveWindowIdentity.
+    /// Returns the resolution source or nil if no window can be identified.
+    static func decideWindowResolution(
+        hasBinding: Bool,
+        bindingVerified: Bool,
+        bindingIdentity: WindowIdentity?,
+        hasTerminalContext: Bool,
+        terminalContextIdentity: WindowIdentity?
+    ) -> WindowResolutionSource? {
+        if hasBinding {
+            if bindingVerified, let identity = bindingIdentity {
+                return .binding(identity)
+            }
+            // Binding failed verification — try terminal context fallback
+            if hasTerminalContext, let identity = terminalContextIdentity {
+                return .bindingFailedTerminalFallback(identity)
+            }
+            return nil
+        }
+        // No binding — try terminal context
+        if hasTerminalContext, let identity = terminalContextIdentity {
+            return .terminalContext(identity)
+        }
+        return nil
+    }
 
     private func resolveWindowIdentity(
         payload: ClaudeHookPayload,
@@ -285,6 +360,31 @@ final class HookEventHandler {
     private struct RestoreValidation {
         let record: ToggleRecord
         let mainScreen: NSScreen
+    }
+
+    /// Restore eligibility decision — extracted for testability.
+    enum RestoreEligibility {
+        case eligible(record: ToggleRecord, mainScreenFrame: CGRect)
+        case toggleInFlight
+        case windowNotOnMainScreen
+        case noRecord
+        case recordInvalid(windowID: UInt32)
+    }
+
+    /// Pure decision logic for validateRestoreEligibility.
+    static func decideRestoreEligibility(
+        isToggleInFlight: Bool,
+        isWindowOnMainScreen: Bool,
+        record: ToggleRecord?,
+        mainScreenFrame: CGRect?
+    ) -> RestoreEligibility {
+        if isToggleInFlight { return .toggleInFlight }
+        if !isWindowOnMainScreen { return .windowNotOnMainScreen }
+        guard let record else { return .noRecord }
+        guard let mainScreenFrame, record.isValid(mainScreenFrame: mainScreenFrame) else {
+            return .recordInvalid(windowID: record.windowID)
+        }
+        return .eligible(record: record, mainScreenFrame: mainScreenFrame)
     }
 
     private func validateRestoreEligibility(
