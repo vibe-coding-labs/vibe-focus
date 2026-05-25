@@ -10,6 +10,23 @@ import Cocoa
 @MainActor
 extension ToggleEngine {
 
+    /// Pure decision: which record to use for restore, and which window ID to look up?
+    /// Returns (record, axLookupWindowID) or nil if no record found.
+    static func resolveRestoreRecord(
+        windowID: UInt32,
+        fallbackPID: Int32?,
+        loadByWindowID: (UInt32) -> ToggleRecord?,
+        loadByPID: (Int32) -> ToggleRecord?
+    ) -> (record: ToggleRecord, axLookupID: UInt32)? {
+        var record = loadByWindowID(windowID)
+        if record == nil, let pid = fallbackPID {
+            record = loadByPID(pid)
+        }
+        guard let record else { return nil }
+        let axLookupID = (record.windowID != windowID) ? windowID : record.windowID
+        return (record, axLookupID)
+    }
+
     @discardableResult
     func restore(windowID: UInt32, fallbackPID: Int32? = nil, triggerSource: String, traceID: String? = nil) -> Bool {
         let trace = traceID ?? makeOperationID(prefix: "te")
@@ -46,13 +63,23 @@ extension ToggleEngine {
             "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))"
         ])
 
-        // 4. Move to original space via yabai (one shot)
-        let moved = sc.moveWindow(
-            axLookupID,
-            toSpace: .yabai(record.sourceSpace),
-            focus: triggerSource == "carbon_hotkey",
-            operationID: trace
-        )
+        // 4. Move to original space via yabai (skip if sourceSpace=0 — no space info available)
+        var moved = false
+        if record.sourceSpace > 0 {
+            moved = sc.moveWindow(
+                axLookupID,
+                toSpace: .yabai(record.sourceSpace),
+                focus: triggerSource == "carbon_hotkey",
+                operationID: trace
+            )
+            log("[ToggleEngine] restore: space move result", fields: [
+                "traceID": trace, "moved": String(moved), "sourceSpace": String(record.sourceSpace)
+            ])
+        } else {
+            log("[ToggleEngine] restore: sourceSpace=0, skipping yabai space move (no space info)", fields: [
+                "traceID": trace, "windowID": String(windowID)
+            ])
+        }
 
         // 5. Float on target space — prevents yabai from tiling
         sc.setWindowFloat(axLookupID, operationID: trace)
