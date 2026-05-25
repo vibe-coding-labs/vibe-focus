@@ -119,30 +119,30 @@ extension WindowManager {
         let effectiveWindowID = windowHandle(for: windowAX) ?? identity.windowID
         spaceController.setWindowFloat(effectiveWindowID, operationID: op)
 
-        // Save toggle record
+        // Save toggle record — always save, even when yabai can't determine space
+        // (sourceSpace=0 signals "no space info, skip yabai space move on restore")
         let actualTargetFrame = frame(of: windowAX) ?? targetFrame
-        if let sourceSpaceIndex = spaceContext.sourceSpaceIndex {
-            let sourceContext = displayContext(for: origFrame)
-            let teSourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.index.map { .yabai($0) } ?? .yabai(0)
-            let postMoveWindowID = windowHandle(for: windowAX) ?? effectiveWindowID
-            if postMoveWindowID != effectiveWindowID {
-                SessionWindowRegistry.shared.remapWindowID(oldWindowID: effectiveWindowID, newWindowID: postMoveWindowID)
-            }
-            ToggleEngine.shared.save(
-                windowID: postMoveWindowID,
-                pid: identity.pid,
-                bundleIdentifier: identity.bundleIdentifier,
-                appName: identity.appName,
-                origFrame: origFrame,
-                sourceSpace: sourceSpaceIndex,
-                sourceDisplay: teSourceDisplay,
-                sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? .yabai(0),
-                sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
-                targetFrame: actualTargetFrame,
-                targetDisplay: targetDisplayIndex ?? 0,
-                sessionID: sessionID
-            )
+        let sourceSpaceIndex = spaceContext.sourceSpaceIndex ?? .yabai(0)
+        let sourceContext = displayContext(for: origFrame)
+        let teSourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.index.map { .yabai($0) } ?? .yabai(0)
+        let postMoveWindowID = windowHandle(for: windowAX) ?? effectiveWindowID
+        if postMoveWindowID != effectiveWindowID {
+            SessionWindowRegistry.shared.remapWindowID(oldWindowID: effectiveWindowID, newWindowID: postMoveWindowID)
         }
+        ToggleEngine.shared.save(
+            windowID: postMoveWindowID,
+            pid: identity.pid,
+            bundleIdentifier: identity.bundleIdentifier,
+            appName: identity.appName,
+            origFrame: origFrame,
+            sourceSpace: sourceSpaceIndex,
+            sourceDisplay: teSourceDisplay,
+            sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? .yabai(0),
+            sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
+            targetFrame: actualTargetFrame,
+            targetDisplay: targetDisplayIndex ?? 0,
+            sessionID: sessionID
+        )
 
         log("[WindowManager] moveWindowToMainScreen finished", fields: [
             "op": op,
