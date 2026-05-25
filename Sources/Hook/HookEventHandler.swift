@@ -38,7 +38,9 @@ final class HookEventHandler {
                 "sessionID": payload.sessionID,
                 "cwd": payload.cwd ?? "nil",
                 "hasTerminalCtx": String(payload.terminalCtx != nil),
-                "terminalCtxUseful": String(payload.terminalCtx?.hasUsefulContext ?? false)
+                "terminalCtxUseful": String(payload.terminalCtx?.hasUsefulContext ?? false),
+                "isRemote": String(payload.terminalCtx?.isRemote ?? false),
+                "machineLabel": payload.terminalCtx?.machineLabel ?? "nil"
             ]
         )
 
@@ -62,6 +64,16 @@ final class HookEventHandler {
         // 区分本地绑定和远程映射
         let identity: WindowIdentity
         if terminalCtx.isRemote, let label = terminalCtx.machineLabel {
+            log(
+                "[handleSessionStart] remote session detected, resolving via machine_label",
+                level: .debug,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "machineLabel": label,
+                    "tty": terminalCtx.tty ?? "nil",
+                    "ppid": terminalCtx.ppid ?? "nil"
+                ]
+            )
             // 远程机器：通过 machine_label 查映射表
             guard let resolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID) else {
                 return (
@@ -75,7 +87,17 @@ final class HookEventHandler {
             }
             identity = resolved
         } else {
-            // 本地机器：用 PPID/TTY 进程树匹配（原有逻辑）
+            // 本地机器：用 PPID/TTY 进程树匹配
+            log(
+                "[handleSessionStart] local session, resolving via TTY/PPID",
+                level: .debug,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "tty": terminalCtx.tty ?? "nil",
+                    "ppid": terminalCtx.ppid ?? "nil",
+                    "termSessionID": terminalCtx.termSessionID ?? "nil"
+                ]
+            )
             guard let localIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) else {
                 log(
                     "[handleSessionStart] terminal context match failed",
@@ -195,6 +217,16 @@ final class HookEventHandler {
 
         // 1. 解析窗口身份
         guard let identity = resolveWindowIdentity(payload: payload, traceID: traceID, startedAt: handleStartedAt) else {
+            log(
+                "[HookEventHandler] UserPromptSubmit: window identity resolution failed",
+                level: .warn,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "hasTerminalCtx": String(payload.terminalCtx != nil),
+                    "machineLabel": payload.terminalCtx?.machineLabel ?? "nil"
+                ]
+            )
             return (
                 200,
                 ClaudeHookResponse(
@@ -231,7 +263,18 @@ final class HookEventHandler {
         // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
             // 无 ToggleRecord（如远程 session 从未被 toggle 过）→ fallback: 直接移到主屏
-            if !WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
+            let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+            log(
+                "[HookEventHandler] UserPromptSubmit: validateRestoreEligibility returned nil",
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "app": identity.appName ?? "unknown",
+                    "onMainScreen": String(onMainScreen),
+                    "sessionID": payload.sessionID
+                ]
+            )
+            if !onMainScreen {
                 log(
                     "[HookEventHandler] UserPromptSubmit: no toggle record, falling back to moveWindowToMainScreen",
                     fields: [
@@ -331,7 +374,27 @@ final class HookEventHandler {
         let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
 
         if let state {
+            log(
+                "[HookEventHandler] resolveWindowIdentity: found binding",
+                level: .debug,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "windowID": String(state.windowID),
+                    "bindingType": String(describing: state.bindingType),
+                    "app": state.appName ?? "unknown"
+                ]
+            )
             if SessionWindowRegistry.shared.verifyBinding(state) {
+                log(
+                    "[HookEventHandler] resolveWindowIdentity: binding verified",
+                    level: .debug,
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(state.windowID),
+                        "source": "binding"
+                    ]
+                )
                 return WindowIdentity(from: state)
             }
             // 绑定验证失败 — 降级到 terminal context
@@ -354,9 +417,48 @@ final class HookEventHandler {
 
         // 无绑定 — 尝试 terminal context
         if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
-            return WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            log(
+                "[HookEventHandler] resolveWindowIdentity: no binding, trying terminal context",
+                level: .debug,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "tty": terminalCtx.tty ?? "nil",
+                    "isRemote": String(terminalCtx.isRemote),
+                    "machineLabel": terminalCtx.machineLabel ?? "nil"
+                ]
+            )
+            let resolved = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            if let resolved {
+                log(
+                    "[HookEventHandler] resolveWindowIdentity: terminal context resolved",
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(resolved.windowID),
+                        "source": "terminalCtx"
+                    ]
+                )
+            } else {
+                log(
+                    "[HookEventHandler] resolveWindowIdentity: terminal context match failed",
+                    level: .warn,
+                    fields: [
+                        "traceID": traceID,
+                        "sessionID": payload.sessionID
+                    ]
+                )
+            }
+            return resolved
         }
 
+        log(
+            "[HookEventHandler] resolveWindowIdentity: no binding and no terminal context",
+            level: .warn,
+            fields: [
+                "traceID": traceID,
+                "sessionID": payload.sessionID
+            ]
+        )
         return nil
     }
 
@@ -396,26 +498,9 @@ final class HookEventHandler {
     ) -> RestoreValidation? {
         // 防止与手动热键 toggle 冲突
         if HotKeyManager.shared.isToggleInFlight {
-            return nil
-        }
-
-        // 窗口必须在主屏上
-        guard WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) else {
-            return nil
-        }
-
-        // 必须有有效的 toggle record
-        let engine = ToggleEngine.shared
-        guard let record = engine.load(windowID: identity.windowID) else {
-            return nil
-        }
-
-        // record 必须通过验证
-        guard let mainScreen = WindowManager.shared.getMainScreen(),
-              record.isValid(mainScreenFrame: mainScreen.frame) else {
             log(
-                "[HookEventHandler] toggle record failed validation",
-                level: .warn,
+                "[HookEventHandler] validateRestoreEligibility: toggle in flight, skipping",
+                level: .debug,
                 fields: [
                     "traceID": traceID,
                     "windowID": String(identity.windowID)
@@ -423,6 +508,60 @@ final class HookEventHandler {
             )
             return nil
         }
+
+        // 窗口必须在主屏上
+        let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+        guard onMainScreen else {
+            log(
+                "[HookEventHandler] validateRestoreEligibility: window not on main screen",
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "app": identity.appName ?? "unknown"
+                ]
+            )
+            return nil
+        }
+
+        // 必须有有效的 toggle record
+        let engine = ToggleEngine.shared
+        guard let record = engine.load(windowID: identity.windowID) else {
+            log(
+                "[HookEventHandler] validateRestoreEligibility: no toggle record found",
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "pid": String(identity.pid)
+                ]
+            )
+            return nil
+        }
+
+        // record 必须通过验证
+        guard let mainScreen = WindowManager.shared.getMainScreen(),
+              record.isValid(mainScreenFrame: mainScreen.frame) else {
+            log(
+                "[HookEventHandler] validateRestoreEligibility: toggle record failed validation",
+                level: .warn,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sourceSpace": String(record.sourceSpace),
+                    "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
+                ]
+            )
+            return nil
+        }
+
+        log(
+            "[HookEventHandler] validateRestoreEligibility: eligible for restore",
+            fields: [
+                "traceID": traceID,
+                "windowID": String(identity.windowID),
+                "sourceSpace": String(record.sourceSpace),
+                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
+            ]
+        )
 
         return RestoreValidation(record: record, mainScreen: mainScreen)
     }

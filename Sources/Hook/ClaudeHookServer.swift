@@ -134,7 +134,7 @@ final class ClaudeHookServer: ObservableObject {
 
         if let expectedToken = configuredToken, !expectedToken.isEmpty {
             let queryToken = query["token"]
-            let headerToken = headerValue(from: headers, forKey: "X-VibeFocus-Token")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let headerToken = Self.resolveHeaderValue(from: headers, forKey: "X-VibeFocus-Token")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let providedToken = queryToken ?? headerToken
             guard providedToken == expectedToken else {
                 log(
@@ -178,6 +178,22 @@ final class ClaudeHookServer: ObservableObject {
 
         lastEventAt = Date()
 
+        let sourceIP = Self.resolveHeaderValue(from: headers, forKey: "X-Forwarded-For")
+            ?? Self.resolveHeaderValue(from: headers, forKey: "X-Real-IP")
+            ?? "local"
+        let isRemote = sourceIP != "local"
+        log(
+            "[ClaudeHookServer] request received",
+            fields: [
+                "event": payload.event.rawValue,
+                "sessionID": payload.sessionID,
+                "source": isRemote ? "remote(\(sourceIP))" : "local",
+                "isRemote": String(isRemote),
+                "hasTerminalCtx": String(payload.terminalCtx != nil),
+                "machineLabel": payload.terminalCtx?.machineLabel ?? "nil"
+            ]
+        )
+
         let eventHandler = HookEventHandler.shared
         var result: (statusCode: Int, response: ClaudeHookResponse)
 
@@ -201,19 +217,47 @@ final class ClaudeHookServer: ObservableObject {
             unmatchedSessionCount += 1
         }
 
+        log(
+            "[ClaudeHookServer] response sent",
+            fields: [
+                "event": payload.event.rawValue,
+                "sessionID": payload.sessionID,
+                "code": result.response.code,
+                "handled": String(result.response.handled),
+                "statusCode": String(result.statusCode)
+            ]
+        )
+
         return result
     }
 
     // MARK: - Response Helpers
 
     /// Case-insensitive header lookup — GCDWebServer preserves original HTTP header casing
-    private func headerValue(from headers: [String: String], forKey key: String) -> String? {
+    static func resolveHeaderValue(from headers: [String: String], forKey key: String) -> String? {
         if let value = headers[key] { return value }
         let lowerKey = key.lowercased()
         for (k, v) in headers where k.lowercased() == lowerKey {
             return v
         }
         return nil
+    }
+
+    /// Pure token validation — extracted for testability.
+    /// Returns the effective token from query params or headers, or nil if no token needed.
+    static func resolveProvidedToken(query: [String: String], headers: [String: String]) -> String? {
+        let queryToken = query["token"]
+        let headerToken = resolveHeaderValue(from: headers, forKey: "X-VibeFocus-Token")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return queryToken ?? headerToken
+    }
+
+    /// Pure token validation decision — extracted for testability.
+    static func isTokenValid(expectedToken: String?, providedToken: String?) -> Bool {
+        guard let expectedToken, !expectedToken.isEmpty else {
+            return true // No token configured → skip validation
+        }
+        return providedToken == expectedToken
     }
 
     private func makeJSONResponse(statusCode: Int, response: ClaudeHookResponse) -> GCDWebServerDataResponse {

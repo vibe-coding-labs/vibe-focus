@@ -3,6 +3,55 @@ import Foundation
 
 @MainActor
 extension HookEventHandler {
+
+    // MARK: - Window Move Decision Logic (extracted for testability)
+
+    /// Window move trigger decision — all possible outcomes.
+    enum WindowMoveDecision: Equatable {
+        case autoFocusDisabled
+        case noBindingSkip
+        case terminalContextFallback
+        case bindingVerificationFailed
+        case alreadyCompleted
+        case alreadyOnMainScreen
+        case staleBindingPIDMismatch
+        case nonTerminalWindow
+        case proceedToMove(source: String)
+    }
+
+    /// Pure decision logic for handleWindowMoveTrigger.
+    /// Captures the full decision tree from binding resolution through validation.
+    static func decideWindowMove(
+        autoFocusEnabled: Bool,
+        hasBinding: Bool,
+        bindingVerified: Bool,
+        hasTerminalContext: Bool,
+        isCompleted: Bool,
+        isWindowOnMainScreen: Bool,
+        bindingAge: TimeInterval,
+        pidMatches: Bool?,
+        isTerminalOrIDE: Bool
+    ) -> WindowMoveDecision {
+        guard autoFocusEnabled else { return .autoFocusDisabled }
+
+        if !hasBinding {
+            return hasTerminalContext ? .terminalContextFallback : .noBindingSkip
+        }
+
+        guard bindingVerified else { return .bindingVerificationFailed }
+
+        if isCompleted { return .alreadyCompleted }
+        if isWindowOnMainScreen { return .alreadyOnMainScreen }
+
+        if bindingAge > 1800 && pidMatches == false {
+            return .staleBindingPIDMismatch
+        }
+
+        guard isTerminalOrIDE else { return .nonTerminalWindow }
+
+        return .proceedToMove(source: hasBinding ? "binding" : "terminalCtx")
+    }
+
     // MARK: - Window Move Trigger (Stop / SessionEnd)
 
     func handleWindowMoveTrigger(
@@ -38,7 +87,11 @@ extension HookEventHandler {
             log(
                 "[HookEventHandler] \(triggerName) no binding found, trying terminal context fallback",
                 level: .warn,
-                fields: ["sessionID": payload.sessionID]
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "machineLabel": payload.terminalCtx?.machineLabel ?? "nil",
+                    "isRemote": String(payload.terminalCtx?.isRemote ?? false)
+                ]
             )
 
             if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext,
@@ -165,6 +218,17 @@ extension HookEventHandler {
         }
 
         let identity = WindowIdentity(from: binding)
+
+        log(
+            "[HookEventHandler] \(triggerName) proceeding to move binding window",
+            fields: [
+                "sessionID": payload.sessionID,
+                "windowID": String(windowID),
+                "bindingType": binding.bindingType.rawValue,
+                "app": binding.appName ?? "unknown",
+                "bindingAge": String(Int(bindingAge)) + "s"
+            ]
+        )
 
         return moveWindowToMainScreenAndRespond(
             identity: identity,

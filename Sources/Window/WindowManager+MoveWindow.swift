@@ -98,6 +98,15 @@ extension WindowManager {
 
         let spaceContext = spaceController.captureSpaceContext(windowID: identity.windowID, operationID: op)
 
+        log("[WindowManager] moveWindowToMainScreen: space context captured", fields: [
+            "op": op,
+            "windowID": String(identity.windowID),
+            "sourceSpaceIndex": spaceContext.sourceSpaceIndex.map { String(describing: $0) } ?? "nil",
+            "sourceDisplayIndex": spaceContext.sourceDisplayIndex.map { String(describing: $0) } ?? "nil",
+            "sourceDisplaySpaceIndex": String(spaceContext.sourceDisplaySpaceIndex ?? -1),
+            "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.width))x\(Int(origFrame.height))"
+        ])
+
         guard let mainScreen = getMainScreen() else {
             log("moveWindowToMainScreen failed: cannot determine main screen", level: .error, fields: ["op": op])
             return false
@@ -143,6 +152,16 @@ extension WindowManager {
             targetDisplay: targetDisplayIndex ?? 0,
             sessionID: sessionID
         )
+
+        log("[WindowManager] moveWindowToMainScreen: ToggleRecord saved", fields: [
+            "op": op,
+            "windowID": String(postMoveWindowID),
+            "sourceSpace": String(describing: sourceSpaceIndex),
+            "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y))",
+            "targetFrame": "\(Int(actualTargetFrame.origin.x)),\(Int(actualTargetFrame.origin.y))",
+            "reason": reason.rawValue,
+            "sessionID": sessionID ?? "nil"
+        ])
 
         log("[WindowManager] moveWindowToMainScreen finished", fields: [
             "op": op,
