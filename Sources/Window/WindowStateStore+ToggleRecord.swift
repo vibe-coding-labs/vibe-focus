@@ -94,9 +94,9 @@ extension WindowStateStore {
                 orig_x, orig_y, orig_w, orig_h,
                 target_x, target_y, target_w, target_h,
                 source_space, source_display, source_yabai_disp, source_disp_space,
-                target_display, toggle_reason, toggled_at,
+                target_display, toggle_reason, toggled_at, session_id,
                 is_completed, created_at
-            ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_hotkey', ?, 0, ?)
+            ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_hotkey', ?, ?, 0, ?)
         """
 
         guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
@@ -125,7 +125,12 @@ extension WindowStateStore {
         sqlite3_bind_int(stmt, 17, Int32(record.sourceDispSpace))
         sqlite3_bind_int(stmt, 18, Int32(record.targetDisplay))
         sqlite3_bind_double(stmt, 19, record.toggledAt.timeIntervalSince1970)
-        sqlite3_bind_double(stmt, 20, now)
+        if let sid = record.sessionID, !sid.isEmpty {
+            sqlite3_bind_text(stmt, 20, sid, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 20)
+        }
+        sqlite3_bind_double(stmt, 21, now)
 
         let insertResult = sqlite3_step(stmt)
         sqlite3_finalize(stmt)
@@ -271,6 +276,7 @@ extension WindowStateStore {
             sessionID: sessionID,
             cwd: cwd,
             model: model,
+            bindingType: .local,
             origX: origX, origY: origY, origW: origW, origH: origH,
             targetX: targetX, targetY: targetY, targetW: targetW, targetH: targetH,
             sourceSpace: sourceSpace,

@@ -109,6 +109,7 @@ final class HookEventHandler {
                 "windowID": String(identity.windowID)
             ]
         )
+        let resolvedBindingType: WindowState.BindingType = terminalCtx.isRemote ? .remote : .local
         SessionWindowRegistry.shared.bind(
             sessionID: payload.sessionID,
             windowIdentity: identity,
@@ -116,7 +117,8 @@ final class HookEventHandler {
             terminalSessionID: payload.terminalCtx?.termSessionID,
             itermSessionID: payload.terminalCtx?.itermSessionID,
             cwd: payload.cwd,
-            model: payload.model
+            model: payload.model,
+            bindingType: resolvedBindingType
         )
         AuditLogger.shared.record(
             eventType: "session_bind",
@@ -126,6 +128,7 @@ final class HookEventHandler {
             details: [
                 "app": identity.appName ?? "unknown",
                 "isRemote": String(terminalCtx.isRemote),
+                "bindingType": String(describing: resolvedBindingType),
                 "cwd": payload.cwd ?? "nil"
             ]
         )
