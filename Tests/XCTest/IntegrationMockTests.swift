@@ -255,6 +255,20 @@ struct RestoreIntegrationTests {
         #expect(mock.clearedWindowIDs == [42])
     }
 
+    @Test("BindingType: remote session creates .remote binding")
+    func bindingTypeRemote() {
+        let bt = WindowState.BindingType.remote
+        #expect(bt == .remote)
+        #expect(bt.rawValue == "remote")
+    }
+
+    @Test("BindingType: local session creates .local binding")
+    func bindingTypeLocal() {
+        let bt = WindowState.BindingType.local
+        #expect(bt == .local)
+        #expect(bt.rawValue == "local")
+    }
+
     @Test("Full pipeline: Window resolution with binding → no mock interaction needed")
     func windowResolutionBindingPipeline() {
         let bindingIdentity = WindowIdentity(
