@@ -43,6 +43,17 @@ final class SessionWindowRegistry: ObservableObject {
         let now = Date()
         let wid = windowIdentity.windowID
 
+        log("[SessionWindowRegistry] bind called", fields: [
+            "sessionID": sessionID,
+            "windowID": String(wid),
+            "pid": String(windowIdentity.pid),
+            "app": windowIdentity.appName ?? "unknown",
+            "bindingType": bindingType.rawValue,
+            "tty": terminalTTY ?? "nil",
+            "itermSessionID": itermSessionID ?? "nil",
+            "cwd": cwd ?? "nil"
+        ])
+
         guard TerminalRegistry.isTerminalPID(windowIdentity.pid) else {
             log("[SessionWindowRegistry] bind rejected: PID is not a terminal app", level: .warn, fields: [
                 "windowID": String(wid),
@@ -100,6 +111,13 @@ final class SessionWindowRegistry: ObservableObject {
         lastEventDescription = "SessionStart 绑定窗口：\(windowIdentity.appName ?? "Unknown") / \(windowIdentity.title ?? "Untitled")"
         pruneExpiredBindings(shouldPersist: false)
         persistToDB(windowID: wid)
+        log("[SessionWindowRegistry] bind completed", fields: [
+            "sessionID": sessionID,
+            "windowID": String(wid),
+            "bindingType": bindingType.rawValue,
+            "activeBindings": String(activeBindingCount),
+            "totalBindings": String(windowStates.count)
+        ])
     }
 
     // MARK: - Lookup

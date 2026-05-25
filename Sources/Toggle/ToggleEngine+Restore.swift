@@ -33,8 +33,14 @@ extension ToggleEngine {
 
         // 1. Load record (PID fallback for CGWindowNumber instability)
         var record = load(windowID: windowID)
+        let loadedBy = record != nil ? "windowID" : nil
         if record == nil, let pid = fallbackPID {
             record = loadByPID(pid: pid)
+            if record != nil {
+                log("[ToggleEngine] restore: record found via PID fallback", fields: [
+                    "traceID": trace, "windowID": String(windowID), "pid": String(pid)
+                ])
+            }
         }
         guard let record else {
             log("[ToggleEngine] restore: no toggle record", level: .warn, fields: [
@@ -58,9 +64,13 @@ extension ToggleEngine {
         log("[ToggleEngine] restore: starting", fields: [
             "traceID": trace,
             "windowID": String(windowID),
+            "recordWindowID": String(record.windowID),
+            "pid": String(record.pid),
             "sourceSpace": String(record.sourceSpace),
             "triggerSource": triggerSource,
-            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))"
+            "loadedBy": loadedBy ?? "windowID",
+            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))",
+            "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.width))x\(Int(record.targetFrame.height))"
         ])
 
         // 4. Move to original space via yabai (skip if sourceSpace=0 — no space info available)
