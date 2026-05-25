@@ -10,6 +10,9 @@ class TitleEditorService {
 
     private var isEditing = false
 
+    /// Tracks windows the user has manually renamed via Ctrl+T — autoSetTitle skips these
+    private var userRenamedWindowIDs: Set<UInt32> = []
+
     // MARK: - Public API
 
     func editTitle() {
@@ -92,6 +95,10 @@ class TitleEditorService {
         if response == .alertFirstButtonReturn {
             let newTitle = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !newTitle.isEmpty {
+                if let windowID = WindowManager.shared.windowHandle(for: window) {
+                    userRenamedWindowIDs.insert(windowID)
+                    log("[TitleEditorService] marked window as user-renamed", fields: ["windowID": String(windowID)])
+                }
                 applyTitle(newTitle, to: window, pid: pid, bundleID: bundleID)
             }
         }
@@ -103,6 +110,12 @@ class TitleEditorService {
     // MARK: - Auto Title
 
     func autoSetTitle(cwd: String?, pid: pid_t, bundleID: String, window: AXUIElement) {
+        if let windowID = WindowManager.shared.windowHandle(for: window),
+           userRenamedWindowIDs.contains(windowID) {
+            log("[TitleEditorService] autoSetTitle: skipping, user has manually renamed this window", fields: ["windowID": String(windowID)])
+            return
+        }
+
         let projectName: String
         if let cwd = cwd, !cwd.isEmpty {
             projectName = URL(fileURLWithPath: cwd).lastPathComponent
