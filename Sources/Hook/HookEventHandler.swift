@@ -262,28 +262,63 @@ final class HookEventHandler {
 
         // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
-            // 无 ToggleRecord 或窗口不在主屏 → 不操作
-            // 用户可能手动还原了窗口（ToggleRecord 被清除），或窗口本来就不在主屏
-            // Stop 事件负责在 Claude 完成时将窗口移到主屏，UserPromptSubmit 只负责还原
             let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
-            let reason = onMainScreen ? "no_toggle_record" : "window_not_on_main"
+
+            if onMainScreen {
+                log(
+                    "[HookEventHandler] UserPromptSubmit: on main screen but no toggle record, skipping",
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(identity.windowID),
+                        "app": identity.appName ?? "unknown",
+                        "sessionID": payload.sessionID,
+                        "reason": "no_toggle_record"
+                    ]
+                )
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "restore_skipped_no_toggle_record",
+                        message: "Window on main screen but no toggle record",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+
+            // 窗口不在主屏 → 主动移到主屏（toggle fallback）
             log(
-                "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
+                "[HookEventHandler] UserPromptSubmit: window not on main screen, executing toggle fallback",
+                level: .info,
                 fields: [
                     "traceID": traceID,
                     "windowID": String(identity.windowID),
                     "app": identity.appName ?? "unknown",
-                    "onMainScreen": String(onMainScreen),
-                    "sessionID": payload.sessionID,
-                    "reason": reason
+                    "sessionID": payload.sessionID
                 ]
             )
+            let moved = WindowManager.shared.moveWindowToMainScreen(
+                identity: identity,
+                reason: .claudeSessionEnd,
+                sessionID: payload.sessionID
+            )
+            if moved {
+                lastAutoRestoreByWindowID[identity.windowID] = Date()
+                Task { @MainActor in
+                    SoundManager.shared.playCompletionSound()
+                    DockBadgeManager.shared.showBadge(
+                        targetBundleID: identity.bundleIdentifier,
+                        targetAppName: identity.appName
+                    )
+                }
+            }
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "restore_skipped_\(reason)",
-                    message: "Window not eligible for auto-restore (\(reason))",
-                    sessionID: payload.sessionID, handled: false
+                    ok: true,
+                    code: moved ? "toggle_fallback" : "toggle_fallback_failed",
+                    message: moved ? "Window moved to main screen via toggle fallback" : "Toggle fallback failed",
+                    sessionID: payload.sessionID,
+                    handled: moved
                 )
             )
         }
@@ -373,7 +408,43 @@ final class HookEventHandler {
             return nil
         }
 
-        // 无绑定 — 无法识别窗口
+        // 无绑定 — 尝试通过 machineLabel 自愈远程 binding
+        if let label = payload.terminalCtx?.machineLabel, !label.isEmpty {
+            log(
+                "[HookEventHandler] resolveWindowIdentity: no binding, attempting remote self-heal",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "machineLabel": label
+                ]
+            )
+            if let identity = resolveRemoteBinding(label: label, sessionID: payload.sessionID) {
+                log(
+                    "[HookEventHandler] resolveWindowIdentity: remote self-heal succeeded, registering binding",
+                    level: .info,
+                    fields: [
+                        "traceID": traceID,
+                        "sessionID": payload.sessionID,
+                        "machineLabel": label,
+                        "windowID": String(identity.windowID),
+                        "app": identity.appName ?? "unknown"
+                    ]
+                )
+                SessionWindowRegistry.shared.bind(
+                    sessionID: payload.sessionID,
+                    windowIdentity: identity,
+                    terminalTTY: payload.terminalCtx?.tty,
+                    terminalSessionID: payload.terminalCtx?.termSessionID,
+                    itermSessionID: payload.terminalCtx?.itermSessionID,
+                    cwd: payload.cwd,
+                    model: payload.model,
+                    bindingType: .remote
+                )
+                return identity
+            }
+        }
+
         log(
             "[HookEventHandler] resolveWindowIdentity: no binding, cannot identify window",
             level: .warn,
