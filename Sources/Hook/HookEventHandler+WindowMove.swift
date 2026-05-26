@@ -19,12 +19,11 @@ extension HookEventHandler {
     }
 
     /// Pure decision logic for handleWindowMoveTrigger.
-    /// Captures the full decision tree from binding resolution through validation.
+    /// Decision based on physical window state, not session flags.
     static func decideWindowMove(
         autoFocusEnabled: Bool,
         hasBinding: Bool,
         bindingVerified: Bool,
-        isCompleted: Bool,
         isWindowOnMainScreen: Bool,
         bindingAge: TimeInterval,
         pidMatches: Bool?,
@@ -38,7 +37,6 @@ extension HookEventHandler {
 
         guard bindingVerified else { return .bindingVerificationFailed }
 
-        if isCompleted { return .alreadyCompleted }
         if isWindowOnMainScreen { return .alreadyOnMainScreen }
 
         if bindingAge > 1800 && pidMatches == false {
@@ -174,21 +172,6 @@ extension HookEventHandler {
         payload: ClaudeHookPayload,
         triggerName: String
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        if binding.isCompleted {
-            log(
-                "[HookEventHandler] \(triggerName) already completed",
-                fields: ["sessionID": payload.sessionID]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "already_completed",
-                    message: "Session already completed",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
         let windowID = binding.windowID
         let bindingAge = Date().timeIntervalSince(binding.createdAt)
 
