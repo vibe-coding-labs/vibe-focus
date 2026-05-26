@@ -40,7 +40,7 @@ extension WindowManager {
             return matched
         }
 
-        return windows.first
+        return nil
     }
 
     @discardableResult
