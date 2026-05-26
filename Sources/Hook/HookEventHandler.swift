@@ -281,6 +281,7 @@ final class HookEventHandler {
 
         if success {
             lastAutoRestoreByWindowID[identity.windowID] = Date()
+            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
         }
 
         return (
