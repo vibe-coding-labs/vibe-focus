@@ -246,7 +246,10 @@ extension HookEventHandler {
             triggerName: triggerName,
             source: "binding",
             bindingAge: bindingAge,
-            onComplete: { SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID) }
+            onComplete: {
+                SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
+                HookEventHandler.shared.setMoveCooldown(windowID: binding.windowID)
+            }
         )
     }
 
