@@ -31,91 +31,29 @@ extension HookEventHandler {
             return nil
         }
 
-        // 尝试绑定窗口，验证标题是否匹配 SSH 模式
+        // 直接使用绑定的 windowID
         if let identity = WindowManager.shared.findWindowByCGWindowID(boundWindowID) {
-            if titleMatchesSSHPattern(title: identity.title, label: label) {
-                log(
-                    "[HookEventHandler] resolveRemoteBinding: bound window title matches SSH pattern",
-                    fields: [
-                        "label": label,
-                        "windowID": String(boundWindowID),
-                        "title": identity.title ?? "nil",
-                        "sessionID": sessionID
-                    ]
-                )
-                return identity
-            }
-
-            // 绑定窗口标题不匹配 → 搜索正确的窗口
             log(
-                "[HookEventHandler] resolveRemoteBinding: bound window title does not match SSH pattern, scanning for correct window",
-                level: .info,
-                fields: [
-                    "label": label,
-                    "boundWindowID": String(boundWindowID),
-                    "boundTitle": identity.title ?? "nil",
-                    "sessionID": sessionID
-                ]
-            )
-        }
-
-        // 绑定窗口不存在或标题不匹配 → 按 SSH 标题模式搜索所有终端窗口
-        let sshPattern = "@" + label + ":"
-        let windows = cgWindowListAll()
-        let terminalWindows = windows.filter { TerminalRegistry.isTerminalPID($0.ownerPID) }
-        let matched = terminalWindows.filter { entry in
-            guard let title = entry.name, !title.isEmpty else { return false }
-            return title.contains(sshPattern)
-        }
-
-        guard let best = matched.first, let bestIdentity = WindowManager.shared.findWindowByCGWindowID(best.windowID) else {
-            // 没找到匹配的 SSH 窗口 → 回退到绑定的 windowID（如果还存在）
-            if let fallback = WindowManager.shared.findWindowByCGWindowID(boundWindowID) {
-                log(
-                    "[HookEventHandler] resolveRemoteBinding: no SSH title match found, falling back to bound windowID",
-                    level: .info,
-                    fields: [
-                        "label": label,
-                        "windowID": String(boundWindowID),
-                        "sessionID": sessionID
-                    ]
-                )
-                return fallback
-            }
-            log(
-                "[HookEventHandler] resolveRemoteBinding: windowID no longer exists in CGWindowList",
-                level: .warn,
+                "[HookEventHandler] resolveRemoteBinding: resolved via bound windowID",
                 fields: [
                     "label": label,
                     "windowID": String(boundWindowID),
+                    "title": identity.title ?? "nil",
                     "sessionID": sessionID
                 ]
             )
-            return nil
+            return identity
         }
 
-        // 自动更新 LAN binding 到正确的窗口
         log(
-            "[HookEventHandler] resolveRemoteBinding: auto-updating binding to matched window",
-            level: .info,
+            "[HookEventHandler] resolveRemoteBinding: bound windowID no longer exists",
+            level: .warn,
             fields: [
                 "label": label,
-                "oldWindowID": String(boundWindowID),
-                "newWindowID": String(best.windowID),
-                "matchedTitle": best.name ?? "nil",
+                "windowID": String(boundWindowID),
                 "sessionID": sessionID
             ]
         )
-        var updated = LANHookPreferences.remoteBindings
-        updated[label] = best.windowID
-        LANHookPreferences.remoteBindings = updated
-
-        return bestIdentity
-    }
-
-    /// 检查窗口标题是否匹配 SSH 模式（user@machine_label:path）
-    private func titleMatchesSSHPattern(title: String?, label: String) -> Bool {
-        guard let title, !title.isEmpty else { return false }
-        return title.contains("@" + label + ":")
+        return nil
     }
 }

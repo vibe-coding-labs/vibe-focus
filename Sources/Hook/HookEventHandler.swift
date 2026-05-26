@@ -263,62 +263,24 @@ final class HookEventHandler {
         // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
             let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
-
-            if onMainScreen {
-                log(
-                    "[HookEventHandler] UserPromptSubmit: on main screen but no toggle record, skipping",
-                    fields: [
-                        "traceID": traceID,
-                        "windowID": String(identity.windowID),
-                        "app": identity.appName ?? "unknown",
-                        "sessionID": payload.sessionID,
-                        "reason": "no_toggle_record"
-                    ]
-                )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "restore_skipped_no_toggle_record",
-                        message: "Window on main screen but no toggle record",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            }
-
-            // 窗口不在主屏 → 主动移到主屏（toggle fallback）
+            let reason = onMainScreen ? "no_toggle_record" : "window_not_on_main"
             log(
-                "[HookEventHandler] UserPromptSubmit: window not on main screen, executing toggle fallback",
-                level: .info,
+                "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
                 fields: [
                     "traceID": traceID,
                     "windowID": String(identity.windowID),
                     "app": identity.appName ?? "unknown",
-                    "sessionID": payload.sessionID
+                    "onMainScreen": String(onMainScreen),
+                    "sessionID": payload.sessionID,
+                    "reason": reason
                 ]
             )
-            let moved = WindowManager.shared.moveWindowToMainScreen(
-                identity: identity,
-                reason: .claudeSessionEnd,
-                sessionID: payload.sessionID
-            )
-            if moved {
-                lastAutoRestoreByWindowID[identity.windowID] = Date()
-                Task { @MainActor in
-                    SoundManager.shared.playCompletionSound()
-                    DockBadgeManager.shared.showBadge(
-                        targetBundleID: identity.bundleIdentifier,
-                        targetAppName: identity.appName
-                    )
-                }
-            }
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true,
-                    code: moved ? "toggle_fallback" : "toggle_fallback_failed",
-                    message: moved ? "Window moved to main screen via toggle fallback" : "Toggle fallback failed",
-                    sessionID: payload.sessionID,
-                    handled: moved
+                    ok: true, code: "restore_skipped_\(reason)",
+                    message: "Window not eligible for auto-restore (\(reason))",
+                    sessionID: payload.sessionID, handled: false
                 )
             )
         }
