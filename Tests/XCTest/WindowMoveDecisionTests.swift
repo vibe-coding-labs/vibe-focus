@@ -13,7 +13,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: false,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
@@ -27,7 +26,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: false, bindingVerified: false,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
@@ -41,25 +39,10 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: false,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "bindingVerificationFailed")
-    }
-
-    // MARK: - Already completed
-
-    @Test("binding verified but completed → alreadyCompleted")
-    func alreadyCompleted() {
-        let result = HookEventHandler.decideWindowMove(
-            autoFocusEnabled: true,
-            hasBinding: true, bindingVerified: true,
-            isCompleted: true,
-            isWindowOnMainScreen: false, bindingAge: 0,
-            pidMatches: nil, isTerminalOrIDE: true
-        )
-        assertDecision(result, expected: "alreadyCompleted")
     }
 
     // MARK: - Already on main screen
@@ -69,7 +52,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: true, bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
@@ -83,7 +65,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 3600,
             pidMatches: false, isTerminalOrIDE: true
         )
@@ -95,7 +76,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 3600,
             pidMatches: true, isTerminalOrIDE: true
         )
@@ -109,7 +89,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 3600,
             pidMatches: nil, isTerminalOrIDE: true
         )
@@ -123,7 +102,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 100,
             pidMatches: false, isTerminalOrIDE: true
         )
@@ -139,7 +117,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: false
         )
@@ -153,7 +130,6 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: true
         )
@@ -171,19 +147,17 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: false,
             hasBinding: true, bindingVerified: true,
-            isCompleted: false,
             isWindowOnMainScreen: false, bindingAge: 3600,
             pidMatches: false, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "autoFocusDisabled")
     }
 
-    @Test("binding verification failure takes priority over isCompleted")
+    @Test("binding verification failure takes priority over screen position")
     func bindingVerificationPriority() {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: false,
-            isCompleted: true,
             isWindowOnMainScreen: false, bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
