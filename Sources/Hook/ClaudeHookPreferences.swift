@@ -176,7 +176,7 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
 """
     }
 
-    private static func normalizePort(_ value: Int) -> Int {
+    static func normalizePort(_ value: Int) -> Int {
         min(max(value, 1024), 65535)
     }
 

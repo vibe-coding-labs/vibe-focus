@@ -10,7 +10,6 @@ extension HookEventHandler {
     enum WindowMoveDecision: Equatable {
         case autoFocusDisabled
         case noBindingSkip
-        case terminalContextFallback
         case bindingVerificationFailed
         case alreadyCompleted
         case alreadyOnMainScreen
@@ -25,7 +24,6 @@ extension HookEventHandler {
         autoFocusEnabled: Bool,
         hasBinding: Bool,
         bindingVerified: Bool,
-        hasTerminalContext: Bool,
         isCompleted: Bool,
         isWindowOnMainScreen: Bool,
         bindingAge: TimeInterval,
@@ -35,7 +33,7 @@ extension HookEventHandler {
         guard autoFocusEnabled else { return .autoFocusDisabled }
 
         if !hasBinding {
-            return hasTerminalContext ? .terminalContextFallback : .noBindingSkip
+            return .noBindingSkip
         }
 
         guard bindingVerified else { return .bindingVerificationFailed }
@@ -83,9 +81,8 @@ extension HookEventHandler {
         }
 
         guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
-            // 无绑定 — 尝试 terminal context 降级（app 重启后绑定丢失的场景）
             log(
-                "[HookEventHandler] \(triggerName) no binding found, trying terminal context fallback",
+                "[HookEventHandler] \(triggerName) no binding found, skipping",
                 level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
@@ -94,18 +91,11 @@ extension HookEventHandler {
                 ]
             )
 
-            if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext,
-               let identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) {
-                return moveTerminalContextWindowToMainScreen(
-                    identity: identity, payload: payload, triggerName: triggerName
-                )
-            }
-
             return (
                 200,
                 ClaudeHookResponse(
                     ok: true, code: "no_binding_skip",
-                    message: "No session binding or terminal context, skipping window move",
+                    message: "No session binding, skipping window move",
                     sessionID: payload.sessionID, handled: false
                 )
             )
@@ -237,21 +227,6 @@ extension HookEventHandler {
             source: "binding",
             bindingAge: bindingAge,
             onComplete: { SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID) }
-        )
-    }
-
-    // MARK: - Terminal Context Fallback（无绑定时通过终端上下文定位窗口）
-
-    private func moveTerminalContextWindowToMainScreen(
-        identity: WindowIdentity,
-        payload: ClaudeHookPayload,
-        triggerName: String
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        return moveWindowToMainScreenAndRespond(
-            identity: identity,
-            payload: payload,
-            triggerName: triggerName,
-            source: "terminalCtx"
         )
     }
 

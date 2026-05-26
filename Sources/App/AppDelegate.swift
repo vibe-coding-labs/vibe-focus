@@ -2,21 +2,9 @@ import AppKit
 import SwiftUI
 import Foundation
 
-@main
-struct VibeFocusApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    var body: some Scene {
-        Settings {
-            SettingsView()
-                .environmentObject(HotKeyManager.shared)
-        }
-    }
-}
-
 // MARK: - App Delegate
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate {
+public class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var toggleMenuItem: NSMenuItem?
     let openSettingsDistributedNotification = Notification.Name("com.vibefocus.app.open-settings")
@@ -27,7 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let path: String?
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         installCrashSignalHandlers()
         installAtExitHandler()
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
@@ -111,13 +99,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         showSettingsWindowOnLaunch()
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         log("applicationShouldHandleReopen hasVisibleWindows=\(flag)")
         SettingsWindowController.shared.show()
         return true
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    public func applicationWillTerminate(_ notification: Notification) {
         ScreenOverlayManager.shared.flushPendingPreferenceSave(reason: "application_will_terminate")
         PreferencesSync.persistToDiskAndWait()
         CrashContextRecorder.shared.markCleanExit()

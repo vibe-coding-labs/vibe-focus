@@ -8,6 +8,50 @@ class OverlayWindow: NSWindow {
     private var screenIndex: Int = 0
     private var spaceIndex: Int = 0
 
+    /// Pure layout calculation — extracted for testability.
+    static func calculateOverlayOrigin(
+        position: IndexPosition,
+        screenFrame: CGRect,
+        windowSize: CGSize,
+        margin: CGFloat
+    ) -> CGPoint {
+        let edgeMargin = max(0, margin)
+        switch position {
+        case .topLeft:
+            return CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
+        case .topCenter:
+            return CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.maxY - windowSize.height - edgeMargin)
+        case .topRight:
+            return CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
+        case .bottomLeft:
+            return CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.minY + edgeMargin)
+        case .bottomCenter:
+            return CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.minY + edgeMargin)
+        case .bottomRight:
+            return CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.minY + edgeMargin)
+        }
+    }
+
+    /// Pure text and size calculation — extracted for testability.
+    static func calculateOverlayLabel(screenIndex: Int, spaceIndex: Int) -> String {
+        "\(screenIndex + 1)-\(spaceIndex)"
+    }
+
+    /// Pure dimension calculation for overlay — extracted for testability.
+    static func calculateOverlaySize(
+        textWidth: CGFloat,
+        textHeight: CGFloat,
+        scaledFontSize: CGFloat
+    ) -> CGSize {
+        let horizontalPadding: CGFloat = scaledFontSize * 0.8
+        let verticalPadding: CGFloat = scaledFontSize * 0.5
+        let minWidth: CGFloat = scaledFontSize * 3.5
+        let minHeight: CGFloat = scaledFontSize * 2.0
+        let width = max(textWidth + horizontalPadding * 2, minWidth)
+        let height = max(textHeight + verticalPadding * 2, minHeight)
+        return CGSize(width: width, height: height)
+    }
+
     init(screen: NSScreen) {
         let initialFrame = NSRect(x: 0, y: 0, width: 200, height: 100)
         super.init(
@@ -44,8 +88,7 @@ class OverlayWindow: NSWindow {
         self.spaceIndex = spaceIndex
 
         // 屏幕索引从1开始（对用户更友好）
-        let displayScreenIndex = screenIndex + 1
-        let text = "\(displayScreenIndex)-\(spaceIndex)"
+        let text = Self.calculateOverlayLabel(screenIndex: screenIndex, spaceIndex: spaceIndex)
 
         // 计算尺寸（应用面板缩放）
         let scaledFontSize = preferences.fontSize * preferences.panelScale
@@ -60,14 +103,13 @@ class OverlayWindow: NSWindow {
         let attributedString = NSAttributedString(string: text, attributes: attributes)
         let textSize = attributedString.size()
 
-        // 基础尺寸（应用缩放）
-        let horizontalPadding: CGFloat = scaledFontSize * 0.8
-        let verticalPadding: CGFloat = scaledFontSize * 0.5
-        let minWidth: CGFloat = scaledFontSize * 3.5
-        let minHeight: CGFloat = scaledFontSize * 2.0
-
-        let width = max(textSize.width + horizontalPadding * 2, minWidth)
-        let height = max(textSize.height + verticalPadding * 2, minHeight)
+        let overlaySize = Self.calculateOverlaySize(
+            textWidth: textSize.width,
+            textHeight: textSize.height,
+            scaledFontSize: scaledFontSize
+        )
+        let width = overlaySize.width
+        let height = overlaySize.height
 
         // 设置窗口尺寸
         self.setContentSize(CGSize(width: width, height: height))
@@ -99,24 +141,12 @@ class OverlayWindow: NSWindow {
     func updatePosition(for screen: NSScreen, position: IndexPosition = .topRight, margin: CGFloat = 20) {
         let screenFrame = screen.frame
         let windowSize = self.contentView?.bounds.size ?? CGSize(width: 100, height: 60)
-        let edgeMargin = max(0, margin)
-
-        var origin: CGPoint
-        switch position {
-        case .topLeft:
-            origin = CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
-        case .topCenter:
-            origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.maxY - windowSize.height - edgeMargin)
-        case .topRight:
-            origin = CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.maxY - windowSize.height - edgeMargin)
-        case .bottomLeft:
-            origin = CGPoint(x: screenFrame.minX + edgeMargin, y: screenFrame.minY + edgeMargin)
-        case .bottomCenter:
-            origin = CGPoint(x: screenFrame.midX - windowSize.width / 2, y: screenFrame.minY + edgeMargin)
-        case .bottomRight:
-            origin = CGPoint(x: screenFrame.maxX - windowSize.width - edgeMargin, y: screenFrame.minY + edgeMargin)
-        }
-
+        let origin = Self.calculateOverlayOrigin(
+            position: position,
+            screenFrame: screenFrame,
+            windowSize: windowSize,
+            margin: margin
+        )
         self.setFrameOrigin(origin)
     }
 

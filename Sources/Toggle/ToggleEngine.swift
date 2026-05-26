@@ -10,7 +10,7 @@ import ApplicationServices
 /// 2. 确定性查找：用 windowID 直接查 SQLite，不走 PID/TTY/PPID 猜测链
 /// 3. 原子操作：save 是一次 SQLite UPDATE，read 是一次 SELECT
 @MainActor
-final class ToggleEngine {
+final class ToggleEngine: ToggleRecordStore {
 
     static let shared = ToggleEngine()
     private init() {}
@@ -19,6 +19,15 @@ final class ToggleEngine {
 
     var displayCount: Int {
         max(NSScreen.screens.count, 1)
+    }
+
+    // MARK: - Save Validation (extracted for testability)
+
+    /// Pure decision: should a save be rejected because origFrame is on the main screen?
+    static func shouldRejectSave(origFrame: CGRect, mainScreenFrame: CGRect?) -> Bool {
+        guard let mainScreenFrame else { return false }
+        let origCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
+        return mainScreenFrame.contains(origCenter)
     }
 
     // MARK: - Save (Ctrl+Q 触发)
@@ -40,22 +49,19 @@ final class ToggleEngine {
     ) {
         // 验证 origFrame 不在主屏上 — 如果 origFrame 在主屏，说明数据异常
         let mainScreen = NSScreen.screens.first { $0.frame.origin == .zero }
-        if let mainScreenFrame = mainScreen?.frame {
-            let origCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
-            if mainScreenFrame.contains(origCenter) {
-                log(
-                    "[ToggleEngine] save rejected: origFrame is on main screen (corrupted data)",
-                    level: .warn,
-                    fields: [
-                        "windowID": String(windowID),
-                        "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-                        "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))",
-                        "sourceSpace": String(describing: sourceSpace),
-                        "sourceYabaiDisp": String(describing: sourceYabaiDisp)
-                    ]
-                )
-                return
-            }
+        if Self.shouldRejectSave(origFrame: origFrame, mainScreenFrame: mainScreen?.frame) {
+            log(
+                "[ToggleEngine] save rejected: origFrame is on main screen (corrupted data)",
+                level: .warn,
+                fields: [
+                    "windowID": String(windowID),
+                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+                    "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))",
+                    "sourceSpace": String(describing: sourceSpace),
+                    "sourceYabaiDisp": String(describing: sourceYabaiDisp)
+                ]
+            )
+            return
         }
 
         let record = ToggleRecord(

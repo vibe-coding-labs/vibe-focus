@@ -10,39 +10,22 @@ import Cocoa
 @MainActor
 extension ToggleEngine {
 
-    /// Pure decision: which record to use for restore, and which window ID to look up?
-    /// Returns (record, axLookupWindowID) or nil if no record found.
+    /// Pure decision: which record to use for restore?
+    /// Returns record or nil if not found. No PID fallback — same-PID windows
+    /// (e.g. all iTerm2 windows) would return the wrong record.
     static func resolveRestoreRecord(
         windowID: UInt32,
-        fallbackPID: Int32?,
-        loadByWindowID: (UInt32) -> ToggleRecord?,
-        loadByPID: (Int32) -> ToggleRecord?
-    ) -> (record: ToggleRecord, axLookupID: UInt32)? {
-        var record = loadByWindowID(windowID)
-        if record == nil, let pid = fallbackPID {
-            record = loadByPID(pid)
-        }
-        guard let record else { return nil }
-        let axLookupID = (record.windowID != windowID) ? windowID : record.windowID
-        return (record, axLookupID)
+        loadByWindowID: (UInt32) -> ToggleRecord?
+    ) -> ToggleRecord? {
+        return loadByWindowID(windowID)
     }
 
     @discardableResult
-    func restore(windowID: UInt32, fallbackPID: Int32? = nil, triggerSource: String, traceID: String? = nil) -> Bool {
+    func restore(windowID: UInt32, triggerSource: String, traceID: String? = nil) -> Bool {
         let trace = traceID ?? makeOperationID(prefix: "te")
 
-        // 1. Load record (PID fallback for CGWindowNumber instability)
-        var record = load(windowID: windowID)
-        let loadedBy = record != nil ? "windowID" : nil
-        if record == nil, let pid = fallbackPID {
-            record = loadByPID(pid: pid)
-            if record != nil {
-                log("[ToggleEngine] restore: record found via PID fallback", fields: [
-                    "traceID": trace, "windowID": String(windowID), "pid": String(pid)
-                ])
-            }
-        }
-        guard let record else {
+        // 1. Load record — windowID only, no PID fallback
+        guard let record = load(windowID: windowID) else {
             log("[ToggleEngine] restore: no toggle record", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID)
             ])
@@ -68,7 +51,6 @@ extension ToggleEngine {
             "pid": String(record.pid),
             "sourceSpace": String(record.sourceSpace),
             "triggerSource": triggerSource,
-            "loadedBy": loadedBy ?? "windowID",
             "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))",
             "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.width))x\(Int(record.targetFrame.height))"
         ])

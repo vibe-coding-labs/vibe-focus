@@ -10,18 +10,19 @@ let package = Package(
         .executable(name: "VibeFocusHotkeys", targets: ["VibeFocusHotkeys"])
     ],
     dependencies: [
-        .package(url: "https://github.com/yene/GCDWebServer", from: "3.5.4")
+        .package(url: "https://github.com/yene/GCDWebServer", from: "3.5.4"),
+        .package(url: "https://github.com/apple/swift-testing", from: "0.7.0")
     ],
     targets: [
         .systemLibrary(name: "Csqlite3", path: "Csqlite3"),
-        .executableTarget(
-            name: "VibeFocusHotkeys",
+        .target(
+            name: "VibeFocusKit",
             dependencies: [
                 .product(name: "GCDWebServer", package: "GCDWebServer"),
                 .target(name: "Csqlite3")
             ],
             path: "Sources",
-            exclude: [],
+            exclude: ["AppEntry"],
             resources: [
                 .copy("../Resources/yabai-space-changed.sh"),
                 .copy("../Resources/claude-session-hook-example.sh"),
@@ -30,6 +31,19 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
+        ),
+        .executableTarget(
+            name: "VibeFocusHotkeys",
+            dependencies: ["VibeFocusKit"],
+            path: "Sources/AppEntry"
+        ),
+        .testTarget(
+            name: "VibeFocusTests",
+            dependencies: [
+                "VibeFocusKit",
+                .product(name: "Testing", package: "swift-testing")
+            ],
+            path: "Tests/XCTest"
         )
     ]
 )

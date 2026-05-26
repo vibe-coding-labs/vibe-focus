@@ -98,7 +98,7 @@ struct ScreenIndexPreferences: Codable {
         return .default
     }
 
-    private static func loadLegacyPreferences(from data: Data) -> ScreenIndexPreferences? {
+    static func loadLegacyPreferences(from data: Data) -> ScreenIndexPreferences? {
         struct LegacyPreferences: Codable {
             var isEnabled: Bool
             var position: IndexPosition
@@ -131,7 +131,7 @@ struct ScreenIndexPreferences: Codable {
         }
     }
 
-    private static func enforcePerScreenSpaceIndexingIfNeeded(_ preferences: ScreenIndexPreferences) -> ScreenIndexPreferences {
+    static func enforcePerScreenSpaceIndexingIfNeeded(_ preferences: ScreenIndexPreferences) -> ScreenIndexPreferences {
         guard !preferences.usePerScreenSpaceIndexing else {
             return preferences
         }

@@ -13,13 +13,13 @@ extension WindowManager {
         // 1. 前置检查：accessibility 权限 + 焦点窗口识别
         guard hasAccessibilityPermission() else {
             log(
-                "[WindowManager] restore fallback: accessibility denied",
+                "[WindowManager] restore failed: accessibility denied",
                 level: .warn,
                 fields: ["op": op]
             )
             CrashContextRecorder.shared.record("restore_ax_denied op=\(op)")
             logDiagnostics("ax_trusted_false_restore")
-            restoreViaSystemEvents()
+            notifyAccessibilityPermissionRequired()
             return
         }
 
@@ -64,7 +64,6 @@ extension WindowManager {
         let engine = ToggleEngine.shared
         let restoreSucceeded = engine.restore(
             windowID: currentWindowID,
-            fallbackPID: frontApp.processIdentifier,
             triggerSource: triggerSource,
             traceID: op
         )

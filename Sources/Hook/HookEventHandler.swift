@@ -262,51 +262,27 @@ final class HookEventHandler {
 
         // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
-            // 无 ToggleRecord（如远程 session 从未被 toggle 过）→ fallback: 直接移到主屏
+            // 无 ToggleRecord 或窗口不在主屏 → 不操作
+            // 用户可能手动还原了窗口（ToggleRecord 被清除），或窗口本来就不在主屏
+            // Stop 事件负责在 Claude 完成时将窗口移到主屏，UserPromptSubmit 只负责还原
             let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+            let reason = onMainScreen ? "no_toggle_record" : "window_not_on_main"
             log(
-                "[HookEventHandler] UserPromptSubmit: validateRestoreEligibility returned nil",
+                "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
                 fields: [
                     "traceID": traceID,
                     "windowID": String(identity.windowID),
                     "app": identity.appName ?? "unknown",
                     "onMainScreen": String(onMainScreen),
-                    "sessionID": payload.sessionID
+                    "sessionID": payload.sessionID,
+                    "reason": reason
                 ]
             )
-            if !onMainScreen {
-                log(
-                    "[HookEventHandler] UserPromptSubmit: no toggle record, falling back to moveWindowToMainScreen",
-                    fields: [
-                        "traceID": traceID,
-                        "sessionID": payload.sessionID,
-                        "windowID": String(identity.windowID)
-                    ]
-                )
-                let moved = WindowManager.shared.moveWindowToMainScreen(
-                    identity: identity,
-                    reason: .claudeSessionEnd,
-                    sessionID: payload.sessionID
-                )
-                if moved {
-                    lastAutoRestoreByWindowID[identity.windowID] = Date()
-                }
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true,
-                        code: moved ? "window_moved" : "window_move_failed",
-                        message: moved ? "Window moved to main screen (no toggle record)" : "Move to main screen failed",
-                        sessionID: payload.sessionID,
-                        handled: moved
-                    )
-                )
-            }
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "no_action_needed",
-                    message: "Window not eligible for restore",
+                    ok: true, code: "restore_skipped_\(reason)",
+                    message: "Window not eligible for auto-restore (\(reason))",
                     sessionID: payload.sessionID, handled: false
                 )
             )
@@ -336,8 +312,6 @@ final class HookEventHandler {
     /// Window identity resolution decision — extracted for testability.
     enum WindowResolutionSource {
         case binding(WindowIdentity)
-        case terminalContext(WindowIdentity)
-        case bindingFailedTerminalFallback(WindowIdentity)
     }
 
     /// Pure decision logic for resolveWindowIdentity.
@@ -345,23 +319,13 @@ final class HookEventHandler {
     static func decideWindowResolution(
         hasBinding: Bool,
         bindingVerified: Bool,
-        bindingIdentity: WindowIdentity?,
-        hasTerminalContext: Bool,
-        terminalContextIdentity: WindowIdentity?
+        bindingIdentity: WindowIdentity?
     ) -> WindowResolutionSource? {
         if hasBinding {
             if bindingVerified, let identity = bindingIdentity {
                 return .binding(identity)
             }
-            // Binding failed verification — try terminal context fallback
-            if hasTerminalContext, let identity = terminalContextIdentity {
-                return .bindingFailedTerminalFallback(identity)
-            }
             return nil
-        }
-        // No binding — try terminal context
-        if hasTerminalContext, let identity = terminalContextIdentity {
-            return .terminalContext(identity)
         }
         return nil
     }
@@ -397,9 +361,8 @@ final class HookEventHandler {
                 )
                 return WindowIdentity(from: state)
             }
-            // 绑定验证失败 — 降级到 terminal context
             log(
-                "[HookEventHandler] binding verification failed, trying terminal context fallback",
+                "[HookEventHandler] resolveWindowIdentity: binding verification failed",
                 level: .warn,
                 fields: [
                     "traceID": traceID,
@@ -407,52 +370,12 @@ final class HookEventHandler {
                     "boundWindowID": String(state.windowID)
                 ]
             )
-            if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
-                if let identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) {
-                    return identity
-                }
-            }
             return nil
         }
 
-        // 无绑定 — 尝试 terminal context
-        if let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext {
-            log(
-                "[HookEventHandler] resolveWindowIdentity: no binding, trying terminal context",
-                level: .debug,
-                fields: [
-                    "traceID": traceID,
-                    "sessionID": payload.sessionID,
-                    "tty": terminalCtx.tty ?? "nil",
-                    "isRemote": String(terminalCtx.isRemote),
-                    "machineLabel": terminalCtx.machineLabel ?? "nil"
-                ]
-            )
-            let resolved = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
-            if let resolved {
-                log(
-                    "[HookEventHandler] resolveWindowIdentity: terminal context resolved",
-                    fields: [
-                        "traceID": traceID,
-                        "windowID": String(resolved.windowID),
-                        "source": "terminalCtx"
-                    ]
-                )
-            } else {
-                log(
-                    "[HookEventHandler] resolveWindowIdentity: terminal context match failed",
-                    level: .warn,
-                    fields: [
-                        "traceID": traceID,
-                        "sessionID": payload.sessionID
-                    ]
-                )
-            }
-            return resolved
-        }
-
+        // 无绑定 — 无法识别窗口
         log(
-            "[HookEventHandler] resolveWindowIdentity: no binding and no terminal context",
+            "[HookEventHandler] resolveWindowIdentity: no binding, cannot identify window",
             level: .warn,
             fields: [
                 "traceID": traceID,
@@ -589,7 +512,6 @@ final class HookEventHandler {
 
         let success = engine.restore(
             windowID: identity.windowID,
-            fallbackPID: identity.pid,
             triggerSource: "user_prompt_submit",
             traceID: traceID
         )

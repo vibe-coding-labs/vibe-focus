@@ -35,6 +35,7 @@ enum PreferencesSync {
 
         // LANHookPreferences
         LANHookPreferences.lanModeKey: LANHookPreferences.defaultLanMode,
+        LANHookPreferences.remoteBindingsKey: "",
 
         // SessionWindowRegistry and WindowManager savedWindowStates
         // migrated to SQLite — no longer in UserDefaults

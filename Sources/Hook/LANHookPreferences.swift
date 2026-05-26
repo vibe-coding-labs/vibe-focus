@@ -16,8 +16,14 @@ enum LANHookPreferences {
 
     /// 远程机器 → 窗口ID 映射, 格式: ["machine-label": windowID]
     /// windowID 为 nil 表示已添加但尚未选择窗口
+    /// 序列化为 JSON string 存入 UserDefaults，以便 PreferencesSync 可持久化到 config.json
     static var remoteBindings: [String: UInt32?] {
         get {
+            if let jsonStr = UserDefaults.standard.string(forKey: remoteBindingsKey),
+               let data = jsonStr.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([String: UInt32].self, from: data) {
+                return decoded.mapValues { Optional($0) }
+            }
             guard let raw = UserDefaults.standard.dictionary(forKey: remoteBindingsKey) else { return [:] }
             var result: [String: UInt32?] = [:]
             for (key, value) in raw {
@@ -27,16 +33,17 @@ enum LANHookPreferences {
                     result[key] = UInt32(id)
                 }
             }
+            if !result.isEmpty {
+                remoteBindings = result
+            }
             return result
         }
         set {
-            var storable: [String: Any] = [:]
-            for (key, value) in newValue {
-                if let id = value {
-                    storable[key] = id
-                }
+            let active: [String: UInt32] = newValue.compactMapValues { $0 }
+            if let data = try? JSONEncoder().encode(active),
+               let jsonStr = String(data: data, encoding: .utf8) {
+                UserDefaults.standard.set(jsonStr, forKey: remoteBindingsKey)
             }
-            UserDefaults.standard.set(storable, forKey: remoteBindingsKey)
             PreferencesSync.persistToDisk()
         }
     }

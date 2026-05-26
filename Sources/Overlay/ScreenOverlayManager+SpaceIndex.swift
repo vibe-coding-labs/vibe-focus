@@ -31,7 +31,7 @@ enum SpaceIndexResolver {
         return nil
     }
 
-    private static func activeDisplaySpaceIndex(in spaces: [SpaceSnapshot]) -> Int? {
+    static func activeDisplaySpaceIndex(in spaces: [SpaceSnapshot]) -> Int? {
         if let visible = spaces.first(where: { $0.isVisible }) {
             return visible.index
         }

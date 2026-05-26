@@ -126,7 +126,7 @@ final class SpaceController: ObservableObject {
         } else {
             availability = .unavailable
             canControlSpaces = false
-            lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+            lastErrorMessage = Self.formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
             updateEnabledState()
         }
     }
@@ -272,7 +272,7 @@ final class SpaceController: ObservableObject {
                 lastErrorMessage = "yabai scripting-addition 不可用，跨工作区恢复功能受限。请在设置中加载 scripting-addition。"
                 canControlSpaces = false
             } else {
-                lastErrorMessage = formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+                lastErrorMessage = Self.formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
             }
         } else {
             lastErrorMessage = fallback
@@ -306,15 +306,7 @@ final class SpaceController: ObservableObject {
     }
 
     func decodeSingleOrFirst<T: Decodable>(_ type: T.Type, from text: String) -> T? {
-        let data = Data(text.utf8)
-        let decoder = JSONDecoder()
-        if let single = try? decoder.decode(T.self, from: data) {
-            return single
-        }
-        if let array = try? decoder.decode([T].self, from: data) {
-            return array.first
-        }
-        return nil
+        Self.staticDecodeSingleOrFirst(type, from: text)
     }
 
     func decodeArray<T: Decodable>(_ type: T.Type, from text: String) -> [T]? {
@@ -326,8 +318,19 @@ final class SpaceController: ObservableObject {
         return nil
     }
 
+    static func staticDecodeSingleOrFirst<T: Decodable>(_ type: T.Type, from text: String) -> T? {
+        let data = Data(text.utf8)
+        let decoder = JSONDecoder()
+        if let single = try? decoder.decode(T.self, from: data) {
+            return single
+        }
+        if let array = try? decoder.decode([T].self, from: data) {
+            return array.first
+        }
+        return nil
+    }
 
-    func formatErrorMessage(stdout: String, stderr: String) -> String {
+    static func formatErrorMessage(stdout: String, stderr: String) -> String {
         let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedStderr = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedStderr.isEmpty {
