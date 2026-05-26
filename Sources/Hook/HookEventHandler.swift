@@ -596,4 +596,9 @@ final class HookEventHandler {
         lastAutoRestoreByWindowID.removeValue(forKey: windowID)
     }
 
+    /// Stop 移动窗口后设置冷却期，阻止 UserPromptSubmit 立即 restore 同一窗口
+    func setMoveCooldown(windowID: UInt32) {
+        lastAutoRestoreByWindowID[windowID] = Date()
+    }
+
 }
