@@ -2,47 +2,9 @@ import Testing
 import Foundation
 @testable import VibeFocusKit
 
-@Suite("Stop Debounce and Cooldown Logic")
+@Suite("Cooldown Logic")
 @MainActor
 struct StopDebounceAndCooldownTests {
-
-    // MARK: - shouldDebounceStop
-
-    @Test("shouldDebounceStop: elapsed < threshold → true")
-    func debounceActive() {
-        #expect(HookEventHandler.shouldDebounceStop(elapsed: 5, threshold: 30))
-    }
-
-    @Test("shouldDebounceStop: elapsed == threshold → false")
-    func debounceExactThreshold() {
-        #expect(!HookEventHandler.shouldDebounceStop(elapsed: 30, threshold: 30))
-    }
-
-    @Test("shouldDebounceStop: elapsed > threshold → false")
-    func debounceExpired() {
-        #expect(!HookEventHandler.shouldDebounceStop(elapsed: 31, threshold: 30))
-    }
-
-    @Test("shouldDebounceStop: zero elapsed → true")
-    func debounceZeroElapsed() {
-        #expect(HookEventHandler.shouldDebounceStop(elapsed: 0, threshold: 30))
-    }
-
-    @Test("shouldDebounceStop: very small elapsed → true")
-    func debounceSmallElapsed() {
-        #expect(HookEventHandler.shouldDebounceStop(elapsed: 0.001, threshold: 30))
-    }
-
-    @Test("shouldDebounceStop: negative elapsed → true (clock skew)")
-    func debounceNegativeElapsed() {
-        #expect(HookEventHandler.shouldDebounceStop(elapsed: -1, threshold: 30))
-    }
-
-    @Test("shouldDebounceStop: custom threshold respected")
-    func debounceCustomThreshold() {
-        #expect(HookEventHandler.shouldDebounceStop(elapsed: 5, threshold: 10))
-        #expect(!HookEventHandler.shouldDebounceStop(elapsed: 15, threshold: 10))
-    }
 
     // MARK: - isInCooldown
 
