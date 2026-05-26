@@ -162,6 +162,7 @@ extension LiveIntegrationTests {
         switch result {
         case .eligible: actual = "eligible"
         case .toggleInFlight: actual = "toggleInFlight"
+        case .windowNotOnMainScreen: actual = "windowNotOnMainScreen"
         case .noRecord: actual = "noRecord"
         case .recordInvalid: actual = "recordInvalid"
         }
