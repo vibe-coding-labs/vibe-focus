@@ -164,16 +164,25 @@ extension ScreenOverlayManager {
         "enabled=\(preferences.isEnabled)|pos=\(preferences.position.rawValue)|font=\(String(format: "%.1f", preferences.fontSize))|opacity=\(String(format: "%.2f", preferences.opacity))|scale=\(String(format: "%.2f", preferences.panelScale))|margin=\(String(format: "%.1f", preferences.panelMargin))"
     }
 
+    /// Generate a deterministic UUID from a display ID — extracted for testability.
+    static func uuidFromDisplayID(_ displayID: UInt32) -> UUID {
+        var uuidBytes = uuid_t(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        uuidBytes.0 = UInt8((displayID >> 24) & 0xFF)
+        uuidBytes.1 = UInt8((displayID >> 16) & 0xFF)
+        uuidBytes.2 = UInt8((displayID >> 8) & 0xFF)
+        uuidBytes.3 = UInt8(displayID & 0xFF)
+        return UUID(uuid: uuidBytes)
+    }
+
+    /// Generate a fallback UUID from a hash value — extracted for testability.
+    static func fallbackUUIDFromHash(_ hashValue: Int) -> UUID {
+        UUID(uuid: uuid_t(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, UInt8(abs(hashValue % 256))))
+    }
+
     func uuidForScreen(_ screen: NSScreen) -> UUID {
         if let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
-            var uuidBytes = uuid_t(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            let value = screenID.uint32Value
-            uuidBytes.0 = UInt8((value >> 24) & 0xFF)
-            uuidBytes.1 = UInt8((value >> 16) & 0xFF)
-            uuidBytes.2 = UInt8((value >> 8) & 0xFF)
-            uuidBytes.3 = UInt8(value & 0xFF)
-            return UUID(uuid: uuidBytes)
+            return Self.uuidFromDisplayID(screenID.uint32Value)
         }
-        return UUID(uuid: uuid_t(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, UInt8(abs(screen.hashValue % 256))))
+        return Self.fallbackUUIDFromHash(screen.hashValue)
     }
 }

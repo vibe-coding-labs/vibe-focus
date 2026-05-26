@@ -128,7 +128,7 @@ final class CrashContextRecorder {
         }
 
         guard let reportText = try? String(contentsOf: latestReport, encoding: .utf8),
-              let payload = parseIPSJSONPayload(from: reportText) else {
+              let payload = parseIPSJSONPayloadAndLog(from: reportText) else {
             log("CrashContextRecorder.ingestLatestCrashReportIfNeeded parse failed", level: .debug, fields: ["reportName": reportName])
             appendEvent("crash_report_parse_failed file=\(reportName)")
             state?.lastIngestedCrashReport = reportName
@@ -170,22 +170,25 @@ final class CrashContextRecorder {
         persistState()
     }
 
-    private func parseIPSJSONPayload(from reportText: String) -> [String: Any]? {
-        log("CrashContextRecorder.parseIPSJSONPayload entry", level: .debug, fields: ["textLength": String(reportText.count)])
+    static func parseIPSJSONPayload(from reportText: String) -> [String: Any]? {
         let lines = reportText.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.count >= 2 else {
-            log("CrashContextRecorder.parseIPSJSONPayload too few lines", level: .debug, fields: ["lineCount": String(lines.count)])
-            return nil
-        }
+        guard lines.count >= 2 else { return nil }
         let payloadText = lines.dropFirst().joined(separator: "\n")
         guard let data = payloadText.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
-              let payload = object as? [String: Any] else {
-            log("CrashContextRecorder.parseIPSJSONPayload JSON parse failed", level: .debug)
-            return nil
-        }
-        log("CrashContextRecorder.parseIPSJSONPayload exit", level: .debug, fields: ["keyCount": String(payload.count)])
+              let payload = object as? [String: Any] else { return nil }
         return payload
+    }
+
+    private func parseIPSJSONPayloadAndLog(from reportText: String) -> [String: Any]? {
+        log("CrashContextRecorder.parseIPSJSONPayload entry", level: .debug, fields: ["textLength": String(reportText.count)])
+        let result = Self.parseIPSJSONPayload(from: reportText)
+        if let result {
+            log("CrashContextRecorder.parseIPSJSONPayload exit", level: .debug, fields: ["keyCount": String(result.count)])
+        } else {
+            log("CrashContextRecorder.parseIPSJSONPayload failed", level: .debug)
+        }
+        return result
     }
 
     private func latestCrashReportURL() -> URL? {

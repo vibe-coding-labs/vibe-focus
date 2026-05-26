@@ -6,8 +6,8 @@ import Foundation
 
 // MARK: - HotKey Manager
 @MainActor
-final class HotKeyManager: ObservableObject {
-    static let shared = HotKeyManager()
+public final class HotKeyManager: ObservableObject {
+    public static let shared = HotKeyManager()
 
     @Published private(set) var currentHotKey: HotKeyConfiguration
     @Published var shortcutStatusMessage = "当前快捷键已生效"
@@ -34,7 +34,7 @@ final class HotKeyManager: ObservableObject {
     let toggleDedupInterval: TimeInterval = 0.15
     let toggleCooldownInterval: TimeInterval = 0.05
 
-    private init() {
+    public init() {
         currentHotKey = Self.loadStoredHotKey()
         accessibilityStatus = Self.checkAccessibility()
     }

@@ -76,12 +76,15 @@ extension SpaceController {
         return match
     }
 
+    /// Pure logic for visibleSpaceIndex — extracted for testability.
+    static func resolveVisibleSpaceIndex(displayIndex: Int?, spaces: [YabaiSpaceInfo]?) -> SpaceIdentifier? {
+        guard let displayIndex else { return nil }
+        return spaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index.map { .yabai($0) }
+    }
+
     func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> SpaceIdentifier? {
-        guard let displayIndex else {
-            return nil
-        }
         let resolvedSpaces = spaces ?? querySpaces()
-        return resolvedSpaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index.map { .yabai($0) }
+        return Self.resolveVisibleSpaceIndex(displayIndex: displayIndex, spaces: resolvedSpaces)
     }
 
     func windowSpaceIndex(windowID: UInt32) -> SpaceIdentifier? {

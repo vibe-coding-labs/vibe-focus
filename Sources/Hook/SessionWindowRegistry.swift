@@ -10,6 +10,10 @@ final class SessionWindowRegistry: ObservableObject {
     /// 内存缓存：key = windowID (CGWindowNumber)，value = WindowState
     private(set) var windowStates: [UInt32: WindowState] = [:]
 
+    /// 次要映射：当同一窗口有多个活跃会话时（如远程 SSH 共享同一 iTerm 窗口），
+    /// 记录 sessionID → windowID 的关系，让 UserPromptSubmit 能找到正确的窗口。
+    private var sessionAliasWindowID: [String: UInt32] = [:]
+
     var activeBindingCount: Int {
         windowStates.values.filter { !$0.isCompleted }.count
     }
@@ -70,6 +74,19 @@ final class SessionWindowRegistry: ObservableObject {
         }
 
         if var existing = windowStates[wid] {
+            // Don't overwrite an active binding from a different session
+            if let existingSID = existing.sessionID, existingSID != sessionID, !existing.isCompleted {
+                log("[SessionWindowRegistry] bind alias: windowID \(wid) already has active binding for session \(existingSID.prefix(8)), recording alias for session \(sessionID.prefix(8))", level: .info, fields: [
+                    "windowID": String(wid),
+                    "existingSessionID": existingSID,
+                    "newSessionID": sessionID,
+                    "existingBindingType": existing.bindingType.rawValue,
+                    "newBindingType": bindingType.rawValue
+                ])
+                sessionAliasWindowID[sessionID] = wid
+                lastEventDescription = "SessionStart 别名绑定：\(windowIdentity.appName ?? "Unknown") / \(sessionID.prefix(8))"
+                return
+            }
             existing.pid = windowIdentity.pid
             existing.tty = terminalTTY
             existing.axWindowNumber = resolvedWindowNumber
@@ -125,6 +142,7 @@ final class SessionWindowRegistry: ObservableObject {
     /// 按 sessionID 查找窗口状态（扫描，低频操作）
     /// 优先返回 PID 有效的绑定，避免返回损坏数据
     func binding(for sessionID: String) -> WindowState? {
+        // 1. Direct lookup: binding has this sessionID
         let candidates = windowStates.values.filter { $0.sessionID == sessionID }
         if let valid = candidates.first(where: { TerminalRegistry.isTerminalPID($0.pid) }) {
             return valid
@@ -132,6 +150,19 @@ final class SessionWindowRegistry: ObservableObject {
         if let first = candidates.first {
             return first
         }
+
+        // 2. Alias lookup: session shares a window with another session
+        if let aliasWindowID = sessionAliasWindowID[sessionID],
+           let state = windowStates[aliasWindowID] {
+            log("[SessionWindowRegistry] binding(for:) resolved via alias", fields: [
+                "sessionID": sessionID,
+                "windowID": String(aliasWindowID),
+                "boundSessionID": String(state.sessionID?.prefix(8) ?? "nil")
+            ])
+            return state
+        }
+
+        // 3. DB fallback
         if let state = WindowStateStore.shared.findWindowStateBySession(sessionID: sessionID) {
             if !TerminalRegistry.isTerminalPID(state.pid) {
                 log("[SessionWindowRegistry] binding(for:) loaded corrupt binding from DB, cleaning up", level: .warn, fields: [
@@ -234,6 +265,7 @@ final class SessionWindowRegistry: ObservableObject {
     // MARK: - State Updates
 
     func markCompleted(sessionID: String) {
+        sessionAliasWindowID.removeValue(forKey: sessionID)
         guard let state = binding(for: sessionID) else { return }
         guard var updated = windowStates[state.windowID] else { return }
         updated.isCompleted = true
@@ -305,6 +337,7 @@ final class SessionWindowRegistry: ObservableObject {
 
     func clearAllBindings() {
         windowStates.removeAll()
+        sessionAliasWindowID.removeAll()
         lastEventDescription = "所有绑定已清除"
         WindowStateStore.shared.deleteAllWindowsStates()
     }

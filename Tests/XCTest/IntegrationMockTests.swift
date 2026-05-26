@@ -36,7 +36,6 @@ struct RestoreIntegrationTests {
         let decision = WindowManager.decideRestore(
             focusedOnMain: true,
             recordByWindowID: loaded,
-            recordByPID: nil,
             mainScreenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080)
         )
         #expect(assertDecisionIs(decision, expectedCase: "restore"))
@@ -56,7 +55,6 @@ struct RestoreIntegrationTests {
         let decision = WindowManager.decideRestore(
             focusedOnMain: true,
             recordByWindowID: loaded,
-            recordByPID: nil,
             mainScreenFrame: mainScreen
         )
 
@@ -69,40 +67,15 @@ struct RestoreIntegrationTests {
         #expect(mock.load(windowID: 42) == nil)
     }
 
-    @Test("Integration pattern: PID fallback when windowID lookup fails")
-    func pidFallbackIntegration() {
+    @Test("Integration pattern: windowID lookup fails → noRecord")
+    func lookupFails() {
         let mock = MockToggleRecordStore()
-        let pidRecord = makeRecord(
-            windowID: 99,
-            origFrame: CGRect(x: 100, y: -1000, width: 800, height: 600),
-            targetFrame: CGRect(x: 500, y: 300, width: 800, height: 600)
-        )
-        mock.recordByPID[1234] = pidRecord
 
-        // windowID lookup returns nil, PID lookup succeeds
         let loadedByID = mock.load(windowID: 42)
-        let loadedByPID = mock.loadByPID(pid: 1234)
 
         let decision = WindowManager.decideRestore(
             focusedOnMain: true,
             recordByWindowID: loadedByID,
-            recordByPID: loadedByPID,
-            mainScreenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        )
-        #expect(assertDecisionIs(decision, expectedCase: "restore"))
-    }
-
-    @Test("Integration pattern: both lookups fail → noRecord")
-    func bothLookupsFail() {
-        let mock = MockToggleRecordStore()
-
-        let loadedByID = mock.load(windowID: 42)
-        let loadedByPID = mock.loadByPID(pid: 1234)
-
-        let decision = WindowManager.decideRestore(
-            focusedOnMain: true,
-            recordByWindowID: loadedByID,
-            recordByPID: loadedByPID,
             mainScreenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080)
         )
         #expect(assertDecisionIs(decision, expectedCase: "noRecord"))
@@ -212,49 +185,6 @@ struct RestoreIntegrationTests {
 
     // MARK: - Full pipeline: mock → decide → clear verification
 
-    @Test("Full pipeline: System Events restore with corrupted record → mock clear called")
-    func systemEventsCorruptedPipeline() {
-        let mock = MockToggleRecordStore()
-        let record = makeRecord(
-            origFrame: CGRect(x: 100, y: 200, width: 800, height: 600),
-            targetFrame: CGRect(x: 500, y: 300, width: 800, height: 600)
-        )
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-
-        // Simulate system events path
-        let loaded = mock.load(windowID: 42)
-        let decision = WindowManager.decideSystemEventsRestore(
-            windowID: 42, record: loaded ?? record, mainScreenFrame: mainScreen
-        )
-
-        if case .corruptedClearWindowID(let windowID) = decision {
-            mock.clear(windowID: windowID)
-        }
-
-        #expect(mock.clearedWindowIDs == [42])
-    }
-
-    @Test("Full pipeline: System Events with sourceSpace=0 → mock clear called")
-    func systemEventsInvalidSourceSpacePipeline() {
-        let mock = MockToggleRecordStore()
-        let record = makeRecord(
-            origFrame: CGRect(x: 100, y: -1000, width: 800, height: 600),
-            targetFrame: CGRect(x: 500, y: 300, width: 800, height: 600),
-            sourceSpace: 0
-        )
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-
-        let decision = WindowManager.decideSystemEventsRestore(
-            windowID: 42, record: record, mainScreenFrame: mainScreen
-        )
-
-        if case .invalidSourceSpaceClearWindowID(let windowID) = decision {
-            mock.clear(windowID: windowID)
-        }
-
-        #expect(mock.clearedWindowIDs == [42])
-    }
-
     @Test("BindingType: remote session creates .remote binding")
     func bindingTypeRemote() {
         let bt = WindowState.BindingType.remote
@@ -276,18 +206,11 @@ struct RestoreIntegrationTests {
             bundleIdentifier: "com.apple.Terminal",
             appName: "Terminal", title: "bash"
         )
-        let terminalIdentity = WindowIdentity(
-            windowID: 99, pid: 5678,
-            bundleIdentifier: "com.apple.Terminal",
-            appName: "Terminal", title: "vim"
-        )
 
         let result = HookEventHandler.decideWindowResolution(
             hasBinding: true,
             bindingVerified: true,
-            bindingIdentity: bindingIdentity,
-            hasTerminalContext: true,
-            terminalContextIdentity: terminalIdentity
+            bindingIdentity: bindingIdentity
         )
 
         if case .binding(let identity) = result {

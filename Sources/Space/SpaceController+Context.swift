@@ -53,6 +53,21 @@ extension SpaceController {
         )
     }
 
+    /// Pure logic for displayLocalSpaceIndex — extracted for testability.
+    static func resolveDisplayLocalSpaceIndex(spaceIndex: Int?, displayIndex: Int?, spaces: [YabaiSpaceInfo]?) -> Int? {
+        guard let spaceIndex, let displayIndex else { return nil }
+        guard let spaces else { return nil }
+        let spacesOnDisplay = spaces
+            .filter { $0.display == displayIndex }
+            .sorted { ($0.index ?? Int.max) < ($1.index ?? Int.max) }
+        for (offset, info) in spacesOnDisplay.enumerated() {
+            if info.index == spaceIndex {
+                return offset + 1
+            }
+        }
+        return nil
+    }
+
     func displayLocalSpaceIndex(forGlobalSpaceIndex spaceIndex: Int?, displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> Int? {
         log(
             "[SpaceController] displayLocalSpaceIndex called",
@@ -63,6 +78,9 @@ extension SpaceController {
                 "hasSpaces": String(spaces != nil)
             ]
         )
+        if let spaces {
+            return Self.resolveDisplayLocalSpaceIndex(spaceIndex: spaceIndex, displayIndex: displayIndex, spaces: spaces)
+        }
         guard let spaceIndex, let displayIndex else {
             log(
                 "[SpaceController] displayLocalSpaceIndex: nil input",
@@ -70,53 +88,36 @@ extension SpaceController {
             )
             return nil
         }
-        let resolvedSpaces: [YabaiSpaceInfo]
-        if let spaces {
-            resolvedSpaces = spaces
-        } else {
-            refreshAvailabilityIfNeeded()
-            guard isEnabled, let queried = querySpaces() else {
-                return nil
-            }
-            resolvedSpaces = queried
+        refreshAvailabilityIfNeeded()
+        guard isEnabled, let queried = querySpaces() else {
+            return nil
         }
+        return Self.resolveDisplayLocalSpaceIndex(spaceIndex: spaceIndex, displayIndex: displayIndex, spaces: queried)
+    }
 
-        let spacesOnDisplay = resolvedSpaces
-            .filter { $0.display == displayIndex }
-            .sorted { ($0.index ?? Int.max) < ($1.index ?? Int.max) }
-
-        for (offset, info) in spacesOnDisplay.enumerated() {
-            if info.index == spaceIndex {
-                return offset + 1
-            }
-        }
-        return nil
+    /// Pure logic for nativeSpaceID — extracted for testability.
+    static func resolveNativeSpaceID(yabaiIndex: Int, spaces: [YabaiSpaceInfo]?) -> Int64? {
+        guard let spaces else { return nil }
+        guard let id = spaces.first(where: { $0.index == yabaiIndex })?.id else { return nil }
+        return Int64(id)
     }
 
     func nativeSpaceID(forYabaiIndex index: Int) -> Int64? {
-        guard let spaces = querySpaces() else {
+        let result = Self.resolveNativeSpaceID(yabaiIndex: index, spaces: querySpaces())
+        if result == nil {
             log(
-                "[SpaceController] nativeSpaceID: querySpaces failed",
+                "[SpaceController] nativeSpaceID: no match",
                 level: .debug,
                 fields: ["yabaiIndex": String(index)]
             )
-            return nil
-        }
-        let matched = spaces.first { $0.index == index }
-        guard let id = matched?.id else {
+        } else {
             log(
-                "[SpaceController] nativeSpaceID: no matching space",
+                "[SpaceController] nativeSpaceID resolved",
                 level: .debug,
-                fields: ["yabaiIndex": String(index)]
+                fields: ["yabaiIndex": String(index), "nativeSpaceID": String(result!)]
             )
-            return nil
         }
-        log(
-            "[SpaceController] nativeSpaceID resolved",
-            level: .debug,
-            fields: ["yabaiIndex": String(index), "nativeSpaceID": String(id)]
-        )
-        return Int64(id)
+        return result
     }
 
     func preferredSourceSpace(windowSpace: Int?, visibleSpace: Int?, fallbackSpace: Int?) -> Int? {

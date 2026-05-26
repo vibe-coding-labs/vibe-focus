@@ -1,6 +1,10 @@
 // Tests/Standalone/ToggleRecordTests.swift
 // Verification: ToggleRecord validation logic
 // Run: swift Tests/Standalone/ToggleRecordTests.swift
+//
+// NOTE: isValid() here mirrors Sources/Hook/ClaudeHookModels.swift:147-152
+// which does Quartz→Cocoa coordinate conversion. If the source code changes,
+// update this file to match.
 
 import Foundation
 import CoreGraphics
@@ -22,15 +26,13 @@ struct ToggleRecord: Equatable {
     let toggledAt: Date
     let sessionID: String?
 
+    /// Mirrors ClaudeHookModels.swift:147-152
+    /// Converts Quartz coords to Cocoa coords before checking mainScreenFrame.
     func isValid(mainScreenFrame: CGRect) -> Bool {
-        let origCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
-        let tgtCenter = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
-        return !mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
-    }
-
-    func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 200) -> Bool {
-        abs(currentFrame.origin.x - targetFrame.origin.x) <= tolerance &&
-        abs(currentFrame.origin.y - targetFrame.origin.y) <= tolerance
+        let mainScreenHeight = mainScreenFrame.height
+        let origCocoaCenter = CGPoint(x: origFrame.midX, y: mainScreenHeight - origFrame.midY)
+        let tgtCocoaCenter = CGPoint(x: targetFrame.midX, y: mainScreenHeight - targetFrame.midY)
+        return !mainScreenFrame.contains(origCocoaCenter) && mainScreenFrame.contains(tgtCocoaCenter)
     }
 }
 
@@ -55,7 +57,7 @@ func check(_ name: String, _ condition: Bool) {
     else { failed += 1; print("  FAIL: \(name)") }
 }
 
-print("Test 1: isValid with correct data (orig off-screen, target on-screen)")
+print("Test 1: isValid with correct data (orig on secondary above, target on main)")
 do {
     let record = makeRecord(origX: 1480, origY: -710, origW: 1145, origH: 710,
                             targetX: 75, targetY: 38, targetW: 1656, targetH: 1070)
@@ -76,37 +78,25 @@ do {
     check("target off-screen", !record.isValid(mainScreenFrame: mainScreenFrame))
 }
 
-print("Test 4: isNearTarget within default tolerance (200px)")
+print("Test 4: isValid with orig on secondary below main screen")
 do {
-    let record = makeRecord(origX: 1480, origY: -710, origW: 1145, origH: 710,
+    let record = makeRecord(origX: 500, origY: 1400, origW: 1920, origH: 1080,
                             targetX: 75, targetY: 38, targetW: 1656, targetH: 1070)
-    let currentFrame = CGRect(x: 100, y: 50, width: 1656, height: 1070)
-    check("25px offset within tolerance", record.isNearTarget(currentFrame: currentFrame))
+    check("secondary below main", record.isValid(mainScreenFrame: mainScreenFrame))
 }
 
-print("Test 5: isNearTarget outside tolerance")
+print("Test 5: isValid with orig on secondary right of main screen")
 do {
-    let record = makeRecord(origX: 1480, origY: -710, origW: 1145, origH: 710,
+    let record = makeRecord(origX: 2500, origY: 200, origW: 2000, origH: 1200,
                             targetX: 75, targetY: 38, targetW: 1656, targetH: 1070)
-    let currentFrame = CGRect(x: 500, y: 500, width: 1656, height: 1070)
-    check("425px offset outside tolerance", !record.isNearTarget(currentFrame: currentFrame))
+    check("secondary right of main", record.isValid(mainScreenFrame: mainScreenFrame))
 }
 
-print("Test 6: isNearTarget with custom tolerance")
+print("Test 6: isValid with orig on secondary left of main screen")
 do {
-    let record = makeRecord(origX: 1480, origY: -710, origW: 1145, origH: 710,
+    let record = makeRecord(origX: -1500, origY: 100, origW: 1920, origH: 1080,
                             targetX: 75, targetY: 38, targetW: 1656, targetH: 1070)
-    let currentFrame = CGRect(x: 250, y: 50, width: 1656, height: 1070)
-    check("175px offset within 200 tolerance", record.isNearTarget(currentFrame: currentFrame, tolerance: 200))
-    check("175px offset outside 100 tolerance", !record.isNearTarget(currentFrame: currentFrame, tolerance: 100))
-}
-
-print("Test 7: Edge case - exact match at target")
-do {
-    let record = makeRecord(origX: 1480, origY: -710, origW: 1145, origH: 710,
-                            targetX: 75, targetY: 38, targetW: 1656, targetH: 1070)
-    let currentFrame = CGRect(x: 75, y: 38, width: 1656, height: 1070)
-    check("exact match", record.isNearTarget(currentFrame: currentFrame))
+    check("secondary left of main", record.isValid(mainScreenFrame: mainScreenFrame))
 }
 
 // Summary

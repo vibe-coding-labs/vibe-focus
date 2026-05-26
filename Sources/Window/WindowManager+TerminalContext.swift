@@ -8,6 +8,15 @@ import Foundation
 @MainActor
 extension WindowManager {
 
+    // MARK: - TTY Normalization (extracted for testability)
+
+    /// Normalize a TTY string to a full device path.
+    /// Returns nil for empty, "not a tty", or nil input.
+    static func normalizeTTY(_ tty: String?) -> String? {
+        guard let tty, !tty.isEmpty, tty != "not a tty" else { return nil }
+        return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+    }
+
     // MARK: - Terminal Context Window Matching
 
     /// 通过 hook 辅助脚本捕获的终端上下文精确定位窗口
@@ -159,49 +168,84 @@ extension WindowManager {
                 "terminalPID": String(terminalPID),
                 "terminalApp": terminalAppName,
                 "itermSessionID": ctx.itermSessionID ?? "nil",
-                "strategiesAttempted": "TTY_process,iTerm2_applescript,Terminal_applescript,lsof_tty_ordering"
+                "strategiesAttempted": "TTY_process,iTerm2_applescript,Terminal_applescript"
             ]
         )
         return nil
     }
 
-    /// 通过 PID 查询 CGWindowList 中属于该 PID 的所有窗口
-    private func findWindowsForPID(_ pid: Int32) -> [WindowIdentity] {
-        let windows = cgWindowListAll()
-
-        let appName = NSRunningApplication(processIdentifier: pid)?.localizedName
-            ?? (runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(pid)])?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown")
-        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
-
-        var results: [WindowIdentity] = []
-        for entry in windows {
-            guard entry.layer == 0 else { continue }
-            guard entry.ownerPID == pid else { continue }
-
-            results.append(WindowIdentity(
+    /// Filter CGWindowEntry list to visible windows for a given PID — extracted for testability.
+    static func filterWindowsByPID(
+        entries: [CGWindowEntry],
+        targetPID: Int32,
+        appName: String?,
+        bundleID: String?
+    ) -> [WindowIdentity] {
+        entries.filter { $0.layer == 0 && $0.ownerPID == targetPID }.map { entry in
+            WindowIdentity(
                 windowID: entry.windowID,
                 pid: entry.ownerPID,
                 bundleIdentifier: bundleID,
                 appName: appName,
                 title: entry.name
-            ))
+            )
         }
-        return results
+    }
+
+    /// Match a command name against window title patterns — extracted for testability.
+    static func matchCommandToWindowTitle(
+        commands: [String],
+        windows: [WindowIdentity]
+    ) -> WindowIdentity? {
+        for cmd in commands.reversed() {
+            for win in windows {
+                let titleLower = win.title?.lowercased() ?? ""
+                if titleLower.contains("— \(cmd)") || titleLower.contains("— \(cmd) ◂") {
+                    return win
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Extract command basenames from ps output lines — extracted for testability.
+    static func parseCommandBasename(from psOutput: String) -> [String] {
+        var commands: [String] = []
+        for line in psOutput.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            let basename = URL(fileURLWithPath: String(trimmed.split(separator: " ").first ?? Substring(trimmed))).lastPathComponent
+            commands.append(basename)
+        }
+        return commands
+    }
+
+    /// 通过 PID 查询 CGWindowList 中属于该 PID 的所有窗口
+    private func findWindowsForPID(_ pid: Int32) -> [WindowIdentity] {
+        let windows = cgWindowListAll()
+        let appName = NSRunningApplication(processIdentifier: pid)?.localizedName
+            ?? (runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(pid)])?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown")
+        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        return Self.filterWindowsByPID(entries: windows, targetPID: pid, appName: appName, bundleID: bundleID)
+    }
+
+    /// Extract UUID part from iTerm2 session ID (format: w{N}t{N}p{N}:{UUID})
+    static func parseItermSessionUUID(_ sessionID: String) -> String? {
+        let uuidPart: String
+        if let colonRange = sessionID.range(of: ":") {
+            uuidPart = String(sessionID[colonRange.upperBound...])
+        } else {
+            uuidPart = sessionID
+        }
+        return uuidPart.isEmpty ? nil : uuidPart
     }
 
     /// 通过 ITERM_SESSION_ID 用 iTerm2 AppleScript API 查找窗口
     /// ITERM_SESSION_ID 格式: w{N}t{N}p{N}:{UUID}
     /// 遍历 iTerm2 所有窗口的 session，匹配 UUID 部分找到目标窗口
     private func matchiTerm2WindowBySessionID(itermSessionID: String, windows: [WindowIdentity]) -> WindowIdentity? {
-        let uuidPart: String
-        if let colonRange = itermSessionID.range(of: ":") {
-            uuidPart = String(itermSessionID[colonRange.upperBound...])
-        } else {
-            uuidPart = itermSessionID
-        }
-
-        guard !uuidPart.isEmpty else { return nil }
+        guard let uuidPart = Self.parseItermSessionUUID(itermSessionID) else { return nil }
 
         let escapedUUID = uuidPart
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -298,74 +342,11 @@ extension WindowManager {
             )
         }
 
-        // 方法 2: osascript 权限不足时，用 TTY 上的 login 进程的 SID 推断窗口索引
-        // Terminal.app 的每个 tab 有一个 login→zsh 进程链，按创建顺序对应窗口
-        // 通过 ps 获取所有属于 Terminal 的 TTY，按 ttys 编号排序，推断窗口顺序
         log(
-            "[WindowManager] matchTerminalWindowByShellScript: osascript failed, trying TTY ordering fallback",
+            "[WindowManager] matchTerminalWindowByShellScript: osascript failed",
             level: .debug,
             fields: ["tty": fullTTY, "terminalPID": String(terminalPID)]
         )
-
-        // 获取 Terminal 下所有 TTY
-        // Terminal 主进程没有 TTY，用 lsof 找它打开的 tty 设备
-        let lsofOutput = runShellCommand("/usr/sbin/lsof", args: ["-p", String(terminalPID)])
-
-        // 收集该 PID 的所有 ttys
-        var ttys: [String] = []
-        if let lsofOutput {
-            for line in lsofOutput.components(separatedBy: "\n") {
-                if line.contains("tty") || line.contains("/dev/ttys") {
-                    let parts = line.split(separator: " ").filter { $0.hasPrefix("/dev/ttys") || $0.hasPrefix("ttys") }
-                    for part in parts {
-                        let tty = part.hasPrefix("/dev/") ? String(part) : "/dev/\(part)"
-                        if !ttys.contains(tty) {
-                            ttys.append(tty)
-                        }
-                    }
-                }
-            }
-        }
-
-        // 如果 lsof 没结果，用 ps 找该 PID 下所有子进程的 TTY
-        if ttys.isEmpty {
-            let childTTYs = runShellCommand("/bin/ps", args: ["-E", "-o", "tty=", "-p", String(terminalPID)]) ?? ""
-            for part in childTTYs.components(separatedBy: .whitespaces) {
-                let trimmed = part.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("ttys") || trimmed.hasPrefix("/dev/ttys") {
-                    let tty = trimmed.hasPrefix("/") ? trimmed : "/dev/\(trimmed)"
-                    if !ttys.contains(tty) {
-                        ttys.append(tty)
-                    }
-                }
-            }
-        }
-
-        if ttys.isEmpty {
-            log(
-                "[WindowManager] matchTerminalWindowByShellScript: no TTYs found for Terminal PID",
-                level: .debug,
-                fields: ["terminalPID": String(terminalPID)]
-            )
-            return nil
-        }
-
-        // 排序 TTY 并找到目标 TTY 的索引
-        ttys.sort()
-        guard let targetIndex = ttys.firstIndex(of: fullTTY) else {
-            log(
-                "[WindowManager] matchTerminalWindowByShellScript: target TTY not in Terminal's TTY list",
-                level: .debug,
-                fields: ["tty": fullTTY, "availableTTYs": ttys.joined(separator: ",")]
-            )
-            return nil
-        }
-
-        // 按窗口 ID 排序（Terminal 的窗口 ID 通常与 tab 创建顺序一致）
-        let sortedWindows = windows.sorted { $0.windowID < $1.windowID }
-        if targetIndex < sortedWindows.count {
-            return sortedWindows[targetIndex]
-        }
 
         return nil
     }
@@ -386,22 +367,9 @@ extension WindowManager {
             return nil
         }
 
-        var commands: [String] = []
-        for line in psOutput.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            let basename = URL(fileURLWithPath: String(trimmed.split(separator: " ").first ?? Substring(trimmed))).lastPathComponent
-            commands.append(basename)
-        }
-
-        // 用 command basename 在窗口标题中精确匹配
-        for cmd in commands.reversed() {
-            for win in windows {
-                let titleLower = win.title?.lowercased() ?? ""
-                if titleLower.contains("— \(cmd)") || titleLower.contains("— \(cmd) ◂") {
-                    return win
-                }
-            }
+        let commands = Self.parseCommandBasename(from: psOutput)
+        if let match = Self.matchCommandToWindowTitle(commands: commands, windows: windows) {
+            return match
         }
 
         log(

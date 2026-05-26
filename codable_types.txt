@@ -1,0 +1,47 @@
+Sources/Settings/SettingsView+OverlaySection.swift:                                prefs.textColor = CodableColor(newValue)
+Sources/Settings/SettingsView+OverlaySection.swift:                                prefs.backgroundColor = CodableColor(newValue)
+Sources/Support/PreferencesSync.swift:        // ScreenIndexPreferences — 整体 Codable 对象存为 String
+Sources/Support/PreferencesSync.swift:                } else if let codable = defaultValue as? Codable {
+Sources/Support/PreferencesSync.swift:enum PreferenceValue: Codable {
+Sources/Support/PreferencesSync.swift:    // MARK: - 自定义 Codable（生成简洁 JSON 而非嵌套 {"_0": ...}）
+Sources/Support/PreferencesSync.swift:    private enum CodingKeys: String, CodingKey { case type, value }
+Sources/Support/PreferencesSync.swift:        var container = encoder.container(keyedBy: CodingKeys.self)
+Sources/Support/PreferencesSync.swift:        let container = try decoder.container(keyedBy: CodingKeys.self)
+Sources/App/SoundManager.swift:enum CompletionSoundType: String, CaseIterable, Codable {
+Sources/App/SoundManager.swift:struct SoundPreferences: Codable {
+Sources/Window/WindowManager.swift:    struct ScriptWindowSnapshot: Codable {
+Sources/Support/CrashContextRecorder.swift:    private struct SessionState: Codable {
+Sources/Overlay/ScreenIndexPreferences.swift:enum IndexPosition: String, CaseIterable, Codable {
+Sources/Overlay/ScreenIndexPreferences.swift:struct ScreenIndexPreferences: Codable {
+Sources/Overlay/ScreenIndexPreferences.swift:    var textColor: CodableColor
+Sources/Overlay/ScreenIndexPreferences.swift:    var backgroundColor: CodableColor
+Sources/Overlay/ScreenIndexPreferences.swift:        textColor: CodableColor(.white),
+Sources/Overlay/ScreenIndexPreferences.swift:        backgroundColor: CodableColor(.black.opacity(0.6)),
+Sources/Overlay/ScreenIndexPreferences.swift:        struct LegacyPreferences: Codable {
+Sources/Overlay/ScreenIndexPreferences.swift:            var textColor: CodableColor
+Sources/Overlay/ScreenIndexPreferences.swift:            var backgroundColor: CodableColor
+Sources/Overlay/ScreenIndexPreferences.swift:// MARK: - Codable Color
+Sources/Overlay/ScreenIndexPreferences.swift:struct CodableColor: Codable {
+Sources/Space/YabaiClient.swift:    static func queryJSON<T: Decodable>(_ type: T.Type, arguments: [String]) -> T? {
+Sources/HotKey/HotKeyConfiguration.swift:struct HotKeyConfiguration: Codable, Equatable {
+Sources/Hook/ClaudeHookModels.swift:enum ClaudeHookEventType: String, Codable, CaseIterable {
+Sources/Hook/ClaudeHookModels.swift:enum WindowMoveReason: String, Codable {
+Sources/Hook/ClaudeHookModels.swift:struct WindowIdentity: Codable, Equatable {
+Sources/Hook/ClaudeHookModels.swift:struct WindowState: Codable, Equatable {
+Sources/Hook/ClaudeHookModels.swift:struct TerminalContext: Codable, Equatable {
+Sources/Hook/ClaudeHookModels.swift:    enum CodingKeys: String, CodingKey {
+Sources/Hook/ClaudeHookModels.swift:struct ClaudeHookPayload: Decodable {
+Sources/Hook/ClaudeHookModels.swift:    private enum CodingKeys: String, CodingKey {
+Sources/Hook/ClaudeHookModels.swift:        let container = try decoder.container(keyedBy: CodingKeys.self)
+Sources/Hook/ClaudeHookModels.swift:struct ClaudeHookResponse: Encodable {
+Sources/Hook/ClaudeHookModels.swift:    private enum CodingKeys: String, CodingKey {
+Sources/Space/SpaceController.swift:    func decodeSingleOrFirst<T: Decodable>(_ type: T.Type, from text: String) -> T? {
+Sources/Space/SpaceController.swift:    func decodeArray<T: Decodable>(_ type: T.Type, from text: String) -> [T]? {
+Sources/Space/SpaceController.swift:    static func staticDecodeSingleOrFirst<T: Decodable>(_ type: T.Type, from text: String) -> T? {
+Sources/Space/SpaceController.swift:struct YabaiSpaceInfo: Decodable {
+Sources/Space/SpaceController.swift:    enum CodingKeys: String, CodingKey {
+Sources/Space/SpaceController.swift:struct YabaiWindowInfo: Decodable {
+Sources/Space/SpaceController.swift:    enum CodingKeys: String, CodingKey {
+Sources/Space/SpaceController.swift:    struct Frame: Decodable {
+Sources/Space/SpaceController.swift:struct YabaiDisplayInfo: Decodable {
+Sources/Space/SpaceController.swift:    struct Frame: Decodable {

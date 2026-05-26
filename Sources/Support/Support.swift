@@ -70,7 +70,7 @@ private func threadID() -> UInt64 {
     UInt64(pthread_mach_thread_np(pthread_self()))
 }
 
-private func sanitizeFieldValue(_ value: String) -> String {
+func sanitizeFieldValue(_ value: String) -> String {
     let escaped = value
         .replacingOccurrences(of: "\\", with: "\\\\")
         .replacingOccurrences(of: "\n", with: "\\n")
@@ -83,7 +83,7 @@ private func sanitizeFieldValue(_ value: String) -> String {
     return escaped
 }
 
-private func serializeFields(_ fields: [String: String]) -> String {
+func serializeFields(_ fields: [String: String]) -> String {
     guard !fields.isEmpty else {
         return ""
     }

@@ -8,13 +8,45 @@ import Foundation
 @MainActor
 extension WindowManager {
 
-    private struct WindowCandidate {
+    struct WindowCandidate {
         let windowID: UInt32
         let pid: pid_t
         let appName: String
         let bundleIdentifier: String?
         let title: String
         let isOnMainScreen: Bool
+    }
+
+    /// Pure strategy logic for findClaudeCodeWindow — extracted for testability.
+    /// Returns the index of the best matching candidate, or nil if no match.
+    static func findBestCandidate(
+        candidates: [WindowCandidate],
+        cwd: String?,
+        isHostApp: (WindowCandidate) -> Bool
+    ) -> WindowCandidate? {
+        let projectName = cwd?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .components(separatedBy: "/")
+            .last?
+            .lowercased()
+
+        // Strategy 1: Host app + cwd project name in title
+        if let projectName, !projectName.isEmpty {
+            if let match = candidates.first(where: { c in
+                return isHostApp(c) && c.title.lowercased().contains(projectName)
+            }) {
+                return match
+            }
+        }
+
+        // Strategy 2: Host app + "Claude Code" in title
+        if let match = candidates.first(where: { c in
+            return isHostApp(c) && c.title.lowercased().contains("claude code")
+        }) {
+            return match
+        }
+
+        return nil
     }
 
     func captureFocusedWindowIdentity() -> WindowIdentity? {

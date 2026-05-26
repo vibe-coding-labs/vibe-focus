@@ -140,8 +140,7 @@ extension WindowManager {
     private func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String) {
         guard let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWin = focusedWindow(for: frontApp.processIdentifier),
-              let windowID = windowHandle(for: focusedWin),
-              let currentFrame = frame(of: focusedWin) else {
+              let windowID = windowHandle(for: focusedWin) else {
             log("[WindowManager] moveStuckWindowToSecondaryScreen: no focused window", level: .warn)
             return
         }
@@ -177,47 +176,10 @@ extension WindowManager {
             if moved { return }
         }
 
-        // yabai space move 失败 — 回退到 AX 位置移动
-        guard NSScreen.screens.count > 1, let mainScr = getMainScreen() else {
-            log("[WindowManager] moveStuckWindowToSecondaryScreen: no secondary screen available", level: .warn)
-            return
-        }
-
-        let allScreens = NSScreen.screens
-        let targetScreen = allScreens.first { screen in
-            !mainScr.frame.contains(CGPoint(x: screen.frame.midX, y: screen.frame.midY))
-        }
-
-        guard let targetScreen else {
-            log("[WindowManager] moveStuckWindowToSecondaryScreen: could not find secondary screen", level: .warn)
-            return
-        }
-
-        let targetVisibleFrame = targetScreen.visibleFrame
-        let newX = targetVisibleFrame.origin.x + (targetVisibleFrame.width - currentFrame.width) / 2
-        let newY = targetVisibleFrame.origin.y + (targetVisibleFrame.height - currentFrame.height) / 2
-        let centeredFrame = CGRect(x: newX, y: newY, width: currentFrame.width, height: currentFrame.height)
-
-        var targetOrigin = CGPoint(x: centeredFrame.origin.x, y: centeredFrame.origin.y)
-        var targetSize = CGSize(width: centeredFrame.width, height: centeredFrame.height)
-        guard let originValue = AXValueCreate(.cgPoint, &targetOrigin),
-              let sizeValue = AXValueCreate(.cgSize, &targetSize) else {
-            log("[WindowManager] moveStuckWindowToSecondaryScreen: AXValueCreate failed", level: .warn)
-            return
-        }
-        AXUIElementSetAttributeValue(focusedWin, kAXPositionAttribute as CFString, originValue as CFTypeRef)
-        AXUIElementSetAttributeValue(focusedWin, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
-
         log(
-            "[WindowManager] moveStuckWindowToSecondaryScreen: AX fallback moved",
-            fields: [
-                "op": operationID,
-                "windowID": String(windowID),
-                "fromX": String(Int(currentFrame.origin.x)),
-                "fromY": String(Int(currentFrame.origin.y)),
-                "toX": String(Int(centeredFrame.origin.x)),
-                "toY": String(Int(centeredFrame.origin.y))
-            ]
+            "[WindowManager] moveStuckWindowToSecondaryScreen: yabai space move failed, no fallback",
+            level: .warn,
+            fields: ["op": operationID, "windowID": String(windowID)]
         )
     }
 
@@ -236,7 +198,7 @@ extension WindowManager {
 
         if !axTrusted {
             log(
-                "[WindowManager] accessibility denied, fallback to System Events",
+                "[WindowManager] move_to_main failed: accessibility denied",
                 level: .warn,
                 fields: [
                     "op": op
@@ -244,7 +206,7 @@ extension WindowManager {
             )
             CrashContextRecorder.shared.record("move_to_main_ax_denied op=\(op)")
             logDiagnostics("ax_trusted_false_move")
-            moveToMainScreenViaSystemEvents()
+            notifyAccessibilityPermissionRequired()
             return
         }
         guard let identity = captureFocusedWindowIdentity() else {
@@ -288,13 +250,53 @@ extension WindowManager {
         }
     }
 
+    /// Restore decision — extracted for testability
+    enum RestoreDecision {
+        case restore                // window on main + valid toggle record
+        case moveToMain             // window on secondary screen
+        case noRecord               // no toggle record found
+        case corruptedClearWindowID(UInt32)  // record exists but invalid
+        case noFocusedWindow        // cannot identify focused window
+        case noMainScreen           // cannot get main screen frame
+    }
+
+    /// Pure decision logic for shouldRestoreCurrentWindow.
+    /// Separates the decision tree from system I/O for unit testing.
+    static func decideRestore(
+        focusedOnMain: Bool?,
+        recordByWindowID: ToggleRecord?,
+        mainScreenFrame: CGRect?
+    ) -> RestoreDecision {
+        guard let focusedOnMain else {
+            return .noFocusedWindow
+        }
+        if !focusedOnMain {
+            return .moveToMain
+        }
+        guard let record = recordByWindowID else {
+            return .noRecord
+        }
+        guard let mainScreenFrame else {
+            return .noMainScreen
+        }
+        if !record.isValid(mainScreenFrame: mainScreenFrame) {
+            return .corruptedClearWindowID(record.windowID)
+        }
+        return .restore
+    }
+
     func shouldRestoreCurrentWindow() -> Bool {
+        return shouldRestoreCurrentWindow(store: ToggleEngine.shared)
+    }
+
+    /// Testable overload that accepts an injected ToggleRecordStore.
+    func shouldRestoreCurrentWindow(store: ToggleRecordStore) -> Bool {
         if !hasAccessibilityPermission() {
             log(
-                "[WindowManager] shouldRestoreCurrentWindow: no AX permission, using System Events",
+                "[WindowManager] shouldRestoreCurrentWindow: no AX permission, cannot determine",
                 level: .debug
             )
-            return shouldRestoreCurrentWindowViaSystemEvents()
+            return false
         }
 
         guard let frontApp = NSWorkspace.shared.frontmostApplication,
@@ -329,28 +331,9 @@ extension WindowManager {
         }
 
         // 聚焦窗口在主屏 → 直接查 SQLite 看有没有 toggle record
-        var record = ToggleEngine.shared.load(windowID: currentWindowID)
-        if record == nil {
-            // Fallback: CGWindowNumber 可能在跨显示器移动后变化（iTerm2 等应用）
-            // 用 PID 查找最近一条 toggle record
-            let pid = frontApp.processIdentifier
-            record = ToggleEngine.shared.loadByPID(pid: pid)
-            if let pidRecord = record {
-                log(
-                    "[WindowManager] shouldRestoreCurrentWindow: windowID lookup failed, found record by PID fallback",
-                    level: .info,
-                    fields: [
-                        "windowID": String(currentWindowID),
-                        "pid": String(pid),
-                        "storedWindowID": String(pidRecord.windowID)
-                    ]
-                )
-            }
-        }
-
-        guard let record else {
+        guard let record = store.load(windowID: currentWindowID) else {
             log(
-                "[WindowManager] shouldRestoreCurrentWindow: no toggle record for window (windowID + PID both failed)",
+                "[WindowManager] shouldRestoreCurrentWindow: no toggle record for window",
                 level: .debug,
                 fields: ["windowID": String(currentWindowID)]
             )
@@ -364,11 +347,10 @@ extension WindowManager {
                 level: .warn,
                 fields: [
                     "windowID": String(currentWindowID),
-                    "storedWindowID": String(record.windowID),
-                    "usedPIDFallback": String(currentWindowID != record.windowID)
+                    "storedWindowID": String(record.windowID)
                 ]
             )
-            ToggleEngine.shared.clear(windowID: record.windowID)
+            store.clear(windowID: record.windowID)
             return false
         }
 

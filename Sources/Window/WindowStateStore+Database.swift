@@ -10,12 +10,16 @@ final class WindowStateStore {
     var db: OpaquePointer?
     let dbPath: String
 
-    private init() {
-        let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus")
-        if !FileManager.default.fileExists(atPath: dir) {
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    init(dbPath: String? = nil) {
+        if let dbPath {
+            self.dbPath = dbPath
+        } else {
+            let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus")
+            if !FileManager.default.fileExists(atPath: dir) {
+                try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            }
+            self.dbPath = (dir as NSString).appendingPathComponent("vibefocus.db")
         }
-        dbPath = (dir as NSString).appendingPathComponent("vibefocus.db")
         openDatabase()
         createTables()
     }

@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 // SettingsView — see SettingsComponents.swift for UI components
 // AppDelegate — see AppDelegate.swift for app lifecycle
 
-struct SettingsView: View {
+public struct SettingsView: View {
+    public init() {}
     @EnvironmentObject var hotKeyManager: HotKeyManager
     @StateObject var spaceController = SpaceController.shared
     @StateObject var loginItemManager = LoginItemManager.shared
@@ -243,7 +244,7 @@ struct SettingsView: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
             headerBar
                 .padding(.top, 20)

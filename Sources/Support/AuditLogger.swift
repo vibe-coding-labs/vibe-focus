@@ -12,9 +12,11 @@ final class AuditLogger {
     private var insertCount: Int = 0
     private let cleanupInterval: Int = 50
 
-    private var db: OpaquePointer? { WindowStateStore.shared.db }
+    private let _injectedDB: OpaquePointer?
+    private var db: OpaquePointer? { _injectedDB ?? WindowStateStore.shared.db }
 
-    private init() {
+    init(db: OpaquePointer? = nil) {
+        _injectedDB = db
         createTable()
     }
 
@@ -99,7 +101,7 @@ final class AuditLogger {
 
     // MARK: - Cleanup
 
-    private func trimOldRecords() {
+    func trimOldRecords() {
         guard let db else { return }
         var stmt: OpaquePointer?
         let sql = """
@@ -112,4 +114,7 @@ final class AuditLogger {
         sqlite3_bind_int(stmt, 1, Int32(maxRecords))
         sqlite3_step(stmt)
     }
+
+    /// Test-only accessor for the injected database pointer
+    var testDB: OpaquePointer? { db }
 }
