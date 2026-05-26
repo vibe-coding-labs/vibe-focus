@@ -253,21 +253,24 @@ final class HookEventHandler {
 
         // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
+            let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+            let reason = onMainScreen ? "no_toggle_record" : "window_not_on_main"
             log(
                 "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
                 fields: [
                     "traceID": traceID,
                     "windowID": String(identity.windowID),
                     "app": identity.appName ?? "unknown",
+                    "onMainScreen": String(onMainScreen),
                     "sessionID": payload.sessionID,
-                    "reason": "no_toggle_record"
+                    "reason": reason
                 ]
             )
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "restore_skipped_no_toggle_record",
-                    message: "Window not eligible for auto-restore (no_toggle_record)",
+                    ok: true, code: "restore_skipped_\(reason)",
+                    message: "Window not eligible for auto-restore (\(reason))",
                     sessionID: payload.sessionID, handled: false
                 )
             )
@@ -416,6 +419,7 @@ final class HookEventHandler {
     enum RestoreEligibility {
         case eligible(record: ToggleRecord, mainScreenFrame: CGRect)
         case toggleInFlight
+        case windowNotOnMainScreen
         case noRecord
         case recordInvalid(windowID: UInt32)
     }
@@ -423,10 +427,12 @@ final class HookEventHandler {
     /// Pure decision logic for validateRestoreEligibility.
     static func decideRestoreEligibility(
         isToggleInFlight: Bool,
+        isWindowOnMainScreen: Bool,
         record: ToggleRecord?,
         mainScreenFrame: CGRect?
     ) -> RestoreEligibility {
         if isToggleInFlight { return .toggleInFlight }
+        if !isWindowOnMainScreen { return .windowNotOnMainScreen }
         guard let record else { return .noRecord }
         guard let mainScreenFrame, record.isValid(mainScreenFrame: mainScreenFrame) else {
             return .recordInvalid(windowID: record.windowID)
@@ -446,6 +452,20 @@ final class HookEventHandler {
                 fields: [
                     "traceID": traceID,
                     "windowID": String(identity.windowID)
+                ]
+            )
+            return nil
+        }
+
+        // 窗口必须在主屏上
+        let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+        guard onMainScreen else {
+            log(
+                "[HookEventHandler] validateRestoreEligibility: window not on main screen",
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "app": identity.appName ?? "unknown"
                 ]
             )
             return nil
