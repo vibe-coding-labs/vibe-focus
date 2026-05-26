@@ -80,7 +80,44 @@ extension HookEventHandler {
             )
         }
 
-        guard let binding = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+        // 尝试获取 binding，无 binding 时通过 machineLabel 自愈远程 session
+        let binding: WindowState
+        if let existing = SessionWindowRegistry.shared.binding(for: payload.sessionID) {
+            binding = existing
+        } else if let label = payload.terminalCtx?.machineLabel, !label.isEmpty,
+                  let identity = resolveRemoteBinding(label: label, sessionID: payload.sessionID) {
+            log(
+                "[HookEventHandler] \(triggerName) self-heal: resolved remote binding via machineLabel",
+                level: .info,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "machineLabel": label,
+                    "windowID": String(identity.windowID),
+                    "app": identity.appName ?? "unknown"
+                ]
+            )
+            SessionWindowRegistry.shared.bind(
+                sessionID: payload.sessionID,
+                windowIdentity: identity,
+                terminalTTY: payload.terminalCtx?.tty,
+                terminalSessionID: payload.terminalCtx?.termSessionID,
+                itermSessionID: payload.terminalCtx?.itermSessionID,
+                cwd: payload.cwd,
+                model: payload.model,
+                bindingType: .remote
+            )
+            guard let healed = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "no_binding_skip",
+                        message: "Self-heal binding lost after registration",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+            binding = healed
+        } else {
             log(
                 "[HookEventHandler] \(triggerName) no binding found, skipping",
                 level: .warn,
