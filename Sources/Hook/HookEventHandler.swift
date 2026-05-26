@@ -5,20 +5,12 @@ import Cocoa
 final class HookEventHandler {
     static let shared = HookEventHandler()
 
-    private var lastActivityBySession: [String: Date] = [:]
-    private let stopDebounceInterval: TimeInterval = 30.0
-
     private static let autoRestoreCooldownSeconds: TimeInterval = 30
     private var lastAutoRestoreByWindowID: [UInt32: Date] = [:]
 
     private init() {}
 
     // MARK: - Pure Decision Helpers (extracted for testability)
-
-    /// Pure: should a Stop event be debounced because the session was recently active?
-    static func shouldDebounceStop(elapsed: TimeInterval, threshold: TimeInterval = 30.0) -> Bool {
-        elapsed < threshold
-    }
 
     /// Pure: is a window still in the auto-restore cooldown period?
     static func isInCooldown(lastRestore: Date?, now: Date = Date(), cooldownSeconds: TimeInterval = 30) -> Bool {
@@ -188,7 +180,6 @@ final class HookEventHandler {
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         let traceID = makeOperationID(prefix: "ups")
         let handleStartedAt = Date()
-        lastActivityBySession[payload.sessionID] = Date()
 
         log(
             "[HookEventHandler] UserPromptSubmit triggered",
@@ -578,32 +569,6 @@ final class HookEventHandler {
     func handleStop(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        if let lastActivity = lastActivityBySession[payload.sessionID] {
-            let elapsed = Date().timeIntervalSince(lastActivity)
-            if elapsed < stopDebounceInterval {
-                log(
-                    "[HookEventHandler] Stop debounced — session was active \(String(format: "%.1f", elapsed))s ago",
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "elapsedSinceActivity": String(format: "%.1f", elapsed),
-                        "debounceThreshold": String(format: "%.0f", stopDebounceInterval)
-                    ]
-                )
-                SessionWindowRegistry.shared.touch(
-                    sessionID: payload.sessionID,
-                    message: "Stop 收到（防抖中：会话仍活跃）"
-                )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "stop_debounced",
-                        message: "Stop debounced — session still active",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            }
-        }
-
         guard ClaudeHookPreferences.triggerOnStop else {
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
@@ -623,7 +588,6 @@ final class HookEventHandler {
             )
         }
 
-        lastActivityBySession.removeValue(forKey: payload.sessionID)
         return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
     }
 
