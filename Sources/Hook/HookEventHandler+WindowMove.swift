@@ -175,18 +175,31 @@ extension HookEventHandler {
         triggerName: String
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         if binding.isCompleted {
-            log(
-                "[HookEventHandler] \(triggerName) already completed",
-                fields: ["sessionID": payload.sessionID]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "already_completed",
-                    message: "Session already completed",
-                    sessionID: payload.sessionID, handled: false
+            // 窗口不在主屏说明 session 被 restore 后又恢复了，需要重新移动
+            if !WindowManager.shared.isWindowOnMainScreen(windowID: binding.windowID) {
+                log(
+                    "[HookEventHandler] \(triggerName) completed but window not on main screen, resetting for re-move",
+                    level: .info,
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "windowID": String(binding.windowID)
+                    ]
                 )
-            )
+                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            } else {
+                log(
+                    "[HookEventHandler] \(triggerName) already completed",
+                    fields: ["sessionID": payload.sessionID]
+                )
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "already_completed",
+                        message: "Session already completed",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
         }
 
         let windowID = binding.windowID
