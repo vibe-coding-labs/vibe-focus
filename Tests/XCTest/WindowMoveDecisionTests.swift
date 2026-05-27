@@ -13,7 +13,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: false,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 0,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "autoFocusDisabled")
@@ -26,7 +27,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: false, bindingVerified: false,
-            isWindowOnMainScreen: false, bindingAge: 0,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "noBindingSkip")
@@ -39,7 +41,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: false,
-            isWindowOnMainScreen: false, bindingAge: 0,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "bindingVerificationFailed")
@@ -52,10 +55,37 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: true, bindingAge: 0,
+            isWindowOnMainScreen: true, isInCooldown: false,
+            bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "alreadyOnMainScreen")
+    }
+
+    // MARK: - Restore cooldown
+
+    @Test("window in restore cooldown → restoreCooldownActive")
+    func restoreCooldownActive() {
+        let result = HookEventHandler.decideWindowMove(
+            autoFocusEnabled: true,
+            hasBinding: true, bindingVerified: true,
+            isWindowOnMainScreen: false, isInCooldown: true,
+            bindingAge: 0,
+            pidMatches: nil, isTerminalOrIDE: true
+        )
+        assertDecision(result, expected: "restoreCooldownActive")
+    }
+
+    @Test("cooldown takes priority over stale binding check")
+    func cooldownPriorityOverStale() {
+        let result = HookEventHandler.decideWindowMove(
+            autoFocusEnabled: true,
+            hasBinding: true, bindingVerified: true,
+            isWindowOnMainScreen: false, isInCooldown: true,
+            bindingAge: 3600,
+            pidMatches: false, isTerminalOrIDE: true
+        )
+        assertDecision(result, expected: "restoreCooldownActive")
     }
 
     // MARK: - Stale binding
@@ -65,7 +95,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 3600,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 3600,
             pidMatches: false, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "staleBindingPIDMismatch")
@@ -76,7 +107,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 3600,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 3600,
             pidMatches: true, isTerminalOrIDE: true
         )
         if case .proceedToMove = result { } else {
@@ -89,7 +121,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 3600,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 3600,
             pidMatches: nil, isTerminalOrIDE: true
         )
         if case .proceedToMove = result { } else {
@@ -102,7 +135,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 100,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
             pidMatches: false, isTerminalOrIDE: true
         )
         if case .proceedToMove = result { } else {
@@ -117,7 +151,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 100,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: false
         )
         assertDecision(result, expected: "nonTerminalWindow")
@@ -130,12 +165,86 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 100,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: true
         )
         if case .proceedToMove(let source) = result {
             #expect(source == "binding")
         } else {
+            #expect(Bool(false), "Expected .proceedToMove, got \(result)")
+        }
+    }
+
+    // MARK: - remoteOnly (Stop for remote sessions only)
+
+    @Test("remoteOnly + local binding → localBindingSkip")
+    func remoteOnlyLocalBindingSkip() {
+        let result = HookEventHandler.decideWindowMove(
+            autoFocusEnabled: true,
+            hasBinding: true, bindingVerified: true,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
+            pidMatches: true, isTerminalOrIDE: true,
+            remoteOnly: true, isLocalBinding: true
+        )
+        assertDecision(result, expected: "localBindingSkip")
+    }
+
+    @Test("remoteOnly + remote binding → proceedToMove")
+    func remoteOnlyRemoteBindingProceeds() {
+        let result = HookEventHandler.decideWindowMove(
+            autoFocusEnabled: true,
+            hasBinding: true, bindingVerified: true,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
+            pidMatches: true, isTerminalOrIDE: true,
+            remoteOnly: true, isLocalBinding: false
+        )
+        if case .proceedToMove = result { } else {
+            #expect(Bool(false), "Expected .proceedToMove, got \(result)")
+        }
+    }
+
+    @Test("remoteOnly + autoFocus disabled → autoFocusDisabled takes priority")
+    func remoteOnlyAutoFocusPriority() {
+        let result = HookEventHandler.decideWindowMove(
+            autoFocusEnabled: false,
+            hasBinding: true, bindingVerified: true,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
+            pidMatches: true, isTerminalOrIDE: true,
+            remoteOnly: true, isLocalBinding: true
+        )
+        assertDecision(result, expected: "autoFocusDisabled")
+    }
+
+    @Test("remoteOnly=false + local binding → proceedToMove (no restriction)")
+    func noRemoteOnlyLocalBindingProceeds() {
+        let result = HookEventHandler.decideWindowMove(
+            autoFocusEnabled: true,
+            hasBinding: true, bindingVerified: true,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
+            pidMatches: true, isTerminalOrIDE: true,
+            remoteOnly: false, isLocalBinding: true
+        )
+        if case .proceedToMove = result { } else {
+            #expect(Bool(false), "Expected .proceedToMove, got \(result)")
+        }
+    }
+
+    @Test("remoteOnly + local binding + hasMachineLabel → proceedToMove (LAN session)")
+    func remoteOnlyLocalBindingWithMachineLabel() {
+        let result = HookEventHandler.decideWindowMove(
+            autoFocusEnabled: true,
+            hasBinding: true, bindingVerified: true,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 100,
+            pidMatches: true, isTerminalOrIDE: true,
+            remoteOnly: true, isLocalBinding: true, hasMachineLabel: true
+        )
+        if case .proceedToMove = result { } else {
             #expect(Bool(false), "Expected .proceedToMove, got \(result)")
         }
     }
@@ -147,7 +256,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: false,
             hasBinding: true, bindingVerified: true,
-            isWindowOnMainScreen: false, bindingAge: 3600,
+            isWindowOnMainScreen: false, isInCooldown: true,
+            bindingAge: 3600,
             pidMatches: false, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "autoFocusDisabled")
@@ -158,7 +268,8 @@ struct WindowMoveDecisionTests {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
             hasBinding: true, bindingVerified: false,
-            isWindowOnMainScreen: false, bindingAge: 0,
+            isWindowOnMainScreen: false, isInCooldown: false,
+            bindingAge: 0,
             pidMatches: nil, isTerminalOrIDE: true
         )
         assertDecision(result, expected: "bindingVerificationFailed")
@@ -173,10 +284,12 @@ struct WindowMoveDecisionTests {
         let actual: String
         switch result {
         case .autoFocusDisabled: actual = "autoFocusDisabled"
+        case .localBindingSkip: actual = "localBindingSkip"
         case .noBindingSkip: actual = "noBindingSkip"
         case .bindingVerificationFailed: actual = "bindingVerificationFailed"
         case .alreadyCompleted: actual = "alreadyCompleted"
         case .alreadyOnMainScreen: actual = "alreadyOnMainScreen"
+        case .restoreCooldownActive: actual = "restoreCooldownActive"
         case .staleBindingPIDMismatch: actual = "staleBindingPIDMismatch"
         case .nonTerminalWindow: actual = "nonTerminalWindow"
         case .proceedToMove: actual = "proceedToMove"

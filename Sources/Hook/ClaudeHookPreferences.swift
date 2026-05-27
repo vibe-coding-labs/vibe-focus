@@ -521,9 +521,8 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         ])
         var hooks: [String: Any] = [:]
         hooks["SessionStart"] = [makeHookEntry()]
-        if triggerOnStop {
-            hooks["Stop"] = [makeHookEntry()]
-        }
+        // Stop 始终注册：handleStop 内部根据 remoteOnly 区分本地/远程 session
+        hooks["Stop"] = [makeHookEntry()]
         if triggerOnSessionEnd {
             hooks["SessionEnd"] = [makeHookEntry()]
         }
@@ -596,7 +595,7 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
         for (key, value) in ourHooks {
             existingHooks[key] = value
         }
-        if !triggerOnStop { existingHooks.removeValue(forKey: "Stop") }
+        // Stop 不再根据 triggerOnStop 移除 — handleStop 内部区分本地/远程
         if !triggerOnSessionEnd { existingHooks.removeValue(forKey: "SessionEnd") }
         if !autoRestoreOnPromptSubmit { existingHooks.removeValue(forKey: "UserPromptSubmit") }
         settings["hooks"] = existingHooks

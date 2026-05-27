@@ -9,10 +9,12 @@ extension HookEventHandler {
     /// Window move trigger decision — all possible outcomes.
     enum WindowMoveDecision: Equatable {
         case autoFocusDisabled
+        case localBindingSkip
         case noBindingSkip
         case bindingVerificationFailed
         case alreadyCompleted
         case alreadyOnMainScreen
+        case restoreCooldownActive
         case staleBindingPIDMismatch
         case nonTerminalWindow
         case proceedToMove(source: String)
@@ -25,11 +27,17 @@ extension HookEventHandler {
         hasBinding: Bool,
         bindingVerified: Bool,
         isWindowOnMainScreen: Bool,
+        isInCooldown: Bool,
         bindingAge: TimeInterval,
         pidMatches: Bool?,
-        isTerminalOrIDE: Bool
+        isTerminalOrIDE: Bool,
+        remoteOnly: Bool = false,
+        isLocalBinding: Bool = false,
+        hasMachineLabel: Bool = false
     ) -> WindowMoveDecision {
         guard autoFocusEnabled else { return .autoFocusDisabled }
+
+        if remoteOnly && isLocalBinding && !hasMachineLabel { return .localBindingSkip }
 
         if !hasBinding {
             return .noBindingSkip
@@ -38,6 +46,8 @@ extension HookEventHandler {
         guard bindingVerified else { return .bindingVerificationFailed }
 
         if isWindowOnMainScreen { return .alreadyOnMainScreen }
+
+        if isInCooldown { return .restoreCooldownActive }
 
         if bindingAge > 1800 && pidMatches == false {
             return .staleBindingPIDMismatch
@@ -52,7 +62,8 @@ extension HookEventHandler {
 
     func handleWindowMoveTrigger(
         payload: ClaudeHookPayload,
-        triggerName: String
+        triggerName: String,
+        remoteOnly: Bool = false
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         log(
             "[HookEventHandler] \(triggerName) triggered",
@@ -136,6 +147,35 @@ extension HookEventHandler {
             )
         }
 
+        // remoteOnly 模式：仅处理远程 session 的 Stop 事件，跳过本地绑定
+        // machineLabel 非空说明是远程 session（即使 bindingType 为 local，因为 hook 本地转发）
+        if remoteOnly && binding.bindingType == .local {
+            let machineLabel = payload.terminalCtx?.machineLabel ?? ""
+            if machineLabel.isEmpty {
+                SessionWindowRegistry.shared.touch(
+                    sessionID: payload.sessionID,
+                    message: "\(triggerName) 本地绑定跳过（Stop 仅限远程）"
+                )
+                log(
+                    "[HookEventHandler] \(triggerName) local binding skipped (remoteOnly mode)",
+                    level: .debug,
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "windowID": String(binding.windowID),
+                        "bindingType": "local"
+                    ]
+                )
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "local_binding_skip",
+                        message: "Stop trigger skipped for local binding (remoteOnly mode)",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+        }
+
         guard SessionWindowRegistry.shared.verifyBinding(binding) else {
             log(
                 "[HookEventHandler] \(triggerName) binding verification failed",
@@ -193,6 +233,31 @@ extension HookEventHandler {
                 ClaudeHookResponse(
                     ok: true, code: "already_on_main_screen",
                     message: "Window already on main screen, no action needed",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 冷却检查：窗口刚被用户恢复（手动热键或 UPS 自动恢复），不重复拉到主屏
+        // 多个远程 session 共享同一窗口时，防止 Stop 事件反复拉窗
+        if isWindowInMoveCooldown(windowID: windowID) {
+            SessionWindowRegistry.shared.setLastEventDescription(
+                "\(triggerName) 窗口刚被恢复，跳过移动（冷却中）"
+            )
+            log(
+                "[HookEventHandler] \(triggerName) window recently restored, skipping move (cooldown)",
+                level: .info,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "windowID": String(windowID),
+                    "app": binding.appName ?? "unknown"
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "restore_cooldown_active",
+                    message: "Window recently restored, skipping move (cooldown active)",
                     sessionID: payload.sessionID, handled: false
                 )
             )

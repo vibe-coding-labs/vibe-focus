@@ -72,6 +72,10 @@ extension WindowManager {
 
         if shouldRestore {
             restore(operationID: op, triggerSource: triggerSource)
+            // 设置冷却期：防止 Stop 事件立即把刚恢复的窗口再次拉到主屏
+            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+                HookEventHandler.shared.setMoveCooldown(windowID: winID)
+            }
             if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
                 AuditLogger.shared.record(
                     eventType: "toggle_restore",

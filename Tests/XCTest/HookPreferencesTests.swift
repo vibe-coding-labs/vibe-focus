@@ -108,14 +108,15 @@ struct HookPreferencesTests {
         #expect(dict["Stop"] != nil)
     }
 
-    @Test("generateHooksDict excludes Stop when triggerOnStop is false")
-    func generateHooksDictStopDisabled() {
+    @Test("generateHooksDict always includes Stop (remoteOnly handled in handleStop)")
+    func generateHooksDictStopAlwaysIncluded() {
         let saved = ClaudeHookPreferences.triggerOnStop
         ClaudeHookPreferences.triggerOnStop = false
         defer { ClaudeHookPreferences.triggerOnStop = saved }
 
         let dict = ClaudeHookPreferences.generateHooksDict()
-        #expect(dict["Stop"] == nil)
+        // Stop 始终注册到 hook 配置，handleStop 内部通过 remoteOnly 区分本地/远程
+        #expect(dict["Stop"] != nil)
     }
 
     @Test("generateHooksDict includes SessionEnd when triggerOnSessionEnd is true")
