@@ -62,12 +62,19 @@ enum PreferencesSync {
         }
 
         var restored = 0
+        var skipped = 0
         for (key, value) in dict {
             if key == ClaudeHookPreferences.tokenKey { continue }
+            // UserDefaults 写入是同步的，config.json 写入是异步的。
+            // 如果 UserDefaults 已有值，说明比 config.json 更新（或相等），不覆盖。
+            if UserDefaults.standard.object(forKey: key) != nil {
+                skipped += 1
+                continue
+            }
             value.writeToUserDefaults(key: key)
             restored += 1
         }
-        log("PreferencesSync: restored \(restored) keys from disk", fields: ["path": path])
+        log("PreferencesSync: restored \(restored) keys, skipped \(skipped) (already in UserDefaults)", fields: ["path": path])
 
         ensureDefaultsPopulated()
     }
