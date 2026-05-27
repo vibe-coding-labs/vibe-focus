@@ -18,6 +18,12 @@ final class HookEventHandler {
         return now.timeIntervalSince(lastRestore) < cooldownSeconds
     }
 
+    /// Check if a window is in move cooldown — recently restored by user or UPS.
+    /// Used by Stop handler to avoid re-moving a window the user just put back.
+    func isWindowInMoveCooldown(windowID: UInt32) -> Bool {
+        return Self.isInCooldown(lastRestore: lastAutoRestoreByWindowID[windowID])
+    }
+
     // MARK: - Session Start
 
     func handleSessionStart(
@@ -570,26 +576,10 @@ final class HookEventHandler {
     func handleStop(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        guard ClaudeHookPreferences.triggerOnStop else {
-            SessionWindowRegistry.shared.touch(
-                sessionID: payload.sessionID,
-                message: "Stop 收到（Stop 触发已关闭）"
-            )
-            log(
-                "[HookEventHandler] Stop received but trigger disabled",
-                fields: ["sessionID": payload.sessionID]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "stop_trigger_disabled",
-                    message: "Stop received, trigger disabled",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        return handleWindowMoveTrigger(payload: payload, triggerName: "Stop")
+        // triggerOnStop=true: 处理所有 session（本地+远程）
+        // triggerOnStop=false: 仅处理远程 session（跳过本地绑定）
+        let remoteOnly = !ClaudeHookPreferences.triggerOnStop
+        return handleWindowMoveTrigger(payload: payload, triggerName: "Stop", remoteOnly: remoteOnly)
     }
 
     func clearAutoRestoreCooldown(windowID: UInt32) {
