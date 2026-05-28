@@ -260,7 +260,82 @@ final class HookEventHandler {
         // 3. 验证是否应该 restore
         guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
             let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
-            let reason = onMainScreen ? "no_toggle_record" : "window_not_on_main"
+
+            // Fallback: 窗口在主屏但无 ToggleRecord → 创建 synthetic record 并 restore 到副屏
+            if onMainScreen {
+                let engine = ToggleEngine.shared
+                if let syntheticRecord = engine.createSyntheticToggleRecord(
+                    windowID: identity.windowID,
+                    pid: identity.pid,
+                    bundleIdentifier: identity.bundleIdentifier,
+                    appName: identity.appName
+                ) {
+                    log(
+                        "[HookEventHandler] UserPromptSubmit: created synthetic toggle record, attempting restore",
+                        level: .info,
+                        fields: [
+                            "traceID": traceID,
+                            "windowID": String(identity.windowID),
+                            "app": identity.appName ?? "unknown",
+                            "sessionID": payload.sessionID
+                        ]
+                    )
+                    guard let mainScreen = WindowManager.shared.getMainScreen() else {
+                        return (
+                            200,
+                            ClaudeHookResponse(
+                                ok: true, code: "restore_skipped_no_main_screen",
+                                message: "Cannot determine main screen for synthetic restore",
+                                sessionID: payload.sessionID, handled: false
+                            )
+                        )
+                    }
+                    let syntheticValidation = RestoreValidation(record: syntheticRecord, mainScreen: mainScreen)
+                    let success = executeRestore(
+                        identity: identity,
+                        validation: syntheticValidation,
+                        traceID: traceID,
+                        startedAt: handleStartedAt,
+                        sessionID: payload.sessionID
+                    )
+                    if success {
+                        lastAutoRestoreByWindowID[identity.windowID] = Date()
+                        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+                    }
+                    return (
+                        200,
+                        ClaudeHookResponse(
+                            ok: true,
+                            code: success ? "restored_synthetic" : "restore_failed",
+                            message: success ? "Window restored to secondary screen (synthetic record)" : "Synthetic restore attempt failed",
+                            sessionID: payload.sessionID,
+                            handled: success
+                        )
+                    )
+                }
+
+                // 无法创建 synthetic record（无副屏或验证失败）
+                log(
+                    "[HookEventHandler] UserPromptSubmit: on main screen, no toggle record, synthetic record creation failed",
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(identity.windowID),
+                        "app": identity.appName ?? "unknown",
+                        "sessionID": payload.sessionID,
+                        "reason": "no_toggle_record_no_secondary_screen"
+                    ]
+                )
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "restore_skipped_no_toggle_record",
+                        message: "Window on main screen but no toggle record and no secondary screen available",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
+
+            // 窗口不在主屏 → 正常 skip（窗口已在副屏，无需 restore）
             log(
                 "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
                 fields: [
@@ -269,14 +344,14 @@ final class HookEventHandler {
                     "app": identity.appName ?? "unknown",
                     "onMainScreen": String(onMainScreen),
                     "sessionID": payload.sessionID,
-                    "reason": reason
+                    "reason": "window_not_on_main"
                 ]
             )
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "restore_skipped_\(reason)",
-                    message: "Window not eligible for auto-restore (\(reason))",
+                    ok: true, code: "restore_skipped_window_not_on_main",
+                    message: "Window not on main screen, no restore needed",
                     sessionID: payload.sessionID, handled: false
                 )
             )
