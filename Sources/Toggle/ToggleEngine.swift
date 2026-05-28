@@ -113,4 +113,68 @@ final class ToggleEngine: ToggleRecordStore {
         log("ToggleEngine.clear", fields: ["windowID": String(windowID)])
     }
 
+    // MARK: - Synthetic Record (UPS fallback)
+
+    /// 为没有 ToggleRecord 的窗口创建合成记录 — 使用第一个非主屏作为 restore 目标
+    /// 用于 UserPromptSubmit fallback：窗口在主屏但无历史位置记录时，将窗口移到副屏
+    func createSyntheticToggleRecord(
+        windowID: UInt32,
+        pid: Int32,
+        bundleIdentifier: String?,
+        appName: String?
+    ) -> ToggleRecord? {
+        guard let secondaryScreen = NSScreen.screens.first(where: { $0.frame.origin != .zero }) else {
+            log("[ToggleEngine] createSyntheticToggleRecord: no secondary screen found", level: .warn, fields: [
+                "windowID": String(windowID),
+                "screenCount": String(NSScreen.screens.count)
+            ])
+            return nil
+        }
+
+        guard let mainScreen = NSScreen.screens.first(where: { $0.frame.origin == .zero }) else {
+            log("[ToggleEngine] createSyntheticToggleRecord: no main screen found", level: .warn, fields: [
+                "windowID": String(windowID)
+            ])
+            return nil
+        }
+
+        let origFrame = CoordinateKit.quartzVisibleFrame(of: secondaryScreen)
+        let targetFrame = CoordinateKit.quartzVisibleFrame(of: mainScreen)
+
+        let record = ToggleRecord(
+            windowID: windowID,
+            pid: pid,
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            origFrame: origFrame,
+            sourceSpace: 0,
+            sourceDisplay: 0,
+            sourceYabaiDisp: 0,
+            sourceDispSpace: 0,
+            targetFrame: targetFrame,
+            targetDisplay: 0,
+            toggledAt: Date(),
+            sessionID: nil
+        )
+
+        guard record.isValid(mainScreenFrame: mainScreen.frame) else {
+            log("[ToggleEngine] createSyntheticToggleRecord: synthetic record failed validation", level: .warn, fields: [
+                "windowID": String(windowID),
+                "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y))",
+                "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y))"
+            ])
+            return nil
+        }
+
+        store.saveToggleRecord(record)
+
+        log("[ToggleEngine] createSyntheticToggleRecord: saved", level: .info, fields: [
+            "windowID": String(windowID),
+            "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
+            "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))"
+        ])
+
+        return record
+    }
+
 }
