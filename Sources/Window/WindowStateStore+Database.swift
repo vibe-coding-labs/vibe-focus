@@ -95,6 +95,15 @@ extension WindowStateStore {
             runSchema("ALTER TABLE windows ADD COLUMN completed_at REAL;")
         }
 
+        // preferences 表：key-value 持久化（不受 app rebuild 影响）
+        runSchema("""
+            CREATE TABLE IF NOT EXISTS preferences (
+                key TEXT NOT NULL PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            """)
+
         // Migration: 如果旧表 PK 是 (pid, tty)，重建为 (window_id)
         migrateWindowsPKIfNeeded()
         log("[WindowStateStore] tables created/verified")
@@ -199,6 +208,38 @@ extension WindowStateStore {
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_last_seen ON windows(updated_at);")
 
         log("[WindowStateStore] migrate: copied \(copiedRows) rows, PK now (window_id)")
+    }
+
+    // MARK: - Preference Persistence (SQLite key-value store)
+
+    func savePreference(key: String, value: String) {
+        guard let db else { return }
+        let sql = "INSERT OR REPLACE INTO preferences (key, value, updated_at) VALUES (?, ?, ?);"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            log("[WindowStateStore] savePreference prepare failed", level: .warn, fields: ["key": key])
+            return
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            log("[WindowStateStore] savePreference step failed", level: .warn, fields: ["key": key])
+            return
+        }
+    }
+
+    func loadPreference(key: String) -> String? {
+        guard let db else { return nil }
+        let sql = "SELECT value FROM preferences WHERE key = ?;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard let text = sqlite3_column_text(stmt, 0) else { return nil }
+        return String(cString: text)
     }
 
     // MARK: - Schema Helpers

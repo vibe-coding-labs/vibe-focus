@@ -4,6 +4,7 @@ import SwiftUI
 @testable import VibeFocusKit
 
 @Suite("ScreenIndexPreferences Migration")
+@MainActor
 struct ScreenIndexMigrationTests {
 
     private func makeLegacyJSON(

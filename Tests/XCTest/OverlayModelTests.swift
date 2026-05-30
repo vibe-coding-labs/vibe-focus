@@ -31,7 +31,7 @@ struct OverlayModelTests {
     @Test("ScreenIndexPreferences default values")
     func screenIndexPreferencesDefaults() {
         let d = ScreenIndexPreferences.default
-        #expect(d.isEnabled == false)
+        #expect(d.isEnabled == true)
         #expect(d.position == .topRight)
         #expect(d.fontSize == 48)
         #expect(d.opacity == 0.8)
