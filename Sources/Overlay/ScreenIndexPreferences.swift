@@ -47,7 +47,7 @@ struct ScreenIndexPreferences: Codable {
     var usePerScreenSpaceIndexing: Bool
 
     static let `default` = ScreenIndexPreferences(
-        isEnabled: false,
+        isEnabled: true,
         position: .topRight,
         fontSize: 48,
         opacity: 0.8,
@@ -61,7 +61,15 @@ struct ScreenIndexPreferences: Codable {
 
     static let userDefaultsKey = "screenIndexPreferences"
 
+    @MainActor
     static func load() -> ScreenIndexPreferences {
+        // 1. SQLite 主源（~/.vibefocus/vibefocus.db — 不受 app rebuild 影响）
+        if let sqlitePrefs = loadFromSQLite() {
+            log("ScreenIndexPreferences loaded from SQLite: isEnabled=\(sqlitePrefs.isEnabled)")
+            return enforcePerScreenSpaceIndexingIfNeeded(sqlitePrefs)
+        }
+
+        // 2. CFPreferences（次源）
         let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
         if let value = CFPreferencesCopyAppValue(userDefaultsKey as CFString, bundleId as CFString),
            let jsonString = value as? String,
@@ -98,6 +106,20 @@ struct ScreenIndexPreferences: Codable {
         return .default
     }
 
+    @MainActor
+    private static func loadFromSQLite() -> ScreenIndexPreferences? {
+        guard let json = WindowStateStore.shared.loadPreference(key: userDefaultsKey),
+              let data = json.data(using: .utf8) else {
+            return nil
+        }
+        do {
+            return try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
+        } catch {
+            log("ScreenIndexPreferences decode error from SQLite: \(error)")
+            return nil
+        }
+    }
+
     static func loadLegacyPreferences(from data: Data) -> ScreenIndexPreferences? {
         struct LegacyPreferences: Codable {
             var isEnabled: Bool
@@ -131,6 +153,7 @@ struct ScreenIndexPreferences: Codable {
         }
     }
 
+    @MainActor
     static func enforcePerScreenSpaceIndexingIfNeeded(_ preferences: ScreenIndexPreferences) -> ScreenIndexPreferences {
         guard !preferences.usePerScreenSpaceIndexing else {
             return preferences
@@ -143,12 +166,16 @@ struct ScreenIndexPreferences: Codable {
         return migrated
     }
 
+    @MainActor
     func save() {
         guard let data = try? JSONEncoder().encode(self),
               let jsonString = String(data: data, encoding: .utf8) else {
             log("ScreenIndexPreferences: Failed to encode")
             return
         }
+        // SQLite 主源（不受 app rebuild 影响）
+        WindowStateStore.shared.savePreference(key: Self.userDefaultsKey, value: jsonString)
+        // CFPreferences + UserDefaults + config.json 次源
         let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
         CFPreferencesSetAppValue(Self.userDefaultsKey as CFString, jsonString as CFString, bundleId as CFString)
         CFPreferencesAppSynchronize(bundleId as CFString)
