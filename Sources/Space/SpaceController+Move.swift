@@ -53,11 +53,13 @@ extension SpaceController {
         return false
     }
 
-    func setWindowFloat(_ windowID: UInt32, operationID: String? = nil) {
+    func setWindowFloat(_ windowID: UInt32, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) {
         let op = operationID ?? "none"
         guard isEnabled else { return }
 
-        if let info = queryWindow(windowID: windowID) {
+        // 使用传入的窗口信息或查询缓存
+        let info = knownWindowInfo ?? queryWindow(windowID: windowID)
+        if let info {
             if info.isFloating { return }
         } else {
             log("setWindowFloat: queryWindow returned nil, skipping toggle", level: .warn, fields: [
@@ -73,12 +75,14 @@ extension SpaceController {
         )
     }
 
-    func focusWindow(_ windowID: UInt32, operationID: String? = nil) -> Bool {
+    func focusWindow(_ windowID: UInt32, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) -> Bool {
         let op = operationID ?? "none"
         refreshAvailabilityIfNeeded()
         guard isEnabled else { return false }
 
-        guard queryWindow(windowID: windowID) != nil else {
+        // 使用传入的窗口信息或查询缓存
+        let info = knownWindowInfo ?? queryWindow(windowID: windowID)
+        guard info != nil else {
             log("[SpaceController] focusWindow aborted: window does not exist", level: .warn, fields: [
                 "op": op, "windowID": String(windowID)
             ])
