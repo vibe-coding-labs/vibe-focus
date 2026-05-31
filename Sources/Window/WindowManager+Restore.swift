@@ -7,21 +7,9 @@ extension WindowManager {
     func restore(operationID: String? = nil, triggerSource: String = "unknown") {
         let op = operationID ?? makeOperationID(prefix: "restore")
         let startedAt = Date()
-        updateCrashSnapshotFromRuntime()
-        logRuntimeStateSnapshot(context: "restore_start")
-
-        // 1. 前置检查：accessibility 权限 + 焦点窗口识别
-        guard hasAccessibilityPermission() else {
-            log(
-                "[WindowManager] restore failed: accessibility denied",
-                level: .warn,
-                fields: ["op": op]
-            )
-            CrashContextRecorder.shared.record("restore_ax_denied op=\(op)")
-            logDiagnostics("ax_trusted_false_restore")
-            notifyAccessibilityPermissionRequired()
-            return
-        }
+        // 注意：updateCrashSnapshotFromRuntime、logRuntimeStateSnapshot、AX 权限检查、
+        // isWindowOnMainScreen 已在 toggle() 中完成，此处不再重复。
+        // restore() 唯一调用者是 toggle()，所有前置检查已由 toggle() 完成。
 
         guard let frontApp = NSWorkspace.shared.frontmostApplication,
               let focusedWindow = focusedWindow(for: frontApp.processIdentifier),
@@ -34,25 +22,14 @@ extension WindowManager {
             return
         }
 
-        let focusedOnMain = isWindowOnMainScreen(windowID: currentWindowID)
         log(
             "[WindowManager] restore started",
             fields: [
                 "op": op,
                 "source": triggerSource,
-                "windowID": String(currentWindowID),
-                "focusedOnMain": String(focusedOnMain)
+                "windowID": String(currentWindowID)
             ]
         )
-
-        guard focusedOnMain else {
-            log(
-                "[WindowManager] restore skipped: focused window not on main screen",
-                level: .warn,
-                fields: ["op": op, "windowID": String(currentWindowID)]
-            )
-            return
-        }
 
         // 2. 委托 ToggleEngine 执行 restore（唯一执行入口）
         // ToggleEngine 内部处理：load record → validate → space switch → apply frame
