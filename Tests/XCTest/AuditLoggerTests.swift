@@ -38,12 +38,26 @@ struct AuditLoggerTests {
         return (eventType, windowID, pid, sessionID, details)
     }
 
+    /// 记录事件并立即刷盘 — 测试用辅助方法
+    /// AuditLogger.record() 是异步缓冲的，测试需要显式 flush 才能读到 DB 数据
+    private func recordSync(
+        _ logger: AuditLogger,
+        eventType: String,
+        windowID: UInt32,
+        pid: Int32? = nil,
+        sessionID: String? = nil,
+        details: [String: String] = [:]
+    ) {
+        logger.record(eventType: eventType, windowID: windowID, pid: pid, sessionID: sessionID, details: details)
+        logger.flushPendingEvents()
+    }
+
     // MARK: - record basic
 
     @Test("record inserts a row with all fields")
     func recordInsertsRow() {
         let logger = makeLogger()
-        logger.record(eventType: "toggle", windowID: 42, pid: 1234, sessionID: "sess-1", details: ["key": "value"])
+        recordSync(logger, eventType: "toggle", windowID: 42, pid: 1234, sessionID: "sess-1", details: ["key": "value"])
 
         #expect(recordCount(in: logger.testDB) == 1)
         let row = fetchLatest(in: logger.testDB)
@@ -58,7 +72,7 @@ struct AuditLoggerTests {
     @Test("record with nil pid inserts NULL")
     func recordNilPID() {
         let logger = makeLogger()
-        logger.record(eventType: "restore", windowID: 10, pid: nil)
+        recordSync(logger, eventType: "restore", windowID: 10, pid: nil)
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.pid == nil)
@@ -67,7 +81,7 @@ struct AuditLoggerTests {
     @Test("record with empty sessionID inserts NULL")
     func recordEmptySessionID() {
         let logger = makeLogger()
-        logger.record(eventType: "toggle", windowID: 10, sessionID: "")
+        recordSync(logger, eventType: "toggle", windowID: 10, sessionID: "")
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.sessionID == nil)
@@ -76,7 +90,7 @@ struct AuditLoggerTests {
     @Test("record with nil sessionID inserts NULL")
     func recordNilSessionID() {
         let logger = makeLogger()
-        logger.record(eventType: "toggle", windowID: 10, sessionID: nil)
+        recordSync(logger, eventType: "toggle", windowID: 10, sessionID: nil)
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.sessionID == nil)
@@ -85,7 +99,7 @@ struct AuditLoggerTests {
     @Test("record with empty details inserts NULL details")
     func recordEmptyDetails() {
         let logger = makeLogger()
-        logger.record(eventType: "toggle", windowID: 10)
+        recordSync(logger, eventType: "toggle", windowID: 10)
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.details == nil)
@@ -94,7 +108,7 @@ struct AuditLoggerTests {
     @Test("record with non-empty details inserts JSON string")
     func recordJSONDetails() {
         let logger = makeLogger()
-        logger.record(eventType: "session bind", windowID: 10, details: ["reason": "auto", "space": "3"])
+        recordSync(logger, eventType: "session bind", windowID: 10, details: ["reason": "auto", "space": "3"])
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.details != nil)
@@ -109,9 +123,9 @@ struct AuditLoggerTests {
     @Test("multiple records coexist")
     func multipleRecords() {
         let logger = makeLogger()
-        logger.record(eventType: "toggle", windowID: 1)
-        logger.record(eventType: "restore", windowID: 2)
-        logger.record(eventType: "space move", windowID: 3)
+        recordSync(logger, eventType: "toggle", windowID: 1)
+        recordSync(logger, eventType: "restore", windowID: 2)
+        recordSync(logger, eventType: "space move", windowID: 3)
 
         #expect(recordCount(in: logger.testDB) == 3)
     }
@@ -126,7 +140,7 @@ struct AuditLoggerTests {
 
         // Insert 15 records
         for i in 1...15 {
-            logger.record(eventType: "toggle", windowID: UInt32(i))
+            recordSync(logger, eventType: "toggle", windowID: UInt32(i))
         }
         #expect(recordCount(in: logger.testDB) == 15)
 
@@ -167,6 +181,8 @@ struct AuditLoggerTests {
     func recordNilDB() {
         let logger = AuditLogger(db: nil)
         logger.record(eventType: "toggle", windowID: 42)
+        // flush with nil db should also not crash
+        logger.flushPendingEvents()
     }
 
     // MARK: - event types
@@ -176,7 +192,7 @@ struct AuditLoggerTests {
         let logger = makeLogger()
         let types = ["toggle", "restore", "session bind", "space move", "UserPromptSubmit"]
         for (i, type) in types.enumerated() {
-            logger.record(eventType: type, windowID: UInt32(i))
+            recordSync(logger, eventType: type, windowID: UInt32(i))
         }
 
         #expect(recordCount(in: logger.testDB) == 5)
@@ -188,7 +204,7 @@ struct AuditLoggerTests {
     func largeWindowID() {
         let logger = makeLogger()
         let largeID: UInt32 = 4_294_967_295 // UInt32.max
-        logger.record(eventType: "toggle", windowID: largeID)
+        recordSync(logger, eventType: "toggle", windowID: largeID)
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.windowID == Int64(largeID))
@@ -231,7 +247,7 @@ struct AuditLoggerTests {
     @Test("record with windowID 0 inserts successfully")
     func recordWindowIDZero() {
         let logger = makeLogger()
-        logger.record(eventType: "session bind", windowID: 0)
+        recordSync(logger, eventType: "session bind", windowID: 0)
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.windowID == 0)
@@ -242,9 +258,9 @@ struct AuditLoggerTests {
     @Test("multiple records with same windowID coexist")
     func duplicateWindowID() {
         let logger = makeLogger()
-        logger.record(eventType: "toggle", windowID: 42)
-        logger.record(eventType: "restore", windowID: 42)
-        logger.record(eventType: "toggle", windowID: 42)
+        recordSync(logger, eventType: "toggle", windowID: 42)
+        recordSync(logger, eventType: "restore", windowID: 42)
+        recordSync(logger, eventType: "toggle", windowID: 42)
 
         #expect(recordCount(in: logger.testDB) == 3)
     }
@@ -254,7 +270,7 @@ struct AuditLoggerTests {
     @Test("record with empty eventType inserts successfully")
     func recordEmptyEventType() {
         let logger = makeLogger()
-        logger.record(eventType: "", windowID: 1)
+        recordSync(logger, eventType: "", windowID: 1)
 
         let row = fetchLatest(in: logger.testDB)
         #expect(row?.eventType == "")
