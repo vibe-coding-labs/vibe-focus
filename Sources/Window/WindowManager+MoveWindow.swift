@@ -76,8 +76,9 @@ extension WindowManager {
             return false
         }
 
-        // Skip if already on main screen
-        let yabaiDisplay = spaceController.windowDisplayIndex(windowID: identity.windowID)
+        // Skip if already on main screen — 一次性查询窗口信息，后续复用缓存
+        let windowInfo = spaceController.queryWindow(windowID: identity.windowID)
+        let yabaiDisplay = windowInfo?.display.map { DisplayIdentifier.yabai($0) }
         if let display = yabaiDisplay?.yabaiIndex, display == 1 {
             if let mainScreen = getMainScreen() {
                 let windowCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
