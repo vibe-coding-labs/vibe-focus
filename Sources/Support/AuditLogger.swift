@@ -12,6 +12,11 @@ final class AuditLogger {
     private var insertCount: Int = 0
     private let cleanupInterval: Int = 50
 
+    /// 待写入事件缓冲区 — toggle 热路径中仅追加到此数组，不阻塞
+    private var pendingEvents: [(eventType: String, windowID: UInt32, pid: Int32?, sessionID: String?, details: [String: String])] = []
+    private var flushScheduled = false
+    private let flushDebounceInterval: TimeInterval = 0.3
+
     private let _injectedDB: OpaquePointer?
     private var db: OpaquePointer? { _injectedDB ?? WindowStateStore.shared.db }
 
@@ -52,7 +57,50 @@ final class AuditLogger {
         sessionID: String? = nil,
         details: [String: String] = [:]
     ) {
+        // 追加到内存缓冲区 — 不阻塞调用者
+        pendingEvents.append((eventType, windowID, pid, sessionID, details))
+        scheduleFlush()
+    }
+
+    /// 调度异步刷新（带防抖）
+    private func scheduleFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + flushDebounceInterval) { [weak self] in
+            self?.flushScheduled = false
+            self?.flushPendingEvents()
+        }
+    }
+
+    /// 批量写入待处理事件到 SQLite
+    /// internal 以便测试直接调用（@testable import 可见）
+    func flushPendingEvents() {
+        guard !pendingEvents.isEmpty else { return }
+        let events = pendingEvents
+        pendingEvents = []
+
         guard let db else { return }
+        for event in events {
+            insertEventSync(
+                db: db,
+                eventType: event.eventType,
+                windowID: event.windowID,
+                pid: event.pid,
+                sessionID: event.sessionID,
+                details: event.details
+            )
+        }
+    }
+
+    /// 同步写入单条事件到 SQLite（内部使用）
+    private func insertEventSync(
+        db: OpaquePointer,
+        eventType: String,
+        windowID: UInt32,
+        pid: Int32?,
+        sessionID: String?,
+        details: [String: String]
+    ) {
         var stmt: OpaquePointer?
         let sql = """
             INSERT INTO window_audit_log (event_type, window_id, pid, session_id, details, created_at)
