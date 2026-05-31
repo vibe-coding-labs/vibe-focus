@@ -65,6 +65,27 @@ final class SpaceController: ObservableObject {
     var scriptingAdditionRecoverySucceeded = false
     private let checkInterval: TimeInterval = 20
 
+    // MARK: - Query Cache (per-toggle lifecycle)
+
+    /// 查询缓存 TTL — 短到不会错过 yabai 状态变化，长到覆盖一次 toggle 操作
+    static let queryCacheTTL: TimeInterval = 2.0
+
+    /// 缓存 queryWindow 结果 — key 是 windowID
+    var windowQueryCache: [UInt32: (result: YabaiWindowInfo?, cachedAt: Date)] = [:]
+    /// 缓存 querySpaces 结果
+    var spacesQueryCache: (result: [YabaiSpaceInfo]?, cachedAt: Date)?
+
+    /// 清除所有查询缓存 — 每次 toggle 操作结束后调用
+    func clearQueryCache() {
+        windowQueryCache.removeAll()
+        spacesQueryCache = nil
+    }
+
+    /// 检查缓存是否过期
+    func isCacheExpired(_ cachedAt: Date) -> Bool {
+        return Date().timeIntervalSince(cachedAt) > Self.queryCacheTTL
+    }
+
     private init() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.refreshAvailability(force: true)
