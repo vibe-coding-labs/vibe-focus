@@ -46,6 +46,11 @@ extension WindowManager {
         let shouldRestore = shouldRestoreCurrentWindow()
         let mode = shouldRestore ? "restore" : "move_to_main"
 
+        // 预查询窗口信息到缓存 — restore/move 路径都会复用
+        if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+            _ = spaceController.queryWindow(windowID: winID)
+        }
+
         // 采集 toggle record 状态用于决策日志
         var decisionFields: [String: String] = [
             "op": op,
