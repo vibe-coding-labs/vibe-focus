@@ -13,6 +13,11 @@ extension SpaceController {
     }
 
     func querySpaces(caller: String = #function) -> [YabaiSpaceInfo]? {
+        // 1. 检查缓存
+        if let cached = spacesQueryCache, !isCacheExpired(cached.cachedAt) {
+            return cached.result
+        }
+
         let startedAt = Date()
         guard let result = runYabai(arguments: ["-m", "query", "--spaces"]),
               result.exitCode == 0 else {
@@ -24,6 +29,7 @@ extension SpaceController {
                     "durationMs": String(elapsedMilliseconds(since: startedAt))
                 ]
             )
+            spacesQueryCache = (result: nil, cachedAt: Date())
             return nil
         }
         let spaces = decodeArray(YabaiSpaceInfo.self, from: result.stdout)
@@ -38,14 +44,22 @@ extension SpaceController {
                 ]
             )
         }
+        spacesQueryCache = (result: spaces, cachedAt: Date())
         return spaces
     }
 
     func queryWindow(windowID: UInt32) -> YabaiWindowInfo? {
+        // 1. 检查缓存
+        if let cached = windowQueryCache[windowID], !isCacheExpired(cached.cachedAt) {
+            return cached.result
+        }
+
+        // 2. 直接查询
         if let result = runYabai(arguments: ["-m", "query", "--windows", "--window", "\(windowID)"]),
            result.exitCode == 0 {
             let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
             if info != nil {
+                windowQueryCache[windowID] = (result: info, cachedAt: Date())
                 return info
             }
         }
@@ -58,6 +72,7 @@ extension SpaceController {
         guard let allResult = runYabai(arguments: ["-m", "query", "--windows"]),
               allResult.exitCode == 0 else {
             log("[queryWindow] all-windows fallback also failed", level: .warn, fields: ["windowID": String(windowID)])
+            windowQueryCache[windowID] = (result: nil, cachedAt: Date())
             return nil
         }
         let allWindows = decodeArray(YabaiWindowInfo.self, from: allResult.stdout) ?? []
@@ -73,6 +88,7 @@ extension SpaceController {
                 "totalWindows": String(allWindows.count)
             ]
         )
+        windowQueryCache[windowID] = (result: match, cachedAt: Date())
         return match
     }
 

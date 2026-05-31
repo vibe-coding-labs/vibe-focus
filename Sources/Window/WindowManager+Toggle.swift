@@ -7,6 +7,8 @@ extension WindowManager {
     func toggle(operationID: String? = nil, triggerSource: String = "unknown") {
         let op = operationID ?? makeOperationID(prefix: "toggle")
         let startedAt = Date()
+        // 清除查询缓存，确保本次 toggle 获取最新状态
+        SpaceController.shared.clearQueryCache()
         let frontBefore = frontmostAppDescriptor()
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "toggle_start")
@@ -139,6 +141,8 @@ extension WindowManager {
         if durationMs >= 650 {
             CrashContextRecorder.shared.record("toggle_slow op=\(op) durationMs=\(durationMs) mode=\(mode)")
         }
+        // toggle 结束后清除缓存
+        SpaceController.shared.clearQueryCache()
     }
 
     private func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String) {
