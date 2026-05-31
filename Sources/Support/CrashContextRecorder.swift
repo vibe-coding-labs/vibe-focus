@@ -33,6 +33,12 @@ final class CrashContextRecorder {
 
     private var state: SessionState?
 
+    /// 异步写入队列 — 避免在 toggle 热路径中阻塞主线程
+    private let persistQueue = DispatchQueue(label: "com.vibefocus.crash-persist", qos: .utility)
+    /// 防抖标志：避免快速连续 record 调用时频繁写入磁盘
+    private var persistScheduled = false
+    private let persistDebounceInterval: TimeInterval = 0.5
+
     private init() {}
 
     func bootstrap() {
@@ -91,13 +97,19 @@ final class CrashContextRecorder {
 
     func record(_ event: String) {
         appendEvent(event)
-        persistState()
-        log(
-            "[CRASH_CONTEXT] event",
-            fields: [
-                "event": truncateForLog(event, limit: 360)
-            ]
-        )
+        // 异步延迟写入 — 不阻塞 toggle 热路径
+        schedulePersist()
+    }
+
+    /// 调度异步持久化（带防抖）
+    /// 使用 main.asyncAfter — 调用者不被阻塞，延迟后在主线程执行写入
+    private func schedulePersist() {
+        guard !persistScheduled else { return }
+        persistScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + persistDebounceInterval) { [weak self] in
+            self?.persistScheduled = false
+            self?.persistState()
+        }
     }
 
     func markCleanExit() {
