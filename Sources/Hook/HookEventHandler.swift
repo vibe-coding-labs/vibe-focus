@@ -333,28 +333,70 @@ final class HookEventHandler {
                         sessionID: payload.sessionID, handled: false
                     )
                 )
-            }
+            } else {
+                // 窗口不在主屏 → 检查是否有 ToggleRecord 可以 restore 回主屏
+                // 这是远程 session 最常见的场景：⌃Q toggle 把窗口移到副屏后，
+                // 用户在远程 Claude 里打字触发 UserPromptSubmit，需要把窗口拉回主屏。
+                let engine = ToggleEngine.shared
+                if let record = engine.load(windowID: identity.windowID),
+                   let mainScreen = WindowManager.shared.getMainScreen() {
+                    log(
+                        "[HookEventHandler] UserPromptSubmit: window off-main but has ToggleRecord, restoring to main screen",
+                        level: .info,
+                        fields: [
+                            "traceID": traceID,
+                            "windowID": String(identity.windowID),
+                            "app": identity.appName ?? "unknown",
+                            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
+                            "sourceSpace": String(record.sourceSpace),
+                            "sessionID": payload.sessionID
+                        ]
+                    )
+                    let validation = RestoreValidation(record: record, mainScreen: mainScreen)
+                    let success = executeRestore(
+                        identity: identity,
+                        validation: validation,
+                        traceID: traceID,
+                        startedAt: handleStartedAt,
+                        sessionID: payload.sessionID
+                    )
+                    if success {
+                        lastAutoRestoreByWindowID[identity.windowID] = Date()
+                        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+                    }
+                    return (
+                        200,
+                        ClaudeHookResponse(
+                            ok: true,
+                            code: success ? "restored_from_secondary" : "restore_failed",
+                            message: success ? "Window restored from secondary screen to main screen" : "Restore from secondary screen failed",
+                            sessionID: payload.sessionID,
+                            handled: success
+                        )
+                    )
+                }
 
-            // 窗口不在主屏 → 正常 skip（窗口已在副屏，无需 restore）
-            log(
-                "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
-                fields: [
-                    "traceID": traceID,
-                    "windowID": String(identity.windowID),
-                    "app": identity.appName ?? "unknown",
-                    "onMainScreen": String(onMainScreen),
-                    "sessionID": payload.sessionID,
-                    "reason": "window_not_on_main"
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "restore_skipped_window_not_on_main",
-                    message: "Window not on main screen, no restore needed",
-                    sessionID: payload.sessionID, handled: false
+                // 无 ToggleRecord，窗口就在副屏且没有记录可以 restore → skip
+                log(
+                    "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(identity.windowID),
+                        "app": identity.appName ?? "unknown",
+                        "onMainScreen": String(onMainScreen),
+                        "sessionID": payload.sessionID,
+                        "reason": "window_not_on_main_no_record"
+                    ]
                 )
-            )
+                return (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true, code: "restore_skipped_window_not_on_main",
+                        message: "Window not on main screen and no toggle record to restore from",
+                        sessionID: payload.sessionID, handled: false
+                    )
+                )
+            }
         }
 
         // 4. 执行 restore
@@ -513,7 +555,7 @@ final class HookEventHandler {
         mainScreenFrame: CGRect?
     ) -> RestoreEligibility {
         if isToggleInFlight { return .toggleInFlight }
-        if !isWindowOnMainScreen { return .windowNotOnMainScreen }
+        // 不再要求窗口必须在主屏 — 窗口在副屏但有 ToggleRecord 时也应该可以 restore
         guard let record else { return .noRecord }
         guard let mainScreenFrame, record.isValid(mainScreenFrame: mainScreenFrame) else {
             return .recordInvalid(windowID: record.windowID)
