@@ -56,17 +56,10 @@ extension WindowManager {
 
         // 3. ToggleEngine.restore() 已自动清除 toggle record，无需手动 clear
 
-        // 4. 焦点跟随（仅 carbon_hotkey 触发）
-        if triggerSource == "carbon_hotkey" {
-            if let postApplySpace = spaceController.windowSpaceIndex(windowID: currentWindowID)?.yabaiIndex,
-               let currentSpace = spaceController.currentSpaceIndex(),
-               postApplySpace != currentSpace {
-                log("[WindowManager] restore: following window to Space \(postApplySpace)", fields: [
-                    "op": op, "windowID": String(currentWindowID), "currentSpace": String(currentSpace)
-                ])
-                _ = spaceController.focusWindow(currentWindowID, operationID: op)
-            }
-        }
+        // 4. 焦点跟随已移至 ToggleEngine.restore() 内部处理。
+        // 旧逻辑使用 windowSpaceIndex（基于 yabai 缓存）判断窗口位置，
+        // 但 yabai lost AX ref 时缓存数据过期，导致错误的 space 切换。
+        // ToggleEngine 现在在 AX frame set 后直接检测并修正 macOS auto-switch。
 
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
         log(

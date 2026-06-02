@@ -397,13 +397,20 @@ struct YabaiWindowInfo: Decodable {
     let display: Int?
     let frame: Frame?
     let isFloatingRaw: Bool?
+    let hasAXReferenceRaw: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, pid, app, title, space, display, frame
         case isFloatingRaw = "is-floating"
+        case hasAXReferenceRaw = "has-ax-reference"
     }
 
     var isFloating: Bool { isFloatingRaw == true }
+
+    /// yabai 是否能通过 AXUIElement 管理此窗口。
+    /// has-ax-reference=false 时所有 yabai 命令（move/float/focus）都会失败，
+    /// 必须跳过 yabai 改用 AX/NativeSpaceBridge 等替代方案。
+    var isManageableByYabai: Bool { hasAXReferenceRaw == true }
 
     struct Frame: Decodable {
         let x: Double

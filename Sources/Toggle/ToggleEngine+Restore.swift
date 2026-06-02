@@ -57,6 +57,8 @@ extension ToggleEngine {
 
         // 4. Move to original space via yabai (skip if sourceSpace=0 — no space info available)
         var moved = false
+        // 记录 AX frame set 前的 focused space — 用于检测 macOS 是否自动切换了 space
+        let preMoveSpace = sc.currentSpaceIndex()
         if record.sourceSpace > 0 {
             moved = sc.moveWindow(
                 axLookupID,
@@ -74,13 +76,33 @@ extension ToggleEngine {
         }
 
         // 5. Float on target space — prevents yabai from tiling
-        sc.setWindowFloat(axLookupID, operationID: trace)
+        // 传递 queryWindow 结果，避免重复查询且让 setWindowFloat 能判断 isManageableByYabai
+        let windowInfo = sc.queryWindow(windowID: axLookupID)
+        sc.setWindowFloat(axLookupID, operationID: trace, knownWindowInfo: windowInfo)
 
         // 6. Apply original frame via AX
         if !wm.apply(frame: record.origFrame, to: windowAX, operationID: trace, stage: "restore") {
             log("[ToggleEngine] restore: AX frame apply failed", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID)
             ])
+        }
+
+        // 6b. 检测 macOS 自动切换 space（AX frame set 把焦点窗口移到了其他 display）
+        // 当 yabai/space move 都失败时，AX 设置坐标会触发 macOS 自动跟随到目标 space，
+        // 导致用户视角从 main screen 跳到 secondary screen。这里检测并切回。
+        if !moved, let preMoveSpace {
+            let postMoveSpace = sc.currentSpaceIndex()
+            if let postMoveSpace, postMoveSpace != preMoveSpace {
+                let steps = preMoveSpace - postMoveSpace
+                log("[ToggleEngine] restore: macOS auto-switched space, switching back", level: .info, fields: [
+                    "traceID": trace, "preSpace": String(preMoveSpace),
+                    "postSpace": String(postMoveSpace), "steps": String(steps)
+                ])
+                if NativeSpaceBridge.focusSpace(steps: steps, operationID: trace) {
+                    // 清除 queryWindow 缓存，因为 space 切换后窗口位置可能已变
+                    sc.clearQueryCache()
+                }
+            }
         }
 
         // 7. Clear record
