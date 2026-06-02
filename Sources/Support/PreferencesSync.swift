@@ -37,6 +37,13 @@ enum PreferencesSync {
         LANHookPreferences.lanModeKey: LANHookPreferences.defaultLanMode,
         LANHookPreferences.remoteBindingsKey: "",
 
+        // TitleEditorPreferences
+        TitleEditorPreferences.enabledKey: true,
+        TitleEditorPreferences.hotKeyEnabledKey: true,
+
+        // SoundManager
+        "soundPreferences": "",
+
         // SessionWindowRegistry and WindowManager savedWindowStates
         // migrated to SQLite — no longer in UserDefaults
     ]
@@ -62,19 +69,16 @@ enum PreferencesSync {
         }
 
         var restored = 0
-        var skipped = 0
         for (key, value) in dict {
             if key == ClaudeHookPreferences.tokenKey { continue }
-            // UserDefaults 写入是同步的，config.json 写入是异步的。
-            // 如果 UserDefaults 已有值，说明比 config.json 更新（或相等），不覆盖。
-            if UserDefaults.standard.object(forKey: key) != nil {
-                skipped += 1
-                continue
-            }
+            // 始终从 config.json 恢复到 UserDefaults。
+            // config.json 是持久化的权威数据源，UserDefaults 只是运行时缓存。
+            // 重装 app 后 UserDefaults plist 可能被 SwiftUI 默认值覆盖，
+            // 只有强制从 config.json 恢复才能确保用户配置不丢失。
             value.writeToUserDefaults(key: key)
             restored += 1
         }
-        log("PreferencesSync: restored \(restored) keys, skipped \(skipped) (already in UserDefaults)", fields: ["path": path])
+        log("PreferencesSync: restored \(restored) keys from config.json", fields: ["path": path])
 
         ensureDefaultsPopulated()
     }

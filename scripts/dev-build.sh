@@ -18,9 +18,22 @@ echo "=========================================="
 # Check and kill existing processes
 echo -e "${YELLOW}1. 检查现有进程...${NC}"
 if pgrep -f "VibeFocus" > /dev/null; then
-    echo "   发现运行中的 VibeFocus，正在终止..."
-    pkill -9 -f "VibeFocus" || true
-    sleep 1
+    echo "   发现运行中的 VibeFocus，正在优雅终止..."
+    # 先发 SIGTERM 让 app 执行 applicationWillTerminate（持久化配置、SQLite WAL checkpoint）
+    pkill -f "VibeFocus" 2>/dev/null || true
+    # 等待最多 3 秒让 app 完成清理
+    for i in 1 2 3; do
+        if ! pgrep -f "VibeFocus" > /dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    # 如果还在运行，SIGKILL 兜底
+    if pgrep -f "VibeFocus" > /dev/null; then
+        echo "   优雅关闭超时，强制终止..."
+        pkill -9 -f "VibeFocus" 2>/dev/null || true
+        sleep 0.5
+    fi
 fi
 echo -e "${GREEN}   ✓ 检查完成${NC}"
 
