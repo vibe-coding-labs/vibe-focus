@@ -181,11 +181,15 @@ final class HookEventHandler {
 
     // MARK: - User Prompt Submit
 
+    /// UserPromptSubmit 事件处理：确保终端窗口在主屏可见。
+    ///
+    /// **设计原则（单向移动）**：只在窗口不在主屏时将其拉到主屏，永远不会把窗口推离主屏。
+    /// 旧逻辑使用 ToggleEngine.restore() 会把窗口移回 origFrame（副屏），
+    /// 导致 Stop→UPS→Stop→UPS 无限循环，窗口在主屏和副屏之间反复跳动。
     func handleUserPromptSubmit(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         let traceID = makeOperationID(prefix: "ups")
-        let handleStartedAt = Date()
 
         log(
             "[HookEventHandler] UserPromptSubmit triggered",
@@ -213,7 +217,7 @@ final class HookEventHandler {
         }
 
         // 1. 解析窗口身份
-        guard let identity = resolveWindowIdentity(payload: payload, traceID: traceID, startedAt: handleStartedAt) else {
+        guard let identity = resolveWindowIdentity(payload: payload, traceID: traceID, startedAt: Date()) else {
             log(
                 "[HookEventHandler] UserPromptSubmit: window identity resolution failed",
                 level: .warn,
@@ -234,12 +238,33 @@ final class HookEventHandler {
             )
         }
 
-        // 2. 冷却检查：同一窗口在冷却期内不重复 auto-restore
+        // 2. 窗口已在主屏 → 无需操作
+        if WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
+            log(
+                "[HookEventHandler] UserPromptSubmit: window already on main screen, skipping",
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sessionID": payload.sessionID
+                ]
+            )
+            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "already_on_main_screen",
+                    message: "Window already on main screen, no action needed",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 3. 冷却检查：同一窗口在冷却期内不重复移动
         if let lastRestore = lastAutoRestoreByWindowID[identity.windowID],
            Date().timeIntervalSince(lastRestore) < Self.autoRestoreCooldownSeconds {
             let remaining = Int(Self.autoRestoreCooldownSeconds - Date().timeIntervalSince(lastRestore))
             log(
-                "[HookEventHandler] UserPromptSubmit: auto-restore cooldown active, skipping",
+                "[HookEventHandler] UserPromptSubmit: cooldown active, skipping",
                 level: .info,
                 fields: [
                     "traceID": traceID,
@@ -257,152 +282,25 @@ final class HookEventHandler {
             )
         }
 
-        // 3. 验证是否应该 restore
-        guard let validation = validateRestoreEligibility(identity: identity, traceID: traceID) else {
-            let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+        // 4. 窗口不在主屏 → 移到主屏（单向操作，不会推离主屏）
+        log(
+            "[HookEventHandler] UserPromptSubmit: moving window to main screen",
+            level: .info,
+            fields: [
+                "traceID": traceID,
+                "windowID": String(identity.windowID),
+                "app": identity.appName ?? "unknown",
+                "sessionID": payload.sessionID
+            ]
+        )
 
-            // Fallback: 窗口在主屏但无 ToggleRecord → 创建 synthetic record 并 restore 到副屏
-            if onMainScreen {
-                let engine = ToggleEngine.shared
-                if let syntheticRecord = engine.createSyntheticToggleRecord(
-                    windowID: identity.windowID,
-                    pid: identity.pid,
-                    bundleIdentifier: identity.bundleIdentifier,
-                    appName: identity.appName
-                ) {
-                    log(
-                        "[HookEventHandler] UserPromptSubmit: created synthetic toggle record, attempting restore",
-                        level: .info,
-                        fields: [
-                            "traceID": traceID,
-                            "windowID": String(identity.windowID),
-                            "app": identity.appName ?? "unknown",
-                            "sessionID": payload.sessionID
-                        ]
-                    )
-                    guard let mainScreen = WindowManager.shared.getMainScreen() else {
-                        return (
-                            200,
-                            ClaudeHookResponse(
-                                ok: true, code: "restore_skipped_no_main_screen",
-                                message: "Cannot determine main screen for synthetic restore",
-                                sessionID: payload.sessionID, handled: false
-                            )
-                        )
-                    }
-                    let syntheticValidation = RestoreValidation(record: syntheticRecord, mainScreen: mainScreen)
-                    let success = executeRestore(
-                        identity: identity,
-                        validation: syntheticValidation,
-                        traceID: traceID,
-                        startedAt: handleStartedAt,
-                        sessionID: payload.sessionID
-                    )
-                    if success {
-                        lastAutoRestoreByWindowID[identity.windowID] = Date()
-                        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-                    }
-                    return (
-                        200,
-                        ClaudeHookResponse(
-                            ok: true,
-                            code: success ? "restored_synthetic" : "restore_failed",
-                            message: success ? "Window restored to secondary screen (synthetic record)" : "Synthetic restore attempt failed",
-                            sessionID: payload.sessionID,
-                            handled: success
-                        )
-                    )
-                }
+        let moved = WindowManager.shared.moveWindowToMainScreen(
+            identity: identity,
+            reason: .userPromptSubmit,
+            sessionID: payload.sessionID
+        )
 
-                // 无法创建 synthetic record（无副屏或验证失败）
-                log(
-                    "[HookEventHandler] UserPromptSubmit: on main screen, no toggle record, synthetic record creation failed",
-                    fields: [
-                        "traceID": traceID,
-                        "windowID": String(identity.windowID),
-                        "app": identity.appName ?? "unknown",
-                        "sessionID": payload.sessionID,
-                        "reason": "no_toggle_record_no_secondary_screen"
-                    ]
-                )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "restore_skipped_no_toggle_record",
-                        message: "Window on main screen but no toggle record and no secondary screen available",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            } else {
-                // 窗口不在主屏 → 检查是否有 ToggleRecord 可以 restore 回主屏
-                // 这是远程 session 最常见的场景：⌃Q toggle 把窗口移到副屏后，
-                // 用户在远程 Claude 里打字触发 UserPromptSubmit，需要把窗口拉回主屏。
-                let engine = ToggleEngine.shared
-                if let record = engine.load(windowID: identity.windowID),
-                   let mainScreen = WindowManager.shared.getMainScreen() {
-                    log(
-                        "[HookEventHandler] UserPromptSubmit: window off-main but has ToggleRecord, restoring to main screen",
-                        level: .info,
-                        fields: [
-                            "traceID": traceID,
-                            "windowID": String(identity.windowID),
-                            "app": identity.appName ?? "unknown",
-                            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
-                            "sourceSpace": String(record.sourceSpace),
-                            "sessionID": payload.sessionID
-                        ]
-                    )
-                    let validation = RestoreValidation(record: record, mainScreen: mainScreen)
-                    let success = executeRestore(
-                        identity: identity,
-                        validation: validation,
-                        traceID: traceID,
-                        startedAt: handleStartedAt,
-                        sessionID: payload.sessionID
-                    )
-                    if success {
-                        lastAutoRestoreByWindowID[identity.windowID] = Date()
-                        SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-                    }
-                    return (
-                        200,
-                        ClaudeHookResponse(
-                            ok: true,
-                            code: success ? "restored_from_secondary" : "restore_failed",
-                            message: success ? "Window restored from secondary screen to main screen" : "Restore from secondary screen failed",
-                            sessionID: payload.sessionID,
-                            handled: success
-                        )
-                    )
-                }
-
-                // 无 ToggleRecord，窗口就在副屏且没有记录可以 restore → skip
-                log(
-                    "[HookEventHandler] UserPromptSubmit: not eligible for auto-restore, skipping",
-                    fields: [
-                        "traceID": traceID,
-                        "windowID": String(identity.windowID),
-                        "app": identity.appName ?? "unknown",
-                        "onMainScreen": String(onMainScreen),
-                        "sessionID": payload.sessionID,
-                        "reason": "window_not_on_main_no_record"
-                    ]
-                )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "restore_skipped_window_not_on_main",
-                        message: "Window not on main screen and no toggle record to restore from",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            }
-        }
-
-        // 4. 执行 restore
-        let success = executeRestore(identity: identity, validation: validation, traceID: traceID, startedAt: handleStartedAt, sessionID: payload.sessionID)
-
-        if success {
+        if moved {
             lastAutoRestoreByWindowID[identity.windowID] = Date()
             SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
         }
@@ -411,10 +309,10 @@ final class HookEventHandler {
             200,
             ClaudeHookResponse(
                 ok: true,
-                code: success ? "restored" : "restore_failed",
-                message: success ? "Window restored to original position" : "Restore attempt failed",
+                code: moved ? "moved_to_main" : "move_failed",
+                message: moved ? "Window moved to main screen" : "Failed to move window to main screen",
                 sessionID: payload.sessionID,
-                handled: success
+                handled: moved
             )
         )
     }
@@ -533,12 +431,9 @@ final class HookEventHandler {
         return nil
     }
 
-    private struct RestoreValidation {
-        let record: ToggleRecord
-        let mainScreen: NSScreen
-    }
-
     /// Restore eligibility decision — extracted for testability.
+    /// ⚠️ 注意：此 enum 及 decideRestoreEligibility 仅被测试引用，生产代码不再使用。
+    /// UserPromptSubmit 现在直接使用 moveWindowToMainScreen（单向移动到主屏）。
     enum RestoreEligibility {
         case eligible(record: ToggleRecord, mainScreenFrame: CGRect)
         case toggleInFlight
@@ -563,131 +458,6 @@ final class HookEventHandler {
         return .eligible(record: record, mainScreenFrame: mainScreenFrame)
     }
 
-    private func validateRestoreEligibility(
-        identity: WindowIdentity,
-        traceID: String
-    ) -> RestoreValidation? {
-        // 防止与手动热键 toggle 冲突
-        if HotKeyManager.shared.isToggleInFlight {
-            log(
-                "[HookEventHandler] validateRestoreEligibility: toggle in flight, skipping",
-                level: .debug,
-                fields: [
-                    "traceID": traceID,
-                    "windowID": String(identity.windowID)
-                ]
-            )
-            return nil
-        }
-
-        // 窗口必须在主屏上
-        let onMainScreen = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
-        guard onMainScreen else {
-            log(
-                "[HookEventHandler] validateRestoreEligibility: window not on main screen",
-                fields: [
-                    "traceID": traceID,
-                    "windowID": String(identity.windowID),
-                    "app": identity.appName ?? "unknown"
-                ]
-            )
-            return nil
-        }
-
-        // 必须有有效的 toggle record
-        let engine = ToggleEngine.shared
-        guard let record = engine.load(windowID: identity.windowID) else {
-            log(
-                "[HookEventHandler] validateRestoreEligibility: no toggle record found",
-                fields: [
-                    "traceID": traceID,
-                    "windowID": String(identity.windowID),
-                    "pid": String(identity.pid)
-                ]
-            )
-            return nil
-        }
-
-        // record 必须通过验证
-        guard let mainScreen = WindowManager.shared.getMainScreen(),
-              record.isValid(mainScreenFrame: mainScreen.frame) else {
-            log(
-                "[HookEventHandler] validateRestoreEligibility: toggle record failed validation",
-                level: .warn,
-                fields: [
-                    "traceID": traceID,
-                    "windowID": String(identity.windowID),
-                    "sourceSpace": String(record.sourceSpace),
-                    "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
-                ]
-            )
-            return nil
-        }
-
-        log(
-            "[HookEventHandler] validateRestoreEligibility: eligible for restore",
-            fields: [
-                "traceID": traceID,
-                "windowID": String(identity.windowID),
-                "sourceSpace": String(record.sourceSpace),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
-            ]
-        )
-
-        return RestoreValidation(record: record, mainScreen: mainScreen)
-    }
-
-    @discardableResult
-    private func executeRestore(
-        identity: WindowIdentity,
-        validation: RestoreValidation,
-        traceID: String,
-        startedAt: Date,
-        sessionID: String
-    ) -> Bool {
-        let engine = ToggleEngine.shared
-        let restoreStart = Date()
-
-        log(
-            "[HookEventHandler] UserPromptSubmit calling ToggleEngine.restore",
-            level: .info,
-            fields: [
-                "traceID": traceID,
-                "windowID": String(identity.windowID),
-                "preRestoreMs": String(elapsedMilliseconds(since: startedAt))
-            ]
-        )
-
-        let success = engine.restore(
-            windowID: identity.windowID,
-            triggerSource: "user_prompt_submit",
-            traceID: traceID
-        )
-
-        let restoreMs = elapsedMilliseconds(since: restoreStart)
-        log(
-            "[HookEventHandler] UserPromptSubmit restore completed",
-            level: success ? .info : .warn,
-            fields: [
-                "traceID": traceID,
-                "success": String(success),
-                "restoreMs": String(restoreMs),
-                "totalMs": String(elapsedMilliseconds(since: startedAt))
-            ]
-        )
-        AuditLogger.shared.record(
-            eventType: success ? "user_prompt_restore" : "user_prompt_restore_failed",
-            windowID: identity.windowID,
-            pid: identity.pid,
-            sessionID: sessionID,
-            details: [
-                "restoreMs": String(restoreMs),
-                "totalMs": String(elapsedMilliseconds(since: startedAt))
-            ]
-        )
-
-        return success
-    }
     // MARK: - Stop
 
     func handleStop(

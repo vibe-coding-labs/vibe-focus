@@ -10,6 +10,7 @@ enum ClaudeHookEventType: String, Codable, CaseIterable {
 enum WindowMoveReason: String, Codable {
     case manualHotkey = "manual_hotkey"
     case claudeSessionEnd = "claude_session_end"
+    case userPromptSubmit = "user_prompt_submit"
 }
 
 struct WindowIdentity: Codable, Equatable {
