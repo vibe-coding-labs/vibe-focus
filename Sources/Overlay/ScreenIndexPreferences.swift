@@ -88,7 +88,9 @@ struct ScreenIndexPreferences: Codable {
                 }
             }
         }
-        if let data = UserDefaults.standard.data(forKey: userDefaultsKey) {
+        // 3. UserDefaults（兜底）— save() 写入 String，优先用 .string() 读取
+        if let jsonString = UserDefaults.standard.string(forKey: userDefaultsKey),
+           let data = jsonString.data(using: .utf8) {
             do {
                 let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
                 let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
@@ -101,6 +103,17 @@ struct ScreenIndexPreferences: Codable {
                     oldPrefs.save()
                     return oldPrefs
                 }
+            }
+        }
+        // Fallback: 如果以 Data 形式存储（理论上不会，但做兼容）
+        if let data = UserDefaults.standard.data(forKey: userDefaultsKey) {
+            do {
+                let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
+                let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
+                log("ScreenIndexPreferences loaded from UserDefaults (data fallback): isEnabled=\(prefs.isEnabled)")
+                return migrated
+            } catch {
+                log("ScreenIndexPreferences decode error from UserDefaults data fallback: \(error)")
             }
         }
         return .default
