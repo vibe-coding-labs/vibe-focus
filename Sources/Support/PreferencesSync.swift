@@ -50,6 +50,12 @@ enum PreferencesSync {
 
     private static let syncQueue = DispatchQueue(label: "com.vibefocus.prefsync", qos: .utility)
 
+    /// 防止 restoreFromDisk() 完成前 persistToDisk() 用默认值覆盖 config.json。
+    /// 启动时可能存在短暂的 transient 进程（install.sh 重启期间），
+    /// 这些进程还没来得及 restore 就收到 hook 请求并触发 preference setter → persistToDisk()，
+    /// 用默认值覆盖了用户的 config.json。此标志确保只有 restore 完成后才能写入。
+    private static var hasRestoredFromDisk = false
+
     // MARK: - 启动时恢复（磁盘 → UserDefaults）
 
     /// 从 ~/.vibefocus/config.json 读取配置并写入 UserDefaults。
@@ -80,6 +86,8 @@ enum PreferencesSync {
         }
         log("PreferencesSync: restored \(restored) keys from config.json", fields: ["path": path])
 
+        hasRestoredFromDisk = true
+
         ensureDefaultsPopulated()
     }
 
@@ -87,7 +95,12 @@ enum PreferencesSync {
 
     /// 将当前所有偏好设置写入 ~/.vibefocus/config.json。
     /// 应在每次配置变更时调用。
+    /// 如果 restoreFromDisk() 尚未完成，跳过写入以防止默认值覆盖用户配置。
     static func persistToDisk() {
+        guard hasRestoredFromDisk else {
+            log("PreferencesSync.persistToDisk skipped: restoreFromDisk not yet completed", level: .debug)
+            return
+        }
         syncQueue.async {
             _persistToDiskSync()
         }
@@ -95,6 +108,10 @@ enum PreferencesSync {
 
     /// 同步版本，用于 applicationWillTerminate 等需要确保写入完成的场景
     static func persistToDiskAndWait() {
+        guard hasRestoredFromDisk else {
+            log("PreferencesSync.persistToDiskAndWait skipped: restoreFromDisk not yet completed", level: .debug)
+            return
+        }
         syncQueue.sync {
             _persistToDiskSync()
         }
