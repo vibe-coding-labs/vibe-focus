@@ -234,7 +234,7 @@ struct WindowMoveDecisionTests {
         }
     }
 
-    @Test("remoteOnly + local binding + hasMachineLabel → proceedToMove (LAN session)")
+    @Test("remoteOnly + local binding + hasMachineLabel → localBindingSkip (all local bindings skipped in remoteOnly mode)")
     func remoteOnlyLocalBindingWithMachineLabel() {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
@@ -244,8 +244,8 @@ struct WindowMoveDecisionTests {
             pidMatches: true, isTerminalOrIDE: true,
             remoteOnly: true, isLocalBinding: true, hasMachineLabel: true
         )
-        if case .proceedToMove = result { } else {
-            #expect(Bool(false), "Expected .proceedToMove, got \(result)")
+        if case .localBindingSkip = result { } else {
+            #expect(Bool(false), "Expected .localBindingSkip, got \(result)")
         }
     }
 
