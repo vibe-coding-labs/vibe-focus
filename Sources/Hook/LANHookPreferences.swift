@@ -44,7 +44,9 @@ enum LANHookPreferences {
                let jsonStr = String(data: data, encoding: .utf8) {
                 UserDefaults.standard.set(jsonStr, forKey: remoteBindingsKey)
             }
-            PreferencesSync.persistToDisk()
+            // Synchronous persist — remote bindings are set infrequently (Settings UI),
+            // and async persistToDisk() can lose data if app is killed before write completes.
+            PreferencesSync.persistToDiskAndWait()
         }
     }
 

@@ -8,6 +8,27 @@ final class HookEventHandler {
     private static let autoRestoreCooldownSeconds: TimeInterval = 30
     private var lastAutoRestoreByWindowID: [UInt32: Date] = [:]
 
+    // MARK: - Per-session UPS rate tracking
+    // Prevents automated/loop sessions from endlessly moving the same window.
+    // 54+ sessions on one remote machine → all mapped to one window → constant jumping.
+
+    /// Sliding-window UPS counter per session.
+    private struct UPSRateWindow {
+        var timestamps: [Date] = []
+        /// Prune events older than `windowDuration` and return the count of remaining events.
+        mutating func pruneAndCount(now: Date, windowDuration: TimeInterval) -> Int {
+            timestamps = timestamps.filter { now.timeIntervalSince($0) < windowDuration }
+            return timestamps.count
+        }
+    }
+
+    private var sessionUPSRate: [String: UPSRateWindow] = [:]
+
+    /// Sliding window duration for UPS rate tracking (10 minutes)
+    private static let upsRateWindowDuration: TimeInterval = 600
+    /// Max UPS events per session within the window before triggering rate limit
+    private static let upsRateMaxEvents: Int = 20
+
     private init() {}
 
     // MARK: - Pure Decision Helpers (extracted for testability)
@@ -233,6 +254,40 @@ final class HookEventHandler {
                 ClaudeHookResponse(
                     ok: true, code: "no_binding_skip",
                     message: "Could not resolve window identity",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        }
+
+        // 1.5. Session-level UPS rate limit — prevents automated/loop sessions
+        // from endlessly moving the same window (e.g., 54 sessions on one remote machine).
+        let now = Date()
+        var rateWindow = sessionUPSRate[payload.sessionID] ?? UPSRateWindow()
+        let recentCount = rateWindow.pruneAndCount(now: now, windowDuration: Self.upsRateWindowDuration)
+        rateWindow.timestamps.append(now)
+        sessionUPSRate[payload.sessionID] = rateWindow
+
+        if recentCount >= Self.upsRateMaxEvents {
+            log(
+                "[HookEventHandler] UserPromptSubmit: session rate-limited (automated session detected), skipping move",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "sessionID": payload.sessionID,
+                    "windowID": String(identity.windowID),
+                    "upsCount": String(recentCount),
+                    "upsMax": String(Self.upsRateMaxEvents)
+                ]
+            )
+            SessionWindowRegistry.shared.touch(
+                sessionID: payload.sessionID,
+                message: "UserPromptSubmit 被限流（session 自动化检测）"
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "session_rate_limited",
+                    message: "Session UPS rate limited (\(recentCount)/\(Self.upsRateMaxEvents) in 10min), skipping move",
                     sessionID: payload.sessionID, handled: false
                 )
             )
