@@ -39,6 +39,10 @@ class ScreenOverlayManager: ObservableObject {
 
     private init() {
         self.preferences = ScreenIndexPreferences.load()
+        // Swift: init() 中赋值不触发 didSet，需显式确保 SQLite 有值。
+        // 这样即使 load() 从 CFPreferences/UserDefaults fallback 加载，
+        // SQLite 也能拿到正确的配置，下次重装不会丢失。
+        preferences.save()
         log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
         setupSignalHandler()
         registerYabaiSignals()
