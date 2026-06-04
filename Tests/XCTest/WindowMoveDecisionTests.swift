@@ -201,8 +201,9 @@ struct WindowMoveDecisionTests {
             pidMatches: true, isTerminalOrIDE: true,
             remoteOnly: true, isLocalBinding: false
         )
-        if case .proceedToMove = result { } else {
-            #expect(Bool(false), "Expected .proceedToMove, got \(result)")
+        // remoteOnly now skips ALL bindings regardless of type
+        if case .localBindingSkip = result { } else {
+            #expect(Bool(false), "Expected .localBindingSkip (remoteOnly skips all), got \(result)")
         }
     }
 

@@ -37,7 +37,8 @@ extension HookEventHandler {
     ) -> WindowMoveDecision {
         guard autoFocusEnabled else { return .autoFocusDisabled }
 
-        if remoteOnly && isLocalBinding { return .localBindingSkip }
+        // remoteOnly=true → triggerOnStop=false → 跳过所有绑定，不区分 local/remote
+        if remoteOnly { return .localBindingSkip }
 
         if !hasBinding {
             return .noBindingSkip
@@ -147,30 +148,30 @@ extension HookEventHandler {
             )
         }
 
-        // remoteOnly 模式：仅处理远程 session 的 Stop 事件，跳过本地绑定
-        // 当 triggerOnStop=false 时 remoteOnly=true，此时不应移动任何本地绑定的窗口。
-        // 之前的逻辑有漏洞：bindingType=local + machineLabel 非空时不跳过，
-        // 导致远程 session 通过本地 hook 转发时（bindingType 被标记为 local）仍然移动窗口。
-        if remoteOnly && binding.bindingType == .local {
+        // remoteOnly 模式：triggerOnStop=false 时跳过所有绑定（不区分 local/remote）
+        // 之前的逻辑只跳过 local 绑定，允许 remote 绑定通过。但用户关闭 triggerOnStop
+        // 意味着"不希望任何 Stop 事件移动窗口"，不论绑定类型。
+        // 如果 remote 绑定通过，窗口仍会被移动，违背用户意图。
+        if remoteOnly {
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
-                message: "\(triggerName) 本地绑定跳过（remoteOnly 模式）"
+                message: "\(triggerName) 跳过（remoteOnly 模式，triggerOnStop=false）"
             )
             log(
-                "[HookEventHandler] \(triggerName) local binding skipped (remoteOnly mode)",
+                "[HookEventHandler] \(triggerName) skipped (remoteOnly mode, triggerOnStop=false)",
                 level: .debug,
                 fields: [
                     "sessionID": payload.sessionID,
                     "windowID": String(binding.windowID),
-                    "bindingType": "local",
+                    "bindingType": binding.bindingType.rawValue,
                     "machineLabel": payload.terminalCtx?.machineLabel ?? "nil"
                 ]
             )
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "local_binding_skip",
-                    message: "Stop trigger skipped for local binding (remoteOnly mode)",
+                    ok: true, code: "trigger_disabled_skip",
+                    message: "\(triggerName) skipped (triggerOnStop=false, no window movement)",
                     sessionID: payload.sessionID, handled: false
                 )
             )
