@@ -41,7 +41,7 @@ cat > "$PLIST_PATH" <<PLIST
   <key>CFBundleExecutable</key>
   <string>VibeFocusHotkeys</string>
   <key>CFBundleIdentifier</key>
-  <string>com.openai.vibe-focus</string>
+  <string>com.vibefocus.app</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
