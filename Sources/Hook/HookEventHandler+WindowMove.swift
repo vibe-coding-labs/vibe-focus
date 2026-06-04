@@ -37,7 +37,7 @@ extension HookEventHandler {
     ) -> WindowMoveDecision {
         guard autoFocusEnabled else { return .autoFocusDisabled }
 
-        if remoteOnly && isLocalBinding && !hasMachineLabel { return .localBindingSkip }
+        if remoteOnly && isLocalBinding { return .localBindingSkip }
 
         if !hasBinding {
             return .noBindingSkip
@@ -148,32 +148,32 @@ extension HookEventHandler {
         }
 
         // remoteOnly 模式：仅处理远程 session 的 Stop 事件，跳过本地绑定
-        // machineLabel 非空说明是远程 session（即使 bindingType 为 local，因为 hook 本地转发）
+        // 当 triggerOnStop=false 时 remoteOnly=true，此时不应移动任何本地绑定的窗口。
+        // 之前的逻辑有漏洞：bindingType=local + machineLabel 非空时不跳过，
+        // 导致远程 session 通过本地 hook 转发时（bindingType 被标记为 local）仍然移动窗口。
         if remoteOnly && binding.bindingType == .local {
-            let machineLabel = payload.terminalCtx?.machineLabel ?? ""
-            if machineLabel.isEmpty {
-                SessionWindowRegistry.shared.touch(
-                    sessionID: payload.sessionID,
-                    message: "\(triggerName) 本地绑定跳过（Stop 仅限远程）"
+            SessionWindowRegistry.shared.touch(
+                sessionID: payload.sessionID,
+                message: "\(triggerName) 本地绑定跳过（remoteOnly 模式）"
+            )
+            log(
+                "[HookEventHandler] \(triggerName) local binding skipped (remoteOnly mode)",
+                level: .debug,
+                fields: [
+                    "sessionID": payload.sessionID,
+                    "windowID": String(binding.windowID),
+                    "bindingType": "local",
+                    "machineLabel": payload.terminalCtx?.machineLabel ?? "nil"
+                ]
+            )
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "local_binding_skip",
+                    message: "Stop trigger skipped for local binding (remoteOnly mode)",
+                    sessionID: payload.sessionID, handled: false
                 )
-                log(
-                    "[HookEventHandler] \(triggerName) local binding skipped (remoteOnly mode)",
-                    level: .debug,
-                    fields: [
-                        "sessionID": payload.sessionID,
-                        "windowID": String(binding.windowID),
-                        "bindingType": "local"
-                    ]
-                )
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "local_binding_skip",
-                        message: "Stop trigger skipped for local binding (remoteOnly mode)",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            }
+            )
         }
 
         guard SessionWindowRegistry.shared.verifyBinding(binding) else {
