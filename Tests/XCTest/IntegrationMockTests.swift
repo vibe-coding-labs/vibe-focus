@@ -112,15 +112,17 @@ struct RestoreIntegrationTests {
         assertEligibility(result, expected: "toggleInFlight")
     }
 
-    @Test("decideRestoreEligibility: window off main → windowNotOnMainScreen")
+    @Test("decideRestoreEligibility: window off main, no record → noRecord")
     func eligibilityOffMain() {
+        // No record → noRecord, regardless of window position.
+        // The caller decides whether to moveWindowToMainScreen.
         let result = HookEventHandler.decideRestoreEligibility(
             isToggleInFlight: false,
             isWindowOnMainScreen: false,
             record: nil,
             mainScreenFrame: nil
         )
-        assertEligibility(result, expected: "windowNotOnMainScreen")
+        assertEligibility(result, expected: "noRecord")
     }
 
     @Test("decideRestoreEligibility: no record → noRecord")
@@ -134,18 +136,18 @@ struct RestoreIntegrationTests {
         assertEligibility(result, expected: "noRecord")
     }
 
-    @Test("decideRestoreEligibility: no record and window off main → windowNotOnMainScreen (caller handles fallback)")
+    @Test("decideRestoreEligibility: no record and window off main → noRecord (caller handles fallback)")
     func eligibilityNoRecordOffMain() {
-        // When no toggle record exists, decideRestoreEligibility still returns based on
-        // window position — the caller (handleUserPromptSubmit) decides whether to
-        // fallback to moveWindowToMainScreen
+        // When no toggle record exists, decideRestoreEligibility returns noRecord
+        // regardless of window position — the caller (handleUserPromptSubmit) decides
+        // whether to fallback to moveWindowToMainScreen
         let result = HookEventHandler.decideRestoreEligibility(
             isToggleInFlight: false,
             isWindowOnMainScreen: false,
             record: nil,
             mainScreenFrame: nil
         )
-        assertEligibility(result, expected: "windowNotOnMainScreen")
+        assertEligibility(result, expected: "noRecord")
     }
 
     @Test("decideRestoreEligibility: corrupted record → recordInvalid")
