@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 
+/// Manages the dock badge indicator for active window focus sessions.
 @MainActor
 final class DockBadgeManager {
     static let shared = DockBadgeManager()

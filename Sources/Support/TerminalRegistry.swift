@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 
+/// Registry of known terminal application PIDs, bundle IDs, and process tree utilities.
 /// 终端/IDE 应用单一事实来源 — 所有需要判断终端 PID 或 bundleID 的地方统一使用这个
 enum TerminalRegistry {
 

@@ -48,6 +48,7 @@ struct SoundPreferences: Codable {
 
 // MARK: - Sound Manager
 
+/// Manages completion sound effects for window focus operations.
 @MainActor
 final class SoundManager: ObservableObject {
     static let shared = SoundManager()
