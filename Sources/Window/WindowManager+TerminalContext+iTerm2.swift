@@ -14,6 +14,16 @@ extension WindowManager {
     func matchiTerm2WindowBySessionID(itermSessionID: String, windows: [WindowIdentity]) -> WindowIdentity? {
         guard let uuidPart = Self.parseItermSessionUUID(itermSessionID) else { return nil }
 
+        // Allowlist validation: iTerm2 session UUID 只含 hex + hyphen
+        guard Self.isValidUUIDPart(uuidPart) else {
+            log(
+                "[WindowManager] matchiTerm2WindowBySessionID: invalid UUID format, skipping",
+                level: .warn,
+                fields: ["itermSessionID": String(itermSessionID.prefix(8)) + "..."]
+            )
+            return nil
+        }
+
         let escapedUUID = uuidPart
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -67,6 +77,16 @@ extension WindowManager {
     /// Terminal.app 不在 CGWindowList 中暴露窗口标题，用 osascript 获取 TTY→窗口ID 映射
     func matchTerminalWindowByAppleScript(tty: String, terminalPID: Int32, windows: [WindowIdentity]) -> WindowIdentity? {
         let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+
+        // Allowlist validation: TTY 必须匹配 /dev/ttys### 或 /dev/pty### 格式
+        guard Self.isValidTTYPath(fullTTY) else {
+            log(
+                "[WindowManager] matchTerminalWindowByAppleScript: invalid TTY format, skipping",
+                level: .warn,
+                fields: ["tty": String(fullTTY.prefix(16))]
+            )
+            return nil
+        }
 
         // 对 TTY 路径做 AppleScript 转义：替换双引号和反斜杠，防止注入
         let escapedTTY = fullTTY
