@@ -85,4 +85,20 @@ extension WindowManager {
         }
         return uuidPart.isEmpty ? nil : uuidPart
     }
+
+    // MARK: - Input Validation (defense-in-depth)
+
+    /// Validate iTerm2 session UUID part — allowlist: hex digits and hyphens only.
+    /// Prevents any metacharacter injection into AppleScript string interpolation.
+    static func isValidUUIDPart(_ uuid: String) -> Bool {
+        let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF-")
+        return uuid.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    /// Validate TTY device path — allowlist: /dev/ttys### or /dev/pty### format.
+    /// Prevents any metacharacter injection into AppleScript string interpolation.
+    static func isValidTTYPath(_ path: String) -> Bool {
+        let pattern = "^/dev/(tty[s\\d]+|pty[\\d]+)$"
+        return path.range(of: pattern, options: .regularExpression) != nil
+    }
 }
