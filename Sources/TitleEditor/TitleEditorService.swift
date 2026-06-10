@@ -3,6 +3,7 @@ import ApplicationServices.HIServices
 import Foundation
 
 @MainActor
+/// Service for programmatically setting terminal window titles via escape sequences.
 class TitleEditorService {
     static let shared = TitleEditorService()
 

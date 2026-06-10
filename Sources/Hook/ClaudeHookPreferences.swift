@@ -1,5 +1,6 @@
 import Foundation
 
+/// Manages Claude Code hook integration preferences and auto-installation.
 enum ClaudeHookPreferences {
     /// 防止 hook 安装被频繁重复调用 — UserDefaults 是线程安全的
     static let lastInstallAtKey = "claudeHookLastInstallAt"

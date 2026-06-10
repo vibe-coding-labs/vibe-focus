@@ -9,6 +9,7 @@ import Foundation
 
 // MARK: - Settings Card
 
+/// Reusable card container with rounded corners for settings sections.
 struct SettingsCard<Content: View>: View {
     let title: String
     let subtitle: String
@@ -38,6 +39,7 @@ struct SettingsCard<Content: View>: View {
 
 // MARK: - Code Block View
 
+/// Monospaced code block view for displaying terminal commands and scripts.
 struct CodeBlockView: View {
     let code: String
     let language: String
@@ -102,6 +104,7 @@ struct CodeBlockView: View {
 
 // MARK: - Status Pill
 
+/// Colored status indicator pill for showing connection or feature state.
 struct SettingsStatusPill: View {
     let title: String
     let tint: Color
@@ -121,6 +124,7 @@ struct SettingsStatusPill: View {
 
 // MARK: - Sidebar Info Card
 
+/// Information card displayed in the settings sidebar.
 struct SidebarInfoCard: View {
     let title: String
     let value: String
@@ -140,6 +144,7 @@ struct SidebarInfoCard: View {
 
 // MARK: - Settings Row
 
+/// Single row in a settings section with label and accessory view.
 struct SettingsRow<Accessory: View>: View {
     let title: String
     let detail: String

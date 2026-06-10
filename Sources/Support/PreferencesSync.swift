@@ -190,6 +190,7 @@ enum PreferencesSync {
 
 // MARK: - PreferenceValue — 类型安全的 UserDefaults 值包装
 
+/// Type-erased wrapper for serializing heterogeneous preference values.
 enum PreferenceValue: Codable {
     case bool(Bool)
     case int(Int)

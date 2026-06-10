@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Settings view for configuring LAN hook remote machine bindings.
 struct LANSettingsView: View {
     @AppStorage(LANHookPreferences.lanModeKey) var lanMode = LANHookPreferences.defaultLanMode
     @State var remoteBindings: [String: UInt32?] = LANHookPreferences.remoteBindings

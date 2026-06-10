@@ -1,5 +1,6 @@
 import Foundation
 
+/// Claude Code hook event types (SessionStart, SessionEnd, UserPromptSubmit, Stop).
 enum ClaudeHookEventType: String, Codable, CaseIterable {
     case sessionStart = "SessionStart"
     case stop = "Stop"
@@ -7,12 +8,14 @@ enum ClaudeHookEventType: String, Codable, CaseIterable {
     case userPromptSubmit = "UserPromptSubmit"
 }
 
+/// Reasons why a window was moved to the main screen.
 enum WindowMoveReason: String, Codable {
     case manualHotkey = "manual_hotkey"
     case claudeSessionEnd = "claude_session_end"
     case userPromptSubmit = "user_prompt_submit"
 }
 
+/// Identifies a window by CGWindowID, PID, and optional metadata.
 struct WindowIdentity: Codable, Equatable {
     let windowID: UInt32
     let pid: Int32
@@ -213,6 +216,7 @@ struct TerminalContext: Codable, Equatable {
     }
 }
 
+/// Parsed payload from a Claude Code hook HTTP request.
 struct ClaudeHookPayload: Decodable {
     let event: ClaudeHookEventType
     let sessionID: String
@@ -284,6 +288,7 @@ struct ClaudeHookPayload: Decodable {
     }
 }
 
+/// HTTP response sent back to Claude Code after processing a hook event.
 struct ClaudeHookResponse: Encodable {
     let ok: Bool
     let code: String

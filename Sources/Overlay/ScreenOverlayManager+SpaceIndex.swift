@@ -2,12 +2,14 @@ import AppKit
 import SwiftUI
 import Foundation
 
+/// Captured state of Space-to-display mappings at a point in time.
 struct SpaceSnapshot: Equatable {
     let index: Int
     let isVisible: Bool
     let hasFocus: Bool
 }
 
+/// Resolves which display index a given Space is located on.
 enum SpaceIndexResolver {
     static func chooseIndex(displaySpaces: [SpaceSnapshot], focusedSpaceIndex: Int?, screenCount: Int) -> Int? {
         let displayActive = activeDisplaySpaceIndex(in: displaySpaces)

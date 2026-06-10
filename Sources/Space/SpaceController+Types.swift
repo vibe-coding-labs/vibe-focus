@@ -6,6 +6,7 @@ import Foundation
 
 // MARK: - Space Types
 
+/// Represents whether Space management features are available.
 enum SpaceAvailability: String {
     case unknown
     case notInstalled
@@ -13,11 +14,13 @@ enum SpaceAvailability: String {
     case available
 }
 
+/// Strategy for restoring a window to its original Space after toggle.
 enum SpaceRestoreStrategy: String, CaseIterable {
     case switchToOriginal
     case pullToCurrent
 }
 
+/// Persistent Space management preferences.
 struct SpacePreferences {
     static let integrationEnabledKey = "spaceIntegrationEnabled"
     static let restoreStrategyKey = "spaceRestoreStrategy"
@@ -47,6 +50,7 @@ struct SpacePreferences {
     }
 }
 
+/// Snapshot of the current Space and display configuration for a window.
 struct SpaceContext {
     let sourceSpaceIndex: SpaceIdentifier?
     let targetSpaceIndex: SpaceIdentifier?
@@ -115,6 +119,7 @@ struct YabaiWindowInfo: Decodable {
     }
 }
 
+/// Display information parsed from yabai query output.
 struct YabaiDisplayInfo: Decodable {
     let index: Int?
     let frame: Frame?
