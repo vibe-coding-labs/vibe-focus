@@ -102,8 +102,8 @@ extension WindowStateStore {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, Int64(windowID))
 
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return parseWindowStateRow(stmt!)
+        guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
+        return parseWindowStateRow(s)
     }
 
     func findWindowStateBySession(sessionID: String) -> WindowState? {
@@ -117,8 +117,8 @@ extension WindowStateStore {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, sessionID, -1, SQLITE_TRANSIENT)
 
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return parseWindowStateRow(stmt!)
+        guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
+        return parseWindowStateRow(s)
     }
 
     func findWindowStateByWindowID(_ windowID: UInt32) -> WindowState? {
@@ -132,8 +132,8 @@ extension WindowStateStore {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, Int64(windowID))
 
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return parseWindowStateRow(stmt!)
+        guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
+        return parseWindowStateRow(s)
     }
 
     func deleteAllWindowsStates() {
@@ -172,8 +172,8 @@ extension WindowStateStore {
         defer { sqlite3_finalize(stmt) }
 
         var results: [WindowState] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if let state = parseWindowStateRow(stmt!) {
+        while sqlite3_step(stmt) == SQLITE_ROW, let s = stmt {
+            if let state = parseWindowStateRow(s) {
                 results.append(state)
             }
         }

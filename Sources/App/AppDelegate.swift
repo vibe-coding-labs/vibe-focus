@@ -165,7 +165,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Single Instance Check
 
     // 文件锁路径，用于防止竞态条件
-    let lockFilePath = "/tmp/VibeFocus.lock"
+    let lockFilePath = VFConstants.appLockFilePath
 
     func expectedAppBundlePaths() -> [String] {
         let home = NSHomeDirectory()
