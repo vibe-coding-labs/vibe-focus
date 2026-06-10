@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 
+/// Represents a single entry from the CGWindowListCopyWindowInfo API.
 struct CGWindowEntry {
     let windowID: UInt32
     let ownerPID: pid_t

@@ -1,5 +1,6 @@
 import Foundation
 
+/// Persistent preferences for the terminal window title editor feature.
 struct TitleEditorPreferences {
     static let enabledKey = "titleEditorEnabled"
     static let hotKeyEnabledKey = "titleEditorHotKeyEnabled"

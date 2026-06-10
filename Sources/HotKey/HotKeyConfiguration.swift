@@ -7,11 +7,13 @@ extension Notification.Name {
     static let hookServerStateChanged = Notification.Name("ClaudeHookServerStateChanged")
 }
 
+/// Describes a conflict between the configured hotkey and a system shortcut.
 struct HotKeyConflict: Equatable {
     let configuration: HotKeyConfiguration
     let reason: String
 }
 
+/// Global hotkey configuration stored in UserDefaults.
 struct HotKeyConfiguration: Codable, Equatable {
     let keyCode: UInt32
     let modifiers: UInt32

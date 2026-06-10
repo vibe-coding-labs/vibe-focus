@@ -19,6 +19,7 @@ func bundledAppIconImage() -> NSImage? {
     return nil
 }
 
+/// Small badge view displaying the app icon in the settings sidebar.
 struct AppLogoBadge: View {
     var size: CGFloat = 84
 
@@ -48,6 +49,7 @@ struct AppLogoBadge: View {
 
 // MARK: - Tab Navigation
 
+/// Tabs available in the settings window.
 enum SettingsTab: String, CaseIterable {
     case general = "通用"
     case workspace = "工作区"
@@ -64,6 +66,7 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
+/// Single tab button used in the settings sidebar navigation.
 struct SettingsTabButton: View {
     let tab: SettingsTab
     let isSelected: Bool

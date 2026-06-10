@@ -1,6 +1,6 @@
 import Foundation
 
-/// yabai 进程调用统一抽象 — 单一 yabai 路径缓存和超时控制
+/// Client for communicating with yabai via its UNIX socket API.
 @MainActor
 enum YabaiClient {
 

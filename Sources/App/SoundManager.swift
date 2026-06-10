@@ -3,6 +3,7 @@ import Foundation
 
 // MARK: - Sound Preferences
 
+/// Available completion sound effects for toggle/restore operations.
 enum CompletionSoundType: String, CaseIterable, Codable {
     case none = "none"
     case systemDefault = "system_default"
@@ -34,6 +35,7 @@ enum CompletionSoundType: String, CaseIterable, Codable {
     }
 }
 
+/// Persistent sound effect preferences stored via UserDefaults.
 struct SoundPreferences: Codable {
     var soundType: CompletionSoundType
     var customSoundPath: String?

@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 // MARK: - Screen Index Position
+/// Available screen positions for the overlay index display.
 enum IndexPosition: String, CaseIterable, Codable {
     case topLeft = "topLeft"
     case topCenter = "topCenter"
@@ -34,6 +35,7 @@ enum IndexPosition: String, CaseIterable, Codable {
 }
 
 // MARK: - Screen Index Preferences
+/// Persistent preferences for the screen index overlay appearance and behavior.
 struct ScreenIndexPreferences: Codable {
     var isEnabled: Bool
     var position: IndexPosition
@@ -198,6 +200,7 @@ struct ScreenIndexPreferences: Codable {
 }
 
 // MARK: - Codable Color
+/// Codable wrapper for NSColor serialization.
 struct CodableColor: Codable {
     var red: Double
     var green: Double

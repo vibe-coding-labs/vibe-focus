@@ -90,6 +90,7 @@ final class ShortcutRecorderButton: NSButton {
 
 // MARK: - ShortcutRecorderView (SwiftUI wrapper)
 
+/// NSViewRepresentable wrapper for recording global keyboard shortcuts.
 struct ShortcutRecorderView: NSViewRepresentable {
     var displayedShortcut: String
     var onShortcutCaptured: ((HotKeyConfiguration) -> Void)?
@@ -108,6 +109,7 @@ struct ShortcutRecorderView: NSViewRepresentable {
 
 // MARK: - Draggable Slider
 
+/// Custom slider with drag-to-adjust behavior for numeric settings.
 struct DraggableSlider: NSViewRepresentable {
     var value: Binding<Double>
     var minValue: Double

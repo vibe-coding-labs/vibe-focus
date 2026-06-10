@@ -9,6 +9,7 @@ import Darwin
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ element: AXUIElement, _ out: UnsafeMutablePointer<CGWindowID>) -> AXError
 
+/// Structured log levels used throughout VibeFocus.
 enum LogLevel: String {
     case debug = "DEBUG"
     case info = "INFO"
