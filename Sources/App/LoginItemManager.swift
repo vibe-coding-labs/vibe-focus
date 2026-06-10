@@ -1,6 +1,7 @@
 import Foundation
 import ServiceManagement
 
+/// Manages macOS login item (auto-start on login) registration and status.
 @MainActor
 final class LoginItemManager: ObservableObject {
     static let shared = LoginItemManager()

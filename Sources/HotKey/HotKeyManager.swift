@@ -5,6 +5,7 @@ import CoreFoundation
 import Foundation
 
 // MARK: - HotKey Manager
+/// Manages global hotkey registration, accessibility permissions, and shortcut recording.
 @MainActor
 public final class HotKeyManager: ObservableObject {
     public static let shared = HotKeyManager()
