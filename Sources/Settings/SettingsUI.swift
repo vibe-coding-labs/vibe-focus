@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 // SettingsView — see SettingsComponents.swift for UI components
 // AppDelegate — see AppDelegate.swift for app lifecycle
+// 计算属性与会话列表已移至 SettingsUI+Helpers.swift
 
 public struct SettingsView: View {
     public init() {}
@@ -22,141 +23,21 @@ public struct SettingsView: View {
     @AppStorage(ClaudeHookPreferences.enabledKey) var hookEnabled = ClaudeHookPreferences.defaultEnabled
     @AppStorage(ClaudeHookPreferences.portKey) var hookPort = ClaudeHookPreferences.defaultPort
 
-    var activeSessionList: some View {
-        let bindings = sessionRegistry.activeBindingsForUI
-        if bindings.isEmpty { return AnyView(EmptyView()) }
-        return AnyView(VStack(alignment: .leading, spacing: 8) {
-            Text("活跃会话（\(sessionRegistry.activeBindingCount)）")
-                .font(.system(size: 13, weight: .medium))
-            ForEach(Array(bindings.prefix(5).enumerated()), id: \.offset) { _, binding in
-                HStack(spacing: 8) {
-                    Image(systemName: "terminal")
-                        .foregroundStyle(.secondary)
-                        .font(.system(size: 11))
-                    Text(binding.appName ?? "Unknown")
-                        .font(.system(size: 12, weight: .medium))
-                    Text(binding.title ?? "Untitled")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Text((binding.sessionID ?? "").prefix(8))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-            }
-            if bindings.count > 5 {
-                Text("还有 \(bindings.count - 5) 个...")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-            }
-        })
-    }
-
-    var completedSessionList: some View {
-        let bindings = sessionRegistry.recentCompletedBindings
-        if bindings.isEmpty { return AnyView(EmptyView()) }
-        return AnyView(VStack(alignment: .leading, spacing: 8) {
-            Text("最近完成（\(sessionRegistry.completedBindingCount)）")
-                .font(.system(size: 13, weight: .medium))
-            ForEach(Array(bindings.prefix(3).enumerated()), id: \.offset) { _, binding in
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.green)
-                        .font(.system(size: 11))
-                    Text(binding.appName ?? "Unknown")
-                        .font(.system(size: 12, weight: .medium))
-                    if let completedAt = binding.completedAt {
-                        Text(completedAt, style: .time)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-            }
-        })
-    }
-    @State var hookToken: String = ""
-    @AppStorage(ClaudeHookPreferences.autoFocusOnSessionEndKey) var autoFocusOnSessionEnd = ClaudeHookPreferences.defaultAutoFocusOnSessionEnd
-    @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop
-    @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) var triggerOnSessionEnd = ClaudeHookPreferences.defaultTriggerOnSessionEnd
-    @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) var autoRestoreOnPromptSubmit = ClaudeHookPreferences.defaultAutoRestoreOnPromptSubmit
-    @State var hookInstallMessage: String?
-    @State var hookInstallSucceeded = false
-
-    // 提示音设置
+    // 提示音
     @StateObject var soundManager = SoundManager.shared
     @State var isPreviewPlaying = false
     @State var showFileImporter = false
     @State var selectedTab: SettingsTab = .general
 
-    var appVersionDisplay: String {
-        let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        let version = (bundleVersion?.isEmpty == false) ? bundleVersion ?? AppVersion.current : AppVersion.current
-        return "v\(version)"
-    }
+    // Hook token / 安装状态
+    @State var hookToken = ""
+    @State var hookInstallMessage: String?
+    @State var hookInstallSucceeded = true
 
-    var bundleIdentifier: String {
-        Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
-    }
-
-    var currentAppPath: String {
-        Bundle.main.bundleURL.path
-    }
-
-    var expectedAppPath: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent("Applications/VibeFocus.app")
-    }
-
-    var otherInstallations: [String] {
-        duplicateAppPaths.filter { $0 != currentAppPath }
-    }
-
-    var resetAccessCommand: String {
-        "tccutil reset Accessibility \(bundleIdentifier)"
-    }
-
-    var spaceStatusTitle: String {
-        switch spaceController.availability {
-        case .available:
-            return "可用"
-        case .notInstalled:
-            return "未安装"
-        case .unavailable:
-            return "不可用"
-        case .unknown:
-            return "未检测"
-        }
-    }
-
-    var spaceStatusTint: Color {
-        switch spaceController.availability {
-        case .available:
-            return .green
-        case .notInstalled, .unknown:
-            return .gray
-        case .unavailable:
-            return .orange
-        }
-    }
-
-    var spaceStatusDetail: String {
-        switch spaceController.availability {
-        case .available:
-            return "检测到 yabai，可启用跨工作区移动。"
-        case .notInstalled:
-            return "未检测到 yabai。安装后可启用跨工作区移动功能。"
-        case .unavailable:
-            return "yabai 已安装但未就绪（可能需要配置 SIP 或授予权限）。"
-        case .unknown:
-            return "尚未检测 yabai 状态。"
-        }
-    }
+    // Hook 触发开关
+    @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop
+    @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) var triggerOnSessionEnd = ClaudeHookPreferences.defaultTriggerOnSessionEnd
+    @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) var autoRestoreOnPromptSubmit = ClaudeHookPreferences.defaultAutoRestoreOnPromptSubmit
 
     // MARK: - Tab Navigation
 
