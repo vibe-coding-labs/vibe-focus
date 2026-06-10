@@ -1,18 +1,22 @@
 import Foundation
 import Cocoa
 
+// 查找与 UI 支持已移至 SessionWindowRegistry+Lookup.swift
+// 状态更新与批量操作已移至 SessionWindowRegistry+State.swift
+// 绑定验证已移至 BindingVerifier.swift
+
 @MainActor
 final class SessionWindowRegistry: ObservableObject {
     static let shared = SessionWindowRegistry()
 
-    @Published private(set) var lastEventDescription: String = "尚未收到 Claude Hook 事件"
+    @Published var lastEventDescription: String = "尚未收到 Claude Hook 事件"
 
     /// 内存缓存：key = windowID (CGWindowNumber)，value = WindowState
-    private(set) var windowStates: [UInt32: WindowState] = [:]
+    var windowStates: [UInt32: WindowState] = [:]
 
     /// 次要映射：当同一窗口有多个活跃会话时（如远程 SSH 共享同一 iTerm 窗口），
     /// 记录 sessionID → windowID 的关系，让 UserPromptSubmit 能找到正确的窗口。
-    private var sessionAliasWindowID: [String: UInt32] = [:]
+    var sessionAliasWindowID: [String: UInt32] = [:]
 
     var activeBindingCount: Int {
         windowStates.values.filter { !$0.isCompleted }.count
@@ -22,8 +26,8 @@ final class SessionWindowRegistry: ObservableObject {
         windowStates.values.filter(\.isCompleted).count
     }
 
-    private let completedRetention: TimeInterval = 4 * 60 * 60
-    private let activeRetention: TimeInterval = 24 * 60 * 60
+    let completedRetention: TimeInterval = 4 * 60 * 60
+    let activeRetention: TimeInterval = 24 * 60 * 60
 
     private init() {
         let loaded = WindowStateStore.shared.loadAllWindowStates()
@@ -137,178 +141,9 @@ final class SessionWindowRegistry: ObservableObject {
         ])
     }
 
-    // MARK: - Lookup
-
-    /// 按 sessionID 查找窗口状态（扫描，低频操作）
-    /// 优先返回 PID 有效的绑定，避免返回损坏数据
-    func binding(for sessionID: String) -> WindowState? {
-        // 1. Direct lookup: binding has this sessionID
-        let candidates = windowStates.values.filter { $0.sessionID == sessionID }
-        if let valid = candidates.first(where: { TerminalRegistry.isTerminalPID($0.pid) }) {
-            return valid
-        }
-        if let first = candidates.first {
-            return first
-        }
-
-        // 2. Alias lookup: session shares a window with another session
-        if let aliasWindowID = sessionAliasWindowID[sessionID],
-           let state = windowStates[aliasWindowID] {
-            log("[SessionWindowRegistry] binding(for:) resolved via alias", fields: [
-                "sessionID": sessionID,
-                "windowID": String(aliasWindowID),
-                "boundSessionID": String(state.sessionID?.prefix(8) ?? "nil")
-            ])
-            return state
-        }
-
-        // 3. DB fallback
-        if let state = WindowStateStore.shared.findWindowStateBySession(sessionID: sessionID) {
-            if !TerminalRegistry.isTerminalPID(state.pid) {
-                log("[SessionWindowRegistry] binding(for:) loaded corrupt binding from DB, cleaning up", level: .warn, fields: [
-                    "windowID": String(state.windowID),
-                    "pid": String(state.pid),
-                    "sessionID": sessionID
-                ])
-                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
-                return nil
-            }
-            windowStates[state.windowID] = state
-            return state
-        }
-        return nil
-    }
-
-    /// 按 windowID 查找窗口状态（O(1)，主查找路径）
-    func findState(windowID: UInt32) -> WindowState? {
-        if let state = windowStates[windowID] {
-            return state
-        }
-        if let state = WindowStateStore.shared.findWindowState(windowID: windowID) {
-            windowStates[state.windowID] = state
-            return state
-        }
-        return nil
-    }
-
-    // 绑定验证逻辑已移至 BindingVerifier.swift
-
-    // MARK: - State Updates
-
-    func markCompleted(sessionID: String) {
-        sessionAliasWindowID.removeValue(forKey: sessionID)
-        guard let state = binding(for: sessionID) else { return }
-        guard var updated = windowStates[state.windowID] else { return }
-        updated.isCompleted = true
-        updated.completedAt = Date()
-        updated.updatedAt = Date()
-        windowStates[state.windowID] = updated
-        lastEventDescription = "SessionEnd 已完成：\(updated.appName ?? "Unknown")"
-        persistToDB(windowID: state.windowID)
-    }
-
-    func reactivate(sessionID: String) {
-        guard let state = binding(for: sessionID) else { return }
-        guard var updated = windowStates[state.windowID] else { return }
-        updated.isCompleted = false
-        updated.completedAt = nil
-        updated.updatedAt = Date()
-        windowStates[state.windowID] = updated
-        persistToDB(windowID: state.windowID)
-    }
-
-    func touch(sessionID: String, message: String? = nil) {
-        guard let state = binding(for: sessionID) else { return }
-        guard var updated = windowStates[state.windowID] else { return }
-        updated.updatedAt = Date()
-        windowStates[state.windowID] = updated
-        persistToDB(windowID: state.windowID)
-        if let message, !message.isEmpty {
-            lastEventDescription = message
-        }
-    }
-
-    func setLastEventDescription(_ message: String) {
-        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        lastEventDescription = message
-    }
-
-    
-    /// 将旧 windowID 的绑定重映射到新 windowID（CGWindowNumber 变化时调用）
-    func remapWindowID(oldWindowID: UInt32, newWindowID: UInt32) {
-        guard oldWindowID != newWindowID else { return }
-        guard var state = windowStates[oldWindowID] else {
-            // 旧 windowID 不在内存缓存中 — 尝试从 DB 加载
-            if let dbState = WindowStateStore.shared.findWindowState(windowID: oldWindowID) {
-                var remapped = dbState
-                remapped.windowID = newWindowID
-                windowStates[newWindowID] = remapped
-                persistToDB(windowID: newWindowID)
-                WindowStateStore.shared.deleteWindowState(windowID: oldWindowID)
-                windowStates.removeValue(forKey: oldWindowID)
-                log("[SessionWindowRegistry] remapWindowID: DB remap", fields: [
-                    "oldWindowID": String(oldWindowID),
-                    "newWindowID": String(newWindowID)
-                ])
-            }
-            return
-        }
-        state.windowID = newWindowID
-        windowStates[newWindowID] = state
-        windowStates.removeValue(forKey: oldWindowID)
-        WindowStateStore.shared.deleteWindowState(windowID: oldWindowID)
-        persistToDB(windowID: newWindowID)
-        log("[SessionWindowRegistry] remapWindowID: memory+DB remap", fields: [
-            "oldWindowID": String(oldWindowID),
-            "newWindowID": String(newWindowID)
-        ])
-    }
-
-    // MARK: - Bulk Operations
-
-    func clearAllBindings() {
-        windowStates.removeAll()
-        sessionAliasWindowID.removeAll()
-        lastEventDescription = "所有绑定已清除"
-        WindowStateStore.shared.deleteAllWindowsStates()
-    }
-
-    func purgeClosedWindows() {
-        let windows = cgWindowListAll()
-        let activeWindowIDs = Set(windows.map { $0.windowID })
-
-        let keysToRemove = windowStates.filter { _, state in
-            guard !state.isCompleted else { return false }
-            return !activeWindowIDs.contains(state.windowID)
-        }.map(\.key)
-
-        for key in keysToRemove {
-            if let state = windowStates[key] {
-                log("[SessionWindowRegistry] purging closed window: wid=\(state.windowID) pid=\(state.pid) app=\(state.appName ?? "unknown")")
-                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
-            }
-            windowStates.removeValue(forKey: key)
-        }
-    }
-
-    // MARK: - UI Support
-
-    var activeBindingsForUI: [WindowState] {
-        windowStates.values
-            .filter { !$0.isCompleted }
-            .sorted { $0.createdAt > $1.createdAt }
-    }
-
-    var recentCompletedBindings: [WindowState] {
-        let now = Date()
-        return windowStates.values
-            .filter { $0.isCompleted && $0.updatedAt.addingTimeInterval(30 * 60) > now }
-            .sorted { $0.updatedAt > $1.updatedAt }
-    }
-
     // MARK: - Private
 
-    private func pruneExpiredBindings(shouldPersist: Bool = true) {
+    func pruneExpiredBindings(shouldPersist: Bool = true) {
         let removed = WindowStateStore.shared.pruneExpiredWindowStates(
             activeRetention: activeRetention,
             completedRetention: completedRetention
@@ -324,20 +159,7 @@ final class SessionWindowRegistry: ObservableObject {
         }
     }
 
-    /// 根据 windowID 查找绑定信息（返回轻量结构，不暴露内部 WindowState）
-    func findBinding(forWindowID windowID: UInt32) -> (tty: String?, termSessionID: String?, itermSessionID: String?, sessionID: String?, cwd: String?, model: String?)? {
-        guard let state = windowStates[windowID] else { return nil }
-        return (
-            tty: state.tty,
-            termSessionID: state.termSessionID,
-            itermSessionID: state.itermSessionID,
-            sessionID: state.sessionID,
-            cwd: state.cwd,
-            model: state.model
-        )
-    }
-
-    private func persistToDB(windowID: UInt32) {
+    func persistToDB(windowID: UInt32) {
         guard let state = windowStates[windowID] else { return }
         WindowStateStore.shared.saveWindowState(state)
     }
