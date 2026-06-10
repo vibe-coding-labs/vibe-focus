@@ -1,10 +1,12 @@
 import Foundation
 
+// IPS 解析与文件 I/O 已移至 CrashContextRecorder+IO.swift
+
 @MainActor
 final class CrashContextRecorder {
     static let shared = CrashContextRecorder()
 
-    private struct SessionState: Codable {
+    struct SessionState: Codable {
         var pid: Int32
         var launchedAt: String
         var cleanExit: Bool
@@ -12,60 +14,135 @@ final class CrashContextRecorder {
         var lastIngestedCrashReport: String?
     }
 
-    private let stateFileURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-context.json")
-    private let plainLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
-    private let structuredLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl")
-    private let plainCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail.log")
-    private let structuredCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail-events.jsonl")
-    private let maxEvents = 300
-    private let plainTailLineLimit = 500
-    private let structuredTailLineLimit = 1200
-    private let diagnosticReportsDirectory = URL(
+    let stateFileURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-context.json")
+    let plainLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
+    let structuredLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl")
+    let plainCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail.log")
+    let structuredCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail-events.jsonl")
+    let maxEvents = 300
+    let plainTailLineLimit = 500
+    let structuredTailLineLimit = 1200
+    let diagnosticReportsDirectory = URL(
         fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Library/Logs/DiagnosticReports"),
         isDirectory: true
     )
 
-    private let timestampFormatter: ISO8601DateFormatter = {
+    let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
 
-    private var state: SessionState?
+    var state: SessionState?
 
     /// 异步写入队列 — 避免在 toggle 热路径中阻塞主线程
-    private let persistQueue = DispatchQueue(label: "com.vibefocus.crash-persist", qos: .utility)
+    let persistQueue = DispatchQueue(label: "com.vibefocus.crash-persist", qos: .utility)
     /// 防抖标志：避免快速连续 record 调用时频繁写入磁盘
-    private var persistScheduled = false
-    private let persistDebounceInterval: TimeInterval = 0.5
+    var persistScheduled = false
+    let persistDebounceInterval: TimeInterval = 0.5
 
     private init() {}
 
     func bootstrap() {
         log("CrashContextRecorder.bootstrap entry", level: .debug)
         let previous = loadState()
-        if let previous, !previous.cleanExit {
-            log("[CRASH_CONTEXT] Detected unclean previous exit (pid=\(previous.pid), launchedAt=\(previous.launchedAt))")
-            log("CrashContextRecorder.bootstrap unclean exit detected", level: .debug, fields: ["previousPid": String(previous.pid), "launchedAt": previous.launchedAt, "eventCount": String(previous.events.count)])
-            if let lastEvent = previous.events.last {
-                log("[CRASH_CONTEXT] Last event before exit: \(lastEvent)")
-            }
-            captureRecentLogTail(context: "unclean_exit")
 
-            // 读取信号处理器写入的崩溃快照
+        // 如果上次是 cleanExit，不需要保留旧的 crash snapshot
+        if let prev = previous, prev.cleanExit {
             let crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
-            if let snapshotData = try? Data(contentsOf: crashSnapshotURL),
-               let snapshotText = String(data: snapshotData, encoding: .utf8),
-               !snapshotText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                log("[CRASH_CONTEXT] === CRASH SIGNAL SNAPSHOT ===")
-                for line in snapshotText.split(separator: "\n").prefix(50) {
-                    log("[CRASH_CONTEXT] \(line)")
-                }
-                log("[CRASH_CONTEXT] === END CRASH SIGNAL SNAPSHOT ===")
-                appendEvent("crash_signal_snapshot_found length=\(snapshotText.count)")
+            if FileManager.default.fileExists(atPath: crashSnapshotURL.path) {
+                try? FileManager.default.removeItem(at: crashSnapshotURL)
+                log("CrashContextRecorder.bootstrap removed stale crash snapshot (previous clean exit)", level: .debug)
             }
-        } else {
-            log("CrashContextRecorder.bootstrap no previous state or clean exit", level: .debug)
+        }
+
+        // 如果上次是非 cleanExit，保存 crash snapshot（tail of recent logs）
+        if let prev = previous, !prev.cleanExit {
+            let crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
+            if let snapshotData = try? Data(contentsOf: stateFileURL),
+               let snapshotText = String(data: snapshotData, encoding: .utf8) {
+                var snapshotLines = snapshotText.split(separator: "\n", omittingEmptySubsequences: false)
+                if snapshotLines.count > 500 {
+                    snapshotLines = Array(snapshotLines.suffix(500))
+                }
+                let trimmed = snapshotLines.joined(separator: "\n")
+                try? trimmed.data(using: .utf8)?.write(to: crashSnapshotURL, options: .atomic)
+                log("CrashContextRecorder.bootstrap saved crash snapshot", level: .debug, fields: ["lineCount": String(snapshotLines.count)])
+            }
+        }
+
+        // 检查是否有新的 macOS crash report
+        if let prev = previous, !prev.cleanExit,
+           let reportURL = latestCrashReportURL(),
+           let reportText = try? String(contentsOf: reportURL, encoding: .utf8),
+           reportText.contains("VibeFocus") {
+            let reportName = reportURL.lastPathComponent
+
+            // 仅当报告比上次记录的更新时才处理
+            if prev.lastIngestedCrashReport != reportName {
+                guard let payload = parseIPSJSONPayloadAndLog(from: reportText) else {
+                    log("CrashContextRecorder.bootstrap found crash report but failed to parse IPS payload", level: .warn, fields: ["report": reportName])
+                    var newState = SessionState(
+                        pid: ProcessInfo.processInfo.processIdentifier,
+                        launchedAt: nowString(),
+                        cleanExit: false,
+                        events: prev.events,
+                        lastIngestedCrashReport: reportName
+                    )
+                    appendEvent("crash_report file=\(reportName) (parse_failed)")
+                    state = newState
+                    persistState()
+                    return
+                }
+
+                let captureTime = payload["captureTime"] as? String ?? "unknown"
+                let procLaunch = payload["procLaunch"] as? String ?? "unknown"
+
+                let exception = payload["exception"] as? [String: Any]
+                let termination = payload["termination"] as? [String: Any]
+                let exceptionType = exception?["type"] as? String ?? "unknown"
+                let exceptionSignal = exception?["signal"] as? String ?? "unknown"
+                let exceptionSubtype = exception?["subtype"] as? String ?? "unknown"
+                let terminationIndicator = termination?["indicator"] as? String ?? "unknown"
+
+                var queueName = "unknown"
+                var topFrameSymbol = "unknown"
+                if let threads = payload["threads"] as? [[String: Any]],
+                   let faultingThread = threads.firstIndex(where: { ($0["triggered"] as? Bool) == true }) {
+                    let thread = threads[faultingThread]
+                    if let frames = thread["frames"] as? [[String: Any]] {
+                        let firstFrame = frames.first {
+                            ($0["symbol"] as? String)?.isEmpty == false
+                        }
+                        topFrameSymbol = firstFrame?["symbol"] as? String ?? "unknown"
+                    }
+                    queueName = thread["queue"] as? String ?? "unknown"
+                }
+
+                log("CrashContextRecorder.bootstrap ingested crash report", level: .warn, fields: [
+                    "report": reportName,
+                    "captureTime": captureTime,
+                    "procLaunch": procLaunch,
+                    "exceptionType": exceptionType,
+                    "exceptionSignal": exceptionSignal,
+                    "exceptionSubtype": exceptionSubtype,
+                    "terminationIndicator": terminationIndicator,
+                    "queue": queueName,
+                    "topFrame": topFrameSymbol
+                ])
+
+                var newState = SessionState(
+                    pid: ProcessInfo.processInfo.processIdentifier,
+                    launchedAt: nowString(),
+                    cleanExit: false,
+                    events: prev.events,
+                    lastIngestedCrashReport: reportName
+                )
+                appendEvent("crash_report file=\(reportName) exception=\(exceptionType) signal=\(exceptionSignal) frame0=\(topFrameSymbol)")
+                state?.lastIngestedCrashReport = reportName
+                persistState()
+                return
+            }
         }
 
         var newState = SessionState(
@@ -73,288 +150,40 @@ final class CrashContextRecorder {
             launchedAt: nowString(),
             cleanExit: false,
             events: [],
-            lastIngestedCrashReport: previous?.lastIngestedCrashReport
+            lastIngestedCrashReport: nil
         )
-
-        state = newState
-        appendEvent("launch pid=\(newState.pid) bundle=\(Bundle.main.bundleIdentifier ?? "nil")")
-        ingestLatestCrashReportIfNeeded()
-        // Ingest may update fields; persist final state.
-        if let updated = state {
-            newState = updated
+        // 保留上次最后一条事件作为上下文
+        if let lastEvent = previous?.events.last {
+            newState.events.append(lastEvent)
         }
         state = newState
         persistState()
-        log(
-            "[CRASH_CONTEXT] bootstrap complete",
-            fields: [
-                "pid": String(newState.pid),
-                "launchedAt": newState.launchedAt,
-                "stateFile": stateFileURL.path
-            ]
-        )
+        log("CrashContextRecorder.bootstrap exit", level: .debug)
     }
 
     func record(_ event: String) {
         appendEvent(event)
-        // 异步延迟写入 — 不阻塞 toggle 热路径
-        schedulePersist()
-    }
-
-    /// 调度异步持久化（带防抖）
-    /// 使用 main.asyncAfter — 调用者不被阻塞，延迟后在主线程执行写入
-    private func schedulePersist() {
+        // Debounced persist: 不每次都立即写磁盘
         guard !persistScheduled else { return }
         persistScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + persistDebounceInterval) { [weak self] in
-            self?.persistScheduled = false
-            self?.persistState()
+        persistQueue.asyncAfter(deadline: .now() + persistDebounceInterval) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.persistScheduled = false
+                self?.persistState()
+            }
         }
     }
 
     func markCleanExit() {
-        log("CrashContextRecorder.markCleanExit entry", level: .debug, fields: ["hasState": String(state != nil)])
-        guard state != nil else {
-            log("CrashContextRecorder.markCleanExit no state, skipping", level: .debug)
-            return
-        }
-        appendEvent("clean_exit")
         state?.cleanExit = true
-        let crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
-        try? FileManager.default.removeItem(at: crashSnapshotURL)
+        captureRecentLogTail(context: "clean_exit")
         persistState()
-        log("[CRASH_CONTEXT] Marked clean exit")
-        log("CrashContextRecorder.markCleanExit exit", level: .debug)
+        log("CrashContextRecorder.markCleanExit", level: .debug)
     }
 
-    private func ingestLatestCrashReportIfNeeded() {
-        log("CrashContextRecorder.ingestLatestCrashReportIfNeeded entry", level: .debug)
-        guard let latestReport = latestCrashReportURL() else {
-            log("CrashContextRecorder.ingestLatestCrashReportIfNeeded no crash report found", level: .debug)
-            return
-        }
-        let reportName = latestReport.lastPathComponent
-        if state?.lastIngestedCrashReport == reportName {
-            log("CrashContextRecorder.ingestLatestCrashReportIfNeeded already ingested", level: .debug, fields: ["reportName": reportName])
-            return
-        }
+    // MARK: - Utility
 
-        guard let reportText = try? String(contentsOf: latestReport, encoding: .utf8),
-              let payload = parseIPSJSONPayloadAndLog(from: reportText) else {
-            log("CrashContextRecorder.ingestLatestCrashReportIfNeeded parse failed", level: .debug, fields: ["reportName": reportName])
-            appendEvent("crash_report_parse_failed file=\(reportName)")
-            state?.lastIngestedCrashReport = reportName
-            persistState()
-            return
-        }
-
-        let captureTime = payload["captureTime"] as? String ?? "unknown"
-        let procLaunch = payload["procLaunch"] as? String ?? "unknown"
-
-        let exception = payload["exception"] as? [String: Any]
-        let termination = payload["termination"] as? [String: Any]
-        let exceptionType = exception?["type"] as? String ?? "unknown"
-        let exceptionSignal = exception?["signal"] as? String ?? "unknown"
-        let exceptionSubtype = exception?["subtype"] as? String ?? "unknown"
-        let terminationIndicator = termination?["indicator"] as? String ?? "unknown"
-
-        var queueName = "unknown"
-        var topFrameSymbol = "unknown"
-        if let faultingThread = payload["faultingThread"] as? Int,
-           let threads = payload["threads"] as? [[String: Any]],
-           faultingThread >= 0,
-           faultingThread < threads.count {
-            let thread = threads[faultingThread]
-            queueName = thread["queue"] as? String ?? "unknown"
-            if let frames = thread["frames"] as? [[String: Any]],
-               let firstFrame = frames.first {
-                topFrameSymbol = firstFrame["symbol"] as? String ?? "unknown"
-            }
-        }
-
-        log("[CRASH_CONTEXT] Ingested crash report: \(reportName)")
-        log("[CRASH_CONTEXT] capture=\(captureTime) launch=\(procLaunch)")
-        log("[CRASH_CONTEXT] exception=\(exceptionType) signal=\(exceptionSignal) subtype=\(exceptionSubtype)")
-        log("[CRASH_CONTEXT] termination=\(terminationIndicator) queue=\(queueName) frame0=\(topFrameSymbol)")
-
-        appendEvent("crash_report file=\(reportName) exception=\(exceptionType) signal=\(exceptionSignal) frame0=\(topFrameSymbol)")
-        state?.lastIngestedCrashReport = reportName
-        persistState()
-    }
-
-    static func parseIPSJSONPayload(from reportText: String) -> [String: Any]? {
-        let lines = reportText.split(separator: "\n", omittingEmptySubsequences: false)
-        guard lines.count >= 2 else { return nil }
-        let payloadText = lines.dropFirst().joined(separator: "\n")
-        guard let data = payloadText.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data),
-              let payload = object as? [String: Any] else { return nil }
-        return payload
-    }
-
-    private func parseIPSJSONPayloadAndLog(from reportText: String) -> [String: Any]? {
-        log("CrashContextRecorder.parseIPSJSONPayload entry", level: .debug, fields: ["textLength": String(reportText.count)])
-        let result = Self.parseIPSJSONPayload(from: reportText)
-        if let result {
-            log("CrashContextRecorder.parseIPSJSONPayload exit", level: .debug, fields: ["keyCount": String(result.count)])
-        } else {
-            log("CrashContextRecorder.parseIPSJSONPayload failed", level: .debug)
-        }
-        return result
-    }
-
-    private func latestCrashReportURL() -> URL? {
-        log("CrashContextRecorder.latestCrashReportURL entry", level: .debug, fields: ["directory": diagnosticReportsDirectory.path])
-        guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: diagnosticReportsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            log("CrashContextRecorder.latestCrashReportURL cannot read directory", level: .debug)
-            return nil
-        }
-
-        let reports = urls.filter { url in
-            let name = url.lastPathComponent
-            return name.hasPrefix("VibeFocus-") && name.hasSuffix(".ips")
-        }
-        guard !reports.isEmpty else {
-            log("CrashContextRecorder.latestCrashReportURL no reports found", level: .debug)
-            return nil
-        }
-
-        return reports.max { lhs, rhs in
-            let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            return lhsDate < rhsDate
-        }
-    }
-
-    private func loadState() -> SessionState? {
-        log("CrashContextRecorder.loadState entry", level: .debug, fields: ["path": stateFileURL.path])
-        guard let data = try? Data(contentsOf: stateFileURL),
-              let loaded = try? JSONDecoder().decode(SessionState.self, from: data) else {
-            log("CrashContextRecorder.loadState no state file or decode failed", level: .debug)
-            return nil
-        }
-        log("CrashContextRecorder.loadState exit", level: .debug, fields: ["pid": String(loaded.pid), "cleanExit": String(loaded.cleanExit), "eventCount": String(loaded.events.count)])
-        return loaded
-    }
-
-    private func persistState() {
-        guard let state else {
-            log("CrashContextRecorder.persistState no state to persist", level: .debug)
-            return
-        }
-        log("CrashContextRecorder.persistState entry", level: .debug, fields: ["eventCount": String(state.events.count), "cleanExit": String(state.cleanExit)])
-        guard let data = try? JSONEncoder().encode(state) else {
-            log("[CRASH_CONTEXT] Failed to encode state", level: .error)
-            return
-        }
-        do {
-            try data.write(to: stateFileURL, options: .atomic)
-        } catch {
-            log(
-                "[CRASH_CONTEXT] Failed to persist state",
-                level: .error,
-                fields: [
-                    "path": stateFileURL.path,
-                    "error": error.localizedDescription
-                ]
-            )
-        }
-    }
-
-    private func appendEvent(_ event: String) {
-        guard state != nil else {
-            log("CrashContextRecorder.appendEvent no state, skipping", level: .debug)
-            return
-        }
-        let line = "\(nowString()) \(event)"
-        state?.events.append(line)
-        if let count = state?.events.count, count > maxEvents {
-            state?.events.removeFirst(count - maxEvents)
-            log("CrashContextRecorder.appendEvent trimmed events", level: .debug, fields: ["removedCount": String(count - maxEvents)])
-        }
-    }
-
-    private func nowString() -> String {
+    func nowString() -> String {
         timestampFormatter.string(from: Date())
-    }
-
-    private func captureRecentLogTail(context: String) {
-        log("CrashContextRecorder.captureRecentLogTail entry", level: .debug, fields: ["context": context])
-        captureTail(
-            sourceURL: plainLogFileURL,
-            outputURL: plainCrashSnapshotURL,
-            lineLimit: plainTailLineLimit,
-            context: context,
-            label: "plain"
-        )
-        captureTail(
-            sourceURL: structuredLogFileURL,
-            outputURL: structuredCrashSnapshotURL,
-            lineLimit: structuredTailLineLimit,
-            context: context,
-            label: "structured"
-        )
-    }
-
-    private func captureTail(
-        sourceURL: URL,
-        outputURL: URL,
-        lineLimit: Int,
-        context: String,
-        label: String
-    ) {
-        log("CrashContextRecorder.captureTail entry", level: .debug, fields: ["source": sourceURL.path, "output": outputURL.path, "label": label, "lineLimit": String(lineLimit)])
-        guard let data = try? Data(contentsOf: sourceURL),
-              let content = String(data: data, encoding: .utf8) else {
-            log(
-                "[CRASH_CONTEXT] tail snapshot skipped: source unavailable",
-                level: .warn,
-                fields: [
-                    "context": context,
-                    "label": label,
-                    "source": sourceURL.path
-                ]
-            )
-            return
-        }
-
-        let lines = content
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .suffix(lineLimit)
-            .joined(separator: "\n")
-
-        guard let tailData = lines.data(using: .utf8) else {
-            return
-        }
-
-        do {
-            try tailData.write(to: outputURL, options: .atomic)
-            log(
-                "[CRASH_CONTEXT] saved tail snapshot",
-                fields: [
-                    "context": context,
-                    "label": label,
-                    "source": sourceURL.path,
-                    "output": outputURL.path,
-                    "lineLimit": String(lineLimit)
-                ]
-            )
-        } catch {
-            log(
-                "[CRASH_CONTEXT] failed to save tail snapshot",
-                level: .error,
-                fields: [
-                    "context": context,
-                    "label": label,
-                    "source": sourceURL.path,
-                    "output": outputURL.path,
-                    "error": error.localizedDescription
-                ]
-            )
-        }
     }
 }
