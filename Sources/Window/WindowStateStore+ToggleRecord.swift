@@ -168,9 +168,9 @@ extension WindowStateStore {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, Int64(windowID))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
 
-        return parseToggleRecord(stmt!)
+        return parseToggleRecord(s)
     }
 
     /// 按 PID 读取最近的 toggle record（CGWindowNumber 变化时的 fallback）
@@ -192,9 +192,9 @@ extension WindowStateStore {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int(stmt, 1, pid)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
 
-        return parseToggleRecord(stmt!)
+        return parseToggleRecord(s)
     }
 
     /// 清除指定窗口的 toggle state

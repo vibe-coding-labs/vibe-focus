@@ -114,7 +114,7 @@ extension SpaceController {
             log(
                 "[SpaceController] nativeSpaceID resolved",
                 level: .debug,
-                fields: ["yabaiIndex": String(index), "nativeSpaceID": String(result!)]
+                fields: ["yabaiIndex": String(index), "nativeSpaceID": result.map { String($0) } ?? "unknown"]
             )
         }
         return result
