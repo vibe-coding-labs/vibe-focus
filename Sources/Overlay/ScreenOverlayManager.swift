@@ -28,7 +28,9 @@ class ScreenOverlayManager: ObservableObject {
     var cachedDisplayIndices: [UUID: Int] = [:]
     var lastQueryTimes: [UUID: Date] = [:]
     let queryDebounceInterval: TimeInterval = 0.05
-    let signalFollowUpRefreshDelays: [TimeInterval] = [0.03, 0.1]
+    // 单次延后 follow-up：space 切换后 yabai 状态需 ~150ms 稳定，180ms 后补一次即可。
+    // 原值 [0.03, 0.1] = 3 次 refresh（立即 + 30ms + 100ms），过度补偿导致主线程 fork 风暴。
+    let signalFollowUpRefreshDelays: [TimeInterval] = [0.18]
     let preferenceRefreshDebounceInterval: TimeInterval = 0.08
     let preferenceSaveDebounceInterval: TimeInterval = 0.2
     let yabaiCommandTimeout: TimeInterval = 0.22
