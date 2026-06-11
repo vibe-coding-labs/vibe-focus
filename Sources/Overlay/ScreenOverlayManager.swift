@@ -36,7 +36,9 @@ class ScreenOverlayManager: ObservableObject {
     let yabaiCommandTimeout: TimeInterval = 0.22
     let minForceRefreshTriggerInterval: TimeInterval = 0.06
     let singleScreenFallbackRefreshInterval: TimeInterval = 0.35
-    let multiScreenFallbackRefreshInterval: TimeInterval = 0.8
+    // 多屏兜底定时器：SIGUSR1 是 workspace switch 主驱动，定时器仅兜底 signal 遗漏。
+    // 0.8s 过激进（空闲时持续 fork yabai），2.0s 足够覆盖遗漏场景。
+    let multiScreenFallbackRefreshInterval: TimeInterval = 2.0
     var automaticRefreshSuspended = false
     var lastLoggedPreferenceSignature: String?
 
