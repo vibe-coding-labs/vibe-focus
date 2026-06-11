@@ -9,6 +9,16 @@ extension WindowManager {
         let startedAt = Date()
         // 清除查询缓存，确保本次 toggle 获取最新状态
         SpaceController.shared.clearQueryCache()
+        // 暂停 overlay 自动刷新：restore/move 内部的 yabai `window --space` 会触发
+        // space_changed signal → SIGUSR1 → force refresh 风暴（多屏 3 次 × 每 screen 2 fork
+        // = 大量主线程阻塞，是"主屏退回副屏"卡顿的主因）。toggle 期间抑制，结束后补一次。
+        ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "toggle_in_progress op=\(op)")
+        // defer 保证：无论 toggle 如何退出（含提前 return / 异常），overlay 刷新都会恢复。
+        defer {
+            ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "toggle_complete op=\(op)")
+            // 补一次 force refresh，替代被抑制的 SIGUSR1 风暴 —— 单次 refresh 覆盖最终 space 状态。
+            ScreenOverlayManager.shared.triggerForceRefresh(reason: "toggle_complete op=\(op)")
+        }
         let frontBefore = frontmostAppDescriptor()
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "toggle_start")
