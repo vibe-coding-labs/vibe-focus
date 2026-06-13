@@ -11,13 +11,12 @@ enum LANHookPreferences {
         get { UserDefaults.standard.object(forKey: lanModeKey) as? Bool ?? defaultLanMode }
         set {
             UserDefaults.standard.set(newValue, forKey: lanModeKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
     /// 远程机器 → 窗口ID 映射, 格式: ["machine-label": windowID]
     /// windowID 为 nil 表示已添加但尚未选择窗口
-    /// 序列化为 JSON string 存入 UserDefaults，以便 PreferencesSync 可持久化到 config.json
+    /// 序列化为 JSON string 存入 UserDefaults
     static var remoteBindings: [String: UInt32?] {
         get {
             if let jsonStr = UserDefaults.standard.string(forKey: remoteBindingsKey),
@@ -45,9 +44,6 @@ enum LANHookPreferences {
                let jsonStr = String(data: data, encoding: .utf8) {
                 UserDefaults.standard.set(jsonStr, forKey: remoteBindingsKey)
             }
-            // Synchronous persist — remote bindings are set infrequently (Settings UI),
-            // and async persistToDisk() can lose data if app is killed before write completes.
-            PreferencesSync.persistToDiskAndWait()
         }
     }
 

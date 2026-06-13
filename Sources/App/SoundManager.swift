@@ -193,7 +193,6 @@ final class SoundManager: ObservableObject {
         do {
             let data = try JSONEncoder().encode(preferences)
             UserDefaults.standard.set(data, forKey: Self.preferencesKey)
-            PreferencesSync.persistToDisk()
         } catch {
             log("[SoundManager] failed to save preferences", level: .error, fields: [
                 "error": error.localizedDescription

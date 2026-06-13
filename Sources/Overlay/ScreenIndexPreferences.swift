@@ -190,12 +190,11 @@ struct ScreenIndexPreferences: Codable {
         }
         // SQLite 主源（不受 app rebuild 影响）
         WindowStateStore.shared.savePreference(key: Self.userDefaultsKey, value: jsonString)
-        // CFPreferences + UserDefaults + config.json 次源
+        // CFPreferences + UserDefaults 次源
         let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
         CFPreferencesSetAppValue(Self.userDefaultsKey as CFString, jsonString as CFString, bundleId as CFString)
         CFPreferencesAppSynchronize(bundleId as CFString)
         UserDefaults.standard.set(jsonString, forKey: Self.userDefaultsKey)
-        PreferencesSync.persistToDisk()
     }
 }
 

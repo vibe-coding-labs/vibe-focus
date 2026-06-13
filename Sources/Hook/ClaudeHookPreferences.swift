@@ -18,7 +18,7 @@ enum ClaudeHookPreferences {
     static let defaultPort = 39277
 
     // MARK: - 统一默认值（唯一源）
-    // 所有默认值只在这里定义一次，SettingsUI 和 PreferencesSync 引用这些常量，
+    // 所有默认值只在这里定义一次，SettingsUI 引用这些常量，
     // 编译器保证一致性，防止默认值漂移导致 app 重启后配置被重置。
 
     static let defaultEnabled = false
@@ -48,7 +48,6 @@ enum ClaudeHookPreferences {
         set {
             log("ClaudeHookPreferences.isEnabled set", level: .debug, fields: ["value": String(newValue)])
             UserDefaults.standard.set(newValue, forKey: enabledKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
@@ -67,7 +66,6 @@ enum ClaudeHookPreferences {
             let normalized = normalizePort(newValue)
             log("ClaudeHookPreferences.listenPort set", level: .debug, fields: ["raw": String(newValue), "normalized": String(normalized)])
             UserDefaults.standard.set(normalized, forKey: portKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
@@ -86,7 +84,6 @@ enum ClaudeHookPreferences {
             let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             log("ClaudeHookPreferences.authToken set", level: .debug, fields: ["hasValue": String(!trimmed.isEmpty)])
             UserDefaults.standard.set(trimmed, forKey: tokenKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
@@ -114,7 +111,6 @@ enum ClaudeHookPreferences {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: autoFocusOnSessionEndKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
@@ -122,7 +118,6 @@ enum ClaudeHookPreferences {
         get { UserDefaults.standard.object(forKey: triggerOnStopKey) as? Bool ?? defaultTriggerOnStop }
         set {
             UserDefaults.standard.set(newValue, forKey: triggerOnStopKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
@@ -130,7 +125,6 @@ enum ClaudeHookPreferences {
         get { UserDefaults.standard.object(forKey: triggerOnSessionEndKey) as? Bool ?? defaultTriggerOnSessionEnd }
         set {
             UserDefaults.standard.set(newValue, forKey: triggerOnSessionEndKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
@@ -138,7 +132,6 @@ enum ClaudeHookPreferences {
         get { UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? defaultAutoRestoreOnPromptSubmit }
         set {
             UserDefaults.standard.set(newValue, forKey: autoRestoreOnPromptSubmitKey)
-            PreferencesSync.persistToDisk()
         }
     }
 
