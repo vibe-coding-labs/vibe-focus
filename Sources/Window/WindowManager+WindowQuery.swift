@@ -63,6 +63,22 @@ extension WindowManager {
             level: .debug,
             fields: ["pid": String(pid), "windowID": String(windowID)]
         )
+        // Fast path：若该窗口是 pid 的当前聚焦窗口，直接返回，跳过全量 AX windows 遍历。
+        // restore 路径中，被 restore 的窗口通常是聚焦窗口（用户刚 toggle 它到主屏再送回）。
+        // 全量 kAXWindowsAttribute 遍历在 space 动画/跨屏时阻塞（实测 restore 偶发 ~2s）。
+        // 聚焦窗口的精确 windowID 匹配与全量遍历结果等价（聚焦窗口必在 windows 列表内，
+        // 全量遍历也会返回它）。不聚焦时 fallback 到全量遍历，行为不变。
+        // 注意：这里不做 title/number fallback（区别于 resolveWindow），保持精确 windowID 匹配语义。
+        if let focused = focusedWindow(for: pid),
+           let focusedID = windowHandle(for: focused),
+           focusedID == windowID {
+            log(
+                "[WindowManager] findWindowByPID: focused fast path hit",
+                level: .debug,
+                fields: ["pid": String(pid), "windowID": String(windowID)]
+            )
+            return focused
+        }
         let appElement = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
