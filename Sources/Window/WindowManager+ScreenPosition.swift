@@ -19,6 +19,19 @@ extension WindowManager {
         return CoordinateKit.isOnMainScreen(bounds)
     }
 
+    /// 通过 CGWindowList 读取窗口 frame（非 AX，不跨屏阻塞）。
+    /// 用于 toggle ctxMs 采集，替代 AX frame(of:) —— 窗口位于副屏 Space 时
+    /// AX kAXFrameAttribute 被 WindowServer 阻塞 1500-1900ms（move_to_main ctxMs 主因，
+    /// 见 toggle-00000187 ctxMs=1918）。CGWindowListCopyWindowInfo 是 WindowServer 快照查询，
+    /// 不走 AX 通道，不阻塞。
+    func cgWindowFrame(forWindowID windowID: UInt32) -> CGRect? {
+        let windows = cgWindowListAll()
+        guard let entry = windows.first(where: { $0.windowID == windowID }) else {
+            return nil
+        }
+        return entry.bounds
+    }
+
     func displayID(for screen: NSScreen) -> UInt32? {
         return CoordinateKit.cgDisplayID(for: screen)
     }

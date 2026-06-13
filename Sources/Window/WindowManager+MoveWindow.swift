@@ -117,28 +117,33 @@ extension WindowManager {
         let targetDisplayID = displayID(for: mainScreen)
         let targetDisplayIndex = displayIndex(forDisplayID: targetDisplayID)
 
-        // AX apply: move window to main screen
-        guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main") else {
+        // 先 float 脱离 yabai 管理，再 apply 设全屏 size —— 顺序关键。
+        // 若窗口被 yabai 管理（tiled），apply 的 AX size write 会被 yabai re-tile 覆盖，
+        // 导致 move_to_main 后窗口 height 不全屏（实测 lingdongditu: width 生效到主屏宽 1646，
+        // 但 height 卡在副屏高 707，未达主屏全屏高 1079）。先 toggle float 让窗口脱离 yabai，
+        // apply 的 size 才能可靠生效。复用第 80 行 windowInfo（缓存命中），避免再次 queryWindow fork。
+        // CGWindowID 跨屏移动后不变，提前计算并复用给 setWindowFloat 和 save record。
+        let effectiveWindowID = windowHandle(for: windowAX) ?? identity.windowID
+        let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
+        spaceController.setWindowFloat(effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
+
+        // AX apply: move window to main screen + set fullscreen size
+        // maxAttempts: 3 —— move_to_main 不切 space（AX 跨屏 move 不触发 space 动画），AX write 通常快；
+        // 3 次重试 + 回读验证确保 size 可靠生效，避免单次模式下异步窗口（Electron 等）size 未应用就返回。
+        guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3) else {
             log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
                 "op": op, "targetFrame": String(describing: targetFrame)
             ])
             return false
         }
 
-        // Float on main screen to prevent yabai tiling
-        let effectiveWindowID = windowHandle(for: windowAX) ?? identity.windowID
-        spaceController.setWindowFloat(effectiveWindowID, operationID: op)
-
         // Save toggle record — always save, even when yabai can't determine space
         // (sourceSpace=0 signals "no space info, skip yabai space move on restore")
-        let actualTargetFrame = frame(of: windowAX) ?? targetFrame
+        let actualTargetFrame = targetFrame
         let sourceSpaceIndex = spaceContext.sourceSpaceIndex ?? .yabai(0)
         let sourceContext = displayContext(for: origFrame)
         let teSourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.index.map { .yabai($0) } ?? .yabai(0)
-        let postMoveWindowID = windowHandle(for: windowAX) ?? effectiveWindowID
-        if postMoveWindowID != effectiveWindowID {
-            SessionWindowRegistry.shared.remapWindowID(oldWindowID: effectiveWindowID, newWindowID: postMoveWindowID)
-        }
+        let postMoveWindowID = effectiveWindowID
         ToggleEngine.shared.save(
             windowID: postMoveWindowID,
             pid: identity.pid,

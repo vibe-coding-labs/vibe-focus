@@ -29,7 +29,9 @@ extension SpaceController {
             return false
         }
 
-        // Strategy 1: yabai command — 仅当窗口可被 yabai 管理时尝试
+        // Strategy 1: yabai 命令 — 优先。
+        // focus=false 后 yabai `window --space` 不切用户视角、不触发 space 动画，SA 不阻塞，
+        // 实测仅 ~29ms/fork（之前 focus=true 切 space 动画时 ~1014ms）。仅当窗口可被 yabai 管理时尝试。
         if windowInfo.isManageableByYabai {
             let result = runYabaiVariants(
                 variants: [["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"]],
@@ -46,14 +48,11 @@ extension SpaceController {
             ])
         }
 
-        // Strategy 2: NativeSpaceBridge fallback
-        if NativeSpaceBridge.isAvailable, let spaceID = nativeSpaceID(forYabaiIndex: spaceIndex) {
-            NativeSpaceBridge.resetFailureCache()
-            if NativeSpaceBridge.moveWindow(windowID, toSpaceID: spaceID) {
-                if focus { _ = focusWindow(windowID, operationID: op, knownWindowInfo: windowInfo) }
-                return true
-            }
-        }
+        // Strategy 2: NativeSpaceBridge (SLS) fallback — yabai 失败时。
+        // 注意：SLSMoveWindowsToManagedSpace 需要 "universal owner connection"（yabai issue #2593），
+        // yabai 经 SA 进程或 Dock sideload 获取。VibeFocus 是普通 GUI app，SLSMainConnectionID 返回
+        // 普通 connection，权限不足 → SLS move 始终失败（result 返回垃圾值，非 0）。
+        // 保留作为 yabai 不可用时的最后尝试，但预期失败（详见 NativeSpaceBridge.moveWindow log）。
 
         markOperationError("Failed to move window \(windowID) to space \(spaceIndex)", operationID: op)
         return false

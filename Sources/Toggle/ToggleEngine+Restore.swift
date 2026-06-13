@@ -66,10 +66,15 @@ extension ToggleEngine {
         // 的窗口移动后仍 float，setWindowFloat 据此正确跳过；未 float 的会正确执行 toggle。
         let windowInfo = sc.queryWindow(windowID: axLookupID)
         if record.sourceSpace > 0 {
+            // focus=false：restore 是"把窗口送回原位"，用户视角留主屏继续工作。
+            // moveWindow 内部的 focusWindow(yabai window --focus) 会切换用户 space 触发
+            // macOS 动画 + SA 阻塞 ~1s（op=186 实测 1019ms）—— 这是 restore 路径最后的卡顿源。
+            // SLS move 只移窗口不切用户视角，配合 focus=false 用户始终留主屏。
+            // macOS 自动切 space 的兜底由下方 line 101-114 的 focusSpace 切回处理。
             moved = sc.moveWindow(
                 axLookupID,
                 toSpace: .yabai(record.sourceSpace),
-                focus: triggerSource == "carbon_hotkey",
+                focus: false,
                 operationID: trace,
                 knownWindowInfo: windowInfo
             )
@@ -87,7 +92,9 @@ extension ToggleEngine {
         sc.setWindowFloat(axLookupID, operationID: trace, knownWindowInfo: windowInfo)
 
         // 6. Apply original frame via AX
-        if !wm.apply(frame: record.origFrame, to: windowAX, operationID: trace, stage: "restore") {
+        // 单次模式：restore 前已 setWindowFloat，yabai 不会 re-tile，无需重试验证。
+        // space 动画期间 AX write 已达物理下限，重试循环只会累积延迟。
+        if !wm.apply(frame: record.origFrame, to: windowAX, operationID: trace, stage: "restore", maxAttempts: 1) {
             log("[ToggleEngine] restore: AX frame apply failed", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID)
             ])

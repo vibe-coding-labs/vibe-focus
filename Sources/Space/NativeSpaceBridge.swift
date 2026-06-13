@@ -83,9 +83,11 @@ enum NativeSpaceBridge {
         if result != 0 {
             _moveWindowFailures[key] = Date().timeIntervalSince1970
         }
+        // result != 0 是预期：SLSMoveWindowsToManagedSpace 需 "universal owner connection"
+        // (yabai issue #2593)，VibeFocus 普通 connection 权限不足。降为 debug 避免日志噪音。
         log(
             "[NativeSpaceBridge] moveWindow",
-            level: result == 0 ? .info : .warn,
+            level: result == 0 ? .info : .debug,
             fields: [
                 "windowID": String(windowID),
                 "spaceID": String(spaceID),
