@@ -132,7 +132,9 @@ extension WindowManager {
 
             let appName = entry.ownerName ?? ""
             let title = entry.name ?? ""
-            let isOnMainScreen = isWindowOnMainScreen(windowID: entry.windowID)
+            // 复用已查询的 entry.bounds，避免循环内对每个窗口再调 isWindowOnMainScreen →
+            // cgWindowListAll() 全量重扫（N 窗口 × 每次全量扫 = O(N²)）。
+            let isOnMainScreen = entry.bounds.map { CoordinateKit.isOnMainScreen($0) } ?? false
 
             let bundleIdentifier: String?
             if let app = NSRunningApplication(processIdentifier: entry.ownerPID) {

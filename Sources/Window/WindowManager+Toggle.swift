@@ -31,6 +31,8 @@ extension WindowManager {
         // 保留 focusedWindow/windowHandle/title 每个 AX 调用的计时用于诊断剩余瓶颈。
         // 解析一次 windowID 供后续多处复用（避免重复 String→UInt32 解析）。
         var resolvedWindowID: UInt32?
+        // 缓存主屏引用：toggle 同步执行期间屏幕配置不变，复用避免重复 getMainScreen() 遍历。
+        let cachedMainScreen = getMainScreen()
         let ctxStart = Date()
         var toggleContext: [String: String] = [
             "op": op,
@@ -52,7 +54,7 @@ extension WindowManager {
                     // CGWindowList（非 AX）读取 frame —— 不跨屏阻塞
                     let winFrame = cgWindowFrame(forWindowID: id)
                     toggleContext["windowFrame"] = String(describing: winFrame)
-                    if let winFrame, let mainScreen = getMainScreen() {
+                    if let winFrame, let mainScreen = cachedMainScreen {
                         let windowCenter = CGPoint(x: winFrame.midX, y: winFrame.midY)
                         toggleContext["onMainScreen"] = String(mainScreen.frame.contains(windowCenter))
                     }
@@ -86,7 +88,7 @@ extension WindowManager {
                 decisionFields["toggleRecordExists"] = "true"
                 decisionFields["toggleRecordOrigFrame"] = "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))"
                 decisionFields["toggleRecordSourceSpace"] = String(record.sourceSpace)
-                if let mainScreen = getMainScreen() {
+                if let mainScreen = cachedMainScreen {
                     decisionFields["toggleRecordValid"] = String(record.isValid(mainScreenFrame: mainScreen.frame))
                 }
             } else {
