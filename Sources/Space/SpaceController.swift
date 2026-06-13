@@ -19,6 +19,8 @@ final class SpaceController: ObservableObject {
     var didAttemptScriptingAdditionRecovery = false
     var scriptingAdditionRecoverySucceeded = false
     private let checkInterval: TimeInterval = 20
+    /// 周期 health check timer — 从启动 fork 竞争等瞬态失败自动恢复 isEnabled
+    private var healthCheckTimer: Timer?
 
     // MARK: - Query Cache (per-toggle lifecycle)
 
@@ -42,9 +44,23 @@ final class SpaceController: ObservableObject {
     }
 
     private init() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.refreshAvailability(force: true)
+        // 启动后多次重试 refreshAvailability，覆盖启动 fork 竞争窗口。
+        // 启动时 overlay refresh / hook check / querySpaces 并发 fork yabai，可能某次
+        // query --spaces Process.launch 失败 → isEnabled=false。moveWindow/setWindowFloat
+        // 都 gate on isEnabled，卡 false 会阻断所有 toggle。多次重试确保从瞬态失败恢复。
+        for delay in [0.5, 4.0, 12.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.refreshAvailability(force: true)
+            }
         }
+        // 周期 health check：运行中 fork 失败或 yabai 重启后自动恢复 isEnabled。
+        // 每 60s force 重查一次（~30ms fork），确保 isEnabled 不长期卡 false。
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshAvailability(force: true) }
+        }
+        timer.tolerance = 15
+        RunLoop.main.add(timer, forMode: .common)
+        healthCheckTimer = timer
     }
 
     deinit {}

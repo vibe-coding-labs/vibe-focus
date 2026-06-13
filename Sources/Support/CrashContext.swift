@@ -158,9 +158,11 @@ func updateCrashSnapshotFromRuntime() {
         append("pid=\(ProcessInfo.processInfo.processIdentifier)")
         append(" ppid=\(getppid())")
 
-        let axOptions = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
-        let axTrusted = AXIsProcessTrustedWithOptions(axOptions)
-        appendField("axTrusted", String(axTrusted))
+        // 用 HotKeyManager 缓存的 accessibilityGranted 代替同步 AXIsProcessTrustedWithOptions。
+        // 后者是同步权限服务查询，WindowServer 繁忙时可达数百 ms，每次 toggle 调用会阻塞入口。
+        // AX 权限状态运行期间不变，缓存值足够用于 crash 诊断。
+        let hkm = HotKeyManager.shared
+        appendField("axTrusted", String(hkm.accessibilityGranted))
 
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             appendField("frontPID", String(frontApp.processIdentifier))
@@ -171,7 +173,6 @@ func updateCrashSnapshotFromRuntime() {
 
         let wm = WindowManager.shared
 
-        let hkm = HotKeyManager.shared
         appendField("hotkey", hkm.currentHotKey.displayString)
         appendField("axGranted", String(hkm.accessibilityGranted))
 

@@ -18,34 +18,49 @@ extension WindowManager {
             ScreenOverlayManager.shared.triggerForceRefresh(reason: "toggle_complete op=\(op)")
         }
         let frontBefore = frontmostAppDescriptor()
+        let snapshotStart = Date()
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "toggle_start")
+        let snapshotMs = elapsedMilliseconds(since: snapshotStart)
 
-        // 采集当前窗口上下文
+        // 采集当前窗口上下文。
+        // 优化：frame 用 CGWindowList（非 AX）替代 AX frame(of:) —— 窗口位于副屏 Space 时
+        // AX kAXFrameAttribute 被 WindowServer 阻塞 1500-1900ms（move_to_main ctxMs 主因，
+        // toggle-00000187 ctxMs=1918）。决策由 shouldRestoreCurrentWindow 独立用 CGWindowList
+        // 完成，此处的 frame/onMainScreen 仅用于日志，可安全换用 CGWindowList。
+        // 保留 focusedWindow/windowHandle/title 每个 AX 调用的计时用于诊断剩余瓶颈。
+        let ctxStart = Date()
         var toggleContext: [String: String] = [
             "op": op,
             "source": triggerSource,
-            "frontBefore": frontBefore
+            "frontBefore": frontBefore,
+            "snapshotMs": String(snapshotMs)
         ]
-        if let frontApp = NSWorkspace.shared.frontmostApplication,
-           let focusedWin = focusedWindow(for: frontApp.processIdentifier) {
-            let winTitle = title(of: focusedWin) ?? ""
-            // AX-safe: focused window is always visible
-            let winFrame = frame(of: focusedWin)
-            let winID = windowHandle(for: focusedWin)
-            if let id = winID {
-                toggleContext["windowID"] = String(id)
-            }
-            toggleContext["windowTitle"] = truncateForLog(winTitle, limit: 60)
-            toggleContext["windowFrame"] = String(describing: winFrame)
-            // 判断窗口在哪个屏幕上
-            if let winFrame,
-               let mainScreen = getMainScreen() {
-                let windowCenter = CGPoint(x: winFrame.midX, y: winFrame.midY)
-                let onMainScreen = mainScreen.frame.contains(windowCenter)
-                toggleContext["onMainScreen"] = String(onMainScreen)
+        if let frontApp = NSWorkspace.shared.frontmostApplication {
+            let tFocusedWindow = Date()
+            let focusedWin = focusedWindow(for: frontApp.processIdentifier)
+            toggleContext["focusedWindowAxMs"] = String(elapsedMilliseconds(since: tFocusedWindow))
+            if let focusedWin {
+                let tWinID = Date()
+                let winID = windowHandle(for: focusedWin)
+                toggleContext["winIDAxMs"] = String(elapsedMilliseconds(since: tWinID))
+                if let id = winID {
+                    toggleContext["windowID"] = String(id)
+                    // CGWindowList（非 AX）读取 frame —— 不跨屏阻塞
+                    let winFrame = cgWindowFrame(forWindowID: id)
+                    toggleContext["windowFrame"] = String(describing: winFrame)
+                    if let winFrame, let mainScreen = getMainScreen() {
+                        let windowCenter = CGPoint(x: winFrame.midX, y: winFrame.midY)
+                        toggleContext["onMainScreen"] = String(mainScreen.frame.contains(windowCenter))
+                    }
+                }
+                let tTitle = Date()
+                let winTitle = title(of: focusedWin) ?? ""
+                toggleContext["titleAxMs"] = String(elapsedMilliseconds(since: tTitle))
+                toggleContext["windowTitle"] = truncateForLog(winTitle, limit: 60)
             }
         }
+        toggleContext["ctxMs"] = String(elapsedMilliseconds(since: ctxStart))
         log(
             "[WindowManager] toggle started",
             fields: toggleContext
