@@ -29,6 +29,8 @@ extension WindowManager {
         // toggle-00000187 ctxMs=1918）。决策由 shouldRestoreCurrentWindow 独立用 CGWindowList
         // 完成，此处的 frame/onMainScreen 仅用于日志，可安全换用 CGWindowList。
         // 保留 focusedWindow/windowHandle/title 每个 AX 调用的计时用于诊断剩余瓶颈。
+        // 解析一次 windowID 供后续多处复用（避免重复 String→UInt32 解析）。
+        var resolvedWindowID: UInt32?
         let ctxStart = Date()
         var toggleContext: [String: String] = [
             "op": op,
@@ -44,6 +46,7 @@ extension WindowManager {
                 let tWinID = Date()
                 let winID = windowHandle(for: focusedWin)
                 toggleContext["winIDAxMs"] = String(elapsedMilliseconds(since: tWinID))
+                resolvedWindowID = winID
                 if let id = winID {
                     toggleContext["windowID"] = String(id)
                     // CGWindowList（非 AX）读取 frame —— 不跨屏阻塞
@@ -78,7 +81,7 @@ extension WindowManager {
             "onMainScreen": toggleContext["onMainScreen"] ?? "nil",
             "windowID": toggleContext["windowID"] ?? "nil"
         ]
-        if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+        if let winID = resolvedWindowID {
             if let record = ToggleEngine.shared.load(windowID: winID) {
                 decisionFields["toggleRecordExists"] = "true"
                 decisionFields["toggleRecordOrigFrame"] = "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))"
@@ -98,10 +101,8 @@ extension WindowManager {
         if shouldRestore {
             restore(operationID: op, triggerSource: triggerSource)
             // 设置冷却期：防止 Stop 事件立即把刚恢复的窗口再次拉到主屏
-            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+            if let winID = resolvedWindowID {
                 HookEventHandler.shared.setMoveCooldown(windowID: winID)
-            }
-            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
                 AuditLogger.shared.record(
                     eventType: "toggle_restore",
                     windowID: winID,
@@ -117,7 +118,7 @@ extension WindowManager {
                 fields: ["op": op, "windowID": toggleContext["windowID"] ?? "nil"]
             )
             moveStuckWindowToSecondaryScreen(operationID: op, triggerSource: triggerSource)
-            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+            if let winID = resolvedWindowID {
                 AuditLogger.shared.record(
                     eventType: "toggle_move_to_secondary",
                     windowID: winID,
@@ -126,7 +127,7 @@ extension WindowManager {
             }
         } else {
             moveToMainScreen(operationID: op, triggerSource: triggerSource)
-            if let winIDStr = toggleContext["windowID"], let winID = UInt32(winIDStr) {
+            if let winID = resolvedWindowID {
                 AuditLogger.shared.record(
                     eventType: "toggle_move_to_main",
                     windowID: winID,
