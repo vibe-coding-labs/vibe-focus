@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 extension SpaceController {
 
-    func moveWindow(_ windowID: UInt32, toSpace space: SpaceIdentifier, focus: Bool, operationID: String? = nil) -> Bool {
+    func moveWindow(_ windowID: UInt32, toSpace space: SpaceIdentifier, focus: Bool, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) -> Bool {
         let op = operationID ?? "none"
         guard let spaceIndex = space.yabaiIndex else {
             log("[SpaceController] moveWindow: unsupported space identifier", level: .warn, fields: ["op": op])
@@ -22,7 +22,7 @@ extension SpaceController {
             return false
         }
 
-        guard let windowInfo = queryWindow(windowID: windowID) else {
+        guard let windowInfo = knownWindowInfo ?? queryWindow(windowID: windowID) else {
             log("[SpaceController] moveWindow aborted: window does not exist", level: .warn, fields: [
                 "op": op, "windowID": String(windowID), "targetSpace": String(spaceIndex)
             ])

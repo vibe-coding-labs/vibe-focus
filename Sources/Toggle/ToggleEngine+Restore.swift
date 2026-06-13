@@ -59,12 +59,19 @@ extension ToggleEngine {
         var moved = false
         // 记录 AX frame set 前的 focused space — 用于检测 macOS 是否自动切换了 space
         let preMoveSpace = sc.currentSpaceIndex()
+        // 移动前查询一次窗口信息（toggle 开始已查询并缓存，此处命中缓存 ~0ms），
+        // 复用给 moveWindow 和 setWindowFloat，避免空间移动后再 queryWindow。
+        // space 切换后 yabai 卡顿，移动后 queryWindow 实测 ~1s fork（op=181 seq=198）。
+        // 安全性：isFloating / isManageableByYabai 跨 space 保持不变 —— toggle 时已 float
+        // 的窗口移动后仍 float，setWindowFloat 据此正确跳过；未 float 的会正确执行 toggle。
+        let windowInfo = sc.queryWindow(windowID: axLookupID)
         if record.sourceSpace > 0 {
             moved = sc.moveWindow(
                 axLookupID,
                 toSpace: .yabai(record.sourceSpace),
                 focus: triggerSource == "carbon_hotkey",
-                operationID: trace
+                operationID: trace,
+                knownWindowInfo: windowInfo
             )
             log("[ToggleEngine] restore: space move result", fields: [
                 "traceID": trace, "moved": String(moved), "sourceSpace": String(record.sourceSpace)
@@ -76,8 +83,7 @@ extension ToggleEngine {
         }
 
         // 5. Float on target space — prevents yabai from tiling
-        // 传递 queryWindow 结果，避免重复查询且让 setWindowFloat 能判断 isManageableByYabai
-        let windowInfo = sc.queryWindow(windowID: axLookupID)
+        // 复用移动前 windowInfo，省去移动后的 queryWindow fork
         sc.setWindowFloat(axLookupID, operationID: trace, knownWindowInfo: windowInfo)
 
         // 6. Apply original frame via AX
