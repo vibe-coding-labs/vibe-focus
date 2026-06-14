@@ -100,6 +100,8 @@ extension WindowManager {
             fields: decisionFields
         )
 
+        // coreOpMs：核心操作（restore / moveToMain / moveStuck）净耗时，与 snapshotMs/ctxMs（决策前置）区分。
+        let coreOpStart = Date()
         if shouldRestore {
             restore(operationID: op, triggerSource: triggerSource)
             // 设置冷却期：防止 Stop 事件立即把刚恢复的窗口再次拉到主屏
@@ -137,6 +139,7 @@ extension WindowManager {
                 )
             }
         }
+        let coreOpMs = elapsedMilliseconds(since: coreOpStart)
 
         let frontAfter = frontmostAppDescriptor()
         let durationMs = logOperationDuration(
@@ -148,7 +151,8 @@ extension WindowManager {
                 "source": triggerSource,
                 "mode": mode,
                 "frontBefore": frontBefore,
-                "frontAfter": frontAfter
+                "frontAfter": frontAfter,
+                "coreOpMs": String(coreOpMs)
             ]
         )
         if frontBefore != frontAfter {
