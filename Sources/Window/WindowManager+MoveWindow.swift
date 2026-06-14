@@ -125,17 +125,21 @@ extension WindowManager {
         // CGWindowID 跨屏移动后不变，提前计算并复用给 setWindowFloat 和 save record。
         let effectiveWindowID = windowHandle(for: windowAX) ?? identity.windowID
         let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
+        let floatStart = Date()
         spaceController.setWindowFloat(effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
+        let floatMs = elapsedMilliseconds(since: floatStart)
 
         // AX apply: move window to main screen + set fullscreen size
         // maxAttempts: 3 —— move_to_main 不切 space（AX 跨屏 move 不触发 space 动画），AX write 通常快；
         // 3 次重试 + 回读验证确保 size 可靠生效，避免单次模式下异步窗口（Electron 等）size 未应用就返回。
+        let applyStart = Date()
         guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3) else {
             log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
                 "op": op, "targetFrame": String(describing: targetFrame)
             ])
             return false
         }
+        let applyMs = elapsedMilliseconds(since: applyStart)
 
         // Post-move 一致性验证（observation 22047：yabai re-tile 覆盖 AX size write → 半屏高 bug）。
         // apply 两阶段重构（0d5378e）后，Phase 2 跨屏 position write 不再回读验证最终 frame；
@@ -145,6 +149,7 @@ extension WindowManager {
         // 反复 reopen 的结构性原因。等 yabai 异步 tiling 稳定后读最终 frame：若 size drift 超阈值
         // 则重写 size（窗口已 floating + 主屏为 float space，重写后稳定）。幂等单次，不进循环；
         // 始终 log finalFrame 供取证。move_to_main 不切 space，AX frame(of:) 读主屏窗口不阻塞。
+        let postMoveCheckStart = Date()
         usleep(30_000)
         if let finalFrame = frame(of: windowAX) {
             let sizeDrift = abs(finalFrame.height - targetFrame.height) + abs(finalFrame.width - targetFrame.width)
@@ -180,6 +185,7 @@ extension WindowManager {
                 }
             }
         }
+        let postMoveCheckMs = elapsedMilliseconds(since: postMoveCheckStart)
 
         // Save toggle record — always save, even when yabai can't determine space
         // (sourceSpace=0 signals "no space info, skip yabai space move on restore")
@@ -188,6 +194,7 @@ extension WindowManager {
         let sourceContext = displayContext(for: origFrame)
         let teSourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.index.map { .yabai($0) } ?? .yabai(0)
         let postMoveWindowID = effectiveWindowID
+        let saveStart = Date()
         ToggleEngine.shared.save(
             windowID: postMoveWindowID,
             pid: identity.pid,
@@ -202,6 +209,7 @@ extension WindowManager {
             targetDisplay: targetDisplayIndex ?? 0,
             sessionID: sessionID
         )
+        let saveMs = elapsedMilliseconds(since: saveStart)
 
         log("[WindowManager] moveWindowToMainScreen: ToggleRecord saved", fields: [
             "op": op,
@@ -216,7 +224,11 @@ extension WindowManager {
         log("[WindowManager] moveWindowToMainScreen finished", fields: [
             "op": op,
             "windowID": String(effectiveWindowID),
-            "durationMs": String(elapsedMilliseconds(since: startedAt))
+            "durationMs": String(elapsedMilliseconds(since: startedAt)),
+            "floatMs": String(floatMs),
+            "applyMs": String(applyMs),
+            "postMoveCheckMs": String(postMoveCheckMs),
+            "saveMs": String(saveMs)
         ])
         return true
     }
