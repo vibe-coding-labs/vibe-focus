@@ -60,20 +60,40 @@ extension SpaceController {
 
     func setWindowFloat(_ windowID: UInt32, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) {
         let op = operationID ?? "none"
-        guard isEnabled else { return }
+        let startedAt = Date()
+        var outcome = "unknown"
+        // defer 汇总：所有退出路径（含各 skip）都记录耗时，消除 setWindowFloat 耗时盲区。
+        defer {
+            log("[SpaceController] setWindowFloat", fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "outcome": outcome,
+                "durationMs": String(elapsedMilliseconds(since: startedAt))
+            ])
+        }
+
+        guard isEnabled else {
+            outcome = "skipped_disabled"
+            return
+        }
 
         // 使用传入的窗口信息或查询缓存
         let info = knownWindowInfo ?? queryWindow(windowID: windowID)
         if let info {
-            if info.isFloating { return }
+            if info.isFloating {
+                outcome = "skipped_already_floating"
+                return
+            }
             // yabai 无法管理此窗口时，float 切换无意义且必定失败
             if !info.isManageableByYabai {
+                outcome = "skipped_unmanaged"
                 log("setWindowFloat: skipping (no AX ref, yabai can't manage)", level: .info, fields: [
                     "op": op, "windowID": String(windowID)
                 ])
                 return
             }
         } else {
+            outcome = "skipped_query_nil"
             log("setWindowFloat: queryWindow returned nil, skipping toggle", level: .warn, fields: [
                 "op": op, "windowID": String(windowID)
             ])
@@ -85,6 +105,7 @@ extension SpaceController {
             operation: "setWindowFloat",
             operationID: op
         )
+        outcome = "toggled"
     }
 
     func focusWindow(_ windowID: UInt32, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) -> Bool {
