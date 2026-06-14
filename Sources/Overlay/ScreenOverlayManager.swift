@@ -44,22 +44,10 @@ class ScreenOverlayManager: ObservableObject {
 
     private init() {
         self.preferences = ScreenIndexPreferences.load()
-        // 仅当 SQLite 完全没有该配置 key（首次安装/全新数据库）时回填一次，
-        // 让 SQLite 成为单一事实源（用户会直接查 ~/.vibefocus/vibefocus.db 验证）。
-        //
-        // 绝不能无条件 save()：load() 的优先级是 SQLite → CFPreferences →
-        // UserDefaults → .default。当 SQLite 瞬时读取失败（WAL 锁/db busy/decode
-        // 抖动）时，load() 会回退到 CF/UserDefaults 的陈旧值（如默认 topRight）。
-        // 此时无条件 save() 会把陈旧值写回 SQLite，永久覆盖用户真实配置
-        // （曾导致 bottomRight 被默认 topRight 反复覆盖，该 bug 出现过几十次）。
-        //
-        // 用独立的 loadPreference 检查 key 是否存在：SQLite 已有值 → 绝不回写，
-        // 避免任何覆盖；SQLite 为空（首次安装）→ 回填一次建立事实源。后续持久化
-        // 完全由 didSet → save() 在用户实际修改时驱动。
-        if WindowStateStore.shared.loadPreference(key: ScreenIndexPreferences.userDefaultsKey) == nil {
-            preferences.save()
-            log("ScreenIndexPreferences: first-run backfill to SQLite (key was absent)")
-        }
+        // init() 只读不写：持久化完全由 didSet → save() 在用户实际修改时驱动。
+        // 历史上这里曾有启动期 save()（无条件 → guarded backfill），在 SQLite 瞬时
+        // 读取失败时会用 load() 的 fallback 陈旧默认覆盖 SQLite 真实配置
+        // （bottomRight→topRight 反复几十次）。彻底移除启动期写路径，根除此类回归。
         log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
         setupSignalHandler()
         registerYabaiSignals()

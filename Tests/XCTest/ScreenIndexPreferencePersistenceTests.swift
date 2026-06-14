@@ -1,7 +1,10 @@
 // Tests/XCTest/ScreenIndexPreferencePersistenceTests.swift
 // Regression tests for: config lost after reinstall (3 bugs fixed)
 // Bug 1: UserDefaults String/Data mismatch — save() writes String, load() used .data(forKey:)
-// Bug 2: init() didSet doesn't fire — preferences never saved to SQLite on first load
+// Bug 2: init() didSet doesn't fire — historical fix once added init() save(), later REMOVED
+//        because it overwrote real config on transient SQLite read miss (bottomRight→topRight).
+//        Persistence is now driven solely by didSet → save(). These tests cover the
+//        WindowStateStore + Codable layer, decoupled from ScreenOverlayManager.init().
 // Bug 3: Bundle ID mismatch between install scripts — CFPreferences lost
 // Run: swift test --filter ScreenIndexPreferencePersistenceTests
 
@@ -173,7 +176,7 @@ struct ScreenIndexPreferencePersistenceTests {
         let loadedString = UserDefaults.standard.string(forKey: key)
         #expect(loadedString != nil)
 
-        // Step 3: Simulate init() persisting to SQLite (the Bug 2 fix)
+        // Step 3: Persist the fallback value to SQLite (legacy-migration path; init() no longer saves)
         if let str = loadedString {
             let decoded = try! JSONDecoder().decode(ScreenIndexPreferences.self, from: str.data(using: .utf8)!)
             let encoded = try! JSONEncoder().encode(decoded)
