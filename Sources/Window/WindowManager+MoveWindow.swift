@@ -137,6 +137,35 @@ extension WindowManager {
             return false
         }
 
+        // Post-move 一致性验证（observation 22047：yabai re-tile 覆盖 AX size write → 半屏高 bug）。
+        // apply 两阶段重构（0d5378e）后，Phase 2 跨屏 position write 不再回读验证最终 frame；
+        // setWindowFloat 的 toggle float 是异步 fork，时序竞争或跨屏 re-tile 可能在 apply 返回后
+        // 覆盖 Phase 1 写入的 height（卡在副屏高 707，未达主屏全屏高 ~1079）。9157d08 删除的
+        // RestoreWatchdog 曾对抗 yabai 异步 tiling 干扰，move 路径此前无等价保护 —— 这是半屏 bug
+        // 反复 reopen 的结构性原因。等 yabai 异步 tiling 稳定后读最终 frame：若 size drift 超阈值
+        // 则重写 size（窗口已 floating + 主屏为 float space，重写后稳定）。幂等单次，不进循环；
+        // 始终 log finalFrame 供取证。move_to_main 不切 space，AX frame(of:) 读主屏窗口不阻塞。
+        usleep(30_000)
+        if let finalFrame = frame(of: windowAX) {
+            let sizeDrift = abs(finalFrame.height - targetFrame.height) + abs(finalFrame.width - targetFrame.width)
+            log("[WindowManager] moveWindowToMainScreen: post-move frame check", fields: [
+                "op": op,
+                "windowID": String(effectiveWindowID),
+                "finalFrame": "\(Int(finalFrame.origin.x)),\(Int(finalFrame.origin.y)) \(Int(finalFrame.width))x\(Int(finalFrame.height))",
+                "targetSize": "\(Int(targetFrame.width))x\(Int(targetFrame.height))",
+                "sizeDrift": String(Int(sizeDrift))
+            ])
+            if sizeDrift > frameTolerance {
+                log("[WindowManager] moveWindowToMainScreen: size drifted after move — rewriting size", level: .warn, fields: [
+                    "op": op, "windowID": String(effectiveWindowID), "sizeDrift": String(Int(sizeDrift))
+                ])
+                var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
+                if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
+                    _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
+                }
+            }
+        }
+
         // Save toggle record — always save, even when yabai can't determine space
         // (sourceSpace=0 signals "no space info, skip yabai space move on restore")
         let actualTargetFrame = targetFrame
