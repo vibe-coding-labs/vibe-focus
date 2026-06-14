@@ -159,9 +159,24 @@ extension WindowManager {
                 log("[WindowManager] moveWindowToMainScreen: size drifted after move — rewriting size", level: .warn, fields: [
                     "op": op, "windowID": String(effectiveWindowID), "sizeDrift": String(Int(sizeDrift))
                 ])
-                var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
-                if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
-                    _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
+                // 重写最多两次 + 每次回读验证。iTerm2 等窗口异步 clamp height，单次 AX write 未必生效；
+                // 窗口此时已在主屏（无跨屏干扰），重写应能突破 clamp。两次后仍 drift 说明 app 硬 clamp，
+                // post-rewrite check 日志会暴露 postDrift，供后续用 yabai --resize 等更强手段。不进无限循环。
+                for rewriteAttempt in 1...2 {
+                    var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
+                    if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
+                        _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
+                    }
+                    usleep(30_000)
+                    guard let postRewriteFrame = frame(of: windowAX) else { break }
+                    let postDrift = abs(postRewriteFrame.height - targetFrame.height) + abs(postRewriteFrame.width - targetFrame.width)
+                    log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
+                        "op": op, "windowID": String(effectiveWindowID),
+                        "rewriteAttempt": String(rewriteAttempt),
+                        "postRewriteFrame": "\(Int(postRewriteFrame.width))x\(Int(postRewriteFrame.height))",
+                        "postDrift": String(Int(postDrift))
+                    ])
+                    if postDrift <= frameTolerance { break }
                 }
             }
         }
