@@ -36,6 +36,7 @@ extension ToggleEngine {
         let sc = SpaceController.shared
 
         // 3. Resolve AX window
+        let lookupStart = Date()
         let axLookupID = (record.windowID != windowID) ? windowID : record.windowID
         guard let windowAX = wm.findWindowByPID(record.pid, windowID: axLookupID) else {
             log("[ToggleEngine] restore: AX window not found", level: .warn, fields: [
@@ -43,6 +44,7 @@ extension ToggleEngine {
             ])
             return false
         }
+        let lookupMs = elapsedMilliseconds(since: lookupStart)
 
         log("[ToggleEngine] restore: starting", fields: [
             "traceID": trace,
@@ -57,6 +59,8 @@ extension ToggleEngine {
 
         // 4. Move to original space via yabai (skip if sourceSpace=0 — no space info available)
         var moved = false
+        // queryMs 覆盖 currentSpaceIndex + queryWindow（移动前查询，命中缓存 ~0ms）。
+        let queryStart = Date()
         // 记录 AX frame set 前的 focused space — 用于检测 macOS 是否自动切换了 space
         let preMoveSpace = sc.currentSpaceIndex()
         // 移动前查询一次窗口信息（toggle 开始已查询并缓存，此处命中缓存 ~0ms），
@@ -65,12 +69,15 @@ extension ToggleEngine {
         // 安全性：isFloating / isManageableByYabai 跨 space 保持不变 —— toggle 时已 float
         // 的窗口移动后仍 float，setWindowFloat 据此正确跳过；未 float 的会正确执行 toggle。
         let windowInfo = sc.queryWindow(windowID: axLookupID)
+        let queryMs = elapsedMilliseconds(since: queryStart)
+        var moveMs = 0
         if record.sourceSpace > 0 {
             // focus=false：restore 是"把窗口送回原位"，用户视角留主屏继续工作。
             // moveWindow 内部的 focusWindow(yabai window --focus) 会切换用户 space 触发
             // macOS 动画 + SA 阻塞 ~1s（op=186 实测 1019ms）—— 这是 restore 路径最后的卡顿源。
             // SLS move 只移窗口不切用户视角，配合 focus=false 用户始终留主屏。
             // macOS 自动切 space 的兜底由下方 line 101-114 的 focusSpace 切回处理。
+            let moveStart = Date()
             moved = sc.moveWindow(
                 axLookupID,
                 toSpace: .yabai(record.sourceSpace),
@@ -78,6 +85,7 @@ extension ToggleEngine {
                 operationID: trace,
                 knownWindowInfo: windowInfo
             )
+            moveMs = elapsedMilliseconds(since: moveStart)
             log("[ToggleEngine] restore: space move result", fields: [
                 "traceID": trace, "moved": String(moved), "sourceSpace": String(record.sourceSpace)
             ])
@@ -89,20 +97,25 @@ extension ToggleEngine {
 
         // 5. Float on target space — prevents yabai from tiling
         // 复用移动前 windowInfo，省去移动后的 queryWindow fork
+        let floatStart = Date()
         sc.setWindowFloat(axLookupID, operationID: trace, knownWindowInfo: windowInfo)
+        let floatMs = elapsedMilliseconds(since: floatStart)
 
         // 6. Apply original frame via AX
         // 单次模式：restore 前已 setWindowFloat，yabai 不会 re-tile，无需重试验证。
         // space 动画期间 AX write 已达物理下限，重试循环只会累积延迟。
+        let applyStart = Date()
         if !wm.apply(frame: record.origFrame, to: windowAX, operationID: trace, stage: "restore", maxAttempts: 1) {
             log("[ToggleEngine] restore: AX frame apply failed", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID)
             ])
         }
+        let applyMs = elapsedMilliseconds(since: applyStart)
 
         // 6b. 检测 macOS 自动切换 space（AX frame set 把焦点窗口移到了其他 display）
         // 当 yabai/space move 都失败时，AX 设置坐标会触发 macOS 自动跟随到目标 space，
         // 导致用户视角从 main screen 跳到 secondary screen。这里检测并切回。
+        var focusSpaceMs = 0
         if !moved, let preMoveSpace {
             let postMoveSpace = sc.currentSpaceIndex()
             if let postMoveSpace, postMoveSpace != preMoveSpace {
@@ -111,10 +124,12 @@ extension ToggleEngine {
                     "traceID": trace, "preSpace": String(preMoveSpace),
                     "postSpace": String(postMoveSpace), "steps": String(steps)
                 ])
+                let focusSpaceStart = Date()
                 if NativeSpaceBridge.focusSpace(steps: steps, operationID: trace) {
                     // 清除 queryWindow 缓存，因为 space 切换后窗口位置可能已变
                     sc.clearQueryCache()
                 }
+                focusSpaceMs = elapsedMilliseconds(since: focusSpaceStart)
             }
         }
 
@@ -126,7 +141,13 @@ extension ToggleEngine {
             "windowID": String(windowID),
             "targetSpace": String(record.sourceSpace),
             "spaceMoveResult": String(moved),
-            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))"
+            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
+            "lookupMs": String(lookupMs),
+            "queryMs": String(queryMs),
+            "moveMs": String(moveMs),
+            "floatMs": String(floatMs),
+            "applyMs": String(applyMs),
+            "focusSpaceMs": String(focusSpaceMs)
         ])
 
         AuditLogger.shared.record(
