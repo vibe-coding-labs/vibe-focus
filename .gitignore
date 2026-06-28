@@ -4,6 +4,7 @@
 
 # Build artifacts
 dist/VibeFocus.app/
+dist/*.zip
 
 # Local logs and process files
 *.log

@@ -10,7 +10,11 @@ NC='\033[0m'
 
 APP_NAME="VibeFocus"
 BUILD_CONFIG="release"
-INSTALL_PATH="/Applications"
+# 安装到 ~/Applications/（用户目录），与 docs/tcc-permission-breakage.md、
+# docs/tcc-accessibility-permission-persistence.md 一致。
+# 历史 bug：曾装到 /Applications/，与实际运行/登录项位置 ~/Applications/ 不一致，
+# 每次部署在错误位置多生一份，导致 mdfind 扫到多个副本（foundCount>1）。
+INSTALL_PATH="$HOME/Applications"
 
 echo -e "${BLUE}🔨 VibeFocus 开发构建脚本${NC}"
 echo "=========================================="
