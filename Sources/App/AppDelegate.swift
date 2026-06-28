@@ -16,6 +16,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // P-INST-113: 启动总耗时（crash/atexit handler 安装 + logDiagnostics + CrashContextRecorder.bootstrap P-INST-80 + findExistingInstance 单实例 + 菜单/hotkey/hook server/overlay 初始化全序列；启动延迟顶层归因，最关键的启动性能指标）。
+        let adflStart = Date()
+        defer {
+            log("[AppDelegate] applicationDidFinishLaunching finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: adflStart))
+            ])
+        }
         installCrashSignalHandlers()
         installAtExitHandler()
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
@@ -109,6 +116,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func handleOpenSettingsRequest(_ notification: Notification) {
+        // P-INST-263: 分布式打开设置请求入口（frontmostAppDescriptor P-INST-210 + DispatchQueue 调度 show；分布式通知跨实例触发设置唤起，归因入口）。
+        let hosStart = Date()
+        defer {
+            log("[App] handleOpenSettingsRequest finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: hosStart))])
+        }
         log(
             "Received distributed open-settings request",
             fields: [
@@ -121,6 +133,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showSettingsWindowOnLaunch() {
+        // P-INST-264: 启动时显示设置窗口入口（DispatchQueue 0.15s 后调度 show；首次启动调用，归因启动设置唤起时机）。
+        let sswStart = Date()
+        defer {
+            log("[App] showSettingsWindowOnLaunch finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: sswStart))])
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             log("Showing settings window on launch")
             SettingsWindowController.shared.show(shouldFocus: false)
@@ -136,14 +153,28 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func currentAppVersion() -> String {
-        let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        if let bundleVersion, !bundleVersion.isEmpty {
-            return bundleVersion
-        }
-        return AppVersion.current
+        // P-INST-190: 当前应用版本读取耗时（Bundle.main.infoDictionary Info.plist 字典查 CFBundleShortVersionString + fallback AppVersion.current P-INST-105；菜单/诊断显示调用，Bundle 读取）。
+        let cavStart = Date()
+        let version: String = {
+            let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+            if let bundleVersion, !bundleVersion.isEmpty {
+                return bundleVersion
+            }
+            return AppVersion.current
+        }()
+        let durMs = elapsedMilliseconds(since: cavStart)
+        if durMs >= 5 { log("[AppDelegate] currentAppVersion slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        return version
     }
 
     func installedVersion(for app: NSRunningApplication) -> String? {
+        // P-INST-114: 已安装版本读取耗时（app.bundleURL + Bundle(url:) 加载 + infoDictionary 字典查 CFBundleShortVersionString/CFBundleVersion；findExistingInstance 单实例检测调用，启动路径）。
+        let ivStart = Date()
+        defer {
+            log("[AppDelegate] installedVersion finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: ivStart))
+            ])
+        }
         guard let bundleURL = app.bundleURL,
               let bundle = Bundle(url: bundleURL) else {
             return nil

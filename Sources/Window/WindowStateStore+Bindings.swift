@@ -9,6 +9,12 @@ extension WindowStateStore {
             log("[WindowStateStore] saveWindowState: db not available", level: .warn)
             return
         }
+        // P-INST-68: hook session bind 写 SQLite 耗时（SessionWindowRegistry.saveWindowState 调用，hook 热路径；INSERT...ON CONFLICT UPDATE；WAL 写通常 <1ms，≥5ms 异常）。
+        let swStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: swStart)
+            if ms >= 5 { log("[WindowStateStore] saveWindowState slow", level: .warn, fields: ["windowID": String(state.windowID), "durationMs": String(ms)]) }
+        }
         var stmt: OpaquePointer?
         let sql = """
             INSERT INTO windows (
@@ -96,6 +102,13 @@ extension WindowStateStore {
             log("[WindowStateStore] findWindowState: db not available", level: .warn)
             return nil
         }
+        // P-INST-68: hook lookup 读 SQLite 耗时（SessionWindowRegistry+Lookup/State 调用，hook 热路径；WAL 读通常 <1ms，≥5ms 异常）。
+        let fwStart = Date()
+        var found = false
+        defer {
+            let ms = elapsedMilliseconds(since: fwStart)
+            if ms >= 5 { log("[WindowStateStore] findWindowState slow", level: .warn, fields: ["windowID": String(windowID), "found": String(found), "durationMs": String(ms)]) }
+        }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows WHERE window_id = ?;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -103,6 +116,7 @@ extension WindowStateStore {
         sqlite3_bind_int64(stmt, 1, Int64(windowID))
 
         guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
+        found = true
         return parseWindowStateRow(s)
     }
 
@@ -111,6 +125,13 @@ extension WindowStateStore {
             log("[WindowStateStore] findWindowStateBySession: db not available", level: .warn)
             return nil
         }
+        // P-INST-68: hook session lookup 读 SQLite 耗时（SessionWindowRegistry+Lookup 调用，hook 热路径；WAL 读通常 <1ms，≥5ms 异常）。
+        let fwsStart = Date()
+        var found = false
+        defer {
+            let ms = elapsedMilliseconds(since: fwsStart)
+            if ms >= 5 { log("[WindowStateStore] findWindowStateBySession slow", level: .warn, fields: ["found": String(found), "durationMs": String(ms)]) }
+        }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -118,6 +139,7 @@ extension WindowStateStore {
         sqlite3_bind_text(stmt, 1, sessionID, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
+        found = true
         return parseWindowStateRow(s)
     }
 
@@ -126,6 +148,13 @@ extension WindowStateStore {
             log("[WindowStateStore] findWindowStateByWindowID: db not available", level: .warn)
             return nil
         }
+        // P-INST-68: hook windowID lookup 读 SQLite 耗时（WAL 读通常 <1ms，≥5ms 异常）。
+        let fwwStart = Date()
+        var found = false
+        defer {
+            let ms = elapsedMilliseconds(since: fwwStart)
+            if ms >= 5 { log("[WindowStateStore] findWindowStateByWindowID slow", level: .warn, fields: ["windowID": String(windowID), "found": String(found), "durationMs": String(ms)]) }
+        }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows WHERE window_id = ? ORDER BY updated_at DESC LIMIT 1;"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -133,10 +162,17 @@ extension WindowStateStore {
         sqlite3_bind_int64(stmt, 1, Int64(windowID))
 
         guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
+        found = true
         return parseWindowStateRow(s)
     }
 
     func deleteAllWindowsStates() {
+        // P-INST-173: 清空全部绑定耗时（runSchema DELETE FROM windows P-INST-169；clearAllBindings 调用，hook 清除绑定 UI 操作）。
+        let dasStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: dasStart)
+            if ms >= 5 { log("[WindowStateStore] deleteAllWindowsStates slow", level: .warn, fields: ["durationMs": String(ms)]) }
+        }
         guard let db else {
             log("[WindowStateStore] deleteAllWindowsStates: db not available", level: .warn)
             return
@@ -145,6 +181,13 @@ extension WindowStateStore {
     }
 
     func pruneExpiredWindowStates(activeRetention: TimeInterval, completedRetention: TimeInterval) -> Int {
+        // P-INST-174: 过期绑定清理耗时（DELETE prepare/bind_double x2/step + sqlite3_changes；SessionWindowRegistry.pruneExpiredBindings P-INST-150 调用，定期回收）。
+        let peStart = Date()
+        var removed = 0
+        defer {
+            let ms = elapsedMilliseconds(since: peStart)
+            if ms >= 5 { log("[WindowStateStore] pruneExpiredWindowStates slow", level: .warn, fields: ["removed": String(removed), "durationMs": String(ms)]) }
+        }
         guard let db else { return 0 }
         let now = Date().timeIntervalSince1970
         let activeCutoff = now - activeRetention
@@ -161,10 +204,17 @@ extension WindowStateStore {
         sqlite3_bind_double(stmt, 1, activeCutoff)
         sqlite3_bind_double(stmt, 2, completedCutoff)
         sqlite3_step(stmt)
-        return Int(sqlite3_changes(db))
+        removed = Int(sqlite3_changes(db))
+        return removed
     }
 
     func loadAllWindowStates() -> [WindowState] {
+        // P-INST-175: 全量加载绑定耗时（SELECT * prepare/step 每行 + parseWindowStateRow P-INST-155；SessionWindowRegistry.init 启动加载，行数 ∝ 绑定数）。
+        let laStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: laStart)
+            if ms >= 5 { log("[WindowStateStore] loadAllWindowStates slow", level: .warn, fields: ["durationMs": String(ms)]) }
+        }
         guard let db else { return [] }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows ORDER BY updated_at ASC;"
@@ -181,6 +231,12 @@ extension WindowStateStore {
     }
 
     func deleteWindowState(windowID: UInt32) {
+        // P-INST-176: 单窗口删除耗时（DELETE prepare/bind_int64/step；SessionWindowRegistry remapWindowID/purgeClosedWindow/init 清理损坏绑定调用，hook 路径）。
+        let dwStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: dwStart)
+            if ms >= 5 { log("[WindowStateStore] deleteWindowState slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(ms)]) }
+        }
         guard let db else {
             log("[WindowStateStore] deleteWindowState: db not available", level: .warn)
             return
@@ -194,11 +250,18 @@ extension WindowStateStore {
     }
 
     var windowStatesCount: Int {
-        guard let db else { return 0 }
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM windows;", -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
-        return Int(sqlite3_column_int(stmt, 0))
-}
+        // P-INST-177: 绑定总数查询耗时（SELECT COUNT(*) prepare/step/column_int；UI 显示绑定数调用）。
+        let wscStart = Date()
+        let count: Int = {
+            guard let db else { return 0 }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM windows;", -1, &stmt, nil) == SQLITE_OK else { return 0 }
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+            return Int(sqlite3_column_int(stmt, 0))
+        }()
+        let ms = elapsedMilliseconds(since: wscStart)
+        if ms >= 5 { log("[WindowStateStore] windowStatesCount slow", level: .warn, fields: ["durationMs": String(ms)]) }
+        return count
+    }
 }

@@ -32,6 +32,8 @@ extension SessionWindowRegistry {
     }
 
     func verifyBinding(_ state: WindowState) -> Bool {
+        // P-INST-38: verifyBinding 耗时（cgWindowListAll + NSRunningApplication；hook 路径 resolveWindowIdentity/handleWindowMoveTrigger 每次调用，归因 hook 验证阻塞）。
+        let vbStart = Date()
         let expectedPID = state.pid
         let windowID = state.windowID
 
@@ -52,6 +54,15 @@ extension SessionWindowRegistry {
             windowEntry: windowEntry,
             expectedPID: expectedPID
         )
+
+        defer {
+            log("[SessionWindowRegistry] verifyBinding finished", level: .debug, fields: [
+                "windowID": String(windowID),
+                "expectedPID": String(expectedPID),
+                "result": String(describing: result),
+                "durationMs": String(elapsedMilliseconds(since: vbStart))
+            ])
+        }
 
         switch result {
         case .valid:

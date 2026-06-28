@@ -8,6 +8,13 @@ import Foundation
 extension HotKeyManager {
 
     func setupCGEventTap() -> Bool {
+        // P-INST-120: CGEvent tap 安装耗时（CGEvent.tapCreate 创建系统级 keyDown 事件 tap + CFMachPortCreateRunLoopSource + CFRunLoopAddSource main runloop + CGEvent.tapEnable；启动路径调用；系统事件 tap 注册涉及 WindowServer 可阻塞）。
+        let scgStart = Date()
+        defer {
+            log("[HotKey] setupCGEventTap finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: scgStart))
+            ])
+        }
         guard accessibilityStatus else {
             log(
                 "[HotKey] setupCGEventTap: accessibility not granted",
@@ -78,6 +85,16 @@ extension HotKeyManager {
     }
 
     func handleCGEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // P-INST-121: 热键检测耗时（仅 hotkey 匹配时记录 durationMs，非匹配 keyDown 不记避免每键日志泛滥；含 event 字段读取 + 修饰键比较 + async dispatch triggerToggleIfNeeded；toggle 最早期 stage 0，物理按键到 "HotKey triggered" 日志之间的归因）。
+        let hceStart = Date()
+        var hotkeyMatched = false
+        defer {
+            if hotkeyMatched {
+                log("[HotKey] handleCGEvent hotkey detection", level: .debug, fields: [
+                    "durationMs": String(elapsedMilliseconds(since: hceStart))
+                ])
+            }
+        }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             let reason = type == .tapDisabledByTimeout ? "timeout" : "user_input"
             log("[CGEventTap] Disabled by \(reason), attempting re-enable")
@@ -103,6 +120,7 @@ extension HotKeyManager {
         if flags.contains(.maskShift) { modifiers |= UInt32(shiftKey) }
 
         if keyCode == currentHotKey.keyCode && modifiers == currentHotKey.modifiers {
+            hotkeyMatched = true
             log(
                 "[HotKey] CGEventTap hotkey match",
                 fields: ["displayString": currentHotKey.displayString]
@@ -117,6 +135,14 @@ extension HotKeyManager {
     }
 
     func reenableEventTap(reason: String) {
+        // P-INST-122: 事件 tap 重启用耗时（CGEvent.tapEnable + 可能 installFallbackMonitors 回退；event tap 被 timeout/user_input 禁用时调用，低频但含系统调用）。
+        let retStart = Date()
+        defer {
+            log("[HotKey] reenableEventTap finished", level: .debug, fields: [
+                "reason": reason,
+                "durationMs": String(elapsedMilliseconds(since: retStart))
+            ])
+        }
         log(
             "[HotKey] reenableEventTap called",
             level: .debug,

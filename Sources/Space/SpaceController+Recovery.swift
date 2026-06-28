@@ -6,6 +6,11 @@ extension SpaceController {
 
     func requestScriptingAdditionLoad() {
         let op = makeOperationID(prefix: "sa-load")
+        // P-INST-207: 手动 SA 加载请求耗时（UserDefaults.standard.removeObject CFPreferences 写 + attemptScriptingAdditionRecovery fork + refreshAvailability；设置面板用户按钮触发）。
+        let rsalStart = Date()
+        defer {
+            log("[SpaceController] requestScriptingAdditionLoad finished", fields: ["op": op, "durationMs": String(elapsedMilliseconds(since: rsalStart))])
+        }
         log(
             "[SpaceController] manual scripting-addition load requested",
             fields: ["op": op]
@@ -23,6 +28,15 @@ extension SpaceController {
     }
 
     func checkScriptingAdditionLoaded(yabaiPath: String) -> Bool {
+        // P-INST-35: SA 检查耗时（yabai query --windows --window fork；availability 路径，启动 + 节流刷新时调用）。
+        let csaStart = Date()
+        var csaResult = "failed_to_run"
+        defer {
+            log("[SpaceController] checkScriptingAdditionLoaded finished", fields: [
+                "result": csaResult,
+                "durationMs": String(elapsedMilliseconds(since: csaStart))
+            ])
+        }
         // 方法：获取当前焦点窗口并尝试 query --window（含 display 字段需要 SA）
         // 更简单的方法：直接尝试 yabai -m window --focus <id>，如果失败且错误包含
         // scripting-addition，则 SA 未加载
@@ -36,19 +50,31 @@ extension SpaceController {
             // query --window 成功且返回数据，检查是否包含 display 字段
             // 没有 SA 时，display 字段不存在或值为 0
             let hasDisplay = result.stdout.contains("\"display\"")
+            csaResult = hasDisplay ? "loaded" : "not_loaded"
             log("checkScriptingAdditionLoaded: query succeeded, hasDisplay=\(hasDisplay)")
             return hasDisplay
         }
         // query --window 失败（可能没有焦点窗口），回退到检查错误信息
         let stderr = result.stderr.lowercased()
         let hasSAError = stderr.contains("scripting-addition")
+        csaResult = hasSAError ? "sa_error" : "no_focus_window"
         log("checkScriptingAdditionLoaded: query failed, hasSAError=\(hasSAError), stderr=\(result.stderr.prefix(100))")
         return !hasSAError
     }
 
     func attemptSilentSARecovery(yabaiPath: String) {
+        // P-INST-36: 静默 SA 恢复耗时（yabai --load-sa fork，无 admin 对话框）。
+        let ssrStart = Date()
+        var ssrResult = "failed"
+        defer {
+            log("[SpaceController] attemptSilentSARecovery finished", fields: [
+                "result": ssrResult,
+                "durationMs": String(elapsedMilliseconds(since: ssrStart))
+            ])
+        }
         log("attemptSilentSARecovery: trying yabai --load-sa without admin prompt")
         if let direct = runProcess(executable: yabaiPath, arguments: ["--load-sa"]), direct.exitCode == 0 {
+            ssrResult = "loaded"
             scriptingAdditionRecoverySucceeded = true
             canControlSpaces = true
             lastErrorMessage = nil
@@ -64,6 +90,14 @@ extension SpaceController {
 
     func attemptScriptingAdditionRecovery(trigger: String, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
+        // P-INST-34: recovery 总耗时（yabai --load-sa fork + 可能的 admin 权限对话框，发生时可能秒级；偶发，result 见各路径 log 用 op 关联，归因 runYabaiVariants durationMs 中 recovery vs fork）。
+        let recoveryStart = Date()
+        defer {
+            log("[SpaceController] scripting-addition recovery finished", fields: [
+                "op": op, "trigger": trigger,
+                "durationMs": String(elapsedMilliseconds(since: recoveryStart))
+            ])
+        }
         if didAttemptScriptingAdditionRecovery {
             return scriptingAdditionRecoverySucceeded
         }
@@ -161,6 +195,14 @@ extension SpaceController {
 
     func executeWithAdminPrivileges(_ command: String, operationID: String? = nil) -> (Bool, String) {
         let op = operationID ?? "none"
+        // P-INST-51: admin 权限执行耗时（NSAppleScript with administrator privileges，admin 对话框可秒级阻塞用户输入；attemptScriptingAdditionRecovery P-INST-34 总耗时含此，此埋点归因 admin 等待）。
+        let adminStart = Date()
+        defer {
+            log("[SpaceController] executeWithAdminPrivileges finished", level: .debug, fields: [
+                "op": op,
+                "durationMs": String(elapsedMilliseconds(since: adminStart))
+            ])
+        }
         // 转义命令中的双引号和反斜杠，防止 AppleScript 注入
         let escapedCommand = command
             .replacingOccurrences(of: "\\", with: "\\\\")

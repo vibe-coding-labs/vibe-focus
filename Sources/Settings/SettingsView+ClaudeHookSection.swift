@@ -93,9 +93,13 @@ extension SettingsView {
 
                 Button("复制配置 JSON") {
                     let json = ClaudeHookPreferences.generateHooksJSON()
+                    // P-INST-240: 复制 hooks JSON 到剪贴板耗时（NSPasteboard.clearContents + setString；设置 UI 按钮触发，generateHooksJSON P-INST-152 已单独计时；slow-op ≥5ms warn）。
+                    let cjsStart = Date()
                     let pb = NSPasteboard.general
                     pb.clearContents()
                     pb.setString(json, forType: .string)
+                    let durMs = elapsedMilliseconds(since: cjsStart)
+                    if durMs >= 5 { log("[ClaudeHookSection] copy JSON slow", level: .warn, fields: ["durationMs": String(durMs)]) }
                     hookInstallMessage = "已复制到剪贴板"
                     hookInstallSucceeded = true
                 }

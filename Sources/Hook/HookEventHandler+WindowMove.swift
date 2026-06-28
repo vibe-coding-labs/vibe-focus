@@ -16,6 +16,15 @@ extension HookEventHandler {
         triggerName: String,
         remoteOnly: Bool = false
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        // P-INST-31: handleWindowMoveTrigger 总耗时（Stop/SessionEnd hook 同步响应延迟；defer 统一记，含 moveBindingToMainScreen）。
+        let wmtStart = Date()
+        defer {
+            log("[HookEventHandler] \(triggerName) finished", fields: [
+                "sessionID": payload.sessionID,
+                "triggerName": triggerName,
+                "durationMs": String(elapsedMilliseconds(since: wmtStart))
+            ])
+        }
         log(
             "[HookEventHandler] \(triggerName) triggered",
             fields: [

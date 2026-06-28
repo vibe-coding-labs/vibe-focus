@@ -78,17 +78,38 @@ extension SettingsView {
     // MARK: - Display Helpers
 
     var appVersionDisplay: String {
+        // P-INST-106: 版本显示字符串构造耗时（Bundle.main.infoDictionary 字典查找 + 字符串拼接；设置 UI 渲染调用）。
+        let avdStart = Date()
+        defer {
+            log("SettingsUI.appVersionDisplay finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: avdStart))
+            ])
+        }
         let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         let version = (bundleVersion?.isEmpty == false) ? bundleVersion ?? AppVersion.current : AppVersion.current
         return "v\(version)"
     }
 
     var bundleIdentifier: String {
-        Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
+        // P-INST-107: bundleIdentifier 读取耗时（Bundle.main.bundleIdentifier；设置 UI 多处调用）。
+        let biStart = Date()
+        defer {
+            log("SettingsUI.bundleIdentifier finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: biStart))
+            ])
+        }
+        return Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
     }
 
     var currentAppPath: String {
-        Bundle.main.bundleURL.path
+        // P-INST-108: 当前 app 路径读取耗时（Bundle.main.bundleURL.path；设置 UI + 安装位置检测调用）。
+        let capStart = Date()
+        defer {
+            log("SettingsUI.currentAppPath finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: capStart))
+            ])
+        }
+        return Bundle.main.bundleURL.path
     }
 
     var expectedAppPath: String {

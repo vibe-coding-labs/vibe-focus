@@ -101,11 +101,23 @@ func serializeFields(_ fields: [String: String]) -> String {
 }
 
 private func shouldEmitLog(_ message: String, level: LogLevel) -> Bool {
-    // 默认输出所有级别日志（包括 debug），方便排查问题
-    return true
+    // 默认放行 info/warn/error；debug 级（P-INST 等细粒度埋点，约 180 处）仅在
+    // VIBEFOCUS_VERBOSE_LOGS=1 时输出，避免海量埋点在生产稳态拖累 CPU/IO。
+    // 历史回归：曾无条件返回 true，debug 埋点全开 + rotate 自激振荡 → 启动后 96% CPU。
+    // verboseLoggingEnabled 由 VIBEFOCUS_VERBOSE_LOGS 环境变量控制，深度排查性能时设为 1。
+    if verboseLoggingEnabled {
+        return true
+    }
+    return level != .debug
 }
 
 private func rotateLogIfNeeded(fileURL: URL, backupURL: URL, maxBytes: UInt64) {
+    // ⚠️ 此函数运行在 logWriteQueue 内部，绝对禁止调用 log()（任何级别都不行）。
+    // 历史回归：这里曾用 defer { log("rotateLogIfNeeded finished") } 打埋点（P-INST-119），
+    // 但 log() 的写入路径会再次 async 到 logWriteQueue 并调用本函数两次 → 每条日志裂变为
+    // 2 条 → 反馈放大形成日志自激振荡（实测启动 15min 打 409 万条日志、几乎全是 rotate
+    // finished、CPU 96%、内存 26%）。日志基础设施自身的内部事件只允许走 NSLog，绝不进入
+    // 文件写入队列。P-INST-119 轮转耗时埋点因此移除：durationMs 实测恒为 0，零价值且是振荡源。
     guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
           let sizeNumber = attributes[.size] as? NSNumber else {
         return
@@ -147,6 +159,12 @@ func truncateForLog(_ text: String, limit: Int = 260) -> String {
 }
 
 func frontmostAppDescriptor() -> String {
+    // P-INST-210: 前台应用 descriptor 构建耗时（NSWorkspace.shared.frontmostApplication + bundleIdentifier/localizedName/pid 访问；日志/crash context 高频调用，frontmostApplication IPC 可能阻塞；slow-op ≥50ms warn）。
+    let fadStart = Date()
+    defer {
+        let durMs = elapsedMilliseconds(since: fadStart)
+        if durMs >= 50 { log("[Support] frontmostAppDescriptor slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+    }
     guard let app = NSWorkspace.shared.frontmostApplication else {
         return "nil"
     }

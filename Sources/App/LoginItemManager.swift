@@ -60,6 +60,13 @@ final class LoginItemManager: ObservableObject {
     /// 清理指向 .build/ 目录的旧裸二进制 login items 和 missing value 条目。
     /// 这些是之前直接运行裸二进制时注册的，无法正常工作。
     private func cleanupStaleLoginItems() {
+        // P-INST-81: 旧 login item 清理耗时（NSAppleScript executeAndReturnError 执行 System Events 脚本，遍历 login items + 删除；启动一次性，didCleanupStaleItems 守卫只跑一次；AppleScript IPC 可阻塞主线程）。
+        let cslStart = Date()
+        defer {
+            log("[LoginItemManager] cleanupStaleLoginItems finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: cslStart))
+            ])
+        }
         let script = """
         tell application "System Events"
             set theItems to every login item
@@ -103,6 +110,14 @@ final class LoginItemManager: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool) {
+        // P-INST-63: setEnabled 耗时（SMAppService register/unregister 系统调用 + refresh；设置面板调用，register 可能弹系统对话框阻塞）。
+        let setEnabledStart = Date()
+        defer {
+            log("[LoginItemManager] setEnabled finished", level: .debug, fields: [
+                "enabled": String(enabled),
+                "durationMs": String(elapsedMilliseconds(since: setEnabledStart))
+            ])
+        }
         log("LoginItemManager.setEnabled() entered", level: .debug, fields: ["enabled": String(enabled)])
         do {
             if enabled {

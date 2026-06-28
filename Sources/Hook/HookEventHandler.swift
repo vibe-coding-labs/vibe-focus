@@ -58,6 +58,15 @@ final class HookEventHandler {
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         let traceID = makeOperationID(prefix: "ups")
+        // P-INST-29: handleUserPromptSubmit 总耗时（hook 同步响应延迟；defer 统一记，outcome 见各路径 code 字段，用 traceID 关联）。
+        let upsStart = Date()
+        defer {
+            log("[HookEventHandler] UserPromptSubmit finished", fields: [
+                "traceID": traceID,
+                "sessionID": payload.sessionID,
+                "durationMs": String(elapsedMilliseconds(since: upsStart))
+            ])
+        }
 
         log(
             "[HookEventHandler] UserPromptSubmit triggered",
@@ -234,11 +243,19 @@ final class HookEventHandler {
 
     func clearAutoRestoreCooldown(windowID: UInt32) {
         lastAutoRestoreByWindowID.removeValue(forKey: windowID)
+        // P-INST-30: 冷却期清除追踪（move_to_main 后调用，允许后续 UPS autoRestore；字典操作 ~0ms 故记状态非 durationMs）。
+        log("[HookEventHandler] clearAutoRestoreCooldown", level: .debug, fields: [
+            "windowID": String(windowID)
+        ])
     }
 
     /// Stop 移动窗口后设置冷却期，阻止 UserPromptSubmit 立即 restore 同一窗口
     func setMoveCooldown(windowID: UInt32) {
         lastAutoRestoreByWindowID[windowID] = Date()
+        // P-INST-30: 冷却期设置追踪（restore 后调用，阻止 Stop→UPS 立即再次 restore 同一窗口）。
+        log("[HookEventHandler] setMoveCooldown", level: .debug, fields: [
+            "windowID": String(windowID)
+        ])
     }
 
 }

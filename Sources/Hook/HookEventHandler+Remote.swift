@@ -6,6 +6,16 @@ extension HookEventHandler {
 
     /// 通过 machine_label 查找映射表中的窗口
     func resolveRemoteBinding(label: String, sessionID: String) -> WindowIdentity? {
+        // P-INST-54: resolveRemoteBinding 耗时（远程 session 自愈入口；LANHookPreferences 字典查 + findWindowByCGWindowID CG 查找；hook 路径 P-INST-31/32/33 已覆盖调用方总耗时，此埋点补远程自愈各 outcome 归因）。
+        let rrbStart = Date()
+        var rrbOutcome = "unknown"
+        defer {
+            log("[HookEventHandler] resolveRemoteBinding finished", level: .debug, fields: [
+                "label": label, "sessionID": sessionID,
+                "outcome": rrbOutcome,
+                "durationMs": String(elapsedMilliseconds(since: rrbStart))
+            ])
+        }
         let bindings = LANHookPreferences.activeRemoteBindings
         log(
             "[HookEventHandler] resolveRemoteBinding: looking up machine_label",
@@ -18,6 +28,7 @@ extension HookEventHandler {
         )
 
         guard let boundWindowID = bindings[label] else {
+            rrbOutcome = "label_not_found"
             log(
                 "[HookEventHandler] resolveRemoteBinding: label not found in remote bindings",
                 level: .warn,
@@ -33,6 +44,7 @@ extension HookEventHandler {
 
         // 直接使用绑定的 windowID
         if let identity = WindowManager.shared.findWindowByCGWindowID(boundWindowID) {
+            rrbOutcome = "resolved"
             log(
                 "[HookEventHandler] resolveRemoteBinding: resolved via bound windowID",
                 fields: [
@@ -45,6 +57,7 @@ extension HookEventHandler {
             return identity
         }
 
+        rrbOutcome = "window_gone"
         log(
             "[HookEventHandler] resolveRemoteBinding: bound windowID no longer exists",
             level: .warn,

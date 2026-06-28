@@ -99,11 +99,24 @@ enum CoordinateKit {
     // MARK: 显示器相关
 
     static var mainScreenQuartzFrame: CGRect? {
-        NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? NSScreen.screens.first?.frame
+        // P-INST-134: 主屏 Quartz 帧查询耗时（NSScreen.screens AppKit 显示配置数组遍历找 origin==.zero；toggle/move/overlay 坐标计算高频调用；mainScreenHeight/isOnMainScreen 经此委托）。
+        let mpqfStart = Date()
+        defer {
+            log("[CoordinateKit] mainScreenQuartzFrame finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: mpqfStart))
+            ])
+        }
+        return NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? NSScreen.screens.first?.frame
     }
 
     static var mainScreenHeight: CGFloat {
-        mainScreenQuartzFrame?.height ?? NSScreen.screens.first?.frame.height ?? 0
+        // P-INST-268: 主屏高度计算属性（mainScreenQuartzFrame P-INST-134 + NSScreen.screens.first.frame 读 fallback；坐标转换高频调用，NSScreen.screens 可能阻塞 WindowServer；slow-op ≥30ms warn）。
+        let mshStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: mshStart)
+            if durMs >= 30 { log("[CoordinateKit] mainScreenHeight slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
+        return mainScreenQuartzFrame?.height ?? NSScreen.screens.first?.frame.height ?? 0
     }
 
     /// NSScreen → Quartz 帧转换
@@ -116,6 +129,12 @@ enum CoordinateKit {
 
     /// 获取屏幕的可用区域（去掉菜单栏和 Dock），返回 Quartz 坐标
     static func quartzVisibleFrame(of screen: NSScreen) -> CGRect {
+        // P-INST-266: NSScreen 可见区域转 Quartz 坐标（screen.visibleFrame 动态计算去菜单栏/Dock + frame 读；窗口定位/axFrame 调用，visibleFrame 可能查 WindowServer；slow-op ≥30ms warn）。
+        let qvfStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: qvfStart)
+            if durMs >= 30 { log("[CoordinateKit] quartzVisibleFrame slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         let visibleFrame = screen.visibleFrame
         if screen.frame.origin == .zero {
             let screenMaxY = screen.frame.maxY
@@ -140,6 +159,13 @@ enum CoordinateKit {
     }
 
     static func screenForRect(_ rect: CGRect) -> NSScreen? {
+        // P-INST-135: rect 所属屏幕查询耗时（mainScreenQuartzFrame P-INST-134 + NSScreen.screens 遍历 frame.contains；窗口定位/检测窗口在哪个屏调用）。
+        let sfrStart = Date()
+        defer {
+            log("[CoordinateKit] screenForRect finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: sfrStart))
+            ])
+        }
         let center = CGPoint(x: rect.midX, y: rect.midY)
         if let mainFrame = mainScreenQuartzFrame, mainFrame.contains(center) {
             return NSScreen.screens.first { $0.frame.origin == .zero }
@@ -172,11 +198,25 @@ enum CoordinateKit {
     // MARK: 显示器索引转换
 
     static func nsScreen(forCGDisplayID displayID: CGDirectDisplayID) -> NSScreen? {
-        NSScreen.screens.first { $0.cgDirectDisplayID == displayID }
+        // P-INST-136: CGDisplayID→NSScreen 查询耗时（NSScreen.screens 遍历 + cgDirectDisplayID deviceDescription 读；显示器索引转换）。
+        let nsgStart = Date()
+        defer {
+            log("[CoordinateKit] nsScreen(forCGDisplayID:) finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: nsgStart))
+            ])
+        }
+        return NSScreen.screens.first { $0.cgDirectDisplayID == displayID }
     }
 
     static func screenArrayIndex(for screen: NSScreen) -> Int? {
-        NSScreen.screens.firstIndex(of: screen)
+        // P-INST-137: NSScreen→数组索引查询耗时（NSScreen.screens.firstIndex Equatable 查找；显示器索引转换）。
+        let saiStart = Date()
+        defer {
+            log("[CoordinateKit] screenArrayIndex finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: saiStart))
+            ])
+        }
+        return NSScreen.screens.firstIndex(of: screen)
     }
 
     static func cgDisplayID(for screen: NSScreen) -> CGDirectDisplayID? {
@@ -185,6 +225,13 @@ enum CoordinateKit {
 
     /// yabai display index (1-based) → NSScreen
     static func nsScreen(forYabaiDisplayIndex index: Int) -> NSScreen? {
+        // P-INST-138: yabai display index→NSScreen 查询耗时（NSScreen.screens 读取 + filter 非主屏 + 索引访问；overlay/display 索引转换）。
+        let nsyStart = Date()
+        defer {
+            log("[CoordinateKit] nsScreen(forYabaiDisplayIndex:) finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: nsyStart))
+            ])
+        }
         let screens = NSScreen.screens
         guard index >= 1, index <= screens.count else { return nil }
         if index == 1 {
@@ -217,7 +264,14 @@ enum CoordinateKit {
 
 extension NSScreen {
     var cgDirectDisplayID: CGDirectDisplayID? {
-        deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        // P-INST-139: NSScreen→CGDisplayID 读取耗时（deviceDescription 字典查 NSScreenNumber；显示器 ID 转换，nsScreen(forCGDisplayID:) 等遍历中调用）。
+        let cgdStart = Date()
+        defer {
+            log("[CoordinateKit] cgDirectDisplayID finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: cgdStart))
+            ])
+        }
+        return deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 
     var isMainScreen: Bool { frame.origin == .zero }

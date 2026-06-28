@@ -12,6 +12,14 @@ extension SessionWindowRegistry {
     /// 按 sessionID 查找窗口状态（扫描，低频操作）
     /// 优先返回 PID 有效的绑定，避免返回损坏数据
     func binding(for sessionID: String) -> WindowState? {
+        // P-INST-158: sessionID→窗口绑定查找耗时（内存 windowStates.values.filter 扫描 + alias 查 + DB fallback findWindowStateBySession P-INST-68 + 损坏绑定 deleteWindowState；hook UserPromptSubmit/Stop/SessionEnd 路径主查找）。
+        let bfsStart = Date()
+        defer {
+            log("[SessionWindowRegistry] binding(for:) finished", level: .debug, fields: [
+                "sessionID": sessionID,
+                "durationMs": String(elapsedMilliseconds(since: bfsStart))
+            ])
+        }
         // 1. Direct lookup: binding has this sessionID
         let candidates = windowStates.values.filter { $0.sessionID == sessionID }
         if let valid = candidates.first(where: { TerminalRegistry.isTerminalPID($0.pid) }) {
@@ -51,6 +59,14 @@ extension SessionWindowRegistry {
 
     /// 按 windowID 查找窗口状态（O(1)，主查找路径）
     func findState(windowID: UInt32) -> WindowState? {
+        // P-INST-159: windowID→窗口状态查找耗时（内存 O(1) windowStates 查 + DB fallback findWindowState P-INST-68；hook/restore 按 windowID 查询主路径，缓存命中应 <1ms）。
+        let fswStart = Date()
+        defer {
+            log("[SessionWindowRegistry] findState finished", level: .debug, fields: [
+                "windowID": String(windowID),
+                "durationMs": String(elapsedMilliseconds(since: fswStart))
+            ])
+        }
         if let state = windowStates[windowID] {
             return state
         }

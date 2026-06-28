@@ -11,6 +11,13 @@ extension WindowStateStore {
     // MARK: - Row Parser
 
     func parseWindowStateRow(_ stmt: OpaquePointer) -> WindowState? {
+        // P-INST-155: WindowState 行解析耗时（34 列 sqlite3_column_int64/int/double/text/type 读取 + optionalStringCol + Date 构造；loadAllWindowStates/findWindowState P-INST-68 每行调用，SQLite 列读取）。
+        let pwsrStart = Date()
+        defer {
+            log("[WindowStateStore] parseWindowStateRow finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: pwsrStart))
+            ])
+        }
         let windowID = UInt32(sqlite3_column_int64(stmt, 0))
         let pid = sqlite3_column_int(stmt, 1)
         let tty = String(cString: sqlite3_column_text(stmt, 2))
@@ -84,6 +91,13 @@ extension WindowStateStore {
     // MARK: - Toggle Record Row Parser
 
     func parseToggleRecord(_ stmt: OpaquePointer) -> ToggleRecord? {
+        // P-INST-156: ToggleRecord 行解析耗时（19 列 sqlite3_column_int64/int/double/text 读取 + String(cString:) + Date 构造；loadToggleRecord P-INST-18/loadByPID P-INST-67 每行调用，SQLite 列读取）。
+        let ptrStart = Date()
+        defer {
+            log("[WindowStateStore] parseToggleRecord finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: ptrStart))
+            ])
+        }
         let wID = UInt32(sqlite3_column_int64(stmt, 0))
         let pid = sqlite3_column_int(stmt, 1)
         let bundleID: String? = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
@@ -119,8 +133,17 @@ extension WindowStateStore {
     }
 
     func optionalStringCol(_ stmt: OpaquePointer, col: Int32) -> String? {
-        guard sqlite3_column_type(stmt, col) != SQLITE_NULL else { return nil }
-        let raw = String(cString: sqlite3_column_text(stmt, col))
-        return raw.isEmpty ? nil : raw
+        // P-INST-157: 可选字符串列读取耗时（sqlite3_column_type NULL 检查 + sqlite3_column_text + String(cString:)；parseWindowStateRow P-INST-155 内每可选列调用，SQLite 列读取叶子）。
+        let oscStart = Date()
+        let value: String? = {
+            guard sqlite3_column_type(stmt, col) != SQLITE_NULL else { return nil }
+            let raw = String(cString: sqlite3_column_text(stmt, col))
+            return raw.isEmpty ? nil : raw
+        }()
+        log("[WindowStateStore] optionalStringCol finished", level: .debug, fields: [
+            "col": String(col),
+            "durationMs": String(elapsedMilliseconds(since: oscStart))
+        ])
+        return value
     }
 }

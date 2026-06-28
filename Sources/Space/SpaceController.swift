@@ -38,6 +38,18 @@ final class SpaceController: ObservableObject {
         spacesQueryCache = nil
     }
 
+    /// 仅清除 queryWindow 缓存，保留 spacesQueryCache。
+    /// 用于 moveWindowToMainScreen（yabai space move focus=false）：只改窗口 space/display，
+    /// 不切任何 display 的 visible space（visible/index/display 映射不变），spacesQueryCache 保留
+    /// 供连续 toggle 的 captureSpaceContext 命中省 querySpaces fork（整机卡时 ~54ms→~0ms）。
+    /// 安全性：spacesQueryCache 的 has-focus 字段在 SpaceController 侧无消费方（仅 overlay 层
+    /// SpaceSnapshot 读 has-focus，用独立查询不读此缓存），toggle 后 has-focus 陈旧不影响任何
+    /// SpaceController 调用方（captureSpaceContext/displayLocalSpaceIndex/nativeSpaceID/visibleSpaceIndex
+    /// 只用 index/display/is-visible/id，focus=false 下均不变）。restore 路径仍用 clearQueryCache。
+    func clearWindowQueryCache() {
+        windowQueryCache.removeAll()
+    }
+
     /// 检查缓存是否过期
     func isCacheExpired(_ cachedAt: Date) -> Bool {
         return Date().timeIntervalSince(cachedAt) > Self.queryCacheTTL
@@ -78,6 +90,16 @@ final class SpaceController: ObservableObject {
     }
 
     func refreshAvailability(force: Bool) {
+        // P-INST-41: refreshAvailability 总耗时（availability 刷新；fork query --spaces + SA check + 可能 recovery；force vs 节流缓存路径，归因 availability 路径阻塞）。
+        let raStart = Date()
+        var raResult = "throttled"
+        defer {
+            log("[SpaceController] refreshAvailability finished", level: .debug, fields: [
+                "force": String(force),
+                "result": raResult,
+                "durationMs": String(elapsedMilliseconds(since: raStart))
+            ])
+        }
         if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < checkInterval {
             return
         }
@@ -88,6 +110,7 @@ final class SpaceController: ObservableObject {
         guard let yabaiPath = locateYabai() else {
             availability = .notInstalled
             canControlSpaces = false
+            raResult = "not_installed"
             updateEnabledState()
             return
         }
@@ -98,6 +121,7 @@ final class SpaceController: ObservableObject {
             availability = .unavailable
             canControlSpaces = false
             lastErrorMessage = "Unable to launch yabai"
+            raResult = "unavailable_launch"
             updateEnabledState()
             return
         }
@@ -109,9 +133,11 @@ final class SpaceController: ObservableObject {
             if saLoaded {
                 canControlSpaces = true
                 lastErrorMessage = nil
+                raResult = "available_sa_loaded"
             } else {
                 canControlSpaces = false
                 lastErrorMessage = "yabai scripting-addition 未加载，跨工作区恢复功能受限。请在设置中加载 scripting-addition。"
+                raResult = "available_sa_missing"
                 attemptSilentSARecovery(yabaiPath: yabaiPath)
             }
             updateEnabledState()
@@ -119,6 +145,7 @@ final class SpaceController: ObservableObject {
             availability = .unavailable
             canControlSpaces = false
             lastErrorMessage = Self.formatErrorMessage(stdout: result.stdout, stderr: result.stderr)
+            raResult = "unavailable_exitcode"
             updateEnabledState()
         }
     }

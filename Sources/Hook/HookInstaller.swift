@@ -12,6 +12,13 @@ extension ClaudeHookPreferences {
 
     /// 写入辅助脚本配置文件（端口和 Token）
     static func writeConfigFile() {
+        // P-INST-87: hook 辅助脚本配置写入耗时（createDirectory + JSONSerialization.data + data.write(.atomic) 写 hook-config.json；applyPreferences P-INST-77 / installHookToClaudeSettings P-INST-78 子阶段；token/port 同步）。
+        let wcStart = Date()
+        defer {
+            log("ClaudeHookPreferences.writeConfigFile() finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: wcStart))
+            ])
+        }
         log("ClaudeHookPreferences.writeConfigFile() entered", level: .debug, fields: [
             "dir": helperScriptDir,
             "path": configFilePath
@@ -36,6 +43,13 @@ extension ClaudeHookPreferences {
     /// 安装辅助脚本到 ~/.vibefocus/hook-forwarder.sh
     @discardableResult
     static func installHelperScript() -> (Bool, String) {
+        // P-INST-88: 辅助脚本安装耗时（createDirectory + data.write(.atomic) 写 hook-forwarder.sh + setAttributes posixPermissions 0o755；applyPreferences P-INST-77 / installHookToClaudeSettings P-INST-78 子阶段；memory feedback_hook_forwarder_verification 关注的脚本写入正确性路径）。
+        let ihsStart = Date()
+        defer {
+            log("ClaudeHookPreferences.installHelperScript() finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: ihsStart))
+            ])
+        }
         log("ClaudeHookPreferences.installHelperScript() entered", level: .debug)
         let dir = helperScriptDir
         do {
@@ -63,6 +77,13 @@ extension ClaudeHookPreferences {
 
     /// 移除辅助脚本和配置文件
     static func removeHelperFiles() {
+        // P-INST-89: 辅助脚本与配置清理耗时（2x removeItem hook-forwarder.sh + hook-config.json；uninstallHookFromClaudeSettings P-INST-83 子阶段；卸载/重装时调用）。
+        let rhStart = Date()
+        defer {
+            log("ClaudeHookPreferences.removeHelperFiles() finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: rhStart))
+            ])
+        }
         log("ClaudeHookPreferences.removeHelperFiles() entered", level: .debug, fields: [
             "scriptPath": helperScriptPath,
             "configPath": configFilePath
@@ -77,6 +98,13 @@ extension ClaudeHookPreferences {
     /// 安全 merge Hook 到 Claude settings.json
     /// 只覆盖 SessionStart/Stop/SessionEnd/UserPromptSubmit 四个 key，保留用户其他 hooks 和配置
     static func installHookToClaudeSettings() -> (Bool, String) {
+        // P-INST-78: claude settings 安装耗时（读 settings.json + JSONSerialization 解析 + cleanVibeFocusHooks + 编码 + atomic 写；含 3s 冷却防抖跳过；memory feedback_hook_forwarder_verification 关注的配置正确性路径；applyPreferences P-INST-77 子阶段）。
+        let ihStart = Date()
+        defer {
+            log("[ClaudeHookPreferences] installHookToClaudeSettings finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: ihStart))
+            ])
+        }
         // 防止 3 秒内重复调用
         let now = Date()
         let lastInstall = UserDefaults.standard.object(forKey: lastInstallAtKey) as? Date ?? .distantPast
@@ -177,6 +205,13 @@ extension ClaudeHookPreferences {
 
     /// 从 Claude settings.json 中精确移除 VibeFocus Hook
     static func uninstallHookFromClaudeSettings() -> (Bool, String) {
+        // P-INST-83: hook 卸载耗时（Data(contentsOf claudeSettingsPath) 读 + JSONSerialization 解析 + cleanVibeFocusHooks 遍历清理 + JSONSerialization 编码 + atomic write + removeHelperFiles 两次 removeItem；设置面板卸载按钮触发；P-INST-78 install 的逆操作）。
+        let uhStart = Date()
+        defer {
+            log("[ClaudeHookPreferences] uninstallHookFromClaudeSettings finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: uhStart))
+            ])
+        }
         let path = claudeSettingsPath
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

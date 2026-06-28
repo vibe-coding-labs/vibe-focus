@@ -57,6 +57,11 @@ public final class HotKeyManager: ObservableObject {
     }
 
     func setup() {
+        // P-INST-219: 热键系统启动编排端到端耗时（refreshAccessibilityStatus + setupCGEventTap CGEventTap 创建 + installHandlerIfNeeded + registerHotKey P-INST-140 Carbon + installFallbackMonitors P-INST-141 NSEvent；启动路径单次调用，归因启动延迟）。
+        let suStart = Date()
+        defer {
+            log("[HotKey] setup finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: suStart))])
+        }
         refreshAccessibilityStatus()
         log(
             "HotKey setup start",
@@ -84,6 +89,11 @@ public final class HotKeyManager: ObservableObject {
     }
 
     func applyShortcut(_ hotKey: HotKeyConfiguration) {
+        // P-INST-220: 快捷键应用端到端耗时（validate + registerHotKey P-INST-140 + NSSound.beep + saveStoredHotKey P-INST-189 + NotificationCenter；用户设置 UI 改快捷键触发，含 beep 反馈）。
+        let asStart = Date()
+        defer {
+            log("[HotKey] applyShortcut finished", level: .debug, fields: ["key": hotKey.displayString, "durationMs": String(elapsedMilliseconds(since: asStart))])
+        }
         log("[HotKey] applyShortcut requested: \(hotKey.displayString) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifiers)")
         CrashContextRecorder.shared.record("hotkey_apply_requested key=\(hotKey.displayString)")
 
@@ -128,6 +138,12 @@ public final class HotKeyManager: ObservableObject {
     }
 
     func openAccessibilitySettings() {
+        // P-INST-188: 打开辅助功能系统设置耗时（NSWorkspace.shared.open URL scheme 启动 System Settings；设置 UI 权限按钮调用，LaunchServices 跨进程调用可阻塞）。
+        let oasStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: oasStart)
+            if durMs >= 50 { log("[HotKey] openAccessibilitySettings slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
@@ -147,8 +163,14 @@ public final class HotKeyManager: ObservableObject {
     }
 
     private static func checkAccessibility() -> Bool {
-        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
+        // P-INST-65: AX 权限检查耗时（AXIsProcessTrustedWithOptions；HotKey setup/refresh 调用；slow-op ≥50ms warn）。
+        let caStart = Date()
+        let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
+        let caMs = elapsedMilliseconds(since: caStart)
+        if caMs >= 50 {
+            log("[HotKey] checkAccessibility slow", level: .warn, fields: ["durationMs": String(caMs)])
+        }
+        return trusted
     }
 
     private func validate(_ hotKey: HotKeyConfiguration) -> String? {
@@ -179,10 +201,17 @@ public final class HotKeyManager: ObservableObject {
     }
 
     private static func loadStoredHotKey() -> HotKeyConfiguration {
-        guard let data = UserDefaults.standard.data(forKey: HotKeyConfiguration.userDefaultsKey),
-              let hotKey = try? JSONDecoder().decode(HotKeyConfiguration.self, from: data) else {
-            return .default
-        }
+        // P-INST-204: 热键持久化读取耗时（UserDefaults.standard.data CFPreferences 同步读 + JSONDecoder.decode；HotKeyManager init 启动 + registerHotKey 前调用，读取已存热键配置）。
+        let lshStart = Date()
+        let hotKey: HotKeyConfiguration = {
+            guard let data = UserDefaults.standard.data(forKey: HotKeyConfiguration.userDefaultsKey),
+                  let decoded = try? JSONDecoder().decode(HotKeyConfiguration.self, from: data) else {
+                return .default
+            }
+            return decoded
+        }()
+        let durMs = elapsedMilliseconds(since: lshStart)
+        if durMs >= 5 { log("[HotKey] loadStoredHotKey slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         if hotKey == .legacyDefault {
             return .default
         }
@@ -190,6 +219,12 @@ public final class HotKeyManager: ObservableObject {
     }
 
     private func saveStoredHotKey(_ hotKey: HotKeyConfiguration) {
+        // P-INST-189: 热键持久化耗时（JSONEncoder.encode + UserDefaults.standard.set CFPreferences 同步写；applyShortcut/resetToDefaultShortcut 调用，热键变更写）。
+        let sshStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: sshStart)
+            if durMs >= 5 { log("[HotKey] saveStoredHotKey slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         guard let data = try? JSONEncoder().encode(hotKey) else {
             return
         }

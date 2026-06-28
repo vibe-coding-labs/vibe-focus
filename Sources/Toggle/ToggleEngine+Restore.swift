@@ -22,6 +22,14 @@ extension ToggleEngine {
 
     @discardableResult
     func restore(windowID: UInt32, triggerSource: String, traceID: String? = nil) -> Bool {
+        // P-INST-79: restore 端到端总耗时（defer 覆盖所有 return 含早期 lookup/query 失败路径；139 finished 仅成功路径汇总子阶段；lookup+query+move+float+apply+focusSpace 之和 + gaps；toggle/restore 核心）。
+        let restoreStart = Date()
+        defer {
+            log("[ToggleEngine] restore finished", level: .debug, fields: [
+                "windowID": String(windowID),
+                "durationMs": String(elapsedMilliseconds(since: restoreStart))
+            ])
+        }
         let trace = traceID ?? makeOperationID(prefix: "te")
 
         // 1. Load record — windowID only, no PID fallback

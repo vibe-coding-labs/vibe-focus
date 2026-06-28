@@ -9,6 +9,18 @@ enum ShellRunner {
 
     @discardableResult
     static func run(executable: String, arguments: [String]) -> YabaiClient.YabaiResult? {
+        // P-INST-49: ShellRunner fork 耗时（ps/pgrep/外部命令底层 fork；被 runShellCommand 包装，findWindowByTerminalContext 进程树/applyViaTTY 等多路径调用；slow-op ≥50ms warn 抓阻塞或超时=2000ms）。
+        let shellStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: shellStart)
+            if durMs >= 50 {
+                log("[ShellRunner] run slow fork", level: .warn, fields: [
+                    "executable": executable,
+                    "args": arguments.joined(separator: " "),
+                    "durationMs": String(durMs)
+                ])
+            }
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -46,6 +58,18 @@ enum ShellRunner {
 
     @discardableResult
     static func run(executable: String, arguments: [String], stdin: String) -> YabaiClient.YabaiResult? {
+        // P-INST-49: ShellRunner fork + stdin 耗时（同 run(executable:arguments:) slow-op ≥50ms warn）。
+        let shellStdinStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: shellStdinStart)
+            if durMs >= 50 {
+                log("[ShellRunner] run(stdin) slow fork", level: .warn, fields: [
+                    "executable": executable,
+                    "args": arguments.joined(separator: " "),
+                    "durationMs": String(durMs)
+                ])
+            }
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -87,8 +111,12 @@ enum ShellRunner {
     }
 
     static func runShell(_ command: String) -> String? {
+        // P-INST-197: bash -c 命令执行耗时（委托 run(executable:arguments:) fork P-INST-49；shell 一行命令便捷入口，≥50ms warn 归因调用点）。
+        let rshStart = Date()
         guard let result = run(executable: "/bin/bash", arguments: ["-c", command]),
               result.exitCode == 0 else { return nil }
+        let durMs = elapsedMilliseconds(since: rshStart)
+        if durMs >= 50 { log("[ShellRunner] runShell slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

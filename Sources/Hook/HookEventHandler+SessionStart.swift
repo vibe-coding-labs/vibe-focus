@@ -13,6 +13,14 @@ extension HookEventHandler {
     func handleSessionStart(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        // P-INST-33: handleSessionStart 总耗时（SessionStart hook 同步响应延迟；含 findWindowByTerminalContext 窗口匹配 + autoSetTitle AX write）。
+        let ssStart = Date()
+        defer {
+            log("[handleSessionStart] finished", fields: [
+                "sessionID": payload.sessionID,
+                "durationMs": String(elapsedMilliseconds(since: ssStart))
+            ])
+        }
         log(
             "[handleSessionStart] called",
             level: .debug,

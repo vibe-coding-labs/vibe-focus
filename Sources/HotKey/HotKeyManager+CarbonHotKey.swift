@@ -45,6 +45,13 @@ extension HotKeyManager {
     }
 
     func registerHotKey() {
+        // P-INST-140: Carbon 热键注册耗时（UnregisterEventHotKey 注销旧 + 2x RegisterEventHotKey 注册主热键 + Ctrl+T title editor + GetApplicationEventTarget；Carbon 系统调用，启动 + 偏好变更时调用）。
+        let rhkStart = Date()
+        defer {
+            log("[HotKey] registerHotKey finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: rhkStart))
+            ])
+        }
         if let hotKeyRef {
             let unregisterStatus = UnregisterEventHotKey(hotKeyRef)
             log("Unregister previous hotkey status: \(unregisterStatus)")
@@ -92,6 +99,13 @@ extension HotKeyManager {
     }
 
     func handleHotKeyEvent(_ eventRef: EventRef) -> OSStatus {
+        // P-INST-142: Carbon 热键事件回调耗时（GetEventParameter 读 hotKeyID + 触发 triggerToggleIfNeeded/title editor；Carbon 热键仅在精确匹配注册组合时触发，无 keypress 刷屏问题，installHandlerIfNeeded 注册的 callback 路径）。
+        let hkeStart = Date()
+        defer {
+            log("[HotKey] handleHotKeyEvent finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: hkeStart))
+            ])
+        }
         var hotKeyID = EventHotKeyID()
         let status = GetEventParameter(
             eventRef,

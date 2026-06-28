@@ -93,8 +93,12 @@ struct CodeBlockView: View {
     }
 
     private func copyToClipboard() {
+        // P-INST-239: 复制安装命令到剪贴板耗时（NSPasteboard.clearContents + setString 剪贴板 IPC；设置 UI 复制按钮触发，withAnimation/asyncAfter UI 反馈不计入；slow-op ≥5ms warn）。
+        let ctcStart = Date()
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
+        let durMs = elapsedMilliseconds(since: ctcStart)
+        if durMs >= 5 { log("[SettingsComponents] copyToClipboard slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         withAnimation { isCopied = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             withAnimation { isCopied = false }

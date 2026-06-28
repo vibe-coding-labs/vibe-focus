@@ -8,14 +8,26 @@ import Foundation
 extension WindowManager {
 
     func runShellCommand(_ executable: String, args: [String]) -> String? {
-        return ShellRunner.run(executable: executable, arguments: args)?.stdout
+        // P-INST-195: WindowManager shell 命令执行入口耗时（委托 ShellRunner.run fork P-INST-49；窗口移动相关 shell 调用，≥50ms warn 归因调用点）。
+        let rscStart = Date()
+        let stdout = ShellRunner.run(executable: executable, arguments: args)?.stdout
+        let durMs = elapsedMilliseconds(since: rscStart)
+        if durMs >= 50 { log("[WindowManager] runShellCommand slow", level: .warn, fields: ["executable": executable, "durationMs": String(durMs)]) }
+        return stdout
     }
 
     func resolveWindow(identity: WindowIdentity) -> AXUIElement? {
+        // P-INST-24: resolveWindow 耗时 + 命中路径（P2 yabai 路径调用，窗口已主屏 space，fast path 应命中；
+        // exactID_scan 全量 kAXWindowsAttribute 遍历可能阻塞，归因 fast path miss 的成本）。
+        let rwStart = Date()
         let pid = pid_t(identity.pid)
         if let focused = focusedWindow(for: pid),
            let focusedID = windowHandle(for: focused),
            focusedID == identity.windowID {
+            log("[WindowManager] resolveWindow result", level: .debug, fields: [
+                "windowID": String(identity.windowID), "path": "fast", "found": "true",
+                "durationMs": String(elapsedMilliseconds(since: rwStart))
+            ])
             return focused
         }
 
@@ -24,11 +36,20 @@ extension WindowManager {
             guard let currentID = windowHandle(for: window) else { return false }
             return currentID == identity.windowID
         }) {
+            log("[WindowManager] resolveWindow result", level: .debug, fields: [
+                "windowID": String(identity.windowID), "path": "exactID_scan", "found": "true",
+                "windowsChecked": String(windows.count),
+                "durationMs": String(elapsedMilliseconds(since: rwStart))
+            ])
             return exactID
         }
 
         if let number = identity.windowNumber,
            let matched = windows.first(where: { windowNumber(for: $0) == number }) {
+            log("[WindowManager] resolveWindow result", level: .debug, fields: [
+                "windowID": String(identity.windowID), "path": "windowNumber", "found": "true",
+                "durationMs": String(elapsedMilliseconds(since: rwStart))
+            ])
             return matched
         }
 
@@ -37,9 +58,17 @@ extension WindowManager {
            let matched = windows.first(where: {
                self.title(of: $0)?.trimmingCharacters(in: .whitespacesAndNewlines) == expectedTitle
            }) {
+            log("[WindowManager] resolveWindow result", level: .debug, fields: [
+                "windowID": String(identity.windowID), "path": "title", "found": "true",
+                "durationMs": String(elapsedMilliseconds(since: rwStart))
+            ])
             return matched
         }
 
+        log("[WindowManager] resolveWindow result", level: .debug, fields: [
+            "windowID": String(identity.windowID), "path": "none", "found": "false",
+            "durationMs": String(elapsedMilliseconds(since: rwStart))
+        ])
         return nil
     }
 
@@ -48,7 +77,8 @@ extension WindowManager {
         identity: WindowIdentity,
         reason: WindowMoveReason,
         sessionID: String?,
-        operationID: String? = nil
+        operationID: String? = nil,
+        knownWindowAX: AXUIElement? = nil
     ) -> Bool {
         let op = operationID ?? makeOperationID(prefix: "move")
         let startedAt = Date()
@@ -66,38 +96,76 @@ extension WindowManager {
             return false
         }
 
-        guard let windowAX = resolveWindow(identity: identity) else {
-            log("moveWindowToMainScreen failed: cannot resolve window", level: .error, fields: ["op": op])
-            return false
+        // P2: captureSpaceContext 必须在 window move 之前（sourceSpace = 移动前 space）。
+        // AX 路径（knownWindowAX != nil）和 yabai 路径都依赖此 sourceSpace 供 restore 移回。
+        // 提前到 windowAX 解析前：yabai 路径会先 yabai space move 改变窗口 space，必须在 move 前捕获。
+        // P-INST-3: captureSpaceContextMs 诊断移动前 space 上下文捕获（含 queryWindow + querySpaces + visibleSpaceIndex）。
+        let captureCtxStart = Date()
+        let spaceContext = spaceController.captureSpaceContext(windowID: identity.windowID, operationID: op)
+        let captureSpaceContextMs = elapsedMilliseconds(since: captureCtxStart)
+
+        // P2: windowAX 解析分两路径。
+        // - AX 路径（knownWindowAX != nil，toggle 入口 AX 解析）：直接复用（省 resolveWindow 的 2 个 AX）。
+        // - yabai 路径（knownWindowAX == nil，toggle 入口 yabai query）：先 yabai space move 到主屏
+        //   visible space（窗口物理 + space 到主屏，focus=false 不切用户视角），再 resolveWindow
+        //   （窗口主屏，AX 不阻塞）。这是消除 toggle 入口 focusedWindow AX 副屏阻塞 1.5s 的核心机制变更。
+        //   memory space_switch_regression：yabai space move 是跨屏移动唯一可靠手段（SLS 无权限），
+        //   restore 路径已用此机制（ToggleEngine+Restore 主屏→副屏；P2 反向 副屏→主屏）。
+        let windowAX: AXUIElement
+        var p2YabaiSpaceMoveMs = 0
+        // P-INST-3: yabai 路径子阶段计时（visibleSpaceIndex + resolveWindow，AX 路径恒 0）。
+        var visibleSpaceIndexMs = 0
+        var resolveWindowMs = 0
+        if let knownAX = knownWindowAX {
+            windowAX = knownAX
+        } else {
+            // P-INST-3: visibleSpaceIndexMs 诊断主屏 visible space 查询（querySpaces 缓存命中应 <1ms）。
+            let visibleSpaceStart = Date()
+            let visibleSpace = spaceController.visibleSpaceIndex(forDisplayIndex: 1)?.yabaiIndex
+            visibleSpaceIndexMs = elapsedMilliseconds(since: visibleSpaceStart)
+            guard let mainScreenSpaceIndex = visibleSpace else {
+                log("moveWindowToMainScreen P2 failed: cannot resolve main screen visible space", level: .error, fields: ["op": op])
+                return false
+            }
+            let spaceMoveStart = Date()
+            let moved = spaceController.moveWindow(
+                identity.windowID,
+                toSpace: .yabai(mainScreenSpaceIndex),
+                focus: false,
+                operationID: op
+            )
+            p2YabaiSpaceMoveMs = elapsedMilliseconds(since: spaceMoveStart)
+            log("[WindowManager] moveWindowToMainScreen P2: yabai space move to main", fields: [
+                "op": op, "windowID": String(identity.windowID),
+                "mainScreenSpace": String(mainScreenSpaceIndex),
+                "moved": String(moved), "spaceMoveMs": String(p2YabaiSpaceMoveMs)
+            ])
+            // yabai space move 改变窗口 space，clear queryWindow 缓存（否则后续 queryWindow 返回
+            // 移动前副屏陈旧值，影响 windowInfo.display 判断）。仅清 windowQueryCache：focus=false 不切
+            // 任何 display 的 visible space（visible/index/display 映射不变），spacesQueryCache 保留供
+            // 连续 toggle 的 captureSpaceContext 命中省 querySpaces fork（has-focus 字段 SpaceController
+            // 侧无消费方）。restore 路径仍用 clearQueryCache（清两个，restore 涉及 space 移回）。
+            if moved { spaceController.clearWindowQueryCache() }
+            // 窗口已到主屏 space（yabai display 1），AX resolveWindow + frame read 不被副屏阻塞。
+            // P-INST-3: resolveWindowMs 诊断窗口主屏后的 AX resolveWindow（focused fast path + 全量遍历 fallback）。
+            let resolveStart = Date()
+            let resolvedAXOpt = resolveWindow(identity: identity)
+            resolveWindowMs = elapsedMilliseconds(since: resolveStart)
+            guard let resolvedAX = resolvedAXOpt else {
+                log("moveWindowToMainScreen P2 failed: cannot resolve window after space move", level: .error, fields: ["op": op])
+                return false
+            }
+            windowAX = resolvedAX
         }
 
-        guard let origFrame = frame(of: windowAX) else {
+        // P-INST-3: frameReadMs 诊断 AX frame(of:) 读取（窗口已在主屏 space，应 <20ms；若高说明 AX 跨屏阻塞）。
+        let frameReadStart = Date()
+        let origFrameOpt = frame(of: windowAX)
+        let frameReadMs = elapsedMilliseconds(since: frameReadStart)
+        guard let origFrame = origFrameOpt else {
             log("moveWindowToMainScreen failed: cannot read current frame", level: .error, fields: ["op": op])
             return false
         }
-
-        // Skip if already on main screen — 一次性查询窗口信息，后续复用缓存
-        let windowInfo = spaceController.queryWindow(windowID: identity.windowID)
-        let yabaiDisplay = windowInfo?.display.map { DisplayIdentifier.yabai($0) }
-        if let display = yabaiDisplay?.yabaiIndex, display == 1 {
-            if let mainScreen = getMainScreen() {
-                let windowCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
-                if mainScreen.frame.contains(windowCenter) {
-                    log("[WindowManager] moveWindowToMainScreen skipped: already on main screen", fields: [
-                        "op": op, "windowID": String(identity.windowID)
-                    ])
-                    return true
-                }
-            }
-        }
-
-        guard isAttributeSettable(windowAX, attribute: kAXPositionAttribute),
-              isAttributeSettable(windowAX, attribute: kAXSizeAttribute) else {
-            log("moveWindowToMainScreen failed: window attributes not settable", level: .error, fields: ["op": op])
-            return false
-        }
-
-        let spaceContext = spaceController.captureSpaceContext(windowID: identity.windowID, operationID: op)
 
         log("[WindowManager] moveWindowToMainScreen: space context captured", fields: [
             "op": op,
@@ -107,6 +175,38 @@ extension WindowManager {
             "sourceDisplaySpaceIndex": String(spaceContext.sourceDisplaySpaceIndex ?? -1),
             "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.width))x\(Int(origFrame.height))"
         ])
+
+        // Skip if already on main screen — 仅 AX 路径检查。
+        // P2 yabai 路径已主动把窗口移到主屏 space，但 frame size 可能仍是副屏尺寸（yabai space move
+        // 不 resize），需继续 apply 全屏 size，不能 skip。一次性查询窗口信息，后续复用缓存。
+        // P-INST-3: queryWindowMs 诊断移动前窗口信息查询（toggle 入口已缓存通常命中 ~0ms，未命中则 fork）。
+        let queryWindowStart = Date()
+        let windowInfo = spaceController.queryWindow(windowID: identity.windowID)
+        let queryWindowMs = elapsedMilliseconds(since: queryWindowStart)
+        if knownWindowAX != nil {
+            let yabaiDisplay = windowInfo?.display.map { DisplayIdentifier.yabai($0) }
+            if let display = yabaiDisplay?.yabaiIndex, display == 1 {
+                if let mainScreen = getMainScreen() {
+                    let windowCenter = CGPoint(x: origFrame.midX, y: origFrame.midY)
+                    if mainScreen.frame.contains(windowCenter) {
+                        log("[WindowManager] moveWindowToMainScreen skipped: already on main screen", fields: [
+                            "op": op, "windowID": String(identity.windowID)
+                        ])
+                        return true
+                    }
+                }
+            }
+        }
+
+        // P-INST-3: settableCheckMs 诊断两次 AX isAttributeSettable 检查（应 <5ms）。
+        let settableStart = Date()
+        let posSettable = isAttributeSettable(windowAX, attribute: kAXPositionAttribute)
+        let sizeSettable = isAttributeSettable(windowAX, attribute: kAXSizeAttribute)
+        let settableCheckMs = elapsedMilliseconds(since: settableStart)
+        guard posSettable, sizeSettable else {
+            log("moveWindowToMainScreen failed: window attributes not settable", level: .error, fields: ["op": op])
+            return false
+        }
 
         guard let mainScreen = getMainScreen() else {
             log("moveWindowToMainScreen failed: cannot determine main screen", level: .error, fields: ["op": op])
@@ -130,10 +230,17 @@ extension WindowManager {
         let floatMs = elapsedMilliseconds(since: floatStart)
 
         // AX apply: move window to main screen + set fullscreen size
-        // maxAttempts: 3 —— move_to_main 不切 space（AX 跨屏 move 不触发 space 动画），AX write 通常快；
-        // 3 次重试 + 回读验证确保 size 可靠生效，避免单次模式下异步窗口（Electron 等）size 未应用就返回。
+        // P3.1: positionFirst 按路径选择。
+        // - P2 yabai 路径（knownWindowAX==nil）：窗口已 yabai space move 到主屏 space，但物理 frame 仍在副屏
+        //   坐标。position 先 + settle：position write 移物理到主屏，settle 等移动，再 size write 主屏全屏 ——
+        //   避免 size 被副屏 visibleFrame clamp（sizeDrift=372 半屏 bug）。size readback 在 settle 后窗口物理
+        //   主屏，不跨屏阻塞（task #7 回退前提是 P2 前窗口副屏，现已主屏 space）。
+        // - AX 路径（knownWindowAX!=nil）：窗口副屏，position 先的 size readback 跨屏阻塞（task #7 回退），
+        //   保持 size 先（positionFirst=false）；半屏 clamp 由 postMoveCheck rewrite 兜底。
+        // maxAttempts: 3 + 回读验证确保 size 可靠生效，避免单次模式下异步窗口（Electron 等）size 未应用就返回。
+        let p2PositionFirst = (knownWindowAX == nil)
         let applyStart = Date()
-        guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3) else {
+        guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3, positionFirst: p2PositionFirst, windowID: effectiveWindowID) else {
             log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
                 "op": op, "targetFrame": String(describing: targetFrame)
             ])
@@ -150,8 +257,13 @@ extension WindowManager {
         // 则重写 size（窗口已 floating + 主屏为 float space，重写后稳定）。幂等单次，不进循环；
         // 始终 log finalFrame 供取证。move_to_main 不切 space，AX frame(of:) 读主屏窗口不阻塞。
         let postMoveCheckStart = Date()
-        usleep(30_000)
-        if let finalFrame = frame(of: windowAX) {
+        // P3.5: 移除 usleep(30_000) + frame read 改 CGWindowList（非阻塞）。P3.1 positionFirst +
+        // setWindowFloat（move_to_main 窗口已 floating，floatMs=0 skipped）后 yabai 无 re-tile，压测
+        // sizeDrift 恒 0（postMoveCheck 从未 rewrite），30ms usleep 等 re-tile 冗余。apply phase2 已
+        // usleep 25ms + sizeReadbackMatched 验证，紧随的 CGWindowList 读 frame 时 WindowServer 已更新。
+        // drift check + rewrite 保留兜底偶发（memory feedback_apply_float_order）。frame read 用 CGWindowList
+        // 遵循 memory feedback_toggle_ctxms_cgwindowlist（热路径读 frame 禁 AX）。
+        if let finalFrame = cgWindowBounds(for: effectiveWindowID) {
             let sizeDrift = abs(finalFrame.height - targetFrame.height) + abs(finalFrame.width - targetFrame.width)
             log("[WindowManager] moveWindowToMainScreen: post-move frame check", fields: [
                 "op": op,
@@ -168,18 +280,21 @@ extension WindowManager {
                 // 窗口此时已在主屏（无跨屏干扰），重写应能突破 clamp。两次后仍 drift 说明 app 硬 clamp，
                 // post-rewrite check 日志会暴露 postDrift，供后续用 yabai --resize 等更强手段。不进无限循环。
                 for rewriteAttempt in 1...2 {
+                    // P-INST-11: 每次 rewrite 耗时（AX write + usleep15 + cgWindowBounds readback，正常 ~17ms）。
+                    let rewriteAttemptStart = Date()
                     var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
                     if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
                         _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
                     }
-                    usleep(30_000)
-                    guard let postRewriteFrame = frame(of: windowAX) else { break }
+                    usleep(15_000)
+                    guard let postRewriteFrame = cgWindowBounds(for: effectiveWindowID) else { break }
                     let postDrift = abs(postRewriteFrame.height - targetFrame.height) + abs(postRewriteFrame.width - targetFrame.width)
                     log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
                         "op": op, "windowID": String(effectiveWindowID),
                         "rewriteAttempt": String(rewriteAttempt),
                         "postRewriteFrame": "\(Int(postRewriteFrame.width))x\(Int(postRewriteFrame.height))",
-                        "postDrift": String(Int(postDrift))
+                        "postDrift": String(Int(postDrift)),
+                        "rewriteMs": String(elapsedMilliseconds(since: rewriteAttemptStart))
                     ])
                     if postDrift <= frameTolerance { break }
                 }
@@ -228,12 +343,28 @@ extension WindowManager {
             "floatMs": String(floatMs),
             "applyMs": String(applyMs),
             "postMoveCheckMs": String(postMoveCheckMs),
-            "saveMs": String(saveMs)
+            "saveMs": String(saveMs),
+            "p2SpaceMoveMs": String(p2YabaiSpaceMoveMs),
+            // P-INST-3: 内部子阶段，解释 durationMs - floatMs - applyMs - postMoveCheckMs - saveMs - p2SpaceMoveMs 的差值。
+            "captureSpaceContextMs": String(captureSpaceContextMs),
+            "visibleSpaceIndexMs": String(visibleSpaceIndexMs),
+            "resolveWindowMs": String(resolveWindowMs),
+            "frameReadMs": String(frameReadMs),
+            "queryWindowMs": String(queryWindowMs),
+            "settableCheckMs": String(settableCheckMs)
         ])
         return true
     }
 
     private func allWindows(for pid: pid_t) -> [AXUIElement] {
+        // P-INST-46: AX 全量窗口枚举耗时（kAXWindowsAttribute；resolveWindow 退化路径，AX 可阻塞；slow-op ≥50ms warn）。
+        let allWinStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: allWinStart)
+            if durMs >= 50 {
+                log("[WindowManager] allWindows slow AX", level: .warn, fields: ["pid": String(pid), "durationMs": String(durMs)])
+            }
+        }
         let appElement = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)

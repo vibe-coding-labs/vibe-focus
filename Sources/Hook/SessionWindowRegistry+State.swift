@@ -87,6 +87,8 @@ extension SessionWindowRegistry {
     }
 
     func purgeClosedWindows() {
+        // P-INST-75: 周期性清理耗时（@MainActor 每 60s Timer 触发 AppDelegate:74；cgWindowListAll + N 次 deleteWindowState SQLite 写；主线程周期性 I/O 可造成微卡顿）。
+        let startedAt = Date()
         let windows = cgWindowListAll()
         let activeWindowIDs = Set(windows.map { $0.windowID })
 
@@ -102,5 +104,6 @@ extension SessionWindowRegistry {
             }
             windowStates.removeValue(forKey: key)
         }
+        logOperationDuration("[SessionWindowRegistry] purgeClosedWindows finished", startedAt: startedAt, warnThresholdMs: 100, fields: ["purged": String(keysToRemove.count)])
     }
 }

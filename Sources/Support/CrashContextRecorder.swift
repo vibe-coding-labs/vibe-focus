@@ -44,6 +44,13 @@ final class CrashContextRecorder {
     private init() {}
 
     func bootstrap() {
+        // P-INST-80: 启动崩溃恢复初始化总耗时（启动路径一次性；含 loadState + fileExists/removeItem crashSnapshot + Data(contentsOf stateFileURL) read + atomic write + latestCrashReportURL 目录扫描 + String(contentsOf) crash report read + persistState 写；崩溃报告目录扫描 + IPS JSON parse 在崩溃后首次启动可能耗时；启动归因）。
+        let bootstrapStart = Date()
+        defer {
+            log("CrashContextRecorder.bootstrap finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: bootstrapStart))
+            ])
+        }
         log("CrashContextRecorder.bootstrap entry", level: .debug)
         let previous = loadState()
 

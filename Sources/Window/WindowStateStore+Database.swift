@@ -29,6 +29,12 @@ extension WindowStateStore {
     // MARK: - Database Setup
 
     func openDatabase() {
+        // P-INST-168: 数据库打开耗时（sqlite3_open 连接 + PRAGMA journal_mode=WAL prepare/step/finalize；启动路径单次调用，WAL 模式设置）。
+        let odStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: odStart)
+            if ms >= 5 { log("[WindowStateStore] openDatabase slow", level: .warn, fields: ["durationMs": String(ms)]) }
+        }
         if sqlite3_open(dbPath, &db) != SQLITE_OK {
             log("[WindowStateStore] failed to open database at \(dbPath)", level: .error)
             db = nil
@@ -45,6 +51,12 @@ extension WindowStateStore {
     }
 
     func runSchema(_ sql: String) {
+        // P-INST-169: schema 执行耗时（sqlite3_exec DDL + sqlite3_errmsg；createTables 启动建表/索引/迁移调用，每次 schema 语句一次）。
+        let rsStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: rsStart)
+            if ms >= 5 { log("[WindowStateStore] runSchema slow", level: .warn, fields: ["durationMs": String(ms)]) }
+        }
         guard let db else { return }
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
             let msg = String(cString: sqlite3_errmsg(db))
@@ -53,6 +65,12 @@ extension WindowStateStore {
     }
 
     func createTables() {
+        // P-INST-170: 建表/迁移编排耗时（5x runSchema P-INST-169 CREATE TABLE/INDEX/ALTER + columnExists P-INST-172 + migrateWindowsPKIfNeeded P-INST-171；启动路径单次调用，DDL 全量执行）。
+        let ctStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: ctStart)
+            if ms >= 5 { log("[WindowStateStore] createTables slow", level: .warn, fields: ["durationMs": String(ms)]) }
+        }
         // windows 宽表：统一会话绑定 + toggle 状态
         // PK = window_id (CGWindowNumber)，全局唯一标识窗口
         runSchema("""
@@ -113,6 +131,12 @@ extension WindowStateStore {
 
     /// 检测旧表 PK 是否为 (pid, tty)，如果是则重建为 (window_id)
     func migrateWindowsPKIfNeeded() {
+        // P-INST-171: windows 表 PK 迁移耗时（PRAGMA table_info prepare/step 读 PK 列 + 必要时 CREATE windows_v2 + INSERT SELECT + DROP/RENAME；createTables 启动调用，迁移路径含多步 DDL）。
+        let mpStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: mpStart)
+            if ms >= 5 { log("[WindowStateStore] migrateWindowsPKIfNeeded slow", level: .warn, fields: ["durationMs": String(ms)]) }
+        }
         guard let db else { return }
 
         var stmt: OpaquePointer?
@@ -214,6 +238,12 @@ extension WindowStateStore {
 
     func savePreference(key: String, value: String) {
         guard let db else { return }
+        // P-INST-69: 偏好写 SQLite 耗时（ScreenIndexPreferences didSet 触发；低频但为完整性覆盖所有 SQLite 公开方法；WAL 写通常 <1ms，≥5ms 异常）。
+        let spStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: spStart)
+            if ms >= 5 { log("[WindowStateStore] savePreference slow", level: .warn, fields: ["key": key, "durationMs": String(ms)]) }
+        }
         let sql = "INSERT OR REPLACE INTO preferences (key, value, updated_at) VALUES (?, ?, ?);"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -232,12 +262,20 @@ extension WindowStateStore {
 
     func loadPreference(key: String) -> String? {
         guard let db else { return nil }
+        // P-INST-69: 偏好读 SQLite 耗时（ScreenIndexPreferences init 触发，启动路径；WAL 读通常 <1ms，≥5ms 异常）。
+        let lpStart = Date()
+        var found = false
+        defer {
+            let ms = elapsedMilliseconds(since: lpStart)
+            if ms >= 5 { log("[WindowStateStore] loadPreference slow", level: .warn, fields: ["key": key, "found": String(found), "durationMs": String(ms)]) }
+        }
         let sql = "SELECT value FROM preferences WHERE key = ?;"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        found = true
         guard let text = sqlite3_column_text(stmt, 0) else { return nil }
         return String(cString: text)
     }
@@ -246,6 +284,12 @@ extension WindowStateStore {
 
     /// 检查表中是否存在指定列（用于安全的 migration）
     private func columnExists(table: String, column: String) -> Bool {
+        // P-INST-172: 列存在性检查耗时（PRAGMA table_info prepare/step/finalize 扫列名；createTables 迁移判断调用）。
+        let ceStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: ceStart)
+            if ms >= 5 { log("[WindowStateStore] columnExists slow", level: .warn, fields: ["table": table, "column": column, "durationMs": String(ms)]) }
+        }
         guard let db else { return false }
         var stmt: OpaquePointer?
         let sql = "PRAGMA table_info('\(table)');"

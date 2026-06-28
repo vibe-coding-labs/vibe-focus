@@ -14,10 +14,21 @@ enum NativeSpaceBridge {
     private typealias FnMoveWindowsToManagedSpace = @convention(c) (Int32, AnyObject, Int32, Int64) -> Int32
 
     private static let skyLightHandle: UnsafeMutableRawPointer? = {
-        dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+        // P-INST-228: SkyLight.framework 动态加载耗时（dlopen RTLD_LAZY 私有框架映射；首次访问 skyLightHandle 时单次执行，启动延迟归因；slow-op ≥50ms warn）。
+        let shStart = Date()
+        let handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+        let durMs = elapsedMilliseconds(since: shStart)
+        if durMs >= 50 { log("[NativeSpaceBridge] skyLightHandle dlopen slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        return handle
     }()
 
     private static func load<T>(_ name: String) -> T? {
+        // P-INST-229: SkyLight 符号动态查找耗时（dlsym 符号解析 + unsafeBitCast；fnMainConnectionID/fnMoveWindowsToManagedSpace 计算属性每次访问调用，首次解析后 OS 缓存；slow-op ≥5ms warn）。
+        let ldStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: ldStart)
+            if durMs >= 5 { log("[NativeSpaceBridge] load slow", level: .warn, fields: ["symbol": name, "durationMs": String(durMs)]) }
+        }
         guard let handle = skyLightHandle,
               let sym = dlsym(handle, name) else { return nil }
         return unsafeBitCast(sym, to: T.self)
@@ -34,6 +45,11 @@ enum NativeSpaceBridge {
     }
 
     static func logAvailability() {
+        // P-INST-230: SLS 符号可用性诊断耗时（访问 fnMainConnectionID/fnMoveWindowsToManagedSpace 计算属性触发 load P-INST-229 dlsym + 循环 log；诊断/启动调用）。
+        let laStart = Date()
+        defer {
+            log("[NativeSpaceBridge] logAvailability finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: laStart))])
+        }
         let symbols: [(String, Any?)] = [
             ("SLSMainConnectionID", fnMainConnectionID as Any),
             ("SLSMoveWindowsToManagedSpace", fnMoveWindowsToManagedSpace as Any),
@@ -57,6 +73,17 @@ enum NativeSpaceBridge {
     }
 
     static func moveWindow(_ windowID: CGWindowID, toSpaceID spaceID: Int64) -> Bool {
+        // P-INST-50: SLS moveWindow 耗时（SLSMoveWindowsToManagedSpace 调用；Strategy 2 fallback 预期权限不足失败，但 SLS 调用本身可能慢；moveWindow P-INST-43 总耗时的 fallback 归因）。
+        let slsStart = Date()
+        var slsOutcome = "unknown"
+        defer {
+            log("[NativeSpaceBridge] moveWindow finished", level: .debug, fields: [
+                "windowID": String(windowID),
+                "spaceID": String(spaceID),
+                "outcome": slsOutcome,
+                "durationMs": String(elapsedMilliseconds(since: slsStart))
+            ])
+        }
         let key = UInt32(windowID)
         if let failedAt = _moveWindowFailures[key] {
             let elapsed = Date().timeIntervalSince1970 - failedAt
@@ -80,6 +107,7 @@ enum NativeSpaceBridge {
         }
         let windowArray: NSArray = [NSNumber(value: UInt32(windowID))]
         let result = fn(cid, windowArray, 1, spaceID)
+        slsOutcome = result == 0 ? "sls_ok" : "sls_failed"
         if result != 0 {
             _moveWindowFailures[key] = Date().timeIntervalSince1970
         }
@@ -105,6 +133,8 @@ enum NativeSpaceBridge {
     /// steps > 0 = 向右切（Ctrl+Right），steps < 0 = 向左切（Ctrl+Left）
     static func focusSpace(steps: Int, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
+        // P-INST-12: focusSpace CGEvent 切换总耗时（含 N×80ms usleep，restore 的 focusSpaceMs 内部细分）。
+        let focusStart = Date()
         guard steps != 0 else { return true }
 
         let keyCode: CGKeyCode
@@ -144,7 +174,10 @@ enum NativeSpaceBridge {
 
         log(
             "[NativeSpaceBridge] focusSpace via CGEvent completed",
-            fields: ["op": op, "direction": direction, "steps": String(absSteps)]
+            fields: [
+                "op": op, "direction": direction, "steps": String(absSteps),
+                "durationMs": String(elapsedMilliseconds(since: focusStart))
+            ]
         )
         return true
     }
@@ -156,12 +189,18 @@ enum NativeSpaceBridge {
     /// 此时所有 space 切换命令（yabai + CGEvent Ctrl+Arrow）都会失败
     static func dismissMissionControl(operationID: String? = nil) {
         let op = operationID ?? "none"
+        // P-INST-20: dismissMissionControl 完成耗时（含 150ms usleep 等 Mission Control 动画）。
+        let dismissStart = Date()
         log("[NativeSpaceBridge] dismissing Mission Control via Escape key", fields: ["op": op])
         let escapeDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: true)
         escapeDown?.post(tap: .cghidEventTap)
         let escapeUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: false)
         escapeUp?.post(tap: .cghidEventTap)
         usleep(150_000) // 等待 Mission Control 动画结束
+        log("[NativeSpaceBridge] dismissMissionControl done", fields: [
+            "op": op,
+            "durationMs": String(elapsedMilliseconds(since: dismissStart))
+        ])
     }
 
     // MARK: - Window Drag (CGEvent Mouse Simulation)
@@ -182,6 +221,8 @@ enum NativeSpaceBridge {
         operationID: String? = nil
     ) -> Bool {
         let op = operationID ?? "none"
+        // P-INST-19: dragWindowToDisplay 总耗时（多步 CGEvent 鼠标拖拽 + usleep，约 310ms 固定成本）。
+        let dragStart = Date()
         let mainScreenHeight = NSScreen.screens.first?.frame.height ?? 0
 
         // windowFrame 是 AX/Quartz 坐标，不需要转换
@@ -245,13 +286,20 @@ enum NativeSpaceBridge {
             level: .info,
             fields: [
                 "op": op,
-                "targetScreenCocoa": "\(targetScreen.frame)"
+                "targetScreenCocoa": "\(targetScreen.frame)",
+                "durationMs": String(elapsedMilliseconds(since: dragStart))
             ]
         )
         return true
     }
 
     private static func postMouse(_ type: CGEventType, position: CGPoint) {
+        // P-INST-206: 合成鼠标事件注入耗时（CGEvent 构造 + event.post cghidEventTap HID 注入；NativeSpaceBridge space 拖拽恢复路径调用，post 可能阻塞 WindowServer；slow-op ≥30ms warn）。
+        let pmStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: pmStart)
+            if durMs >= 30 { log("[NativeSpaceBridge] postMouse slow", level: .warn, fields: ["type": String(type.rawValue), "durationMs": String(durMs)]) }
+        }
         guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
                                   mouseCursorPosition: position, mouseButton: .left) else { return }
         event.post(tap: .cghidEventTap)

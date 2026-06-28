@@ -28,6 +28,12 @@ final class AuditLogger {
     // MARK: - Table Setup
 
     private func createTable() {
+        // P-INST-199: audit 表建表耗时（sqlite3_exec CREATE TABLE + 2x CREATE INDEX；AuditLogger init 启动单次调用）。
+        let atStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: atStart)
+            if durMs >= 5 { log("[AuditLogger] createTable slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         guard let db else { return }
         let sql = """
             CREATE TABLE IF NOT EXISTS window_audit_log (
@@ -64,6 +70,11 @@ final class AuditLogger {
 
     /// 调度异步刷新（带防抖）
     private func scheduleFlush() {
+        // P-INST-258: 审计日志批量写防抖调度入口（DispatchQueue.main.asyncAfter 调度 flushPendingEvents P-INST-66 SQLite 批量写；record() 每次事件追加后调用，实际 flush 已覆盖，此处归因调度入口/防抖频率）。
+        let sfStart = Date()
+        defer {
+            log("[AuditLogger] scheduleFlush finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: sfStart))])
+        }
         guard !flushScheduled else { return }
         flushScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + flushDebounceInterval) { [weak self] in
@@ -76,9 +87,17 @@ final class AuditLogger {
     /// internal 以便测试直接调用（@testable import 可见）
     func flushPendingEvents() {
         guard !pendingEvents.isEmpty else { return }
+        // P-INST-66: AuditLogger 批量 SQLite 写耗时（异步防抖后执行，N 条 insertEventSync；record() 本身只内存 append 不阻塞，此埋点归因批量写对主线程的占用）。
+        let flushStart = Date()
         let events = pendingEvents
         pendingEvents = []
-
+        let flushed = events.count
+        defer {
+            log("[AuditLogger] flushPendingEvents finished", level: .debug, fields: [
+                "events": String(flushed),
+                "durationMs": String(elapsedMilliseconds(since: flushStart))
+            ])
+        }
         guard let db else { return }
         for event in events {
             insertEventSync(
@@ -101,6 +120,12 @@ final class AuditLogger {
         sessionID: String?,
         details: [String: String]
     ) {
+        // P-INST-200: audit 事件同步插入耗时（sqlite3_prepare/bind_text/bind_int64/bind_double/step/finalize INSERT；flushPendingEvents P-INST-66 批量调用，每条事件一次）。
+        let iesStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: iesStart)
+            if durMs >= 5 { log("[AuditLogger] insertEventSync slow", level: .warn, fields: ["eventType": eventType, "durationMs": String(durMs)]) }
+        }
         var stmt: OpaquePointer?
         let sql = """
             INSERT INTO window_audit_log (event_type, window_id, pid, session_id, details, created_at)
@@ -150,6 +175,12 @@ final class AuditLogger {
     // MARK: - Cleanup
 
     func trimOldRecords() {
+        // P-INST-201: audit 旧记录清理耗时（sqlite3_prepare/bind_int/step DELETE NOT IN 子查询；flushPendingEvents P-INST-66 后周期调用，保留 maxRecords 条）。
+        let torStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: torStart)
+            if durMs >= 5 { log("[AuditLogger] trimOldRecords slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         guard let db else { return }
         var stmt: OpaquePointer?
         let sql = """

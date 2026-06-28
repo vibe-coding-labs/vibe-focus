@@ -17,6 +17,11 @@ class TitleEditorService {
     // MARK: - Public API
 
     func editTitle() {
+        // P-INST-218: 标题编辑入口端到端耗时（NSWorkspace.frontmostApplication + WindowManager.focusedWindow P-INST-52 + title AX + NSApp.activate；用户 Ctrl+T 手动触发，非 toggle 热路径）。
+        let etStart = Date()
+        defer {
+            log("[TitleEditorService] editTitle finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: etStart))])
+        }
         guard !isEditing else {
             log("[TitleEditorService] editTitle: already editing, ignoring")
             return
@@ -111,6 +116,12 @@ class TitleEditorService {
     // MARK: - Auto Title
 
     func autoSetTitle(cwd: String?, pid: pid_t, bundleID: String, window: AXUIElement) {
+        // P-INST-250: autoSetTitle 编排耗时（windowHandle AX 查询 + userRenamedWindowIDs 检查 + applyTitle P-INST-40 三路 AX/AppleScript/TTY 写；SessionStart hook 路径调用，归因 title 阶段延迟；slow-op ≥50ms warn）。
+        let astStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: astStart)
+            if durMs >= 50 { log("[TitleEditorService] autoSetTitle slow", level: .warn, fields: ["pid": String(pid), "bundleID": bundleID, "durationMs": String(durMs)]) }
+        }
         if let windowID = WindowManager.shared.windowHandle(for: window),
            userRenamedWindowIDs.contains(windowID) {
             log("[TitleEditorService] autoSetTitle: skipping, user has manually renamed this window", fields: ["windowID": String(windowID)])
@@ -141,6 +152,8 @@ class TitleEditorService {
     // MARK: - Title Application
 
     private func applyTitle(_ newTitle: String, to window: AXUIElement, pid: pid_t, bundleID: String) {
+        // P-INST-40: applyTitle 耗时（AX write + AppleScript fork + TTY fork 三路写；SessionStart autoSetTitle 隐含阻塞，归因 handleSessionStart 的 title 阶段）。
+        let applyTitleStart = Date()
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             log("[TitleEditorService] applyTitle: empty title, skipping")
@@ -171,12 +184,23 @@ class TitleEditorService {
                 "axSuccess": String(axSuccess),
                 "ttySuccess": String(ttySuccess),
                 "scriptSuccess": String(scriptSuccess),
-                "bundleID": bundleID
+                "bundleID": bundleID,
+                "durationMs": String(elapsedMilliseconds(since: applyTitleStart))
             ]
         )
     }
 
     private func applyViaAppleScript(_ title: String, bundleID: String) -> Bool {
+        // P-INST-48: AppleScript title 写入耗时（NSAppleScript fork，可阻塞 100-500ms；Terminal 还有 diagnostic readback 二次 fork；applyTitle P-INST-40 总耗时无法区分哪一路，此埋点归因 AppleScript 路）。
+        let appleScriptStart = Date()
+        var scriptOutcome = "default_skip"
+        defer {
+            log("[TitleEditorService] applyViaAppleScript finished", level: .debug, fields: [
+                "bundleID": bundleID,
+                "outcome": scriptOutcome,
+                "durationMs": String(elapsedMilliseconds(since: appleScriptStart))
+            ])
+        }
         let script: String
         switch bundleID {
         case "com.apple.Terminal":
@@ -201,6 +225,7 @@ class TitleEditorService {
                 .replacingOccurrences(of: "\"", with: "\\\"")
             script = "tell application \"iTerm2\" to set name of current session of current window to \"\(escaped)\""
         default:
+            scriptOutcome = "unsupported_bundle"
             return false
         }
 
@@ -221,12 +246,14 @@ class TitleEditorService {
                 level: .warn,
                 fields: ["errorMsg": errorMsg, "errorNum": String(errorNum)]
             )
+            scriptOutcome = "error_\(errorNum)"
             if errorNum == -1743 {
                 showAutomationPermissionAlert(bundleID: bundleID)
             }
             return false
         }
 
+        scriptOutcome = "success"
         log("[TitleEditorService] applyViaAppleScript: success")
 
         // Diagnostic: read back Terminal.app title state after setting
@@ -261,7 +288,17 @@ class TitleEditorService {
     }
 
     private func applyViaAX(_ title: String, to window: AXUIElement) -> Bool {
+        // P-INST-48: AX title 写入耗时（isAttributeSettable + AXUIElementSetAttributeValue；applyTitle P-INST-40 总耗时归因 AX 路）。
+        let axTitleStart = Date()
+        var axOutcome = "unknown"
+        defer {
+            log("[TitleEditorService] applyViaAX finished", level: .debug, fields: [
+                "outcome": axOutcome,
+                "durationMs": String(elapsedMilliseconds(since: axTitleStart))
+            ])
+        }
         guard WindowManager.shared.isAttributeSettable(window, attribute: kAXTitleAttribute as String) else {
+            axOutcome = "not_settable"
             log(
                 "[TitleEditorService] applyViaAX: kAXTitleAttribute not settable",
                 level: .debug
@@ -272,16 +309,21 @@ class TitleEditorService {
         let result = AXUIElementSetAttributeValue(window, kAXTitleAttribute as CFString, title as CFTypeRef)
         let success = result == .success
         if !success {
+            axOutcome = "set_failed_\(result.rawValue)"
             log(
                 "[TitleEditorService] applyViaAX: AXUIElementSetAttributeValue failed",
                 level: .warn,
                 fields: ["axStatus": String(result.rawValue)]
             )
+        } else {
+            axOutcome = "success"
         }
         return success
     }
 
     private func showAutomationPermissionAlert(bundleID: String) {
+        // P-INST-192: Automation 权限弹窗耗时（NSAlert.runModal 模态阻塞主线程 + 用户确认后 NSWorkspace.shared.open 启动 System Settings；applyTitle 检测到 Automation 权限缺失调用，runModal 阻塞直到用户操作）。
+        let sapaStart = Date()
         let terminalName: String
         switch bundleID {
         case "com.googlecode.iterm2": terminalName = "iTerm2"
@@ -303,6 +345,8 @@ class TitleEditorService {
                     NSWorkspace.shared.open(url)
                 }
             }
+            let durMs = elapsedMilliseconds(since: sapaStart)
+            if durMs >= 50 { log("[TitleEditor] showAutomationPermissionAlert slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
     }
 }

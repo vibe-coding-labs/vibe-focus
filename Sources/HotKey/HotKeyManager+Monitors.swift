@@ -7,6 +7,13 @@ import Foundation
 extension HotKeyManager {
 
     func installFallbackMonitors() {
+        // P-INST-141: 回退事件 monitor 安装耗时（NSEvent.addGlobalMonitorForEvents + addLocalMonitorForEvents 系统级 keyDown 监听注册；CGEvent tap 不可用时回退，reenableEventTap P-INST-122 调用）。
+        let ifmStart = Date()
+        defer {
+            log("[HotKey] installFallbackMonitors finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: ifmStart))
+            ])
+        }
         log(
             "[HotKey] installFallbackMonitors called",
             level: .debug,
@@ -32,6 +39,13 @@ extension HotKeyManager {
     }
 
     func removeFallbackMonitors() {
+        // P-INST-143: 回退事件 monitor 移除耗时（NSEvent.removeMonitor x2 注销 global + local keyDown 监听；reenableEventTap 切换到 CGEvent tap 后调用，停止 fallback 监听）。
+        let rfmStart = Date()
+        defer {
+            log("[HotKey] removeFallbackMonitors finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: rfmStart))
+            ])
+        }
         if let globalMonitor {
             NSEvent.removeMonitor(globalMonitor)
             self.globalMonitor = nil
@@ -97,6 +111,12 @@ extension HotKeyManager {
     }
 
     func handleFallbackEvent(_ event: NSEvent, source: String) -> Bool {
+        // P-INST-252: 热键 fallback 事件处理耗时（NSEvent keyCode/modifierFlags 解析 + currentHotKey.matches + triggerToggleIfNeeded 或 TitleEditor Ctrl+T DispatchQueue 派发；NSEvent monitor fallback 路径，Carbon event tap 不可用时触发；slow-op ≥50ms warn）。
+        let hfeStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: hfeStart)
+            if durMs >= 50 { log("[HotKey] handleFallbackEvent slow", level: .warn, fields: ["source": source, "durationMs": String(durMs)]) }
+        }
         if event.isARepeat {
             return false
         }

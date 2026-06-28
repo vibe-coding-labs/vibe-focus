@@ -44,7 +44,12 @@ extension SettingsView {
                     HStack(spacing: 12) {
                         Button("查看完整指南") {
                             if let url = URL(string: "https://github.com/CC11001100/vibe-focus/blob/main/docs/yabai-guide/README.md") {
+                                // P-INST-109: 用户点击「查看完整指南」打开外部 URL 耗时（NSWorkspace.shared.open 启动默认浏览器；async 返回但启动配置可阻塞调用线程）。
+                                let og1Start = Date()
                                 NSWorkspace.shared.open(url)
+                                log("[Settings] openGuideURL finished", level: .debug, fields: [
+                                    "durationMs": String(elapsedMilliseconds(since: og1Start))
+                                ])
                             }
                         }
                         .buttonStyle(.borderedProminent)
@@ -75,7 +80,12 @@ extension SettingsView {
 
                     Button("打开 yabai 文档") {
                         if let url = URL(string: "https://github.com/koekeishiya/yabai/wiki/Configuration#macos-version-compatibility") {
+                            // P-INST-110: 用户点击「打开 yabai 文档」打开外部 URL 耗时（NSWorkspace.shared.open 启动默认浏览器；async 返回但启动配置可阻塞）。
+                            let oy1Start = Date()
                             NSWorkspace.shared.open(url)
+                            log("[Settings] openYabaiDocsURL finished", level: .debug, fields: [
+                                "durationMs": String(elapsedMilliseconds(since: oy1Start))
+                            ])
                         }
                     }
                     .buttonStyle(.bordered)

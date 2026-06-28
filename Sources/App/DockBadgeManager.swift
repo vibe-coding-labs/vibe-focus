@@ -20,6 +20,13 @@ final class DockBadgeManager {
     }
 
     func showBadge(targetBundleID: String? = nil, targetAppName: String? = nil) {
+        // P-INST-111: dock badge 显示耗时（NSApp.dockTile.badgeLabel 设置 + bounceTerminalApp P-INST-112 进程枚举激活；hook window-move 路径 HookEventHandler+WindowMove+Execute:227 调用）。
+        let sbStart = Date()
+        defer {
+            log("[DockBadgeManager] showBadge finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: sbStart))
+            ])
+        }
         pendingCount += 1
         NSApp.dockTile.badgeLabel = String(pendingCount)
 
@@ -44,6 +51,13 @@ final class DockBadgeManager {
     }
 
     private func bounceTerminalApp(bundleID: String?, appName: String?) {
+        // P-INST-112: 终端 app 激活/弹跳耗时（NSRunningApplication.runningApplications 进程枚举 by bundleID 或 NSWorkspace.shared.runningApplications 全枚举 by name + app.activate；showBadge P-INST-111 子阶段，hook window-move 路径；进程枚举可阻塞）。
+        let btStart = Date()
+        defer {
+            log("[DockBadgeManager] bounceTerminalApp finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: btStart))
+            ])
+        }
         if let bid = bundleID,
            let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first {
             app.activate(options: .activateIgnoringOtherApps)

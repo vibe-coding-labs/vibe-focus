@@ -6,6 +6,12 @@ extension WindowStateStore {
 
     /// 原子性保存 toggle record 到 windows 表
     func saveToggleRecord(_ record: ToggleRecord) {
+        // P-INST-202: toggle record 保存耗时（UPDATE prepare/bind_double x12+ bind_int64/step + 必要时 INSERT upsert；ToggleEngine.save/restore 调用，hook+toggle 热路径 SQLite 写，WAL 通常 <1ms ≥5ms 异常）。
+        let strStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: strStart)
+            if durMs >= 5 { log("[WindowStateStore] saveToggleRecord slow", level: .warn, fields: ["windowID": String(record.windowID), "durationMs": String(durMs)]) }
+        }
         guard let db else {
             log("saveToggleRecord: db is nil", level: .error)
             return
@@ -153,6 +159,12 @@ extension WindowStateStore {
 
     /// 按 windowID 读取 toggle record
     func loadToggleRecord(windowID: UInt32) -> ToggleRecord? {
+        // P-INST-203: toggle record 按 windowID 读取耗时（SELECT prepare/bind_int64/step + parseToggleRecord P-INST-156；ToggleEngine.load 调用，shouldRestore 决策 SQLite 读，WAL 通常 <1ms ≥5ms 异常。P-INST-18 在 ToggleEngine.load 编排层）。
+        let ltrStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: ltrStart)
+            if durMs >= 5 { log("[WindowStateStore] loadToggleRecord slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(durMs)]) }
+        }
         guard let db else { return nil }
         var stmt: OpaquePointer?
         let sql = """
@@ -176,6 +188,13 @@ extension WindowStateStore {
     /// 按 PID 读取最近的 toggle record（CGWindowNumber 变化时的 fallback）
     func loadToggleRecordByPID(pid: Int32) -> ToggleRecord? {
         guard let db else { return nil }
+        // P-INST-67: PID fallback 读 SQLite 耗时（toggle 决策 fallback 路径；P-INST-18 仅覆盖 loadToggleRecord(windowID:)；WAL 读通常 <1ms，≥5ms 异常信号）。
+        let lbpStart = Date()
+        var found = false
+        defer {
+            let ms = elapsedMilliseconds(since: lbpStart)
+            if ms >= 5 { log("[WindowStateStore] loadToggleRecordByPID slow", level: .warn, fields: ["pid": String(pid), "found": String(found), "durationMs": String(ms)]) }
+        }
         var stmt: OpaquePointer?
         let sql = """
             SELECT window_id, pid, bundle_id, app_name,
@@ -193,6 +212,7 @@ extension WindowStateStore {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int(stmt, 1, pid)
         guard sqlite3_step(stmt) == SQLITE_ROW, let s = stmt else { return nil }
+        found = true
 
         return parseToggleRecord(s)
     }
@@ -200,6 +220,12 @@ extension WindowStateStore {
     /// 清除指定窗口的 toggle state
     func clearToggleRecord(windowID: UInt32) {
         guard let db else { return }
+        // P-INST-67: clear SQLite 写耗时（restore 后清除 toggle state，UPDATE 操作；WAL 写通常 <1ms，≥5ms 异常）。
+        let clrStart = Date()
+        defer {
+            let ms = elapsedMilliseconds(since: clrStart)
+            if ms >= 5 { log("[WindowStateStore] clearToggleRecord slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(ms)]) }
+        }
         let sql = """
             UPDATE windows SET
                 orig_x = NULL, orig_y = NULL, orig_w = NULL, orig_h = NULL,

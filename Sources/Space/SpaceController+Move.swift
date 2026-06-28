@@ -6,7 +6,20 @@ extension SpaceController {
 
     func moveWindow(_ windowID: UInt32, toSpace space: SpaceIdentifier, focus: Bool, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) -> Bool {
         let op = operationID ?? "none"
+        // P-INST-43: moveWindow 总耗时（Space 跨工作区移动热路径；queryWindow + runYabaiVariants + 可能 focusWindow；底层 runYabaiVariants P-INST-27 已覆盖，此埋点补顶层编排 + 各 skip/abort 路径）。
+        let mwStart = Date()
+        var moveSuccess = false
+        var moveTarget = "space_\(space.yabaiIndex.map { String($0) } ?? "?")"
+        defer {
+            log("[SpaceController] moveWindow finished", fields: [
+                "op": op, "windowID": String(windowID),
+                "target": moveTarget, "focus": String(focus),
+                "success": String(moveSuccess),
+                "durationMs": String(elapsedMilliseconds(since: mwStart))
+            ])
+        }
         guard let spaceIndex = space.yabaiIndex else {
+            moveTarget = "unsupported_space"
             log("[SpaceController] moveWindow: unsupported space identifier", level: .warn, fields: ["op": op])
             return false
         }
@@ -39,6 +52,7 @@ extension SpaceController {
                 operationID: op
             )
             if result.success {
+                moveSuccess = true
                 if focus { _ = focusWindow(windowID, operationID: op, knownWindowInfo: windowInfo) }
                 return true
             }
@@ -62,12 +76,15 @@ extension SpaceController {
         let op = operationID ?? "none"
         let startedAt = Date()
         var outcome = "unknown"
+        // P-INST-13: yabai toggle float fork 耗时（runYabai logSuccess=false，fast<180ms 不记，此处补 forkMs）。
+        var forkMs = 0
         // defer 汇总：所有退出路径（含各 skip）都记录耗时，消除 setWindowFloat 耗时盲区。
         defer {
             log("[SpaceController] setWindowFloat", fields: [
                 "op": op,
                 "windowID": String(windowID),
                 "outcome": outcome,
+                "forkMs": String(forkMs),
                 "durationMs": String(elapsedMilliseconds(since: startedAt))
             ])
         }
@@ -100,22 +117,35 @@ extension SpaceController {
             return
         }
 
+        let floatForkStart = Date()
         _ = runYabai(
             arguments: ["-m", "window", "\(windowID)", "--toggle", "float"],
             operation: "setWindowFloat",
             operationID: op
         )
+        forkMs = elapsedMilliseconds(since: floatForkStart)
         outcome = "toggled"
     }
 
     func focusWindow(_ windowID: UInt32, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) -> Bool {
         let op = operationID ?? "none"
+        // P-INST-53: focusWindow 总耗时（queryWindow P-INST-6 + runYabaiVariants P-INST-27 + Carbon fallback；顶层归因，含各 abort/success 路径）。
+        let fcStart = Date()
+        var fcOutcome = "unknown"
+        defer {
+            log("[SpaceController] focusWindow finished", fields: [
+                "op": op, "windowID": String(windowID),
+                "outcome": fcOutcome,
+                "durationMs": String(elapsedMilliseconds(since: fcStart))
+            ])
+        }
         refreshAvailabilityIfNeeded()
-        guard isEnabled else { return false }
+        guard isEnabled else { fcOutcome = "disabled"; return false }
 
         // 使用传入的窗口信息或查询缓存
         let info = knownWindowInfo ?? queryWindow(windowID: windowID)
         guard let info else {
+            fcOutcome = "no_window"
             log("[SpaceController] focusWindow aborted: window does not exist", level: .warn, fields: [
                 "op": op, "windowID": String(windowID)
             ])
@@ -125,6 +155,7 @@ extension SpaceController {
         // yabai 无法管理此窗口时，用 Carbon API 直接 focus
         if !info.isManageableByYabai {
             let carbonResult = WindowManager.shared.focusWindowByCGWindowID(windowID)
+            fcOutcome = carbonResult ? "carbon_ok" : "carbon_failed"
             log("[SpaceController] focusWindow via Carbon fallback", level: carbonResult ? .info : .warn, fields: [
                 "op": op, "windowID": String(windowID), "result": String(carbonResult)
             ])
@@ -136,10 +167,11 @@ extension SpaceController {
             operation: "focusWindow(\(windowID))",
             operationID: op
         )
-        if result.success { return true }
+        if result.success { fcOutcome = "yabai_ok"; return true }
         // yabai focus 失败时也尝试 Carbon fallback
         let carbonResult = WindowManager.shared.focusWindowByCGWindowID(windowID)
-        if carbonResult { return true }
+        if carbonResult { fcOutcome = "carbon_fallback_ok"; return true }
+        fcOutcome = "all_failed"
         markOperationError(from: result.failure, fallback: "Failed to focus window \(windowID)", operationID: op)
         return false
     }
