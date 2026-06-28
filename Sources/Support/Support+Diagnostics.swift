@@ -4,6 +4,14 @@ import Foundation
 
 // 诊断日志（尽量详细）
 func logDiagnostics(_ context: String) {
+    // P-INST-62: logDiagnostics 总耗时（bundle/process/AX 信息收集 + logCodesign fork + logSigningCertificates fork；诊断路径，启动 + 手动触发；归因诊断 fork 累积）。
+    let diagStart = Date()
+    defer {
+        log("[Diagnostics] logDiagnostics finished", level: .debug, fields: [
+            "context": context,
+            "durationMs": String(elapsedMilliseconds(since: diagStart))
+        ])
+    }
     let bundle = Bundle.main
     let bundleID = bundle.bundleIdentifier ?? "nil"
     let bundlePath = bundle.bundleURL.path
@@ -70,7 +78,11 @@ private func logCodesign(targetPath: String, label: String) {
 }
 
 func runProcessForDiagnostics(executable: String, arguments: [String]) -> (stdout: String, stderr: String, exitCode: Int32)? {
+    // P-INST-196: 诊断进程执行耗时（委托 ShellRunner.run fork P-INST-49；findAppBundlePaths mdfind / logSigningCertificates security 等诊断路径调用，≥50ms warn 归因调用点）。
+    let rpdStart = Date()
     guard let result = ShellRunner.run(executable: executable, arguments: arguments) else { return nil }
+    let durMs = elapsedMilliseconds(since: rpdStart)
+    if durMs >= 50 { log("[Diagnostics] runProcessForDiagnostics slow", level: .warn, fields: ["executable": executable, "durationMs": String(durMs)]) }
     return (stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode)
 }
 

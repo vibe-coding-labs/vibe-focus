@@ -18,7 +18,13 @@ final class ToggleEngine: ToggleRecordStore {
     private var store: WindowStateStore { WindowStateStore.shared }
 
     var displayCount: Int {
-        max(NSScreen.screens.count, 1)
+        // P-INST-267: 显示器数量计算属性（NSScreen.screens.count 读 + max(...,1) 保证 ≥1；toggle 入口判断单屏/多屏调用，NSScreen.screens 可能阻塞 WindowServer；slow-op ≥30ms warn）。
+        let dcStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: dcStart)
+            if durMs >= 30 { log("[ToggleEngine] displayCount slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
+        return max(NSScreen.screens.count, 1)
     }
 
     // MARK: - Save Validation (extracted for testability)
@@ -47,6 +53,11 @@ final class ToggleEngine: ToggleRecordStore {
         targetDisplay: Int,
         sessionID: String?
     ) {
+        // P-INST-231: toggle record 保存编排端到端耗时（NSScreen.screens 主屏验证 + shouldRejectSave + ToggleRecord 构造 + store.saveToggleRecord SQLite 写 P-INST-17/P-INST-202；toggle 热路径每次调用，区分 NSScreen/构造 vs SQLite dbMs）。
+        let saveTotalStart = Date()
+        defer {
+            log("[ToggleEngine] save finished", level: .debug, fields: ["windowID": String(windowID), "durationMs": String(elapsedMilliseconds(since: saveTotalStart))])
+        }
         // 验证 origFrame 不在主屏上 — 如果 origFrame 在主屏，说明数据异常
         let mainScreen = NSScreen.screens.first { $0.frame.origin == .zero }
         if Self.shouldRejectSave(origFrame: origFrame, mainScreenFrame: mainScreen?.frame) {
@@ -80,7 +91,10 @@ final class ToggleEngine: ToggleRecordStore {
             sessionID: sessionID
         )
 
+        // P-INST-17: save SQLite 写耗时（saveMs 外部已记 moveWindowToMainScreen 的 saveMs 总耗时，此处拆 store.saveToggleRecord 的 SQLite 成本）。
+        let saveDbStart = Date()
         store.saveToggleRecord(record)
+        let saveDbMs = elapsedMilliseconds(since: saveDbStart)
 
         log("ToggleEngine.save", level: .info, fields: [
             "windowID": String(windowID),
@@ -89,7 +103,8 @@ final class ToggleEngine: ToggleRecordStore {
             "sourceYabaiDisp": String(describing: sourceYabaiDisp.yabaiIndex ?? 0),
             "sourceDispSpace": String(sourceDispSpace),
             "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-            "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))"
+            "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))",
+            "dbMs": String(saveDbMs)
         ])
     }
 
@@ -97,7 +112,15 @@ final class ToggleEngine: ToggleRecordStore {
 
     /// 按 windowID 读取 toggle record
     func load(windowID: UInt32) -> ToggleRecord? {
-        return store.loadToggleRecord(windowID: windowID)
+        // P-INST-18: load SQLite 读耗时（shouldRestore decisionMs 内部的 SQLite 成本，应 <2ms）。
+        let loadStart = Date()
+        let record = store.loadToggleRecord(windowID: windowID)
+        log("[ToggleEngine] load", level: .debug, fields: [
+            "windowID": String(windowID),
+            "dbMs": String(elapsedMilliseconds(since: loadStart)),
+            "found": String(record != nil)
+        ])
+        return record
     }
 
     /// 按 PID 读取最近的 toggle record（CGWindowNumber 变化时的 fallback）
@@ -123,6 +146,12 @@ final class ToggleEngine: ToggleRecordStore {
         bundleIdentifier: String?,
         appName: String?
     ) -> ToggleRecord? {
+        // P-INST-211: 合成 toggle record 创建耗时（NSScreen.screens x2 枚举显示器 + CoordinateKit.quartzVisibleFrame x2；UserPromptSubmit UPS fallback 路径，窗口在主屏无历史记录时调用；NSScreen.screens 可能阻塞；slow-op ≥30ms warn）。
+        let cstrStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: cstrStart)
+            if durMs >= 30 { log("[ToggleEngine] createSyntheticToggleRecord slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(durMs)]) }
+        }
         guard let secondaryScreen = NSScreen.screens.first(where: { $0.frame.origin != .zero }) else {
             log("[ToggleEngine] createSyntheticToggleRecord: no secondary screen found", level: .warn, fields: [
                 "windowID": String(windowID),

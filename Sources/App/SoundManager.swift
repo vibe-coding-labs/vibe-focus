@@ -59,6 +59,12 @@ final class SoundManager: ObservableObject {
 
     @Published private(set) var preferences: SoundPreferences {
         didSet {
+            // P-INST-253: 声音偏好变更触发持久化入口（savePreferences P-INST-208 UserDefaults+JSONEncoder 写；偏好 UI 变更/apply 路径触发 didSet，归因持久化触发频率；slow-op ≥5ms warn）。
+            let dslStart = Date()
+            defer {
+                let durMs = elapsedMilliseconds(since: dslStart)
+                if durMs >= 5 { log("[SoundManager] preferences didSet→save slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+            }
             savePreferences()
         }
     }
@@ -72,6 +78,13 @@ final class SoundManager: ObservableObject {
     // MARK: - Public API
 
     func playCompletionSound() {
+        // P-INST-99: 完成音效播放耗时（resolveSound 加载 NSSound 音频文件 + sound.play；hook window-move 路径 HookEventHandler+WindowMove+Execute:217 调用，属热路径；play 本身异步但音频文件加载/解码在调用线程可阻塞）。
+        let pcsStart = Date()
+        defer {
+            log("[SoundManager] playCompletionSound finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: pcsStart))
+            ])
+        }
         guard preferences.soundType != .none else {
             log("[SoundManager] sound type is none, skipping")
             return
@@ -101,6 +114,14 @@ final class SoundManager: ObservableObject {
     }
 
     func previewSound(_ soundType: CompletionSoundType, customPath: String? = nil, volume: Float) {
+        // P-INST-160: 音效预览播放耗时（resolveSound 加载 NSSound P-INST-99 子路径 + sound.play 音频设备开声；设置 UI 试听按钮调用，文件加载/解码在调用线程可阻塞）。
+        let psStart = Date()
+        defer {
+            log("[SoundManager] previewSound finished", level: .debug, fields: [
+                "soundType": soundType.rawValue,
+                "durationMs": String(elapsedMilliseconds(since: psStart))
+            ])
+        }
         let sound = resolveSound(soundType: soundType, customPath: customPath)
         guard let sound else {
             log("[SoundManager] preview failed to resolve sound", level: .warn, fields: [
@@ -124,6 +145,13 @@ final class SoundManager: ObservableObject {
     }
 
     func stopPlayback() {
+        // P-INST-161: 音效停止耗时（currentSound.stop 停止音频设备 + 清引用；设置 UI 停止按钮调用）。
+        let spStart = Date()
+        defer {
+            log("[SoundManager] stopPlayback finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: spStart))
+            ])
+        }
         currentSound?.stop()
         currentSound = nil
     }
@@ -133,6 +161,14 @@ final class SoundManager: ObservableObject {
     }
 
     func updateCustomSoundPath(_ path: String?) {
+        // P-INST-162: 自定义音频路径更新耗时（preferences.customSoundPath didSet 持久化写；设置 UI 选择/清除文件按钮调用，触发偏好持久化）。
+        let ucspStart = Date()
+        defer {
+            log("[SoundManager] updateCustomSoundPath finished", level: .debug, fields: [
+                "hasPath": String(path != nil),
+                "durationMs": String(elapsedMilliseconds(since: ucspStart))
+            ])
+        }
         preferences.customSoundPath = path
     }
 
@@ -146,7 +182,10 @@ final class SoundManager: ObservableObject {
         soundType: CompletionSoundType? = nil,
         customPath: String? = nil
     ) -> NSSound? {
-        let type = soundType ?? preferences.soundType
+        // P-INST-163: 音效资源解析耗时（NSSound(named:) 系统音 / bundledSound P-INST-164 Bundle 查找 / NSSound(contentsOfFile:) 自定义文件加载解码；playCompletionSound P-INST-99 + previewSound P-INST-160 子阶段，音频解码在调用线程可阻塞）。
+        let rsStart = Date()
+        let result: NSSound? = {
+            let type = soundType ?? preferences.soundType
         let path = customPath ?? preferences.customSoundPath
 
         switch type {
@@ -169,9 +208,22 @@ final class SoundManager: ObservableObject {
             }
             return NSSound(contentsOfFile: path, byReference: false)
         }
+        }()
+        log("[SoundManager] resolveSound finished", level: .debug, fields: [
+            "durationMs": String(elapsedMilliseconds(since: rsStart))
+        ])
+        return result
     }
 
     private func bundledSound(named name: String) -> NSSound? {
+        // P-INST-164: 内置音频资源查找耗时（Bundle.main.url forResource 多扩展名 m4a/wav/mp3 × 2 路径查 + NSSound(contentsOf:byReference:) 加载解码；resolveSound P-INST-163 builtin 分支调用）。
+        let bsStart = Date()
+        defer {
+            log("[SoundManager] bundledSound finished", level: .debug, fields: [
+                "name": name,
+                "durationMs": String(elapsedMilliseconds(since: bsStart))
+            ])
+        }
         let extensions = ["m4a", "wav", "mp3"]
         for ext in extensions {
             if let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: "Sounds") {
@@ -190,6 +242,12 @@ final class SoundManager: ObservableObject {
     // MARK: - Persistence
 
     private func savePreferences() {
+        // P-INST-186: 音效偏好持久化耗时（JSONEncoder.encode + UserDefaults.standard.set CFPreferences 同步写；SoundPreferences didSet 触发，设置 UI 改动写）。
+        let spStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: spStart)
+            if durMs >= 5 { log("[SoundManager] savePreferences slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         do {
             let data = try JSONEncoder().encode(preferences)
             UserDefaults.standard.set(data, forKey: Self.preferencesKey)
@@ -201,6 +259,12 @@ final class SoundManager: ObservableObject {
     }
 
     private static func loadPreferences() -> SoundPreferences {
+        // P-INST-208: 声音偏好加载耗时（UserDefaults.standard.data CFPreferences 读 + JSONDecoder.decode；声音偏好变更 + 启动加载调用；slow-op ≥5ms warn）。
+        let lprStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: lprStart)
+            if durMs >= 5 { log("[SoundManager] loadPreferences slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         guard let data = UserDefaults.standard.data(forKey: preferencesKey) else {
             return .default
         }

@@ -5,6 +5,7 @@ import Foundation
 extension WindowManager {
 
     func restore(operationID: String? = nil, triggerSource: String = "unknown") {
+        // P-INST-116: restore 委托路径总耗时（frontmostApplication + focusedWindow AX P-INST-52 + windowHandle AX + shouldRestore 决策 P-INST-76 + 委托 ToggleEngine.restore P-INST-79；memory feedback_single_restore_path：WindowManager.restore 做前置验证后委托，执行逻辑只在 ToggleEngine.restore；startedAt/finalDurationMs 已存在，此标记补全归因）。
         let op = operationID ?? makeOperationID(prefix: "restore")
         let startedAt = Date()
         // 注意：updateCrashSnapshotFromRuntime、logRuntimeStateSnapshot、AX 权限检查、

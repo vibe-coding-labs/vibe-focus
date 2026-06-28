@@ -65,6 +65,11 @@ struct ScreenIndexPreferences: Codable {
 
     @MainActor
     static func load() -> ScreenIndexPreferences {
+        // P-INST-205: 屏幕索引偏好加载端到端耗时（loadFromSQLite P-INST-101 + CFPreferencesCopyAppValue + UserDefaults.standard.string/data + JSONDecoder.decode + legacy migration save；启动 + overlay 刷新调用，多源 fallback 链）。
+        let lpStart = Date()
+        defer {
+            log("[ScreenIndexPreferences] load finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: lpStart))])
+        }
         // 1. SQLite 主源（~/.vibefocus/vibefocus.db — 不受 app rebuild 影响）
         if let sqlitePrefs = loadFromSQLite() {
             log("ScreenIndexPreferences loaded from SQLite: isEnabled=\(sqlitePrefs.isEnabled)")
@@ -123,6 +128,13 @@ struct ScreenIndexPreferences: Codable {
 
     @MainActor
     private static func loadFromSQLite() -> ScreenIndexPreferences? {
+        // P-INST-101: 屏幕索引偏好 SQLite 读取耗时（loadPreference SQLite 读 P-INST-69 + JSONDecoder 解码；load() public 包装调用；SQLite 读是主要成本，decode 纯计算）。
+        let lfsStart = Date()
+        defer {
+            log("[ScreenIndexPreferences] loadFromSQLite finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: lfsStart))
+            ])
+        }
         guard let json = WindowStateStore.shared.loadPreference(key: userDefaultsKey),
               let data = json.data(using: .utf8) else {
             return nil
@@ -136,6 +148,12 @@ struct ScreenIndexPreferences: Codable {
     }
 
     static func loadLegacyPreferences(from data: Data) -> ScreenIndexPreferences? {
+        // P-INST-225: legacy 屏幕索引偏好迁移解码耗时（JSONDecoder.decode LegacyPreferences + 字段映射；load() P-INST-205 旧格式 fallback 路径，migration 通常单次；slow-op ≥5ms warn）。
+        let llpStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: llpStart)
+            if durMs >= 5 { log("[ScreenIndexPreferences] loadLegacyPreferences slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         struct LegacyPreferences: Codable {
             var isEnabled: Bool
             var position: IndexPosition
@@ -183,6 +201,13 @@ struct ScreenIndexPreferences: Codable {
 
     @MainActor
     func save() {
+        // P-INST-100: 屏幕索引偏好持久化耗时（JSONEncoder 编码 + savePreference SQLite 写 P-INST-69 + CFPreferencesSetAppValue plist daemon 写 + CFPreferencesAppSynchronize flush；三源写入；偏好变更时调用，CFPreferences 同步写可阻塞）。
+        let sp2Start = Date()
+        defer {
+            log("[ScreenIndexPreferences] save finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: sp2Start))
+            ])
+        }
         guard let data = try? JSONEncoder().encode(self),
               let jsonString = String(data: data, encoding: .utf8) else {
             log("ScreenIndexPreferences: Failed to encode")

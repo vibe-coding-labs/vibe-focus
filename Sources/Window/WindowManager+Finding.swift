@@ -50,10 +50,16 @@ extension WindowManager {
     }
 
     func captureFocusedWindowIdentity() -> WindowIdentity? {
+        // P-INST-25: captureFocusedWindowIdentity 耗时（4 个 AX 调用 focusedWindow+windowHandle+windowNumber+title，副屏可能阻塞；hook 路径）。
+        let cfStart = Date()
         log(
             "[WindowManager] captureFocusedWindowIdentity called",
             level: .debug
         )
+        // windowID 必须用 AX windowHandle —— resolveWindow(identity:) 后续用 AX focusedWindow +
+        // windowHandle 匹配，windowID 必须同源。CGWindowList 无法可靠识别多窗口 app 的 focused
+        // 窗口（iTerm2 first match 181 ≠ AX focused 170），误拿会导致 resolveWindow 找不到窗口。
+        // 因此这里保留 AX（focusedWindow + windowHandle），不能换 CGWindowList。
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             log(
                 "[WindowManager] captureFocusedWindowIdentity: no frontmost app",
@@ -92,7 +98,8 @@ extension WindowManager {
                 "windowID": String(identity.windowID),
                 "pid": String(identity.pid),
                 "bundleID": identity.bundleIdentifier ?? "nil",
-                "title": truncateForLog(identity.title ?? "", limit: 60)
+                "title": truncateForLog(identity.title ?? "", limit: 60),
+                "durationMs": String(elapsedMilliseconds(since: cfStart))
             ]
         )
         return identity
@@ -106,12 +113,16 @@ extension WindowManager {
     ///   3. 包含 "Claude Code" 关键词的窗口（在非主屏幕上）
     ///   4. 当前前台窗口
     func findClaudeCodeWindow(cwd: String?) -> WindowIdentity? {
+        // P-INST-26: findClaudeCodeWindow 耗时（cgWindowListAll 全扫 + 候选构建 + 策略匹配；hook 路径）。
+        let fcStart = Date()
         log(
             "[WindowManager] findClaudeCodeWindow called",
             level: .debug,
             fields: ["cwd": cwd ?? "nil"]
         )
+        let cgListStart = Date()
         let windows = cgWindowListAll()
+        let cgListMs = elapsedMilliseconds(since: cgListStart)
 
         // 从 cwd 中提取项目名（最后一段路径）
         let projectName = cwd?
@@ -165,7 +176,9 @@ extension WindowManager {
                         "app": match.appName,
                         "title": truncateForLog(match.title, limit: 80),
                         "windowID": String(match.windowID),
-                        "projectName": projectName
+                        "projectName": projectName,
+                        "cgListMs": String(cgListMs),
+                        "durationMs": String(elapsedMilliseconds(since: fcStart))
                     ]
                 )
                 return makeIdentity(from: match)
@@ -182,7 +195,9 @@ extension WindowManager {
                 fields: [
                     "app": claudeMatch.appName,
                     "title": truncateForLog(claudeMatch.title, limit: 80),
-                    "windowID": String(claudeMatch.windowID)
+                    "windowID": String(claudeMatch.windowID),
+                    "cgListMs": String(cgListMs),
+                    "durationMs": String(elapsedMilliseconds(since: fcStart))
                 ]
             )
             return makeIdentity(from: claudeMatch)
@@ -194,39 +209,57 @@ extension WindowManager {
             fields: [
                 "cwd": cwd ?? "nil",
                 "projectName": projectName ?? "nil",
-                "candidateCount": String(candidates.count)
+                "candidateCount": String(candidates.count),
+                "cgListMs": String(cgListMs),
+                "durationMs": String(elapsedMilliseconds(since: fcStart))
             ]
         )
         return captureFocusedWindowIdentity()
     }
 
     private func makeIdentity(from candidate: WindowCandidate) -> WindowIdentity {
-        let bundleID = candidate.bundleIdentifier
-            ?? NSRunningApplication(processIdentifier: candidate.pid)?.bundleIdentifier
-        return WindowIdentity(
+        // P-INST-166: candidate→WindowIdentity 构造耗时（NSRunningApplication(processIdentifier:) LaunchServices 进程元数据查询取 bundleIdentifier；findClaudeCodeWindow P-INST-26 候选构造调用）。
+        let miStart = Date()
+        let identity = WindowIdentity(
             windowID: candidate.windowID,
             pid: candidate.pid,
-            bundleIdentifier: bundleID,
+            bundleIdentifier: candidate.bundleIdentifier
+                ?? NSRunningApplication(processIdentifier: candidate.pid)?.bundleIdentifier,
             appName: candidate.appName,
             title: candidate.title
         )
+        log("[WindowManager] makeIdentity finished", level: .debug, fields: [
+            "pid": String(candidate.pid),
+            "durationMs": String(elapsedMilliseconds(since: miStart))
+        ])
+        return identity
     }
 
     /// 通过 CGWindowID 查找窗口 — 遍历 CGWindowList 按 PID+bounds 匹配到 AXUIElement
     func findWindowByCGWindowID(_ targetWindowID: UInt32) -> WindowIdentity? {
-        let windows = cgWindowListAll()
-        guard let entry = windows.first(where: { $0.windowID == targetWindowID }) else {
-            return nil
-        }
-        let bundleID: String? = NSRunningApplication(processIdentifier: entry.ownerPID)?.bundleIdentifier
+        // P-INST-167: 按 CGWindowID 查窗口耗时（cgWindowListAll 全扫 P-INST-45 + first(where:) 匹配 + NSRunningApplication LaunchServices 查 bundleIdentifier；restore 路径按 windowID 定位调用）。
+        let fcgStart = Date()
+        let result: WindowIdentity? = {
+            let windows = cgWindowListAll()
+            guard let entry = windows.first(where: { $0.windowID == targetWindowID }) else {
+                return nil
+            }
+            let bundleID: String? = NSRunningApplication(processIdentifier: entry.ownerPID)?.bundleIdentifier
 
-        return WindowIdentity(
-            windowID: targetWindowID,
-            pid: entry.ownerPID,
-            bundleIdentifier: bundleID,
-            appName: entry.ownerName,
-            windowNumber: Int(targetWindowID),
-            title: entry.name
-        )
+            return WindowIdentity(
+                windowID: targetWindowID,
+                pid: entry.ownerPID,
+                bundleIdentifier: bundleID,
+                appName: entry.ownerName,
+                windowNumber: Int(targetWindowID),
+                title: entry.name
+            )
+        }()
+        log("[WindowManager] findWindowByCGWindowID finished", level: .debug, fields: [
+            "windowID": String(targetWindowID),
+            "found": String(result != nil),
+            "durationMs": String(elapsedMilliseconds(since: fcgStart))
+        ])
+        return result
     }
 }

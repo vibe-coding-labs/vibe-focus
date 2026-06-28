@@ -10,6 +10,12 @@ extension ClaudeHookPreferences {
 
     /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点
     static func generateHelperScriptContent() -> String {
+        // P-INST-198: hook 辅助脚本内容生成耗时（读 LANHookPreferences.lanMode P-INST-144 + hostBlock/hostDefault 三元 + 多行 bash 字符串插值；installHelperScript P-INST-88 调用，写 hook-forwarder.sh）。
+        let ghscStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: ghscStart)
+            if durMs >= 5 { log("[HookScriptGenerator] generateHelperScriptContent slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         let hostBlock = LANHookPreferences.lanMode ? """
         VF_HOST=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('host','127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
 
@@ -255,7 +261,13 @@ extension ClaudeHookPreferences {
     }
 
     static func generateHooksJSON() -> String {
-        log("ClaudeHookPreferences.generateHooksJSON() entered", level: .debug)
+        // P-INST-152: hooks JSON 序列化耗时（generateHooksDict 构建 + JSONSerialization.data withJSONObject prettyPrinted+sortedKeys；HookInstaller.applyPreferences 写 settings.json 调用，hook toggle/install 路径）。
+        let ghjStart = Date()
+        defer {
+            log("ClaudeHookPreferences.generateHooksJSON() finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: ghjStart))
+            ])
+        }
         let hooks = generateHooksDict()
         let settings: [String: Any] = ["hooks": hooks]
         guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]),

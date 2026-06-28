@@ -190,9 +190,13 @@ struct LANSettingsView: View {
                 Button("复制安装命令") {
                     let lanIP = LANHookPreferences.currentLANIP()
                     let script = ClaudeHookPreferences.generateRemoteInstallScript(host: lanIP)
+                    // P-INST-241: 复制远程安装命令到剪贴板耗时（NSPasteboard.clearContents + setString；设置 UI 按钮触发，currentLANIP P-INST-146/generateRemoteInstallScript 已单独计时；slow-op ≥5ms warn）。
+                    let cisStart = Date()
                     let pb = NSPasteboard.general
                     pb.clearContents()
                     pb.setString(script, forType: .string)
+                    let durMs = elapsedMilliseconds(since: cisStart)
+                    if durMs >= 5 { log("[LANSettings] copy install cmd slow", level: .warn, fields: ["durationMs": String(durMs)]) }
                     remoteInstallMessage = "已复制到剪贴板（\(script.count) 字符）"
                     remoteInstallSucceeded = true
                 }
@@ -204,9 +208,13 @@ struct LANSettingsView: View {
                     let script = ClaudeHookPreferences.generateRemoteInstallScript(host: lanIP)
                     let encoded = script.data(using: .utf8)?.base64EncodedString() ?? ""
                     let oneLiner = "echo '\(encoded)' | base64 -d | bash"
+                    // P-INST-242: 复制 curl 一行命令到剪贴板耗时（NSPasteboard.clearContents + setString；设置 UI 按钮触发，base64 编码纯 CPU；slow-op ≥5ms warn）。
+                    let clsStart = Date()
                     let pb = NSPasteboard.general
                     pb.clearContents()
                     pb.setString(oneLiner, forType: .string)
+                    let durMs = elapsedMilliseconds(since: clsStart)
+                    if durMs >= 5 { log("[LANSettings] copy oneliner slow", level: .warn, fields: ["durationMs": String(durMs)]) }
                     remoteInstallMessage = "已复制一行命令（\(oneLiner.count) 字符）"
                     remoteInstallSucceeded = true
                 }
@@ -230,6 +238,14 @@ struct LANSettingsView: View {
     }
 
     private func mapCurrentWindow(for label: String) {
+        // P-INST-165: 远程绑定映射当前窗口耗时（captureFocusedWindowIdentity 4 AX P-INST-25 + LANHookPreferences.remoteBindings set CFPreferences 写 P-INST-145；设置 UI「映射当前窗口」按钮调用，AX 在副屏可阻塞）。
+        let mcwStart = Date()
+        defer {
+            log("[LANSettings] mapCurrentWindow finished", level: .debug, fields: [
+                "label": label,
+                "durationMs": String(elapsedMilliseconds(since: mcwStart))
+            ])
+        }
         guard let identity = WindowManager.shared.captureFocusedWindowIdentity() else {
             return
         }

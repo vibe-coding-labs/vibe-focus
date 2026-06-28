@@ -21,6 +21,8 @@ final class ClaudeHookServer: ObservableObject {
     private init() {}
 
     func applyPreferences() {
+        // P-INST-77: hook 配置同步总耗时（启动 AppDelegate:71 + hook 偏好变更时；含 writeConfigFile + installHelperScript + installHookToClaudeSettings 三文件 I/O + server start；@MainActor 同步阻塞 UI；memory feedback_hook_toggle_sync 铁律要求 hook toggle 同步 settings.json）。
+        let startedAt = Date()
         if ClaudeHookPreferences.isEnabled {
             ClaudeHookPreferences.ensureTokenGenerated()
             startIfNeeded(port: ClaudeHookPreferences.listenPort, token: ClaudeHookPreferences.authToken)
@@ -32,6 +34,7 @@ final class ClaudeHookServer: ObservableObject {
         } else {
             stop()
         }
+        logOperationDuration("[ClaudeHookServer] applyPreferences finished", startedAt: startedAt, warnThresholdMs: 200)
     }
 
     func stop() {
@@ -128,6 +131,8 @@ final class ClaudeHookServer: ObservableObject {
         query: [String: String],
         headers: [String: String]
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        // P-INST-71: hook 请求端到端总耗时（token 验证 + JSON decode + eventHandler 处理 + 响应构造；hook 路径顶层归因，配合子阶段 P-INST-38/47/54/55/56）。
+        let hhrStart = Date()
         let bodyString = String(data: body, encoding: .utf8) ?? "non-utf8"
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "hook_request")
@@ -224,7 +229,8 @@ final class ClaudeHookServer: ObservableObject {
                 "sessionID": payload.sessionID,
                 "code": result.response.code,
                 "handled": String(result.response.handled),
-                "statusCode": String(result.statusCode)
+                "statusCode": String(result.statusCode),
+                "durationMs": String(elapsedMilliseconds(since: hhrStart))
             ]
         )
 
@@ -261,6 +267,12 @@ final class ClaudeHookServer: ObservableObject {
     }
 
     private func makeJSONResponse(statusCode: Int, response: ClaudeHookResponse) -> GCDWebServerDataResponse {
+        // P-INST-213: hook 响应 JSON 编码耗时（JSONEncoder.encode + GCDWebServerDataResponse 构造；每个 hook 请求响应路径调用，encode 通常 <1ms 但归因 hook 响应延迟；slow-op ≥5ms warn）。
+        let mjrStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: mjrStart)
+            if durMs >= 5 { log("[HookServer] makeJSONResponse slow", level: .warn, fields: ["statusCode": String(statusCode), "durationMs": String(durMs)]) }
+        }
         let encoder = JSONEncoder()
         let bodyData = (try? encoder.encode(response)) ?? Data("{\"ok\":false}".utf8)
         let httpResponse = GCDWebServerDataResponse(data: bodyData, contentType: "application/json")

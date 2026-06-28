@@ -28,6 +28,12 @@ extension SettingsView {
     }
 
     func showDuplicateInFinder(path: String) {
+        // P-INST-212: Finder 定位耗时（NSWorkspace.shared.activateFileViewerSelecting LaunchServices 跨进程激活 Finder 选中文件；设置面板用户手动触发；slow-op ≥50ms warn）。
+        let sdfStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: sdfStart)
+            if durMs >= 50 { log("[SettingsView] showDuplicateInFinder slow", level: .warn, fields: ["path": path, "durationMs": String(durMs)]) }
+        }
         let url = URL(fileURLWithPath: path)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
@@ -46,9 +52,14 @@ extension SettingsView {
         }
 
         do {
+            // P-INST-96: 单副本删除 trashItem + refreshInstallations 耗时（FileManager.trashItem 文件操作移到废纸篓 + refreshInstallations 重新扫描安装列表；设置面板用户 runModal 确认后执行，交互等待时间不计入）。
+            let mdtStart = Date()
             let url = URL(fileURLWithPath: path)
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
             refreshInstallations()
+            log("[SettingsView] moveDuplicateToTrash trashItem finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: mdtStart))
+            ])
         } catch {
             let errorAlert = NSAlert()
             errorAlert.messageText = "删除失败"
@@ -75,6 +86,8 @@ extension SettingsView {
             return
         }
 
+        // P-INST-97: 批量删除副本 trashItem 循环 + refreshInstallations 耗时（N 次 FileManager.trashItem 文件操作 + refreshInstallations 重新扫描安装列表；设置面板用户 runModal 确认后执行，交互等待时间不计入）。
+        let madStart = Date()
         var failedPaths: [String] = []
         for path in pathsToDelete {
             do {
@@ -86,7 +99,10 @@ extension SettingsView {
         }
 
         refreshInstallations()
-
+        log("[SettingsView] moveAllDuplicatesToTrash batch finished", level: .debug, fields: [
+            "durationMs": String(elapsedMilliseconds(since: madStart)),
+            "count": String(pathsToDelete.count)
+        ])
         if !failedPaths.isEmpty {
             let errorAlert = NSAlert()
             errorAlert.messageText = "部分删除失败"
@@ -100,6 +116,12 @@ extension SettingsView {
     // MARK: - Claude Hook Test Helpers
 
     func sendTestHookEvent() {
+        // P-INST-251: 测试 hook 事件发送编排耗时（ensureTokenGenerated UserDefaults 写 + sendHookRequest URLSession 发起 SessionStart；设置 UI 测试按钮触发，HTTP 请求异步回调不计入 defer；slow-op ≥50ms warn）。
+        let sthStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: sthStart)
+            if durMs >= 50 { log("[Settings] sendTestHookEvent slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         let port = hookPort
         let testSessionID = "test-\(UUID().uuidString.prefix(8))"
         if hookToken.isEmpty {
@@ -181,6 +203,8 @@ extension SettingsView {
         token: String?,
         completion: @escaping (Result<Data, Error>) -> Void
     ) {
+        // P-INST-92: hook 测试请求网络往返耗时（URL 构造 + JSONSerialization 序列化 + URLSession POST + 等待响应；shrStart 在 completion 闭包入口记 round-trip durationMs；设置面板 sendTestHookEvent 调用，timeout 5s；本地 127.0.0.1 但可阻塞 UI 线程的 async wait）。
+        let shrStart = Date()
         guard let url = URL(string: "http://127.0.0.1:\(port)\(endpoint)") else {
             completion(.failure(NSError(domain: "VibeFocus", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
@@ -203,6 +227,9 @@ extension SettingsView {
         }
 
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            log("[SettingsView] sendHookRequest round-trip", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: shrStart))
+            ])
             if let error {
                 completion(.failure(error))
                 return

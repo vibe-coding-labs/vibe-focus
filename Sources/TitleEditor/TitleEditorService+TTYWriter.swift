@@ -7,7 +7,18 @@ import Foundation
 extension TitleEditorService {
 
     func applyViaTTY(_ title: String, pid: pid_t) -> Bool {
+        // P-INST-48: TTY title 写入耗时（resolveTTYPath: ps/pgrep fork 递归 + writeTTYSequence open/write 设备；applyTitle P-INST-40 总耗时归因 TTY 路，fork 累积可阻塞）。
+        let ttyStart = Date()
+        var ttyOutcome = "unknown"
+        defer {
+            log("[TitleEditorService] applyViaTTY finished", level: .debug, fields: [
+                "pid": String(pid),
+                "outcome": ttyOutcome,
+                "durationMs": String(elapsedMilliseconds(since: ttyStart))
+            ])
+        }
         guard let ttyPath = resolveTTYPath(for: pid) else {
+            ttyOutcome = "no_tty"
             log(
                 "[TitleEditorService] applyViaTTY: could not resolve TTY",
                 level: .debug,
@@ -22,15 +33,28 @@ extension TitleEditorService {
         )
 
         let sequence = "\u{1B}]0;\(title)\u{07}"
-        return writeTTYSequence(sequence, to: ttyPath)
+        let written = writeTTYSequence(sequence, to: ttyPath)
+        ttyOutcome = written ? "written" : "write_failed"
+        return written
     }
 
     func resolveTTYPath(for pid: pid_t) -> String? {
+        // P-INST-72: TTY 路径解析耗时（ttyForPID /bin/ps fork + searchChildTTY pgrep 递归 fork 最多 3 层；applyViaTTY P-INST-48 子阶段，fork 累积可阻塞）。
+        let rtpStart = Date()
+        var found = false
+        defer {
+            log("[TitleEditorService] resolveTTYPath finished", level: .debug, fields: [
+                "pid": String(pid),
+                "found": String(found),
+                "durationMs": String(elapsedMilliseconds(since: rtpStart))
+            ])
+        }
         // Try the process itself first (works if pid is a shell, not a GUI terminal)
-        if let tty = ttyForPID(pid) { return tty }
+        if let tty = ttyForPID(pid) { found = true; return tty }
 
         // GUI terminal apps don't have TTYs — search child processes
-        return searchChildTTY(parentPID: pid, depth: 0)
+        if let tty = searchChildTTY(parentPID: pid, depth: 0) { found = true; return tty }
+        return nil
     }
 
     private func ttyForPID(_ pid: pid_t) -> String? {
@@ -58,6 +82,13 @@ extension TitleEditorService {
     }
 
     func writeTTYSequence(_ sequence: String, to ttyPath: String) -> Bool {
+        // P-INST-72: TTY 设备写耗时（open O_WRONLY + write OSC 序列；applyViaTTY P-INST-48 子阶段，设备繁忙可阻塞）。
+        let wtsStart = Date()
+        defer {
+            log("[TitleEditorService] writeTTYSequence finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: wtsStart))
+            ])
+        }
         guard let data = sequence.data(using: .utf8) else { return false }
 
         let fd = open(ttyPath, O_WRONLY | O_NOCTTY)

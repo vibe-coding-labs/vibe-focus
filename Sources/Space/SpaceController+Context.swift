@@ -6,6 +6,8 @@ extension SpaceController {
 
     func captureSpaceContext(windowID: UInt32, operationID: String? = nil) -> SpaceContext {
         let op = operationID ?? "none"
+        // P-INST-5: captureSpaceContext 总耗时 + 内部 queryWindow/querySpaces 子查询耗时（移动前 space 上下文捕获）。
+        let captureStart = Date()
         refreshAvailabilityIfNeeded()
         guard isEnabled else {
             return SpaceContext(
@@ -16,10 +18,14 @@ extension SpaceController {
             )
         }
 
+        let queryWindowStart = Date()
         let windowInfo = queryWindow(windowID: windowID)
+        let captureQueryWindowMs = elapsedMilliseconds(since: queryWindowStart)
         let windowSpace = windowInfo?.space
         let windowDisplay = windowInfo?.display
+        let querySpacesStart = Date()
         let spaces = querySpaces()
+        let captureQuerySpacesMs = elapsedMilliseconds(since: querySpacesStart)
         let visibleSpaceOnDisplay = visibleSpaceIndex(forDisplayIndex: windowDisplay, spaces: spaces)
         let sourceSpace = preferredSourceSpace(
             windowSpace: windowSpace,
@@ -41,7 +47,11 @@ extension SpaceController {
                 "windowSpace": String(describing: windowSpace),
                 "visibleSpace": String(describing: visibleSpaceOnDisplay),
                 "display": String(describing: windowDisplay),
-                "localSpace": String(describing: localSpace)
+                "localSpace": String(describing: localSpace),
+                // P-INST-5: 子查询耗时（queryWindow 通常命中 queryFocusedWindow 预填缓存 ~0ms；querySpaces 命中 spacesQueryCache）。
+                "queryWindowMs": String(captureQueryWindowMs),
+                "querySpacesMs": String(captureQuerySpacesMs),
+                "totalMs": String(elapsedMilliseconds(since: captureStart))
             ]
         )
 

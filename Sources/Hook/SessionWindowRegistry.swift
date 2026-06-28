@@ -48,6 +48,13 @@ final class SessionWindowRegistry: ObservableObject {
     // MARK: - Bind
 
     func bind(sessionID: String, windowIdentity: WindowIdentity, terminalTTY: String? = nil, terminalSessionID: String? = nil, itermSessionID: String? = nil, cwd: String? = nil, model: String? = nil, bindingType: WindowState.BindingType = .local) {
+        // P-INST-149: session 绑定编排耗时（TerminalRegistry.isTerminalPID 查 + WindowManager.resolveWindow AX 解析 + windowNumber AX 读取 + pruneExpiredBindings P-INST-150 + persistToDB P-INST-151 SQLite 写；hook SessionStart 热路径，AX 解析在副屏 space 可阻塞）。
+        let bindStart = Date()
+        defer {
+            log("[SessionWindowRegistry] bind finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: bindStart))
+            ])
+        }
         let now = Date()
         let wid = windowIdentity.windowID
 
@@ -144,6 +151,14 @@ final class SessionWindowRegistry: ObservableObject {
     // MARK: - Private
 
     func pruneExpiredBindings(shouldPersist: Bool = true) {
+        // P-INST-150: 过期绑定清理耗时（WindowStateStore.pruneExpiredWindowStates SQLite DELETE + 内存 windowStates filter；bind/init/clearAll 调用，定期回收过期绑定）。
+        let pebStart = Date()
+        defer {
+            log("[SessionWindowRegistry] pruneExpiredBindings finished", level: .debug, fields: [
+                "shouldPersist": String(shouldPersist),
+                "durationMs": String(elapsedMilliseconds(since: pebStart))
+            ])
+        }
         let removed = WindowStateStore.shared.pruneExpiredWindowStates(
             activeRetention: activeRetention,
             completedRetention: completedRetention
@@ -160,6 +175,14 @@ final class SessionWindowRegistry: ObservableObject {
     }
 
     func persistToDB(windowID: UInt32) {
+        // P-INST-151: 单窗口持久化耗时（windowStates 内存查 + WindowStateStore.saveWindowState SQLite INSERT...ON CONFLICT UPDATE P-INST-68；bind/markCompleted/reactivate/touch/remapWindowID 调用）。
+        let pdbStart = Date()
+        defer {
+            log("[SessionWindowRegistry] persistToDB finished", level: .debug, fields: [
+                "windowID": String(windowID),
+                "durationMs": String(elapsedMilliseconds(since: pdbStart))
+            ])
+        }
         guard let state = windowStates[windowID] else { return }
         WindowStateStore.shared.saveWindowState(state)
     }

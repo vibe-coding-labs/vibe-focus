@@ -114,6 +114,12 @@ private func crashSignalHandler(_ sig: Int32) {
 }
 
 func installCrashSignalHandlers() {
+    // P-INST-247: 崩溃信号处理器注册耗时（6x signal syscall 注册 SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL/SIGTRAP 处理器；应用启动调用，崩溃时处理器执行写崩溃快照；与 installAtExitHandler P-INST-193 同类启动注册；slow-op ≥5ms warn）。
+    let icshStart = Date()
+    defer {
+        let durMs = elapsedMilliseconds(since: icshStart)
+        if durMs >= 5 { log("[CrashContext] installCrashSignalHandlers slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+    }
     for sig in [SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL] {
         signal(sig, crashSignalHandler)
     }
@@ -121,6 +127,12 @@ func installCrashSignalHandlers() {
 }
 
 func installAtExitHandler() {
+    // P-INST-193: atexit handler 注册耗时（atexit syscall 注册退出回调；应用启动调用，注册的回调在进程退出时执行 open/write/close 文件 I/O 写崩溃快照日志）。
+    let iaeStart = Date()
+    defer {
+        let durMs = elapsedMilliseconds(since: iaeStart)
+        if durMs >= 5 { log("[CrashContext] installAtExitHandler slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+    }
     atexit {
         let msg = "VibeFocus exiting via atexit (likely normal termination)\n"
         msg.withCString { ptr in
@@ -139,6 +151,13 @@ func updateCrashSnapshot(_ block: (UnsafeMutablePointer<CChar>, Int) -> Int) {
 
 @MainActor
 func updateCrashSnapshotFromRuntime() {
+    // P-INST-117: 运行时崩溃快照更新耗时（NSWorkspace.frontmostApplication + NSScreen.screens.count + WindowManager/HotKeyManager 状态读取 + 写入 crash snapshot buffer；toggle 入口 WindowManager+Toggle:32 + hook 请求 ClaudeHookServer:137 双热路径调用，每次 toggle/hook 都执行）。
+    let ucsrStart = Date()
+    defer {
+        log("CrashContext.updateCrashSnapshotFromRuntime finished", level: .debug, fields: [
+            "durationMs": String(elapsedMilliseconds(since: ucsrStart))
+        ])
+    }
     updateCrashSnapshot { buf, capacity in
         var pos = 0
         func append(_ str: String) {
@@ -188,6 +207,14 @@ func updateCrashSnapshotFromRuntime() {
 
 @MainActor
 func logRuntimeStateSnapshot(context: String) {
+    // P-INST-118: 运行时状态快照日志耗时（WindowManager/HotKeyManager/ClaudeHookServer 状态读取 + 字段字典构造 + log 写；toggle 入口 WindowManager+Toggle:33 + hook 请求 ClaudeHookServer:138 双热路径调用，每次 toggle/hook 都执行）。
+    let lrssStart = Date()
+    defer {
+        log("CrashContext.logRuntimeStateSnapshot finished", level: .debug, fields: [
+            "durationMs": String(elapsedMilliseconds(since: lrssStart)),
+            "context": context
+        ])
+    }
     let wm = WindowManager.shared
     let hkm = HotKeyManager.shared
     let hookServer = ClaudeHookServer.shared

@@ -30,20 +30,44 @@ struct SpacePreferences {
 
     static var integrationEnabled: Bool {
         get {
-            UserDefaults.standard.object(forKey: integrationEnabledKey) as? Bool ?? defaultIntegrationEnabled
+            // P-INST-153: space integration enabled UserDefaults 读耗时（CFPreferences 同步读；SpaceController.refreshAvailability:69 调用，决定 isEnabled 即 space 移动是否启用，toggle/restore 路径间接调用）。
+            let iegStart = Date()
+            let value = UserDefaults.standard.object(forKey: integrationEnabledKey) as? Bool ?? defaultIntegrationEnabled
+            log("[SpacePreferences] integrationEnabled get finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: iegStart)),
+                "value": String(value)
+            ])
+            return value
         }
         set {
+            // P-INST-153: space integration enabled UserDefaults 写耗时（CFPreferences 同步写；设置 UI toggle）。
+            let iesStart = Date()
             UserDefaults.standard.set(newValue, forKey: integrationEnabledKey)
+            log("[SpacePreferences] integrationEnabled set finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: iesStart))
+            ])
         }
     }
 
     static var restoreStrategy: SpaceRestoreStrategy {
         get {
+            // P-INST-154: restore strategy UserDefaults 读耗时（CFPreferences 同步读 string；restore 路径读取决定 switchToOriginal/pullToCurrent，每次 restore 调用）。
+            let rsgStart = Date()
             let raw = UserDefaults.standard.string(forKey: restoreStrategyKey) ?? SpaceRestoreStrategy.switchToOriginal.rawValue
-            return SpaceRestoreStrategy(rawValue: raw) ?? .switchToOriginal
+            let value = SpaceRestoreStrategy(rawValue: raw) ?? .switchToOriginal
+            log("[SpacePreferences] restoreStrategy get finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: rsgStart)),
+                "strategy": value.rawValue
+            ])
+            return value
         }
         set {
+            // P-INST-154: restore strategy UserDefaults 写耗时（CFPreferences 同步写 rawValue；设置 UI 切换）。
+            let rssStart = Date()
             UserDefaults.standard.set(newValue.rawValue, forKey: restoreStrategyKey)
+            log("[SpacePreferences] restoreStrategy set finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: rssStart))
+            ])
         }
     }
 }

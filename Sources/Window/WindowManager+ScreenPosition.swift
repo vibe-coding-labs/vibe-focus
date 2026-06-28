@@ -9,6 +9,16 @@ import Foundation
 extension WindowManager {
 
     func isWindowOnMainScreen(windowID: UInt32) -> Bool {
+        // P-INST-61: isWindowOnMainScreen 耗时（cgWindowListAll P-INST-45 + CoordinateKit.isOnMainScreen；hook 预检 P-INST-47 + toggle 路径调用）。
+        let iwomsStart = Date()
+        var onMain = false
+        defer {
+            log("[WindowManager] isWindowOnMainScreen finished", level: .debug, fields: [
+                "windowID": String(windowID),
+                "onMain": String(onMain),
+                "durationMs": String(elapsedMilliseconds(since: iwomsStart))
+            ])
+        }
         let windows = cgWindowListAll()
         guard let entry = windows.first(where: { $0.windowID == windowID }) else {
             return false
@@ -16,7 +26,8 @@ extension WindowManager {
         guard let bounds = entry.bounds else {
             return false
         }
-        return CoordinateKit.isOnMainScreen(bounds)
+        onMain = CoordinateKit.isOnMainScreen(bounds)
+        return onMain
     }
 
     /// 通过 CGWindowList 读取窗口 frame（非 AX，不跨屏阻塞）。
@@ -25,11 +36,20 @@ extension WindowManager {
     /// 见 toggle-00000187 ctxMs=1918）。CGWindowListCopyWindowInfo 是 WindowServer 快照查询，
     /// 不走 AX 通道，不阻塞。
     func cgWindowFrame(forWindowID windowID: UInt32) -> CGRect? {
-        let windows = cgWindowListAll()
-        guard let entry = windows.first(where: { $0.windowID == windowID }) else {
-            return nil
+        // P-INST-181: 按 windowID 读 CGWindowList 帧耗时（cgWindowListAll 全扫 P-INST-45 + first(where:) 匹配 windowID；toggle/restore 热路径 frame 读取，按 memory feedback_toggle_ctxms_cgwindowlist 铁律必须用 CGWindowList 而非 AX frame(of:)）。
+        let cgfStart = Date()
+        let frame: CGRect? = {
+            let windows = cgWindowListAll()
+            guard let entry = windows.first(where: { $0.windowID == windowID }) else {
+                return nil
+            }
+            return entry.bounds
+        }()
+        let durMs = elapsedMilliseconds(since: cgfStart)
+        if durMs >= 30 {
+            log("[WindowManager] cgWindowFrame slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(durMs)])
         }
-        return entry.bounds
+        return frame
     }
 
     func displayID(for screen: NSScreen) -> UInt32? {
@@ -47,6 +67,12 @@ extension WindowManager {
     }
 
     func displayContext(for frame: CGRect) -> (index: Int?, displayID: UInt32?) {
+        // P-INST-215: 显示器上下文解析耗时（NSScreen.screens.count + enumerated 遍历 contains/intersects + CoordinateKit.cgDisplayID；toggle 路径确定窗口所在屏，NSScreen.screens 可能阻塞；slow-op ≥30ms warn）。
+        let dcStart = Date()
+        defer {
+            let durMs = elapsedMilliseconds(since: dcStart)
+            if durMs >= 30 { log("[WindowManager] displayContext slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
         log(
             "[WindowManager] displayContext called",
             level: .debug,

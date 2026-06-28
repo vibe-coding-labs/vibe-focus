@@ -35,6 +35,14 @@ extension HookEventHandler {
         traceID: String,
         startedAt: Date
     ) -> WindowIdentity? {
+        // P-INST-32: resolveWindowIdentity 耗时（startedAt 由调用方传入，此前是 dead parameter；verifyBinding CGWindowList ~5ms，resolveRemoteBinding 远程自愈偶发）。
+        defer {
+            log("[HookEventHandler] resolveWindowIdentity finished", level: .debug, fields: [
+                "traceID": traceID,
+                "sessionID": payload.sessionID,
+                "durationMs": String(elapsedMilliseconds(since: startedAt))
+            ])
+        }
         let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
 
         if let state {

@@ -16,6 +16,13 @@ extension WindowManager {
     /// 通过 hook 辅助脚本捕获的终端上下文精确定位窗口
     /// 解决多工作区/多 Claude Code 实例场景下的窗口匹配问题
     func findWindowByTerminalContext(_ ctx: TerminalContext) -> WindowIdentity? {
+        // P-INST-39: findWindowByTerminalContext 总耗时（SessionStart 本地绑定核心；进程树 ps fork + CGWindowList + 可能 AppleScript；归因 handleSessionStart durationMs 中的窗口匹配阶段，匹配 strategy 见各 case log）。
+        let fwtcStart = Date()
+        defer {
+            log("[WindowManager] findWindowByTerminalContext finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: fwtcStart))
+            ])
+        }
         log(
             "[WindowManager] findWindowByTerminalContext called",
             level: .debug,
