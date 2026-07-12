@@ -117,7 +117,21 @@ extension ScreenOverlayManager {
                     }
                     return (item.index, item.uuid, displayIndex, spaceIndex)
                 }
-                await MainActor.run {
+                // 在回主线程应用结果前，校验 Task 启动时的屏幕集合是否仍与当前一致。
+                // 后台 yabai 查询期间若发生显示器插拔，preResolved 的 index 已与 NSScreen.screens 错位，
+                // 直接 applyRefreshResults 会用旧 index 访问新数组 + 误触发 refreshOverlays → SIGSEGV。
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    let currentUUIDs = Set(NSScreen.screens.map { self.uuidForScreen($0) })
+                    let preUUIDs = Set(preResolved.map { $0.uuid })
+                    guard ScreenHotplugGuard.identityMatches(preUUIDs: preUUIDs, currentUUIDs: currentUUIDs) else {
+                        log("[REFRESH] screen identity changed during async query (fast path), discarding stale results", level: .warn, fields: [
+                            "preCount": String(preUUIDs.count),
+                            "currentCount": String(currentUUIDs.count)
+                        ])
+                        // 丢弃：屏幕变化由 handleScreenChange（didChangeScreenParameters）+ 下次 refresh 负责重建。
+                        return
+                    }
                     log("[REFRESH] all-spaces fast path", level: .info, fields: [
                         "spaces": String(snapshot.count),
                         "screens": String(preResolved.count),
@@ -151,8 +165,19 @@ extension ScreenOverlayManager {
                 return collected
             }
 
-            // 回主线程更新 cache 和 overlay（UI 操作必须主线程）
-            await MainActor.run {
+            // 回主线程更新 cache 和 overlay（UI 操作必须主线程）。
+            // 同 fast path，回调前校验屏幕一致性，防止跨热插拔用过期 index 触碰 WindowServer。
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                let currentUUIDs = Set(NSScreen.screens.map { self.uuidForScreen($0) })
+                let preUUIDs = Set(preResolved.map { $0.uuid })
+                guard ScreenHotplugGuard.identityMatches(preUUIDs: preUUIDs, currentUUIDs: currentUUIDs) else {
+                    log("[REFRESH] screen identity changed during async query (fallback path), discarding stale results", level: .warn, fields: [
+                        "preCount": String(preUUIDs.count),
+                        "currentCount": String(currentUUIDs.count)
+                    ])
+                    return
+                }
                 self.applyRefreshResults(results, screens: NSScreen.screens, startedAt: rsiStart)
             }
         }
