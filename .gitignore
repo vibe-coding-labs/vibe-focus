@@ -33,3 +33,6 @@ dist/*.zip
 /website/vite.config.d.ts
 
 website/demos/node_modules/
+
+# Superpowers planning docs (local AI workflow artifacts, not versioned)
+docs/superpowers/plans/
