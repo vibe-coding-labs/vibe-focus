@@ -30,6 +30,13 @@ class ScreenOverlayManager: ObservableObject {
     // fork 排队（实测前置 query 650ms + p2SpaceMoveMs 6→36ms）。debounce：连续 toggle 取消前一个，只在
     // toggle 停止 300ms 后刷新一次（20 toggle 60 refresh → 1 refresh），释放 yabai 给 toggle 热路径。
     var pendingPostToggleRefreshWorkItem: DispatchWorkItem?
+    // 屏幕配置变化（didChangeScreenParametersNotification）debounce work item。
+    // 拔插屏时该通知常短时间内多次到达，立即重建 overlay 会与 refreshSpaceIndices
+    // 后台 Task 竞争 WindowServer。debounce 合并连发，等配置稳定后重建一次。
+    var pendingScreenChangeWorkItem: DispatchWorkItem?
+    /// 屏幕变化通知 debounce 间隔。0.25s 合并拔插屏的多次连发（display removal +
+    /// reconfiguration），又远低于人眼感知，避免在 WindowServer 重排中途重建 overlay。
+    static let screenChangeDebounceInterval: TimeInterval = 0.25
 
     var cachedDisplayIndices: [UUID: Int] = [:]
     var lastQueryTimes: [UUID: Date] = [:]
@@ -64,6 +71,15 @@ class ScreenOverlayManager: ObservableObject {
         log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
         setupSignalHandler()
         registerYabaiSignals()
+        // 屏幕配置变化（显示器插拔/重排）主动响应。此前 handleScreenChange 是死代码
+        // （从未注册 observer），屏幕变化全靠 refreshSpaceIndices 的 2s Timer 轮询被动发现，
+        // 把后台 Task 跨 race 的窗口放大到秒级。注册后由系统通知即时触发（debounce 0.25s）。
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
         startRefreshTimer()
     }
 
@@ -91,17 +107,27 @@ class ScreenOverlayManager: ObservableObject {
     }
 
     @objc private func handleScreenChange() {
-        // P-INST-126: 屏幕配置变化处理耗时（清缓存 + cancelPendingSignalRefreshes + refreshOverlays P-INST-123 重建 overlay；NSApplication.didChangeScreenParametersNotification 触发，显示器热插拔时调用）。
-        let hscStart = Date()
-        defer {
+        // 防抖：didChangeScreenParametersNotification 在拔插屏时常短时间内多次到达
+        // （display removal + display reconfiguration + 应用窗口重排）。
+        // 立即 refreshOverlays 会在 WindowServer 仍在重排时重建 overlay，与并发的
+        // refreshSpaceIndices 后台 Task 竞争同一 WindowServer → race。debounce 0.25s
+        // 合并连发通知，等屏幕配置稳定后重建一次（远低于人眼对 overlay 编号变化的感知）。
+        // P-INST-126: 屏幕配置变化处理耗时归因（清缓存 + cancelPendingSignalRefreshes +
+        // refreshOverlays P-INST-123 重建 overlay；NSApplication.didChangeScreenParametersNotification 触发）。
+        pendingScreenChangeWorkItem?.cancel()
+        let startedAt = Date()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            log("Screen configuration changed, refreshing overlays")
+            self.cachedDisplayIndices.removeAll()
+            self.cancelPendingSignalRefreshes()
+            self.refreshOverlays()
             log("[ScreenOverlayManager] handleScreenChange finished", level: .debug, fields: [
-                "durationMs": String(elapsedMilliseconds(since: hscStart))
+                "durationMs": String(elapsedMilliseconds(since: startedAt))
             ])
         }
-        log("Screen configuration changed, refreshing overlays")
-        cachedDisplayIndices.removeAll()
-        cancelPendingSignalRefreshes()
-        refreshOverlays()
+        pendingScreenChangeWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + ScreenOverlayManager.screenChangeDebounceInterval, execute: work)
     }
 
     // MARK: - Public Methods
