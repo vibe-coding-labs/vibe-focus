@@ -198,22 +198,35 @@ extension ScreenOverlayManager {
         var needsRefresh = false
         var changedScreens: [String] = []
 
-        for (index, uuid, displayIndex, spaceIndex) in results {
+        // 构建当前 screens 的 uuid->index 映射，避免使用 results 中过期的 index
+        // （后台 Task 执行期间用户可能重排显示器，UUID 集合相同但 enumerated index 已变）
+        var currentScreenUUIDs: [UUID: Int] = [:]
+        for (index, screen) in screens.enumerated() {
+            currentScreenUUIDs[uuidForScreen(screen)] = index
+        }
+
+        for (_, uuid, displayIndex, spaceIndex) in results {
             if let displayIndex {
                 cachedDisplayIndices[uuid] = displayIndex
             }
             let currentSpaceIndex = spaceIndex ?? 1
 
-            if let cached = screenSpaceCache[uuid] {
-                if cached.screenIndex != index || cached.spaceIndex != currentSpaceIndex {
-                    log("[REFRESH] Space index changed: Screen\(index) \(cached.spaceIndex)->\(currentSpaceIndex)")
-                    needsRefresh = true
-                    changedScreens.append("Screen\(index): \(cached.spaceIndex)->\(currentSpaceIndex)")
-                    screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: currentSpaceIndex)
+            // 用 UUID 在当前 screens 中查找正确的 index（而非使用 results 携带的旧 index）
+            guard let currentIndex = currentScreenUUIDs[uuid] else {
+                log("[REFRESH] Screen UUID \(uuid) not found in current screens, skipping", level: .warn)
+                continue
+            }
 
-                    if index < screens.count, let overlay = overlayWindows[uuid] {
-                        overlay.update(screenIndex: index, spaceIndex: currentSpaceIndex, preferences: preferences)
-                        overlay.updatePosition(for: screens[index], position: preferences.position, margin: preferences.panelMargin)
+            if let cached = screenSpaceCache[uuid] {
+                if cached.screenIndex != currentIndex || cached.spaceIndex != currentSpaceIndex {
+                    log("[REFRESH] Space index changed: Screen\(currentIndex) \(cached.spaceIndex)->\(currentSpaceIndex)")
+                    needsRefresh = true
+                    changedScreens.append("Screen\(currentIndex): \(cached.spaceIndex)->\(currentSpaceIndex)")
+                    screenSpaceCache[uuid] = (screenIndex: currentIndex, spaceIndex: currentSpaceIndex)
+
+                    if let overlay = overlayWindows[uuid] {
+                        overlay.update(screenIndex: currentIndex, spaceIndex: currentSpaceIndex, preferences: preferences)
+                        overlay.updatePosition(for: screens[currentIndex], position: preferences.position, margin: preferences.panelMargin)
                         overlay.show()
                     } else {
                         log("[REFRESH] No overlay found for uuid \(uuid)", level: .warn)
@@ -221,12 +234,12 @@ extension ScreenOverlayManager {
                 }
             } else {
                 needsRefresh = true
-                changedScreens.append("Screen\(index): new->\(currentSpaceIndex)")
-                screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: currentSpaceIndex)
+                changedScreens.append("Screen\(currentIndex): new->\(currentSpaceIndex)")
+                screenSpaceCache[uuid] = (screenIndex: currentIndex, spaceIndex: currentSpaceIndex)
 
-                if index < screens.count, let overlay = overlayWindows[uuid] {
-                    overlay.update(screenIndex: index, spaceIndex: currentSpaceIndex, preferences: preferences)
-                    overlay.updatePosition(for: screens[index], position: preferences.position, margin: preferences.panelMargin)
+                if let overlay = overlayWindows[uuid] {
+                    overlay.update(screenIndex: currentIndex, spaceIndex: currentSpaceIndex, preferences: preferences)
+                    overlay.updatePosition(for: screens[currentIndex], position: preferences.position, margin: preferences.panelMargin)
                     overlay.show()
                 } else {
                     log("[REFRESH] No overlay found for new screen uuid \(uuid)", level: .warn)
