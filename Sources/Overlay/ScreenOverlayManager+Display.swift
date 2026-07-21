@@ -9,6 +9,12 @@ extension ScreenOverlayManager {
         let startedAt = Date()
         let screens = NSScreen.screens
 
+        // 先关闭所有现有 overlay，避免与即将创建的新窗口冲突
+        for (_, overlay) in overlayWindows {
+            overlay.close()
+        }
+        overlayWindows.removeAll()
+
         for (index, screen) in screens.enumerated() {
             let uuid = uuidForScreen(screen)
             let overlay = OverlayWindow(screen: screen)

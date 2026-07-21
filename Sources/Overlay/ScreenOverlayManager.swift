@@ -36,7 +36,7 @@ class ScreenOverlayManager: ObservableObject {
     var pendingScreenChangeWorkItem: DispatchWorkItem?
     /// 屏幕变化通知 debounce 间隔。0.25s 合并拔插屏的多次连发（display removal +
     /// reconfiguration），又远低于人眼感知，避免在 WindowServer 重排中途重建 overlay。
-    static let screenChangeDebounceInterval: TimeInterval = 0.25
+    static let screenChangeDebounceInterval: TimeInterval = 1.0  // 增加到 1 秒，给 WindowServer 足够时间稳定
 
     var cachedDisplayIndices: [UUID: Int] = [:]
     var lastQueryTimes: [UUID: Date] = [:]
