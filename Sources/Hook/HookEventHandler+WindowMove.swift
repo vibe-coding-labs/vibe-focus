@@ -18,10 +18,12 @@ extension HookEventHandler {
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-31: handleWindowMoveTrigger 总耗时（Stop/SessionEnd hook 同步响应延迟；defer 统一记，含 moveBindingToMainScreen）。
         let wmtStart = Date()
+        var decision: WindowMoveDecision?
         defer {
             log("[HookEventHandler] \(triggerName) finished", fields: [
                 "sessionID": payload.sessionID,
                 "triggerName": triggerName,
+                "decision": decision?.logDescription ?? "unknown",
                 "durationMs": String(elapsedMilliseconds(since: wmtStart))
             ])
         }
@@ -35,6 +37,7 @@ extension HookEventHandler {
         )
 
         guard ClaudeHookPreferences.autoFocusOnSessionEnd else {
+            decision = .autoFocusDisabled
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
                 message: "\(triggerName) 收到（自动聚焦已关闭）"
@@ -76,6 +79,7 @@ extension HookEventHandler {
                 bindingType: .remote
             )
             guard let healed = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+                decision = .noBindingSkip
                 return (
                     200,
                     ClaudeHookResponse(
@@ -87,6 +91,7 @@ extension HookEventHandler {
             }
             binding = healed
         } else {
+            decision = .noBindingSkip
             log(
                 "[HookEventHandler] \(triggerName) no binding found, skipping",
                 level: .warn,
@@ -112,6 +117,7 @@ extension HookEventHandler {
         // 意味着"不希望任何 Stop 事件移动窗口"，不论绑定类型。
         // 如果 remote 绑定通过，窗口仍会被移动，违背用户意图。
         if remoteOnly {
+            decision = .localBindingSkip
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
                 message: "\(triggerName) 跳过（remoteOnly 模式，triggerOnStop=false）"
@@ -137,6 +143,7 @@ extension HookEventHandler {
         }
 
         guard SessionWindowRegistry.shared.verifyBinding(binding) else {
+            decision = .bindingVerificationFailed
             log(
                 "[HookEventHandler] \(triggerName) binding verification failed",
                 level: .warn,
@@ -156,6 +163,7 @@ extension HookEventHandler {
             )
         }
 
+        decision = .proceedToMove(source: "binding")
         return moveBindingToMainScreen(binding: binding, payload: payload, triggerName: triggerName)
     }
 }

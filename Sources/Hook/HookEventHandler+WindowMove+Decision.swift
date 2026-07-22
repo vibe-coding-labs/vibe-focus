@@ -22,6 +22,42 @@ extension HookEventHandler {
         case nonTerminalWindow
         case proceedToMove(source: String)
     }
+}
+
+// MARK: - Decision Logging Extension
+
+extension HookEventHandler.WindowMoveDecision {
+    /// 结构化日志描述，用于统一决策路径日志格式
+    var logDescription: String {
+        switch self {
+        case .autoFocusDisabled:
+            return "auto_focus_disabled"
+        case .localBindingSkip:
+            return "local_binding_skip"
+        case .noBindingSkip:
+            return "no_binding_skip"
+        case .bindingVerificationFailed:
+            return "binding_verification_failed"
+        case .alreadyCompleted:
+            return "already_completed"
+        case .alreadyOnMainScreen:
+            return "already_on_main_screen"
+        case .restoreCooldownActive:
+            return "restore_cooldown_active"
+        case .staleBindingPIDMismatch:
+            return "stale_binding_pid_mismatch"
+        case .nonTerminalWindow:
+            return "non_terminal_window"
+        case .proceedToMove(let source):
+            return "proceed_to_move(source=\(source))"
+        }
+    }
+}
+
+@MainActor
+extension HookEventHandler {
+
+    // MARK: - Window Move Decision Logic (extracted for testability)
 
     /// Pure decision logic for handleWindowMoveTrigger.
     /// Decision based on physical window state, not session flags.

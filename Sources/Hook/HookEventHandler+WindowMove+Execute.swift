@@ -17,10 +17,12 @@ extension HookEventHandler {
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-104: moveBindingToMainScreen hook window-move 执行耗时（isWindowOnMainScreen 预检 P-INST-61 + moveWindowToMainScreen P-INST-3 yabai 跨屏移动 + setWindowFloat + AX apply + 可能 refreshOverlays/playCompletionSound；handleWindowMoveTrigger P-INST-31 line 159 调用，hook 窗口移动核心执行；补本执行器各阶段归因）。
         let mbmStart = Date()
+        var subDecision: WindowMoveDecision?
         defer {
             log("[HookEventHandler] moveBindingToMainScreen finished", level: .debug, fields: [
                 "sessionID": payload.sessionID, "triggerName": triggerName,
                 "windowID": String(binding.windowID),
+                "decision": subDecision?.logDescription ?? "proceed",
                 "durationMs": String(elapsedMilliseconds(since: mbmStart))
             ])
         }
@@ -29,6 +31,7 @@ extension HookEventHandler {
 
         // 预检：如果窗口已在主屏幕上，跳过移动
         if WindowManager.shared.isWindowOnMainScreen(windowID: windowID) {
+            subDecision = .alreadyOnMainScreen
             SessionWindowRegistry.shared.setLastEventDescription(
                 "\(triggerName) 窗口已在主屏幕，跳过移动"
             )
@@ -53,6 +56,7 @@ extension HookEventHandler {
         // 冷却检查：窗口刚被用户恢复（手动热键或 UPS 自动恢复），不重复拉到主屏
         // 多个远程 session 共享同一窗口时，防止 Stop 事件反复拉窗
         if isWindowInMoveCooldown(windowID: windowID) {
+            subDecision = .restoreCooldownActive
             SessionWindowRegistry.shared.setLastEventDescription(
                 "\(triggerName) 窗口刚被恢复，跳过移动（冷却中）"
             )
@@ -80,6 +84,7 @@ extension HookEventHandler {
             let windows = cgWindowListAll()
             if let matchedEntry = windows.first(where: { $0.windowID == windowID }) {
                 if matchedEntry.ownerPID != binding.pid {
+                    subDecision = .staleBindingPIDMismatch
                     log(
                         "[HookEventHandler] \(triggerName) stale binding: window PID mismatch (binding age: \(Int(bindingAge))s)",
                         level: .warn,
@@ -142,17 +147,17 @@ extension HookEventHandler {
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-47: moveWindowToMainScreenAndRespond 总耗时 + outcome（hook 移动核心；区分 already_on_main 快路径 vs moved 含 moveWindowToMainScreen P-INST-3 vs non_terminal/move_failed skip；P-INST-31 handleWindowMoveTrigger 已覆盖调用方总耗时，此埋点补本函数各阶段归因）。
         let mwtStart = Date()
-        var outcome = "unknown"
+        var outcome: WindowMoveDecision = .proceedToMove(source: source)
         defer {
             log("[HookEventHandler] moveWindowToMainScreenAndRespond finished", level: .debug, fields: [
                 "sessionID": payload.sessionID, "triggerName": triggerName, "source": source,
-                "outcome": outcome,
+                "decision": outcome.logDescription,
                 "durationMs": String(elapsedMilliseconds(since: mwtStart))
             ])
         }
         // 预检：如果窗口已在主屏幕上，跳过移动
         if WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
-            outcome = "already_on_main"
+            outcome = .alreadyOnMainScreen
             log(
                 "[HookEventHandler] \(triggerName) [\(source)] window already on main screen, skipping",
                 fields: [
@@ -177,7 +182,7 @@ extension HookEventHandler {
             bundleIdentifier: identity.bundleIdentifier
         )
         if !isTerminal {
-            outcome = "non_terminal"
+            outcome = .nonTerminalWindow
             log(
                 "[HookEventHandler] \(triggerName) [\(source)] window is non-terminal, skipping",
                 level: .warn,
@@ -213,7 +218,7 @@ extension HookEventHandler {
             sessionID: payload.sessionID
         )
         if moved {
-            outcome = "moved"
+            outcome = .proceedToMove(source: "moved")
             onComplete?()
             log(
                 "[HookEventHandler] \(triggerName) [\(source)] window moved successfully",
@@ -239,7 +244,7 @@ extension HookEventHandler {
             )
         }
 
-        outcome = "move_failed"
+        outcome = .proceedToMove(source: "move_failed")
         SessionWindowRegistry.shared.touch(
             sessionID: payload.sessionID,
             message: "\(triggerName) 命中绑定，但移动窗口失败"
