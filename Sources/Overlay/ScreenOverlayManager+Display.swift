@@ -18,7 +18,16 @@ extension ScreenOverlayManager {
         for (index, screen) in screens.enumerated() {
             let uuid = uuidForScreen(screen)
             let overlay = OverlayWindow(screen: screen)
-            let spaceIndex = getPerScreenSpaceIndex(for: screen) ?? 1
+            // FIX: 优先使用缓存的 spaceIndex，避免主线程同步调用 yabai fork（屏幕热插拔时 WindowServer 繁忙会导致超时）。
+            // showOverlays 在 handleScreenChange 路径被调用，此时必须避免同步 I/O 阻塞主线程。
+            // 如果 cache miss，使用默认值 1，后续 refreshSpaceIndices 异步任务会更新正确值。
+            let cachedSpaceIndex = screenSpaceCache[uuid]?.spaceIndex
+            let spaceIndex = cachedSpaceIndex ?? 1
+
+            // 诊断日志：记录 cache miss，便于后续排查
+            if cachedSpaceIndex == nil {
+                log("[Overlay] showOverlays cache miss for screen \(index), using default spaceIndex=1", level: .info)
+            }
 
             overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
             overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
@@ -69,7 +78,9 @@ extension ScreenOverlayManager {
         for (index, screen) in screens.enumerated() {
             let uuid = uuidForScreen(screen)
             activeUUIDs.insert(uuid)
-            let spaceIndex = screenSpaceCache[uuid]?.spaceIndex ?? (getPerScreenSpaceIndex(for: screen) ?? 1)
+            // FIX: 优先使用缓存，cache miss 时使用默认值 1，避免主线程同步 yabai fork。
+            // refreshSpaceIndices 异步任务会在后续更新正确值。
+            let spaceIndex = screenSpaceCache[uuid]?.spaceIndex ?? 1
 
             if let overlay = overlayWindows[uuid] {
                 overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)

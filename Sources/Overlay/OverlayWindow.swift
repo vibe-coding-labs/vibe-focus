@@ -82,7 +82,7 @@ class OverlayWindow: NSWindow {
     }
 
     private func setupTextLayer() {
-        // P-INST-129: 文本图层设置耗时（NSScreen.main backingScaleFactor 读取 + CATextLayer 创建/配置 + addSublayer；init P-INST-128 子阶段，overlay 渲染）。
+        // P-INST-129: 文本图层设置耗时（CATextLayer 创建/配置 + addSublayer；init P-INST-128 子阶段，overlay 渲染）。
         let stlStart = Date()
         defer {
             log("[OverlayWindow] setupTextLayer finished", level: .debug, fields: [
@@ -91,7 +91,9 @@ class OverlayWindow: NSWindow {
         }
         let layer = CATextLayer()
         layer.alignmentMode = .center
-        layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        // FIX: 屏幕热插拔时 NSScreen.main 可能指向已移除的屏幕，访问其属性会触发 WindowServer race。
+        // 使用固定值 2.0（Retina 默认），避免在多屏热插拔期间访问可能失效的 NSScreen.main。
+        layer.contentsScale = 2.0
 
         contentView?.wantsLayer = true
         contentView?.layer?.addSublayer(layer)

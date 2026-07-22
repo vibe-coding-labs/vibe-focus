@@ -114,6 +114,10 @@ class ScreenOverlayManager: ObservableObject {
         // 合并连发通知，等屏幕配置稳定后重建一次（远低于人眼对 overlay 编号变化的感知）。
         // P-INST-126: 屏幕配置变化处理耗时归因（清缓存 + cancelPendingSignalRefreshes +
         // refreshOverlays P-INST-123 重建 overlay；NSApplication.didChangeScreenParametersNotification 触发）。
+
+        // FIX: 屏幕变化是高风险操作，崩溃时需要诊断数据
+        updateCrashSnapshotFromRuntime()
+
         pendingScreenChangeWorkItem?.cancel()
         let startedAt = Date()
         let work = DispatchWorkItem { [weak self] in
