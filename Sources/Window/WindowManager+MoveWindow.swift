@@ -273,8 +273,17 @@ extension WindowManager {
                 "sizeDrift": String(Int(sizeDrift))
             ])
             if sizeDrift > frameTolerance {
+                // 增强诊断：记录详细的 size drift 上下文
+                let mainScreenDPI = mainScreen.backingScaleFactor
                 log("[WindowManager] moveWindowToMainScreen: size drifted after move — rewriting size", level: .warn, fields: [
-                    "op": op, "windowID": String(effectiveWindowID), "sizeDrift": String(Int(sizeDrift))
+                    "op": op,
+                    "windowID": String(effectiveWindowID),
+                    "sizeDrift": String(Int(sizeDrift)),
+                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.width))x\(Int(origFrame.height))",
+                    "finalFrame": "\(Int(finalFrame.origin.x)),\(Int(finalFrame.origin.y)) \(Int(finalFrame.width))x\(Int(finalFrame.height))",
+                    "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.width))x\(Int(targetFrame.height))",
+                    "mainScreenDPI": String(describing: mainScreenDPI),
+                    "frameTolerance": String(Int(frameTolerance))
                 ])
                 // 重写最多两次 + 每次回读验证。iTerm2 等窗口异步 clamp height，单次 AX write 未必生效；
                 // 窗口此时已在主屏（无跨屏干扰），重写应能突破 clamp。两次后仍 drift 说明 app 硬 clamp，

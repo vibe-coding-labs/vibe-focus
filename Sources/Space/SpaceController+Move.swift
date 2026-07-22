@@ -68,6 +68,16 @@ extension SpaceController {
         // 普通 connection，权限不足 → SLS move 始终失败（result 返回垃圾值，非 0）。
         // 保留作为 yabai 不可用时的最后尝试，但预期失败（详见 NativeSpaceBridge.moveWindow log）。
 
+        // 增强诊断：记录详细的失败上下文
+        log("[SpaceController] moveWindow failed with detailed context", level: .error, fields: [
+            "op": op,
+            "windowID": String(windowID),
+            "targetSpace": String(spaceIndex),
+            "windowManageable": String(windowInfo.isManageableByYabai),
+            "windowDisplay": String(windowInfo.display ?? -1),
+            "windowSpace": String(windowInfo.space ?? -1),
+            "windowIsFloating": String(windowInfo.isFloating)
+        ])
         markOperationError("Failed to move window \(windowID) to space \(spaceIndex)", operationID: op)
         return false
     }

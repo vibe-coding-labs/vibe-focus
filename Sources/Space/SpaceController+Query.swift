@@ -29,11 +29,25 @@ extension SpaceController {
         // P-INST-6: queryFocusedWindow fork 耗时（副屏焦点窗口 ~635ms 是 move_to_main ctx 主因；
         // 总是 fork，无缓存读，但写 windowQueryCache 供后续 queryWindow 命中）。
         let forkStart = Date()
-        guard let result = runYabai(arguments: ["-m", "query", "--windows", "--window"]),
-              result.exitCode == 0 else {
-            log("[SpaceController] queryFocusedWindow fork failed", level: .warn, fields: [
-                "durationMs": String(elapsedMilliseconds(since: forkStart))
-            ])
+        let result = runYabai(arguments: ["-m", "query", "--windows", "--window"])
+        guard let result, result.exitCode == 0 else {
+            let durationMs = elapsedMilliseconds(since: forkStart)
+            // 区分预期失败和异常失败：
+            // - "could not retrieve window details" = 无焦点窗口，正常场景（如用户点击桌面），降级为 debug
+            // - 其他错误 = 需要关注的异常，保持 warn
+            let stderr = result?.stderr.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if stderr.contains("could not retrieve window details") {
+                // 预期失败：无焦点窗口（如用户点击桌面、所有窗口最小化）
+                log("[SpaceController] queryFocusedWindow: no focused window (expected)", level: .debug, fields: [
+                    "durationMs": String(durationMs)
+                ])
+            } else {
+                // 异常失败：其他错误（如 yabai 崩溃、权限问题）
+                log("[SpaceController] queryFocusedWindow failed with unexpected error", level: .warn, fields: [
+                    "durationMs": String(durationMs),
+                    "stderr": stderr.isEmpty ? "-" : stderr
+                ])
+            }
             return nil
         }
         let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
@@ -114,9 +128,9 @@ extension SpaceController {
         }
 
         // 2. 直接查询
-        if let result = runYabai(arguments: ["-m", "query", "--windows", "--window", "\(windowID)"]),
-           result.exitCode == 0 {
-            let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: result.stdout)
+        let directResult = runYabai(arguments: ["-m", "query", "--windows", "--window", "\(windowID)"])
+        if let directResult, directResult.exitCode == 0 {
+            let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: directResult.stdout)
             if info != nil {
                 windowQueryCache[windowID] = (result: info, cachedAt: Date())
                 log("[SpaceController] queryWindow direct", fields: [
@@ -128,11 +142,20 @@ extension SpaceController {
             }
         }
 
-        log(
-            "[queryWindow] direct query failed, trying all-windows fallback",
-            level: .warn,
-            fields: ["windowID": String(windowID)]
-        )
+        // 直接查询失败，记录诊断并尝试 fallback
+        // "could not locate window" = 窗口 ID 无效（窗口已关闭），预期场景，降级为 debug
+        let stderr = directResult?.stderr ?? ""
+        if stderr.contains("could not locate window") {
+            log("[queryWindow] window not found (expected, window may have closed)", level: .debug, fields: [
+                "windowID": String(windowID)
+            ])
+        } else {
+            log("[queryWindow] direct query failed, trying all-windows fallback", level: .debug, fields: [
+                "windowID": String(windowID),
+                "stderr": stderr.isEmpty ? "-" : stderr
+            ])
+        }
+
         guard let allResult = runYabai(arguments: ["-m", "query", "--windows"]),
               allResult.exitCode == 0 else {
             log("[queryWindow] all-windows fallback also failed", level: .warn, fields: ["windowID": String(windowID)])
@@ -143,7 +166,7 @@ extension SpaceController {
         let match = allWindows.first { $0.id == Int(windowID) }
         log(
             "[queryWindow] fallback result",
-            level: .warn,
+            level: .debug,
             fields: [
                 "windowID": String(windowID),
                 "found": String(match != nil),
