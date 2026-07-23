@@ -88,6 +88,7 @@ extension WindowManager {
     ///   - sessionID: Optional session identifier for hook-related moves
     ///   - operationID: Unique operation identifier (auto-generated if nil)
     ///   - knownWindowAX: Pre-resolved AXUIElement to avoid redundant AX queries
+    ///   - knownOrigFrame: Pre-captured original frame (avoids reading post-space-move frame in P2 yabai path)
     /// - Returns: true if move succeeded, false otherwise
     @discardableResult
     func moveWindowToMainScreen(
@@ -95,7 +96,8 @@ extension WindowManager {
         reason: WindowMoveReason,
         sessionID: String?,
         operationID: String? = nil,
-        knownWindowAX: AXUIElement? = nil
+        knownWindowAX: AXUIElement? = nil,
+        knownOrigFrame: CGRect? = nil
     ) -> Bool {
         let op = operationID ?? makeOperationID(prefix: "move")
         let startedAt = Date()
@@ -176,10 +178,31 @@ extension WindowManager {
         }
 
         // P-INST-3: frameReadMs 诊断 AX frame(of:) 读取（窗口已在主屏 space，应 <20ms；若高说明 AX 跨屏阻塞）。
+        // BUG FIX: In P2 yabai path, frame(of:) is called AFTER yabai space move, which may have
+        // already re-tiled the window, causing origFrame to be corrupted (wrong size). Use knownOrigFrame
+        // (captured BEFORE space move) when available.
         let frameReadStart = Date()
-        let origFrameOpt = frame(of: windowAX)
+        let origFrame: CGRect?
+        if let preCapturedFrame = knownOrigFrame {
+            origFrame = preCapturedFrame
+            log("[WindowManager] moveWindowToMainScreen: using pre-captured origFrame (P2 yabai path)", fields: [
+                "op": op,
+                "windowID": String(identity.windowID),
+                "origFrame": "\(Int(preCapturedFrame.origin.x)),\(Int(preCapturedFrame.origin.y)) \(Int(preCapturedFrame.width))x\(Int(preCapturedFrame.height))",
+                "source": "knownOrigFrame"
+            ])
+        } else {
+            let axFrame = frame(of: windowAX)
+            origFrame = axFrame
+            log("[WindowManager] moveWindowToMainScreen: using AX frame read", fields: [
+                "op": op,
+                "windowID": String(identity.windowID),
+                "origFrame": axFrame.map { "\($0.origin.x),\($0.origin.y) \($0.width)x\($0.height)" } ?? "nil",
+                "source": "AX"
+            ])
+        }
         let frameReadMs = elapsedMilliseconds(since: frameReadStart)
-        guard let origFrame = origFrameOpt else {
+        guard let origFrame = origFrame else {
             log("moveWindowToMainScreen failed: cannot read current frame", level: .error, fields: ["op": op])
             return false
         }

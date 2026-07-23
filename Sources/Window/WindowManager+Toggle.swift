@@ -274,7 +274,12 @@ extension WindowManager {
                 )
             }
         } else {
-            moveToMainScreen(operationID: op, triggerSource: triggerSource, knownIdentity: resolvedIdentity, knownWindowAX: resolvedWindowAX)
+            let knownOrigFrame = toggleContext["windowFrame"].flatMap { frameStr in
+                // Parse "CGRect(x, y, w, h)" format from toggleContext
+                // This is the frame captured by CGWindowList BEFORE any yabai space move
+                parseFrameString(frameStr)
+            }
+            moveToMainScreen(operationID: op, triggerSource: triggerSource, knownIdentity: resolvedIdentity, knownWindowAX: resolvedWindowAX, knownOrigFrame: knownOrigFrame)
             if let winID = resolvedWindowID {
                 AuditLogger.shared.record(
                     eventType: "toggle_move_to_main",
@@ -407,7 +412,8 @@ extension WindowManager {
     ///   - triggerSource: Origin of the move (hotkey, hook, etc.)
     ///   - knownIdentity: Pre-resolved window identity (avoids redundant AX queries)
     ///   - knownWindowAX: Pre-resolved AXUIElement (avoids redundant AX queries)
-    func moveToMainScreen(operationID: String? = nil, triggerSource: String = "unknown", knownIdentity: WindowIdentity? = nil, knownWindowAX: AXUIElement? = nil) {
+    ///   - knownOrigFrame: Pre-captured original frame (avoids reading post-space-move frame)
+    func moveToMainScreen(operationID: String? = nil, triggerSource: String = "unknown", knownIdentity: WindowIdentity? = nil, knownWindowAX: AXUIElement? = nil, knownOrigFrame: CGRect? = nil) {
         let op = operationID ?? makeOperationID(prefix: "move")
         let startedAt = Date()
         log(
@@ -451,7 +457,8 @@ extension WindowManager {
             reason: .manualHotkey,
             sessionID: nil,
             operationID: op,
-            knownWindowAX: knownWindowAX
+            knownWindowAX: knownWindowAX,
+            knownOrigFrame: knownOrigFrame
         )
         HookEventHandler.shared.clearAutoRestoreCooldown(windowID: identity.windowID)
         if moved {
@@ -488,4 +495,28 @@ extension WindowManager {
 
     // Restore 决策逻辑已移至 WindowManager+Toggle+Decision.swift
     // 包含: RestoreDecision 枚举, decideRestore(), shouldRestoreCurrentWindow()
+}
+
+/// Parse CGRect from string format "CGRect(x, y, w, h)" or "(x, y, w, h)"
+/// Used to parse toggleContext["windowFrame"] captured by CGWindowList
+private func parseFrameString(_ s: String) -> CGRect? {
+    // Extract numbers from string like "CGRect(0.0, 0.0, 100.0, 200.0)" or "(0.0, 0.0, 100.0, 200.0)"
+    let pattern = #"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)"#
+    guard let regex = try? NSRegularExpression(pattern: pattern),
+          let match = regex.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+          match.numberOfRanges >= 5 else {
+        return nil
+    }
+    func extractGroup(_ idx: Int) -> CGFloat? {
+        guard idx < match.numberOfRanges else { return nil }
+        let range = Range(match.range(at: idx), in: s)
+        return range.map { CGFloat((s[$0] as NSString).doubleValue) }
+    }
+    guard let x = extractGroup(1),
+          let y = extractGroup(2),
+          let w = extractGroup(3),
+          let h = extractGroup(4) else {
+        return nil
+    }
+    return CGRect(x: x, y: y, width: w, height: h)
 }
