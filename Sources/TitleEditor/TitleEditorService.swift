@@ -4,7 +4,7 @@ import Foundation
 
 @MainActor
 /// Service for programmatically setting terminal window titles via escape sequences.
-class TitleEditorService {
+final class TitleEditorService {
     static let shared = TitleEditorService()
 
     private var terminalBundleIDs: Set<String> { TerminalRegistry.terminalBundleIDs }

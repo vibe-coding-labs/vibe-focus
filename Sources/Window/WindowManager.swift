@@ -7,7 +7,7 @@ import Foundation
 
 @MainActor
 /// Core window management engine — finding, moving, toggling, and restoring windows.
-class WindowManager {
+final class WindowManager {
     static let shared = WindowManager()
 
     let spaceController = SpaceController.shared

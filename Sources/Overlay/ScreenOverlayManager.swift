@@ -5,7 +5,7 @@ import Darwin  // for signal.h
 // MARK: - Screen Overlay Manager
 /// Manages the always-on-top screen index overlay that labels windows by display.
 @MainActor
-class ScreenOverlayManager: ObservableObject {
+final class ScreenOverlayManager: ObservableObject {
     static let shared = ScreenOverlayManager()
 
     static var signalSource: DispatchSourceSignal?

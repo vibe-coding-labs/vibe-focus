@@ -4,7 +4,7 @@ import QuartzCore
 
 // MARK: - Overlay Window
 /// Borderless always-on-top window used for screen index overlays.
-class OverlayWindow: NSWindow {
+final class OverlayWindow: NSWindow {
     private var textLayer: CATextLayer?
     private var screenIndex: Int = 0
     private var spaceIndex: Int = 0
