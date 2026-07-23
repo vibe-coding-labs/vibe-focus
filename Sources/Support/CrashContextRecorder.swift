@@ -27,7 +27,7 @@ final class CrashContextRecorder {
         isDirectory: true
     )
 
-    let timestampFormatter: ISO8601DateFormatter = {
+    private let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
@@ -36,10 +36,10 @@ final class CrashContextRecorder {
     var state: SessionState?
 
     /// 异步写入队列 — 避免在 toggle 热路径中阻塞主线程
-    let persistQueue = DispatchQueue(label: "com.vibefocus.crash-persist", qos: .utility)
+    private let persistQueue = DispatchQueue(label: "com.vibefocus.crash-persist", qos: .utility)
     /// 防抖标志：避免快速连续 record 调用时频繁写入磁盘
-    var persistScheduled = false
-    let persistDebounceInterval: TimeInterval = 0.5
+    private var persistScheduled = false
+    private let persistDebounceInterval: TimeInterval = 0.5
 
     private init() {}
 

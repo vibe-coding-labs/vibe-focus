@@ -8,8 +8,8 @@ enum ClaudeHookPreferences {
 
     static let enabledKey = "claudeHookEnabled"
     static let portKey = "claudeHookPort"
-    static let tokenKey = "claudeHookToken"
-    static let autoFocusOnSessionEndKey = "claudeHookAutoFocusOnSessionEnd"
+    private static let tokenKey = "claudeHookToken"
+    private static let autoFocusOnSessionEndKey = "claudeHookAutoFocusOnSessionEnd"
     static let triggerOnStopKey = "claudeHookTriggerOnStop"
     static let triggerOnSessionEndKey = "claudeHookTriggerOnSessionEnd"
     static let autoRestoreOnPromptSubmitKey = "claudeHookAutoRestoreOnPromptSubmit"
@@ -22,7 +22,7 @@ enum ClaudeHookPreferences {
     // 编译器保证一致性，防止默认值漂移导致 app 重启后配置被重置。
 
     static let defaultEnabled = false
-    static let defaultAutoFocusOnSessionEnd = true
+    private static let defaultAutoFocusOnSessionEnd = true
     static let defaultTriggerOnStop = true
     static let defaultTriggerOnSessionEnd = false
     static let defaultAutoRestoreOnPromptSubmit = true

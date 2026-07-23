@@ -8,7 +8,7 @@ final class WindowStateStore {
     static let shared = WindowStateStore()
 
     var db: OpaquePointer?
-    let dbPath: String
+    private let dbPath: String
 
     init(dbPath: String? = nil) {
         if let dbPath {
@@ -28,7 +28,7 @@ final class WindowStateStore {
 extension WindowStateStore {
     // MARK: - Database Setup
 
-    func openDatabase() {
+    private func openDatabase() {
         // P-INST-168: 数据库打开耗时（sqlite3_open 连接 + PRAGMA journal_mode=WAL prepare/step/finalize；启动路径单次调用，WAL 模式设置）。
         let odStart = Date()
         defer {
@@ -64,7 +64,7 @@ extension WindowStateStore {
         }
     }
 
-    func createTables() {
+    private func createTables() {
         // P-INST-170: 建表/迁移编排耗时（5x runSchema P-INST-169 CREATE TABLE/INDEX/ALTER + columnExists P-INST-172 + migrateWindowsPKIfNeeded P-INST-171；启动路径单次调用，DDL 全量执行）。
         let ctStart = Date()
         defer {
@@ -130,7 +130,7 @@ extension WindowStateStore {
     // MARK: - PK Migration
 
     /// 检测旧表 PK 是否为 (pid, tty)，如果是则重建为 (window_id)
-    func migrateWindowsPKIfNeeded() {
+    private func migrateWindowsPKIfNeeded() {
         // P-INST-171: windows 表 PK 迁移耗时（PRAGMA table_info prepare/step 读 PK 列 + 必要时 CREATE windows_v2 + INSERT SELECT + DROP/RENAME；createTables 启动调用，迁移路径含多步 DDL）。
         let mpStart = Date()
         defer {

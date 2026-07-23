@@ -12,7 +12,7 @@ class WindowManager {
 
     let spaceController = SpaceController.shared
     var focusSpaceKnownBroken: Bool = false
-    var didPromptForAccessibility = false
+    private var didPromptForAccessibility = false
     let frameTolerance: CGFloat = 10
     let axWindowNumberAttribute = "AXWindowNumber"
     let axFrameAttribute = "AXFrame"

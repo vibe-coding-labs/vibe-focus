@@ -3,7 +3,7 @@ import Foundation
 /// Manages LAN hook remote machine binding preferences and persistence.
 enum LANHookPreferences {
     static let lanModeKey = "claudeHookLanMode"
-    static let remoteBindingsKey = "claudeHookRemoteBindings"
+    private static let remoteBindingsKey = "claudeHookRemoteBindings"
 
     static let defaultLanMode = false
 

@@ -16,6 +16,7 @@ class TitleEditorService {
 
     // MARK: - Public API
 
+    /// Manually edit the title of the focused terminal window (Ctrl+T)
     func editTitle() {
         // P-INST-218: 标题编辑入口端到端耗时（NSWorkspace.frontmostApplication + WindowManager.focusedWindow P-INST-52 + title AX + NSApp.activate；用户 Ctrl+T 手动触发，非 toggle 热路径）。
         let etStart = Date()
@@ -115,6 +116,7 @@ class TitleEditorService {
 
     // MARK: - Auto Title
 
+    /// Auto-set terminal title based on CWD project name (SessionStart hook)
     func autoSetTitle(cwd: String?, pid: pid_t, bundleID: String, window: AXUIElement) {
         // P-INST-250: autoSetTitle 编排耗时（windowHandle AX 查询 + userRenamedWindowIDs 检查 + applyTitle P-INST-40 三路 AX/AppleScript/TTY 写；SessionStart hook 路径调用，归因 title 阶段延迟；slow-op ≥50ms warn）。
         let astStart = Date()

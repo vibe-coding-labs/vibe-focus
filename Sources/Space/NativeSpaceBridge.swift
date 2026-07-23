@@ -68,7 +68,7 @@ enum NativeSpaceBridge {
     private static var _moveWindowFailures: [UInt32: TimeInterval] = [:]
     private static let moveWindowFailureRetryInterval: TimeInterval = 300
 
-    static func resetFailureCache() {
+    private static func resetFailureCache() {
         _moveWindowFailures.removeAll()
     }
 
@@ -215,7 +215,7 @@ enum NativeSpaceBridge {
     /// - CGEvent: Quartz 坐标系 — 与 AX 相同
     /// - 鼠标位置 (NSEvent.mouseLocation): Cocoa 坐标系
     /// - 转换: quartzY = mainScreenHeight - cocoaY
-    static func dragWindowToDisplay(
+    private static func dragWindowToDisplay(
         windowFrame: CGRect,
         targetScreen: NSScreen,
         operationID: String? = nil

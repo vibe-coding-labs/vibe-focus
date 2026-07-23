@@ -18,16 +18,16 @@ final class SessionWindowRegistry: ObservableObject {
     /// 记录 sessionID → windowID 的关系，让 UserPromptSubmit 能找到正确的窗口。
     var sessionAliasWindowID: [String: UInt32] = [:]
 
-    var activeBindingCount: Int {
+    private var activeBindingCount: Int {
         windowStates.values.filter { !$0.isCompleted }.count
     }
 
-    var completedBindingCount: Int {
+    private var completedBindingCount: Int {
         windowStates.values.filter(\.isCompleted).count
     }
 
-    let completedRetention: TimeInterval = 4 * 60 * 60
-    let activeRetention: TimeInterval = 24 * 60 * 60
+    private let completedRetention: TimeInterval = 4 * 60 * 60
+    private let activeRetention: TimeInterval = 24 * 60 * 60
 
     private init() {
         let loaded = WindowStateStore.shared.loadAllWindowStates()

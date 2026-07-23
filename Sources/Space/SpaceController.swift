@@ -15,7 +15,7 @@ final class SpaceController: ObservableObject {
     @Published var canControlSpaces: Bool = false
 
     private var lastCheckAt: Date?
-    var cachedYabaiPath: String?
+    private var cachedYabaiPath: String?
     var didAttemptScriptingAdditionRecovery = false
     var scriptingAdditionRecoverySucceeded = false
     private let checkInterval: TimeInterval = 20
@@ -25,7 +25,7 @@ final class SpaceController: ObservableObject {
     // MARK: - Query Cache (per-toggle lifecycle)
 
     /// 查询缓存 TTL — 短到不会错过 yabai 状态变化，长到覆盖一次 toggle 操作
-    static let queryCacheTTL: TimeInterval = 2.0
+    private static let queryCacheTTL: TimeInterval = 2.0
 
     /// 缓存 queryWindow 结果 — key 是 windowID
     var windowQueryCache: [UInt32: (result: YabaiWindowInfo?, cachedAt: Date)] = [:]
