@@ -49,6 +49,14 @@ extension WindowManager {
         return nil
     }
 
+    /// Capture the identity of the currently focused window.
+    ///
+    /// Uses AX (not CGWindowList) for windowID because `resolveWindow(identity:)` later
+    /// matches via AX focusedWindow + windowHandle — IDs must be from the same source.
+    /// CGWindowList cannot reliably identify the focused window in multi-window apps
+    /// (e.g., iTerm2 first match ≠ AX focused).
+    ///
+    /// - Returns: WindowIdentity of the focused window, or nil if unavailable
     func captureFocusedWindowIdentity() -> WindowIdentity? {
         // P-INST-25: captureFocusedWindowIdentity 耗时（4 个 AX 调用 focusedWindow+windowHandle+windowNumber+title，副屏可能阻塞；hook 路径）。
         let cfStart = Date()

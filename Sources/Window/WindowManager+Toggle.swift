@@ -4,6 +4,15 @@ import Foundation
 @MainActor
 extension WindowManager {
 
+    /// Core toggle operation: move focused window between main and secondary screens.
+    ///
+    /// - If window is on secondary screen → move to main screen (maximized)
+    /// - If window has toggle record (was toggled before) → restore to original position
+    /// - If window is stuck on main screen → move to secondary screen to unblock cycle
+    ///
+    /// - Parameters:
+    ///   - operationID: Unique identifier for this operation (auto-generated if nil)
+    ///   - triggerSource: Origin of the toggle (hotkey, hook, etc.)
     func toggle(operationID: String? = nil, triggerSource: String = "unknown") {
         let op = operationID ?? makeOperationID(prefix: "toggle")
         let startedAt = Date()
@@ -385,6 +394,19 @@ extension WindowManager {
         )
     }
 
+    /// Move the currently focused window to the main screen maximized.
+    ///
+    /// This is the "move to main" half of the toggle operation. The window is:
+    /// 1. Moved to the main screen's visible space (via yabai or AX)
+    /// 2. Set to floating (detached from yabai tiling)
+    /// 3. Resized to fill the main screen
+    /// 4. A toggle record is saved for future restore
+    ///
+    /// - Parameters:
+    ///   - operationID: Unique identifier (auto-generated if nil)
+    ///   - triggerSource: Origin of the move (hotkey, hook, etc.)
+    ///   - knownIdentity: Pre-resolved window identity (avoids redundant AX queries)
+    ///   - knownWindowAX: Pre-resolved AXUIElement (avoids redundant AX queries)
     func moveToMainScreen(operationID: String? = nil, triggerSource: String = "unknown", knownIdentity: WindowIdentity? = nil, knownWindowAX: AXUIElement? = nil) {
         let op = operationID ?? makeOperationID(prefix: "move")
         let startedAt = Date()

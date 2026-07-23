@@ -11,6 +11,17 @@ extension HookEventHandler {
 
     // MARK: - Window Move Trigger (Stop / SessionEnd)
 
+    /// Handle Stop/SessionEnd hook events — move the bound window back to the main screen.
+    ///
+    /// This is the "auto-focus on session end" feature. When a Claude Code session
+    /// ends (Stop or SessionEnd hook), the terminal window that was bound to that
+    /// session is moved back to the main screen so the user can see the result.
+    ///
+    /// - Parameters:
+    ///   - payload: The hook event payload containing session info
+    ///   - triggerName: Name of the triggering hook ("Stop" or "SessionEnd")
+    ///   - remoteOnly: If true, only handle remote sessions (skip local)
+    /// - Returns: HTTP-style status code and hook response
     func handleWindowMoveTrigger(
         payload: ClaudeHookPayload,
         triggerName: String,

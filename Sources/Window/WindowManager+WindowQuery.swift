@@ -46,6 +46,13 @@ extension WindowManager {
         return success
     }
 
+    /// Get the AXUIElement for the currently focused window of a given application.
+    ///
+    /// Queries `kAXFocusedWindowAttribute` on the application's AX element.
+    /// Can block 1-2s when the window is on a secondary screen with independent Spaces.
+    ///
+    /// - Parameter pid: Process identifier of the target application
+    /// - Returns: AXUIElement of the focused window, or nil if unavailable
     func focusedWindow(for pid: pid_t) -> AXUIElement? {
         // P-INST-52: AX focusedWindow 读取耗时（kAXFocusedWindowAttribute；resolveWindow fast path / hook 路径调用，跨屏可阻塞 1-2s；slow-op ≥50ms warn）。
         let fwAxStart = Date()
@@ -70,6 +77,17 @@ extension WindowManager {
         return unsafeBitCast(windowRef, to: AXUIElement.self)
     }
 
+    /// Find an AXUIElement window by PID and CGWindowID.
+    ///
+    /// Uses a focused-window fast path: if the target windowID matches the app's
+    /// currently focused window, returns immediately without full AX enumeration.
+    /// Falls back to full `kAXWindowsAttribute` traversal when the fast path misses.
+    /// See `feedback_window_lookup_perf` for the performance rationale.
+    ///
+    /// - Parameters:
+    ///   - pid: Process identifier of the target application
+    ///   - windowID: CGWindowID to match (must be non-nil for any lookup)
+    /// - Returns: Matching AXUIElement, or nil if not found
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? {
         guard let windowID else { return nil }
         // P-INST-21: findWindowByPID 耗时（fast path 应 <5ms，全量遍历 fallback 跨屏阻塞可 ~2s，restore gap3 归因关键）。

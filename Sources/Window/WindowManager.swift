@@ -33,6 +33,12 @@ final class WindowManager {
 
     init() {}
 
+    /// Get the main screen (the one with the menu bar).
+    ///
+    /// Tries `NSScreen.screens.first { isMainScreen }` first, falls back to `NSScreen.main`.
+    /// Can block if WindowServer is busy during screen reconfiguration.
+    ///
+    /// - Returns: The main NSScreen, or nil if unavailable
     func getMainScreen() -> NSScreen? {
         // P-INST-214: 主屏获取耗时（NSScreen.screens 枚举 + first filter + NSScreen.main fallback；toggle/move 多路径调用，NSScreen.screens 可能阻塞 WindowServer；slow-op ≥30ms warn）。
         let gmsStart = Date()
@@ -43,6 +49,12 @@ final class WindowManager {
         return NSScreen.screens.first { $0.isMainScreen } ?? NSScreen.main
     }
 
+    /// Check whether the app has Accessibility permission (AXIsProcessTrusted).
+    ///
+    /// Called before toggle operations and at startup. Usually fast (~5ms) but
+    /// can block if the system is under load.
+    ///
+    /// - Returns: true if accessibility permission is granted
     func hasAccessibilityPermission() -> Bool {
         // P-INST-64: AX 权限检查耗时（AXIsProcessTrustedWithOptions 系统调用；启动 + toggle 前置检查，通常 ~5ms 但系统繁忙时可阻塞；slow-op ≥50ms warn）。
         let hapStart = Date()

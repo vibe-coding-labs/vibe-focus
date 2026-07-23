@@ -8,6 +8,13 @@ import Foundation
 @MainActor
 extension WindowManager {
 
+    /// Check whether a window (by CGWindowID) is currently on the main screen.
+    ///
+    /// Uses CGWindowList (non-blocking) instead of AX to avoid cross-screen stalls.
+    /// Called by toggle decision logic and hook pre-checks.
+    ///
+    /// - Parameter windowID: The CGWindowID of the window to check
+    /// - Returns: true if the window's bounds overlap the main screen
     func isWindowOnMainScreen(windowID: UInt32) -> Bool {
         // P-INST-61: isWindowOnMainScreen 耗时（cgWindowListAll P-INST-45 + CoordinateKit.isOnMainScreen；hook 预检 P-INST-47 + toggle 路径调用）。
         let iwomsStart = Date()
@@ -66,6 +73,13 @@ extension WindowManager {
         return CoordinateKit.screenArrayIndex(for: screen)
     }
 
+    /// Resolve which display a given frame belongs to, returning both array index and CGDisplayID.
+    ///
+    /// Iterates NSScreen.screens to find the screen containing the frame's center point.
+    /// Used by toggle/restore to determine source and target displays.
+    ///
+    /// - Parameter frame: The window frame to locate
+    /// - Returns: Tuple of (screen array index, CGDisplayID), either may be nil if no match
     func displayContext(for frame: CGRect) -> (index: Int?, displayID: UInt32?) {
         // P-INST-215: 显示器上下文解析耗时（NSScreen.screens.count + enumerated 遍历 contains/intersects + CoordinateKit.cgDisplayID；toggle 路径确定窗口所在屏，NSScreen.screens 可能阻塞；slow-op ≥30ms warn）。
         let dcStart = Date()

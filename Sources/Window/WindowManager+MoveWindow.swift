@@ -72,6 +72,23 @@ extension WindowManager {
         return nil
     }
 
+    /// Move a specific window to the main screen with proper space and size handling.
+    ///
+    /// This is the implementation method for `moveToMainScreen`, handling:
+    /// 1. Space context capture (source space/display for future restore)
+    /// 2. Yabai space move (for cross-display moves) or AX positioning
+    /// 3. Float window (detach from yabai tiling)
+    /// 4. Apply fullscreen size on main screen
+    /// 5. Save toggle record for restore
+    /// 6. Post-move size verification and correction
+    ///
+    /// - Parameters:
+    ///   - identity: Window identity (windowID, pid, bundleID, title, etc.)
+    ///   - reason: Why this move is happening (manualHotkey, hookAutoRestore, etc.)
+    ///   - sessionID: Optional session identifier for hook-related moves
+    ///   - operationID: Unique operation identifier (auto-generated if nil)
+    ///   - knownWindowAX: Pre-resolved AXUIElement to avoid redundant AX queries
+    /// - Returns: true if move succeeded, false otherwise
     @discardableResult
     func moveWindowToMainScreen(
         identity: WindowIdentity,

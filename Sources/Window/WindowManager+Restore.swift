@@ -4,6 +4,19 @@ import Foundation
 @MainActor
 extension WindowManager {
 
+    /// Restore the focused window to its pre-toggle position.
+    ///
+    /// This is the restore half of the toggle operation. It:
+    /// 1. Identifies the currently focused window via AX
+    /// 2. Delegates to `ToggleEngine.restore()` for actual execution
+    ///
+    /// **Important:** Execution logic lives exclusively in `ToggleEngine.restore()`.
+    /// This method only does pre-validation (window identification) before delegating.
+    /// See `feedback_single_restore_path` for the architectural rationale.
+    ///
+    /// - Parameters:
+    ///   - operationID: Unique identifier for this operation (auto-generated if nil)
+    ///   - triggerSource: Origin of the restore (hotkey, hook, etc.)
     func restore(operationID: String? = nil, triggerSource: String = "unknown") {
         // P-INST-116: restore 委托路径总耗时（frontmostApplication + focusedWindow AX P-INST-52 + windowHandle AX + shouldRestore 决策 P-INST-76 + 委托 ToggleEngine.restore P-INST-79；memory feedback_single_restore_path：WindowManager.restore 做前置验证后委托，执行逻辑只在 ToggleEngine.restore；startedAt/finalDurationMs 已存在，此标记补全归因）。
         let op = operationID ?? makeOperationID(prefix: "restore")

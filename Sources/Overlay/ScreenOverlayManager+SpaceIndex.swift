@@ -54,6 +54,13 @@ enum SpaceIndexResolver {
 
 extension ScreenOverlayManager {
 
+    /// Refresh space indices for all screens asynchronously.
+    ///
+    /// Queries yabai to determine which Space is currently visible on each screen,
+    /// updates the overlay indicators accordingly. Uses background threads for
+    /// yabai queries to avoid blocking the main thread.
+    ///
+    /// - Parameter force: If true, bypass suspension and clear cache before refresh.
     func refreshSpaceIndices(force: Bool = false) {
         // P-INST-245: overlay space index 刷新编排耗时（NSScreen.screens 枚举 + uuidForScreen/deviceDescription preResolve + 后台 Task 派发 yabai fork query；space 切换/timer/toggle 后调用，主线程同步部分归因；后台 fork 异步不计入 defer；slow-op ≥30ms warn）。
         let rsiStart = Date()

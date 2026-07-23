@@ -10,6 +10,15 @@ extension HookEventHandler {
 
     // MARK: - Session Start
 
+    /// Handle SessionStart hook event — bind a terminal window to a Claude Code session.
+    ///
+    /// When a new Claude Code session starts, this handler:
+    /// 1. Resolves the terminal window from the hook payload's terminal context
+    /// 2. Registers the session-window binding in SessionWindowRegistry
+    /// 3. Optionally sets the terminal window title to include the project name
+    ///
+    /// - Parameter payload: The hook event payload containing session and terminal context
+    /// - Returns: HTTP-style status code and hook response
     func handleSessionStart(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {

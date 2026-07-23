@@ -6,6 +6,13 @@ import Foundation
 @MainActor
 extension WindowManager {
 
+    /// Extract the CGWindowID from an AXUIElement window reference.
+    ///
+    /// Uses `_AXUIElementGetWindow` (private but stable API). This is the primary
+    /// way to bridge from AX elements to CGWindowIDs for CGWindowList queries.
+    ///
+    /// - Parameter window: AXUIElement representing a window
+    /// - Returns: CGWindowID if extraction succeeds, nil otherwise
     func windowHandle(for window: AXUIElement) -> UInt32? {
         // P-INST-44: _AXUIElementGetWindow AX 耗时（slow-op ≥50ms warn；AX 正常 <10ms，阻塞 >>50ms）。
         let whAxStart = Date()
@@ -52,6 +59,16 @@ extension WindowManager {
         return titleRef as? String
     }
 
+    /// Read the frame of an AX window element.
+    ///
+    /// **WARNING:** This function can block 1-2 seconds when the window is on a
+    /// secondary screen with independent Spaces. Toggle hot-path MUST use
+    /// `cgWindowFrame(forWindowID:)` instead. This function is kept for
+    /// non-hot-path diagnostics and post-move verification only.
+    /// See `feedback_toggle_ctxms_cgwindowlist` for the mandate.
+    ///
+    /// - Parameter window: AXUIElement representing a window
+    /// - Returns: The window's frame in global coordinates, or nil on failure
     func frame(of window: AXUIElement) -> CGRect? {
         // P-INST-44: AX frame 读取耗时（已知阻塞元凶，副屏独立 Space 可阻塞 1-2s；memory feedback_toggle_ctxms_cgwindowlist 铁律 toggle 热路径禁用此函数，always debug 用于监控违规调用 + 阻塞归因）。
         let frameAxStart = Date()
@@ -74,6 +91,15 @@ extension WindowManager {
         return frame
     }
 
+    /// Check whether an AX attribute is settable on an element.
+    ///
+    /// Called before every window move operation to verify the attribute can be written.
+    /// Can block if the AX connection is slow.
+    ///
+    /// - Parameters:
+    ///   - element: AXUIElement to check
+    ///   - attribute: Attribute name (e.g., kAXFrameAttribute, kAXPositionAttribute)
+    /// - Returns: true if the attribute is settable
     func isAttributeSettable(_ element: AXUIElement, attribute: String) -> Bool {
         // P-INST-44: AX isAttributeSettable 耗时（slow-op ≥50ms warn；每次 window move 前调用）。
         let settableAxStart = Date()
