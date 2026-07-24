@@ -27,7 +27,8 @@ private final class CrashSnapshotBuffer: @unchecked Sendable {
     private let bufferA = UnsafeMutablePointer<CChar>.allocate(capacity: 16384)
     private let bufferB = UnsafeMutablePointer<CChar>.allocate(capacity: 16384)
     private var activeBuffer: UnsafeMutablePointer<CChar>
-    private var activeLength: Int = 0
+    private var lengthA: Int = 0
+    private var lengthB: Int = 0
     private var activeIsA = true
     private let lock = NSLock()
 
@@ -46,19 +47,32 @@ private final class CrashSnapshotBuffer: @unchecked Sendable {
         lock.lock()
         let buf = activeBuffer
         let written = block(buf, 16384 - 1)
-        activeLength = max(0, written)
-        buf.advanced(by: activeLength).pointee = 0
+        let len = max(0, written)
+        buf.advanced(by: len).pointee = 0
+        // 记录刚写入的 buffer 长度，再切换 active buffer
+        if activeIsA {
+            lengthA = len
+        } else {
+            lengthB = len
+        }
         activeIsA = !activeIsA
         activeBuffer = activeIsA ? bufferA : bufferB
-        activeLength = 0
         activeBuffer.pointee = 0
         lock.unlock()
     }
 
     func readInactiveBuffer() -> (ptr: UnsafeMutablePointer<CChar>, len: Int) {
         lock.lock()
-        let buf = activeIsA ? bufferB : bufferA
-        let len = activeLength
+        // inactive buffer 是当前 active 的对面
+        let buf: UnsafeMutablePointer<CChar>
+        let len: Int
+        if activeIsA {
+            buf = bufferB
+            len = lengthB
+        } else {
+            buf = bufferA
+            len = lengthA
+        }
         lock.unlock()
         return (buf, len)
     }
