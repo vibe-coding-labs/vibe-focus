@@ -225,6 +225,11 @@ struct ClaudeHookPayload: Decodable {
     let cwd: String?
     let model: String?
     let terminalCtx: TerminalContext?
+    /// AI 最后一轮回复的正文（Claude Code / Codex 的 Stop hook payload 直接携带）
+    /// 用于语音播报模板插值与 LLM 总结 fallback
+    let lastAssistantMessage: String?
+    /// 会话 transcript 文件路径（Stop hook payload 携带，目前未使用，留作未来扩展）
+    let transcriptPath: String?
 
     private enum CodingKeys: String, CodingKey {
         case event
@@ -236,6 +241,31 @@ struct ClaudeHookPayload: Decodable {
         case cwd
         case model
         case terminalCtx = "terminal_ctx"
+        case lastAssistantMessage = "last_assistant_message"
+        case transcriptPath = "transcript_path"
+    }
+
+    /// Memberwise initializer（用于非解码路径构造，如语音播报试听）
+    init(
+        event: ClaudeHookEventType,
+        sessionID: String,
+        source: String?,
+        timestamp: String?,
+        cwd: String?,
+        model: String?,
+        terminalCtx: TerminalContext?,
+        lastAssistantMessage: String?,
+        transcriptPath: String?
+    ) {
+        self.event = event
+        self.sessionID = sessionID
+        self.source = source
+        self.timestamp = timestamp
+        self.cwd = cwd
+        self.model = model
+        self.terminalCtx = terminalCtx
+        self.lastAssistantMessage = lastAssistantMessage
+        self.transcriptPath = transcriptPath
     }
 
     init(from decoder: Decoder) throws {
@@ -276,6 +306,8 @@ struct ClaudeHookPayload: Decodable {
         cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
         model = try container.decodeIfPresent(String.self, forKey: .model)
         terminalCtx = try container.decodeIfPresent(TerminalContext.self, forKey: .terminalCtx)
+        lastAssistantMessage = try container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
+        transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
 
         log("ClaudeHookPayload decoded successfully", level: .debug, fields: [
             "event": event.rawValue,
@@ -283,7 +315,9 @@ struct ClaudeHookPayload: Decodable {
             "source": source ?? "nil",
             "cwd": cwd ?? "nil",
             "model": model ?? "nil",
-            "hasTerminalCtx": String(terminalCtx != nil)
+            "hasTerminalCtx": String(terminalCtx != nil),
+            "hasLastAssistantMessage": String(lastAssistantMessage != nil),
+            "hasTranscriptPath": String(transcriptPath != nil)
         ])
     }
 }

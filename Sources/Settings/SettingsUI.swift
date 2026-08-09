@@ -29,10 +29,19 @@ public struct SettingsView: View {
     @State var showFileImporter = false
     @State var selectedTab: SettingsTab = .general
 
+    // 语音播报
+    @StateObject var voiceAnnouncementManager = VoiceAnnouncementManager.shared
+    @State var isVoicePreviewPlaying = false
+    @State var showVoiceFileImporter = false
+
     // Hook token / 安装状态
     @State var hookToken = ""
     @State var hookInstallMessage: String?
     @State var hookInstallSucceeded = true
+
+    // Codex CLI Hook 安装状态
+    @State var codexInstallMessage: String?
+    @State var codexInstallSucceeded = true
 
     // Hook 触发开关
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop
@@ -119,6 +128,7 @@ public struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     titleEditorSection
                     soundSection
+                    voiceAnnouncementSection
                 }
             }
             .scrollIndicators(.visible)
@@ -219,6 +229,24 @@ public struct SettingsView: View {
                 }
             case .failure(let error):
                 log("[Settings] file importer failed", level: .error, fields: [
+                    "error": error.localizedDescription
+                ])
+            }
+        }
+        .fileImporter(
+            isPresented: $showVoiceFileImporter,
+            allowedContentTypes: [.audio, .wav, .mp3, .aiff],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    let path = url.path
+                    log("[Settings] selected voice announcement audio file", fields: ["path": path])
+                    voiceAnnouncementManager.updateAudioFilePath(path)
+                }
+            case .failure(let error):
+                log("[Settings] voice file importer failed", level: .error, fields: [
                     "error": error.localizedDescription
                 ])
             }

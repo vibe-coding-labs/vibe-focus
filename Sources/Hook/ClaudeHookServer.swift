@@ -207,6 +207,11 @@ final class ClaudeHookServer: ObservableObject {
             result = eventHandler.handleSessionStart(payload: payload)
         case .stop:
             result = eventHandler.handleStop(payload: payload)
+            // 语音播报：与移窗逻辑解耦，无条件异步触发（不阻塞 hook 响应）。
+            // 窗口已在主屏（handleStop 早返回）时语音仍触发，避免依赖 moved 标志。
+            Task { @MainActor in
+                VoiceAnnouncementManager.shared.announceCompletion(payload: payload)
+            }
         case .sessionEnd:
             result = eventHandler.handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
         case .userPromptSubmit:
