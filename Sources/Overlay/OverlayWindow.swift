@@ -76,6 +76,12 @@ final class OverlayWindow: NSWindow {
         self.ignoresMouseEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle, .fullScreenAuxiliary]
 
+        // FIX(2026-08-10 SIGSEGV): 显式禁用 isReleasedWhenClosed。NSWindow 默认该属性为 true，
+        // close() 会触发 WindowServer 提前回收窗口资源。在屏幕重排期间 close 旧窗口 + orderFront
+        // 新窗口时，WindowServer 异步释放旧窗口可能与新窗口的 orderFront 回调竞争 → SIGSEGV。
+        // 设为 false 确保 close 仅移除窗口可见性，窗口对象生命周期由 ARC（overlayWindows 字典）管理。
+        self.isReleasedWhenClosed = false
+
         // FIX: 必须先设置 contentView，否则 setupTextLayer 无法添加子图层
         self.contentView = NSView()
         setupTextLayer()

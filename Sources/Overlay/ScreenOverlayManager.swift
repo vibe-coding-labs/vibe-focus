@@ -109,11 +109,20 @@ final class ScreenOverlayManager: ObservableObject {
     @objc private func handleScreenChange() {
         // 防抖：didChangeScreenParametersNotification 在拔插屏时常短时间内多次到达
         // （display removal + display reconfiguration + 应用窗口重排）。
-        // 立即 refreshOverlays 会在 WindowServer 仍在重排时重建 overlay，与并发的
-        // refreshSpaceIndices 后台 Task 竞争同一 WindowServer → race。debounce 0.25s
-        // 合并连发通知，等屏幕配置稳定后重建一次（远低于人眼对 overlay 编号变化的感知）。
+        //
+        // 崩溃根因（2026-08-10 SIGSEGV 循环）：此前此路径调 refreshOverlays() →
+        // hideOverlays()(close 全部 NSWindow + removeAll 立即释放) + showOverlays()(创建全部
+        // 新 NSWindow + orderFrontRegardless)。在屏幕重排期间对 N 个窗口执行 close+重建 =
+        // 2N 次 WindowServer 窗口操作，与 WindowServer 自身的异步重排/释放竞争 → SIGSEGV。
+        // 决定性证据：崩溃前最后日志 `[Overlay] showOverlays finished` 已打印，崩溃在返回后、
+        // 本函数 finished 日志之前。
+        //
+        // 修复：改用 updateOverlaysInPlace() 就地更新。当屏幕 UUID 集合不变（绝大多数情况——
+        // 应用前台切换、Electron 窗口重排触发的 didChangeScreenParametersNotification 并未真正
+        // 拔插屏）时，零 close 零创建，只 update 内容，彻底消除 WindowServer 竞争。仅当屏幕
+        // 真正增减时才对消失的屏幕 close、对新屏幕创建。
         // P-INST-126: 屏幕配置变化处理耗时归因（清缓存 + cancelPendingSignalRefreshes +
-        // refreshOverlays P-INST-123 重建 overlay；NSApplication.didChangeScreenParametersNotification 触发）。
+        // updateOverlaysInPlace P-INST-74 就地更新 overlay；NSApplication.didChangeScreenParametersNotification 触发）。
 
         // FIX: 屏幕变化是高风险操作，崩溃时需要诊断数据
         updateCrashSnapshotFromRuntime()
@@ -125,7 +134,12 @@ final class ScreenOverlayManager: ObservableObject {
             log("Screen configuration changed, refreshing overlays")
             self.cachedDisplayIndices.removeAll()
             self.cancelPendingSignalRefreshes()
-            self.refreshOverlays()
+            // 禁用偏好未启用时不操作窗口，避免无谓的 WindowServer 交互
+            guard self.preferences.isEnabled else {
+                log("[ScreenOverlayManager] handleScreenChange skipped (overlay disabled)", level: .debug)
+                return
+            }
+            self.updateOverlaysInPlace()
             log("[ScreenOverlayManager] handleScreenChange finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: startedAt))
             ])

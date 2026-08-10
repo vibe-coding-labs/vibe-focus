@@ -255,8 +255,10 @@ extension ScreenOverlayManager {
         }
 
         if overlayWindows.count != screens.count {
-            log("[REFRESH] Screen count changed (\(overlayWindows.count) -> \(screens.count)), refreshing overlays")
-            refreshOverlays()
+            log("[REFRESH] Screen count changed (\(overlayWindows.count) -> \(screens.count)), updating overlays in place")
+            // 改用 updateOverlaysInPlace 避免 close+重建 race（同 handleScreenChange 修复）。
+            // 仅对消失的屏幕 close、对新屏幕创建，复用其余现有窗口。
+            updateOverlaysInPlace()
         } else if needsRefresh {
             log("[REFRESH] Updated screens: \(changedScreens.joined(separator: ", "))")
         }
