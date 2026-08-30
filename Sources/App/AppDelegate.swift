@@ -23,6 +23,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 "durationMs": String(elapsedMilliseconds(since: adflStart))
             ])
         }
+        // 崩溃循环熔断第一步：必须先于 installCrashSignalHandlers()（其内部归档会把
+        // /tmp/vibefocus-crash-fatal.log move 走）捕获上次致命信号的时间。
+        CrashContextRecorder.shared.capturePreviousCrashFatalDate()
         installCrashSignalHandlers()
         installAtExitHandler()
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
@@ -76,7 +79,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         HotKeyManager.shared.setup()
         ClaudeHookServer.shared.applyPreferences()
-        ScreenOverlayManager.shared.refreshOverlays()
+        // FIX(2026-08-31): 启动路径弃用 refreshOverlays()（hideOverlays+showOverlays = 全量
+        // close+重建，即 2026-08-10 SIGSEGV 循环中"启动即崩"的执行者——keepalive 拉起时坏
+        // 屏幕配置还在，全量窗口操作与 WindowServer 重排竞争）。改用 updateOverlaysInPlace()
+        // 就地创建：无 close 风暴，仅对新屏幕逐个创建窗口。
+        ScreenOverlayManager.shared.updateOverlaysInPlace()
         promptAccessibilityIfNeeded()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             Task { @MainActor in

@@ -35,6 +35,46 @@ final class CrashContextRecorder {
 
     var state: SessionState?
 
+    /// 上一次致命信号的记录时间（/tmp/vibefocus-crash-fatal.log 的 mtime）。
+    /// 由 `capturePreviousCrashFatalDate()` 在启动最早期捕获——必须先于
+    /// `installCrashSignalHandlers()` 内部的归档（move 走原文件）执行。
+    var previousCrashFatalAt: Date?
+
+    /// 启动最早期捕获上次致命信号的时间（供崩溃循环熔断判定）。
+    ///
+    /// ## 场景
+    /// - AppDelegate.applicationDidFinishLaunching 第一行调用，先于
+    ///   installCrashSignalHandlers()（其 archive 逻辑会把 fatal 文件 move 归档）；
+    /// - 空文件视为无崩溃记录（O_APPEND 创建的空文件是正常启动痕迹）。
+    func capturePreviousCrashFatalDate() {
+        let fatalPath = "/tmp/vibefocus-crash-fatal.log"
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: fatalPath),
+              let size = attrs[.size] as? Int, size > 0,
+              let mtime = attrs[.modificationDate] as? Date else {
+            return
+        }
+        previousCrashFatalAt = mtime
+        log("Previous crash-fatal record captured (pre-archive)", level: .warn, fields: [
+            "mtime": nowString(from: mtime),
+            "ageSeconds": String(Date().timeIntervalSince(mtime))
+        ])
+    }
+
+    /// 崩溃循环检测：上次致命信号是否发生在 maxAge 秒内。
+    ///
+    /// ## 场景
+    /// - ScreenOverlayManager.init 据此置 `crashLoopSuppressed`（熔断 overlay 窗口创建）；
+    /// - 背景：屏幕坏配置持续时"启动→创建 overlay→SIGSEGV→keepalive 10s 拉起→再崩"
+    ///   形成每 10 秒一次的崩溃循环（7-18、8-10 的 crash-fatal 归档每 10 秒一个实证）。
+    func isWithinCrashLoopWindow(maxAge: TimeInterval = 60) -> Bool {
+        guard let date = previousCrashFatalAt else { return false }
+        return Date().timeIntervalSince(date) < maxAge
+    }
+
+    private func nowString(from date: Date) -> String {
+        timestampFormatter.string(from: date)
+    }
+
     /// 异步写入队列 — 避免在 toggle 热路径中阻塞主线程
     private let persistQueue = DispatchQueue(label: "com.vibefocus.crash-persist", qos: .utility)
     /// 防抖标志：避免快速连续 record 调用时频繁写入磁盘
