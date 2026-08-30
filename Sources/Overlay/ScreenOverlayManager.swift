@@ -62,6 +62,17 @@ final class ScreenOverlayManager: ObservableObject {
     var automaticRefreshSuspended = false
     var lastLoggedPreferenceSignature: String?
 
+    /// 崩溃循环熔断开关（2026-08-31 修复）。
+    ///
+    /// ## 场景
+    /// - init 时检测 60s 内是否有致命信号记录（CrashContextRecorder.capturePreviousCrashFatalDate
+    ///   在 AppDelegate 启动最早期捕获），命中则置位；
+    /// - 置位后禁止创建 overlay 窗口（showOverlays/updateOverlaysInPlace no-op、不起刷新
+    ///   Timer），切断"启动→创建 overlay→SIGSEGV→keepalive 10s 拉起→再崩"的循环
+    ///   （7-18、8-10 归档每 10 秒一条 crash-fatal 实证）；
+    /// - 只挡窗口创建：菜单栏/热键/hook 等功能不受影响；下次启动无新崩溃即自动恢复。
+    var crashLoopSuppressed = false
+
     private init() {
         self.preferences = ScreenIndexPreferences.load()
         // init() 只读不写：持久化完全由 didSet → save() 在用户实际修改时驱动。
@@ -69,6 +80,10 @@ final class ScreenOverlayManager: ObservableObject {
         // 读取失败时会用 load() 的 fallback 陈旧默认覆盖 SQLite 真实配置
         // （bottomRight→topRight 反复几十次）。彻底移除启动期写路径，根除此类回归。
         log("ScreenOverlayManager initialized, isEnabled=\(preferences.isEnabled)")
+        crashLoopSuppressed = CrashContextRecorder.shared.isWithinCrashLoopWindow()
+        if crashLoopSuppressed {
+            log("[ScreenOverlayManager] CRASH LOOP detected (fatal signal within 60s), overlay window creation suppressed for this launch", level: .error)
+        }
         setupSignalHandler()
         registerYabaiSignals()
         // 屏幕配置变化（显示器插拔/重排）主动响应。此前 handleScreenChange 是死代码
@@ -91,6 +106,10 @@ final class ScreenOverlayManager: ObservableObject {
         defer {
             let durMs = elapsedMilliseconds(since: srtStart)
             if durMs >= 30 { log("[Overlay] startRefreshTimer slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
+        guard crashLoopSuppressed == false else {
+            log("[Overlay] startRefreshTimer skipped (crash loop suppression)", level: .debug)
+            return
         }
         if automaticRefreshSuspended {
             return
@@ -135,8 +154,8 @@ final class ScreenOverlayManager: ObservableObject {
             self.cachedDisplayIndices.removeAll()
             self.cancelPendingSignalRefreshes()
             // 禁用偏好未启用时不操作窗口，避免无谓的 WindowServer 交互
-            guard self.preferences.isEnabled else {
-                log("[ScreenOverlayManager] handleScreenChange skipped (overlay disabled)", level: .debug)
+            guard self.preferences.isEnabled, !self.crashLoopSuppressed else {
+                log("[ScreenOverlayManager] handleScreenChange skipped (overlay disabled or crash loop suppression)", level: .debug)
                 return
             }
             self.updateOverlaysInPlace()
@@ -216,62 +235,8 @@ final class ScreenOverlayManager: ObservableObject {
 
     // MARK: - Private Methods
 
-    // MARK: - Space Index Detection
-
-    // MARK: - Per-Screen Space Indexing
-
-    func queryYabaiSpaces(forDisplayIndex displayIndex: Int, yabaiPath: String) -> [SpaceSnapshot]? {
-        // P-INST-124: 单 display space 查询耗时（YabaiClient.run -m query --spaces --display fork P-INST-37 + JSONSerialization 解析 + compactMap 构造 SpaceSnapshot；refreshSpaceIndices 每 display 调用，overlay space 索引刷新）。
-        let qysStart = Date()
-        defer {
-            log("[ScreenOverlayManager] queryYabaiSpaces finished", level: .debug, fields: [
-                "displayIndex": String(displayIndex),
-                "durationMs": String(elapsedMilliseconds(since: qysStart))
-            ])
-        }
-        guard let result = YabaiClient.run(arguments: ["-m", "query", "--spaces", "--display", "\(displayIndex)"]),
-              result.exitCode == 0 else {
-            log("queryYabaiSpaces: yabai query failed")
-            return nil
-        }
-
-        guard let data = result.stdout.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            log("queryYabaiSpaces: failed to parse yabai spaces JSON")
-            return nil
-        }
-
-        return json.compactMap { space in
-            guard let index = space["index"] as? Int else {
-                return nil
-            }
-            let visible = (space["is-visible"] as? Bool) ?? ((space["is-visible"] as? Int ?? 0) == 1)
-            let hasFocus = (space["has-focus"] as? Bool) ?? ((space["has-focus"] as? Int ?? 0) == 1)
-            return SpaceSnapshot(index: index, isVisible: visible, hasFocus: hasFocus)
-        }
-    }
-
-    func queryFocusedSpaceIndex(yabaiPath: String) -> Int? {
-        // P-INST-125: 焦点 space 索引查询耗时（YabaiClient.run -m query --spaces --space fork P-INST-37 + JSONSerialization 解析取 index；refreshSpaceIndices 调用，overlay 焦点 space 归因）。
-        let qfsiStart = Date()
-        defer {
-            log("[ScreenOverlayManager] queryFocusedSpaceIndex finished", level: .debug, fields: [
-                "durationMs": String(elapsedMilliseconds(since: qfsiStart))
-            ])
-        }
-        guard let result = YabaiClient.run(arguments: ["-m", "query", "--spaces", "--space"]),
-              result.exitCode == 0 else {
-            log("queryFocusedSpaceIndex: yabai query failed")
-            return nil
-        }
-
-        guard let data = result.stdout.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let index = json["index"] as? Int else {
-            return nil
-        }
-        return index
-    }
+    // Space 查询/刷新已分层：I/O 见 +SpaceQuery.swift，编排见 +Refresh.swift，
+    // 纯类型与解析见 SpaceSnapshot.swift（2026-08-31 拆分；同步查询死代码一并移除）。
 
     deinit {
         // Singleton — deinit rarely called; timer cleaned up on app exit

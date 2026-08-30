@@ -6,6 +6,11 @@ extension ScreenOverlayManager {
 
     func showOverlays() {
         // P-INST-74: overlay 显示总耗时（N 屏 getPerScreenSpaceIndex fork 累积 P-INST-73 + OverlayWindow 创建/show；@MainActor 主线程，fork 阻塞 UI）。
+        // 崩溃循环熔断：见 crashLoopSuppressed 场景注释（ScreenOverlayManager.swift）。
+        guard !crashLoopSuppressed else {
+            log("[Overlay] showOverlays skipped (crash loop suppression)", level: .debug)
+            return
+        }
         let startedAt = Date()
         let screens = NSScreen.screens
 
@@ -71,6 +76,11 @@ extension ScreenOverlayManager {
 
     func updateOverlaysInPlace() {
         // P-INST-74: overlay 就地更新总耗时（N 屏循环 + cache miss getPerScreenSpaceIndex fork P-INST-73 + OverlayWindow show + stale cleanup）。
+        // 崩溃循环熔断：见 crashLoopSuppressed 场景注释（ScreenOverlayManager.swift）。
+        guard !crashLoopSuppressed else {
+            log("[Overlay] updateOverlaysInPlace skipped (crash loop suppression)", level: .debug)
+            return
+        }
         let startedAt = Date()
         let screens = NSScreen.screens
         var activeUUIDs: Set<UUID> = []
