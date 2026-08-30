@@ -275,7 +275,21 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
   编译运行，不依赖 swift-testing）——当前 31/31 通过，新增解析逻辑同套件覆盖
   （`Tests/Standalone/SpaceSnapshotParsingStandaloneTests.swift`，18 项检查）。
 
-### 2.11 待办（按优先级）
+### 2.11 第九轮完成（2026-08-31 续，替换产物与部署脚本就绪）
+
+| 项目 | 内容 |
+|------|------|
+| release 产物 | `swift build -c release` + run.sh 同款组装流程脚本化
+  （`scripts/build-release.sh`）→ `dist/VibeFocus.app`；
+  未触碰运行中的 app 与 ~/Applications |
+| 产物验证 | 二进制含新代码标记：CRASH LOOP detected（熔断）、
+  Previous crash-fatal record captured（启动捕获）、updateOverlaysInPlace ×2 |
+| 部署脚本 | 新增 `scripts/deploy-release.sh`（幂等）：停旧 keepalive → 停 app →
+  备份到 ~/Applications/VibeFocus.app.backup-<ts> → ditto 安装 + ad-hoc 签名 +
+  去隔离 → 启动 → 安装带熔断 keepalive；含回滚说明 |
+| 一键替换 | 用户本机执行 `bash scripts/deploy-release.sh` 即完成 P1 替换 |
+
+### 2.12 待办（按优先级）
 
 | 优先级 | 项目 | 参照 |
 |--------|------|------|
@@ -286,10 +300,11 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | ~~P3 埋点收敛~~ | **收官（2026-08-31）**：第一阶段 103 处开关化 + 第二阶段评估
   保留 47 处关键路径归因常开，Phase 7 完成（见 2.8） | 07-23 计划 Phase 7 |
 | P3 | 单例依赖注入（11 类型 ~120 引用点，评估见 2.8；不专项改造，随功能迭代增量注入） | 07-23 计划 Phase 3 |
-| P1 | 【用户本机】重新构建替换运行中的 8-11 旧二进制（崩溃修复需新构建生效）+
-  `bash scripts/install-keepalive.sh` 替换裸 keepalive | 2026-08-31 诊断 |
+| P1 | 【用户本机一条命令】产物已就绪（`dist/VibeFocus.app`，含全部修复）：
+  `bash scripts/deploy-release.sh` —— 停旧 keepalive/进程、备份、安装新 app、
+  启动、安装带熔断 keepalive 一次完成（助手侧前置已全部就绪） | 2026-08-31 诊断 |
 
-### 2.12 验收标准
+### 2.13 验收标准
 
 - [ ] 新增/被拆分文件的公共 API 100% 有含「场景」段的文档注释
 - [ ] 对外部系统的解析逻辑全部为纯函数 + fixture 测试覆盖
