@@ -135,6 +135,7 @@ struct DraggableSlider: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
+    @MainActor
     class Coordinator {
         var parent: DraggableSlider
         init(parent: DraggableSlider) { self.parent = parent }

@@ -131,7 +131,7 @@ final class CrashContextRecorder {
             if prev.lastIngestedCrashReport != reportName {
                 guard let payload = parseIPSJSONPayloadAndLog(from: reportText) else {
                     log("CrashContextRecorder.bootstrap found crash report but failed to parse IPS payload", level: .warn, fields: ["report": reportName])
-                    var newState = SessionState(
+                    let newState = SessionState(
                         pid: ProcessInfo.processInfo.processIdentifier,
                         launchedAt: nowString(),
                         cleanExit: false,
@@ -180,7 +180,7 @@ final class CrashContextRecorder {
                     "topFrame": topFrameSymbol
                 ])
 
-                var newState = SessionState(
+                let newState = SessionState(
                     pid: ProcessInfo.processInfo.processIdentifier,
                     launchedAt: nowString(),
                     cleanExit: false,
@@ -188,7 +188,10 @@ final class CrashContextRecorder {
                     lastIngestedCrashReport: reportName
                 )
                 appendEvent("crash_report file=\(reportName) exception=\(exceptionType) signal=\(exceptionSignal) frame0=\(topFrameSymbol)")
-                state?.lastIngestedCrashReport = reportName
+                // 2026-08-31 修复：此前构造的 newState 从未赋给 state（state 尚为 nil，
+                // `state?.lastIngestedCrashReport` 是 no-op），reportName 不会持久化，
+                // 同一崩溃报告会被重复 ingest。改为有效赋值。
+                state = newState
                 persistState()
                 return
             }

@@ -49,8 +49,6 @@ func updateCrashSnapshotFromRuntime() {
 
         appendField("screenCount", String(NSScreen.screens.count))
 
-        let wm = WindowManager.shared
-
         appendField("hotkey", hkm.currentHotKey.displayString)
         appendField("axGranted", String(hkm.accessibilityGranted))
 
@@ -76,7 +74,6 @@ func logRuntimeStateSnapshot(context: String) {
         ])
     }
     #endif
-    let wm = WindowManager.shared
     let hkm = HotKeyManager.shared
     let hookServer = ClaudeHookServer.shared
 

@@ -5,6 +5,11 @@ import Foundation
 /// 使用 macOS 原生 API 进行空间操作。
 /// focusSpace: 通过 CGEvent 发送 Ctrl+Left/Right 键盘事件切换空间（可靠，无需私有 API）
 /// moveWindow: 通过 SLS 私有 API 移动窗口到指定空间
+///
+/// @MainActor：skyLightHandle/_moveWindowFailures 为共享可变状态，且全部调用方
+/// （SpaceController 切换/移动、ToggleEngine+Restore、AppDelegate 启动诊断）均在主线程；
+/// SLS 私有 API 调用与失败缓存因此限定主线程，消除全局可变状态并发警告。
+@MainActor
 enum NativeSpaceBridge {
     // MARK: - SLS Private API Types (only for moveWindow)
 

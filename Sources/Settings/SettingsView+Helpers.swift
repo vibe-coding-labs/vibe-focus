@@ -230,6 +230,9 @@ extension SettingsView {
             return
         }
 
+        // completion 原语义即在 URLSession 回调线程执行（非主线程），此处仅为跨 @Sendable
+        // 闭包传递；nonisolated(unsafe) 消除捕获警告，不改变调用线程与行为。
+        nonisolated(unsafe) let completion = completion
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
             log("[SettingsView] sendHookRequest round-trip", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: shrStart))

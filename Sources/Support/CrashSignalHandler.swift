@@ -127,7 +127,6 @@ private func crashSignalHandler(_ sig: Int32) {
     sigMsg += String(cString: timeBuf)
     sigMsg += "\n\n=== PRE-CRASH STATE ===\n"
 
-    var iov = [iovec](repeating: iovec(), count: 4)
     var sigData = [CChar](repeating: 0, count: 512)
     sigMsg.withCString { ptr in
         var idx = 0
@@ -137,8 +136,6 @@ private func crashSignalHandler(_ sig: Int32) {
         }
         sigData[idx] = 0
     }
-    iov[0].iov_base = UnsafeMutableRawPointer(&sigData)
-    iov[0].iov_len = strlen(&sigData)
 
     let nl = "\n=== END PRE-CRASH STATE ===\n"
     var nlData = [CChar](repeating: 0, count: 32)
@@ -148,27 +145,39 @@ private func crashSignalHandler(_ sig: Int32) {
         nlData[idx] = 0
     }
 
-    if len > 0 {
-        iov[1].iov_base = UnsafeMutableRawPointer(mutating: buf)
-        iov[1].iov_len = len
-        iov[2].iov_base = UnsafeMutableRawPointer(&nlData)
-        iov[2].iov_len = strlen(&nlData)
-        writev(crashSnapshotFD, iov, 3)
-    } else {
-        iov[1].iov_base = UnsafeMutableRawPointer(&nlData)
-        iov[1].iov_len = strlen(&nlData)
-        writev(crashSnapshotFD, iov, 2)
-    }
-
-    // 额外写入独立 fatal FD（O_APPEND 不截断），下次启动 archivePreviousCrashFatalIfNeeded
-    // 会读取归档。修复根因 #3：crashSnapshotFD 启动时 O_TRUNC 会覆盖此处写的 FATAL SIGNAL。
-    // 仅 writev（async-signal-safe），复用已构造的 iov。不 close（writev 返回数据已在内核 page
-    // cache，紧随的退出不影响落盘）。
-    if crashFatalFD >= 0 {
-        if len > 0 {
-            writev(crashFatalFD, iov, 3)
-        } else {
-            writev(crashFatalFD, iov, 2)
+    // 2026-08-31 警告清理：iov 基址改在 writev 同作用域内经 withUnsafeMutableBytes 获取，
+    // 消除 & 局部数组临时指针逃逸（#TemporaryPointers 悬垂警告）；写入内容与顺序不变。
+    withUnsafeMutableBytes(of: &sigData) { sigBase in
+        let sigLen = strlen(sigBase.baseAddress!)
+        withUnsafeMutableBytes(of: &nlData) { nlBase in
+            let nlLen = strlen(nlBase.baseAddress!)
+            func emit(to fd: Int32) {
+                if len > 0 {
+                    var iov = [iovec](repeating: iovec(), count: 3)
+                    iov[0].iov_base = sigBase.baseAddress
+                    iov[0].iov_len = sigLen
+                    iov[1].iov_base = UnsafeMutableRawPointer(mutating: buf)
+                    iov[1].iov_len = len
+                    iov[2].iov_base = nlBase.baseAddress
+                    iov[2].iov_len = nlLen
+                    writev(fd, iov, 3)
+                } else {
+                    var iov = [iovec](repeating: iovec(), count: 2)
+                    iov[0].iov_base = sigBase.baseAddress
+                    iov[0].iov_len = sigLen
+                    iov[1].iov_base = nlBase.baseAddress
+                    iov[1].iov_len = nlLen
+                    writev(fd, iov, 2)
+                }
+            }
+            emit(to: crashSnapshotFD)
+            // 额外写入独立 fatal FD（O_APPEND 不截断），下次启动 archivePreviousCrashFatalIfNeeded
+            // 会读取归档。修复根因 #3：crashSnapshotFD 启动时 O_TRUNC 会覆盖此处写的 FATAL SIGNAL。
+            // 仅 writev（async-signal-safe）。不 close（writev 返回数据已在内核 page cache，
+            // 紧随的退出不影响落盘）。
+            if crashFatalFD >= 0 {
+                emit(to: crashFatalFD)
+            }
         }
     }
 

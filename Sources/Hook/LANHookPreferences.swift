@@ -28,6 +28,14 @@ enum LANHookPreferences {
         }
     }
 
+    /// 持久化 active 映射为 JSON string 到 UserDefaults（getter 迁移写回与 setter 共用）。
+    private static func persistBindings(_ active: [String: UInt32]) {
+        if let data = try? JSONEncoder().encode(active),
+           let jsonStr = String(data: data, encoding: .utf8) {
+            UserDefaults.standard.set(jsonStr, forKey: remoteBindingsKey)
+        }
+    }
+
     /// 远程机器 → 窗口ID 映射, 格式: ["machine-label": windowID]
     /// windowID 为 nil 表示已添加但尚未选择窗口
     /// 序列化为 JSON string 存入 UserDefaults
@@ -57,7 +65,8 @@ enum LANHookPreferences {
                 }
             }
             if !result.isEmpty {
-                remoteBindings = result
+                // 旧格式迁移写回（经辅助函数直接持久化，避免 getter 内访问自身）
+                persistBindings(result.compactMapValues { $0 })
             }
             return result
         }
@@ -71,11 +80,7 @@ enum LANHookPreferences {
                 ])
             }
             #endif
-            let active: [String: UInt32] = newValue.compactMapValues { $0 }
-            if let data = try? JSONEncoder().encode(active),
-               let jsonStr = String(data: data, encoding: .utf8) {
-                UserDefaults.standard.set(jsonStr, forKey: remoteBindingsKey)
-            }
+            persistBindings(newValue.compactMapValues { $0 })
         }
     }
 

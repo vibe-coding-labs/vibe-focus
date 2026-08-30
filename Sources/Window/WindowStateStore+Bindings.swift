@@ -177,7 +177,7 @@ extension WindowStateStore {
             if ms >= 5 { log("[WindowStateStore] deleteAllWindowsStates slow", level: .warn, fields: ["durationMs": String(ms)]) }
         }
         #endif
-        guard let db else {
+        guard db != nil else {
             log("[WindowStateStore] deleteAllWindowsStates: db not available", level: .warn)
             return
         }
