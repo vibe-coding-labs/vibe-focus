@@ -190,7 +190,24 @@ Phase 7 执行时用编译开关 `#if PERF_INSTRUMENT` 收敛，届时按本手�
   `SettingsView+ClaudeHookSection.swift`（341 行）SwiftUI 视图拆分会引入
   EnvironmentObject 传递复杂度，待真实新增功能时再拆（P3） |
 
-### 2.7 已知环境问题（第一轮发现，未解决）
+### 2.7 第六轮完成（2026-08-31 续，分批提交 + 埋点收敛第一阶段）
+
+| 项目 | 内容 |
+|------|------|
+| 变更集落盘 | 五轮治理 34 文件按主题分 4 批提交：docs（playbook）→ test（fixture +
+  swift-testing 修复）→ refactor（六处拆分，零行为变更）→ fix(crash)（P1 修复四项） |
+| 埋点收敛第一阶段 | **103 处**标准形态埋点收敛到 `#if PERF_INSTRUMENT`（71 个文件），
+  默认构建零埋点开销；`swift build -Xswiftc -DPERF_INSTRUMENT` 启用归因；
+  双模式 build + 全量测试验证通过 |
+| 收敛工具 | `scripts/condense-perf-instrumentation.py`（defer 式）与
+  `condense-perf-elapsed.py`（elapsed 式）：幂等、变量外泄自动跳过、build 作闸门 |
+| 保留常开 | 编排函数耗时字段外泄进日志字典的归因埋点（MoveWindow/Toggle/
+  HookEventHandler 等 ~160 处）——它们是耗时归因体系的一部分，不收敛 |
+| 脚本教训 | 首版 elapsed 脚本把业务语句卷进 #if（已修复：声明行单独成对包裹）；
+  批量重跑曾造成 2 文件双重包裹（git checkout 恢复后加幂等保护）——
+  机械改写必须以 build 为闸门、小批试点先行 |
+
+### 2.8 已知环境问题（第一轮发现，未解决）
 
 - **`swift test` 在当前工具链下不可用**：本机仅有 CommandLineTools（Swift 6.2.3，无完整
   Xcode）。两种配置均验证失败——保留显式依赖 `apple/swift-testing 0.7.0` 时
@@ -202,7 +219,7 @@ Phase 7 执行时用编译开关 `#if PERF_INSTRUMENT` 收敛，届时按本手�
   编译运行，不依赖 swift-testing）——当前 31/31 通过，新增解析逻辑同套件覆盖
   （`Tests/Standalone/SpaceSnapshotParsingStandaloneTests.swift`，18 项检查）。
 
-### 2.8 待办（按优先级）
+### 2.9 待办（按优先级）
 
 | 优先级 | 项目 | 参照 |
 |--------|------|------|
@@ -210,11 +227,10 @@ Phase 7 执行时用编译开关 `#if PERF_INSTRUMENT` 收敛，届时按本手�
   声明共享，拆分散内聚）与 `WindowStateStore+Database.swift`（306 行，单 extension
   数据库层单一职责）评估后均不拆；剩余 >300 行共 5 个文件全部有书面评估结论，
   300 行上限按 1.1 定义为评估触发线而非硬砍线 | 本手册 1.1 |
-| P2 | 29 个文件变更集分批提交（拆分 / 测试基建 / 崩溃修复 / 文档） | — |
-| P3 | 埋点收敛到 `#if PERF_INSTRUMENT` | 07-23 计划 Phase 7 |
+| P3 | 埋点收敛第二阶段：剩余 ~160 处外泄型归因埋点评估（可采样化或保留） | 07-23 计划 Phase 7 |
 | P3 | 单例依赖注入（影响面大，需专门排期） | 07-23 计划 Phase 3 |
 
-### 2.9 验收标准
+### 2.10 验收标准
 
 - [ ] 新增/被拆分文件的公共 API 100% 有含「场景」段的文档注释
 - [ ] 对外部系统的解析逻辑全部为纯函数 + fixture 测试覆盖
