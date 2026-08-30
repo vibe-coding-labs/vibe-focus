@@ -15,7 +15,7 @@ set -euo pipefail
 
 APP_NAME="VibeFocus"
 EXECUTABLE_NAME="VibeFocusHotkeys"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SRC_APP="$SCRIPT_DIR/dist/$APP_NAME.app"
 DST_APP="$HOME/Applications/$APP_NAME.app"
 LABEL="com.vibefocus.app.keepalive"
@@ -27,7 +27,12 @@ echo "1/6 停止旧 keepalive..."
 launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || launchctl unload "$HOME/Library/LaunchAgents/${LABEL}.plist" 2>/dev/null || true
 
 echo "2/6 停止运行中的 VibeFocus..."
+# 兼容历史 bundle 的可执行名（8-11 构建为 VibeFocus，现行构建为 VibeFocusHotkeys）
 pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+sleep 2
+pkill -9 -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+pkill -9 -x "$APP_NAME" >/dev/null 2>&1 || true
 sleep 1
 
 echo "3/6 备份旧 app..."
@@ -47,7 +52,7 @@ open "$DST_APP"
 sleep 2
 
 echo "6/6 安装带熔断的 keepalive..."
-bash "$SCRIPT_DIR/install-keepalive.sh"
+bash "$SCRIPT_DIR/scripts/install-keepalive.sh"
 
 echo ""
 echo "✅ 替换完成。"

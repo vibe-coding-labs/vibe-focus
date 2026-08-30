@@ -300,9 +300,13 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | ~~P3 埋点收敛~~ | **收官（2026-08-31）**：第一阶段 103 处开关化 + 第二阶段评估
   保留 47 处关键路径归因常开，Phase 7 完成（见 2.8） | 07-23 计划 Phase 7 |
 | P3 | 单例依赖注入（11 类型 ~120 引用点，评估见 2.8；不专项改造，随功能迭代增量注入） | 07-23 计划 Phase 3 |
-| P1 | 【用户本机一条命令】产物已就绪（`dist/VibeFocus.app`，含全部修复）：
-  `bash scripts/deploy-release.sh` —— 停旧 keepalive/进程、备份、安装新 app、
-  启动、安装带熔断 keepalive 一次完成（助手侧前置已全部就绪） | 2026-08-31 诊断 |
+| ~~P1 替换~~ | **完成（2026-08-31 04:25）**：deploy-release.sh 执行成功——旧进程 1436
+  （8-11 构建）终止并备份至 ~/Applications/VibeFocus.app.backup-20260831-042548；
+  新进程 98945 运行新 bundle（二进制含 CRASH LOOP 熔断标记），带熔断 keepalive
+  （wrapper + plist）已安装并加载。验证：进程 PID/启动时间变化 ✅、二进制标记 ✅、
+  无崩溃循环记录（符合预期）✅。部署脚本在执行中修正了 3 个问题：
+  SCRIPT_DIR 应取仓库根、pkill 需兼容旧可执行名 VibeFocus、
+  keepalive 脚本末尾 echo 引用了 wrapper 内部变量 | 2026-08-31 诊断 |
 
 ### 2.13 验收标准
 
