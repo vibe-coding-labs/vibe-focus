@@ -10,8 +10,7 @@ let package = Package(
         .executable(name: "VibeFocusHotkeys", targets: ["VibeFocusHotkeys"])
     ],
     dependencies: [
-        .package(url: "https://github.com/yene/GCDWebServer", from: "3.5.4"),
-        .package(url: "https://github.com/apple/swift-testing", from: "0.7.0")
+        .package(url: "https://github.com/yene/GCDWebServer", from: "3.5.4")
     ],
     targets: [
         .systemLibrary(name: "Csqlite3", path: "Csqlite3"),
@@ -40,8 +39,7 @@ let package = Package(
         .testTarget(
             name: "VibeFocusTests",
             dependencies: [
-                "VibeFocusKit",
-                .product(name: "Testing", package: "swift-testing")
+                "VibeFocusKit"
             ],
             path: "Tests/XCTest"
         )

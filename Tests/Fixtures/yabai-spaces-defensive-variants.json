@@ -1,0 +1,19 @@
+[
+  {
+    "label": "missing-index-entry (解析必须跳过本条)",
+    "display": 1,
+    "is-visible": false,
+    "has-focus": false
+  },
+  {
+    "index": 7,
+    "display": 1,
+    "is-visible": 1,
+    "has-focus": 0
+  },
+  {
+    "index": 8,
+    "is-visible": false,
+    "has-focus": true
+  }
+]
