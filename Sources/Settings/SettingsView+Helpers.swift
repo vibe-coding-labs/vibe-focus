@@ -29,11 +29,13 @@ extension SettingsView {
 
     func showDuplicateInFinder(path: String) {
         // P-INST-212: Finder 定位耗时（NSWorkspace.shared.activateFileViewerSelecting LaunchServices 跨进程激活 Finder 选中文件；设置面板用户手动触发；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let sdfStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: sdfStart)
             if durMs >= 50 { log("[SettingsView] showDuplicateInFinder slow", level: .warn, fields: ["path": path, "durationMs": String(durMs)]) }
         }
+        #endif
         let url = URL(fileURLWithPath: path)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
@@ -117,11 +119,13 @@ extension SettingsView {
 
     func sendTestHookEvent() {
         // P-INST-251: 测试 hook 事件发送编排耗时（ensureTokenGenerated UserDefaults 写 + sendHookRequest URLSession 发起 SessionStart；设置 UI 测试按钮触发，HTTP 请求异步回调不计入 defer；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let sthStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: sthStart)
             if durMs >= 50 { log("[Settings] sendTestHookEvent slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         let port = hookPort
         let testSessionID = "test-\(UUID().uuidString.prefix(8))"
         if hookToken.isEmpty {

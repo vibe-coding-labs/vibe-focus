@@ -10,6 +10,7 @@ enum ShellRunner {
     @discardableResult
     static func run(executable: String, arguments: [String]) -> YabaiClient.YabaiResult? {
         // P-INST-49: ShellRunner fork 耗时（ps/pgrep/外部命令底层 fork；被 runShellCommand 包装，findWindowByTerminalContext 进程树/applyViaTTY 等多路径调用；slow-op ≥50ms warn 抓阻塞或超时=2000ms）。
+        #if PERF_INSTRUMENT
         let shellStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: shellStart)
@@ -21,6 +22,7 @@ enum ShellRunner {
                 ])
             }
         }
+        #endif
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -59,6 +61,7 @@ enum ShellRunner {
     @discardableResult
     static func run(executable: String, arguments: [String], stdin: String) -> YabaiClient.YabaiResult? {
         // P-INST-49: ShellRunner fork + stdin 耗时（同 run(executable:arguments:) slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let shellStdinStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: shellStdinStart)
@@ -70,6 +73,7 @@ enum ShellRunner {
                 ])
             }
         }
+        #endif
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments

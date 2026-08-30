@@ -55,14 +55,18 @@ extension WindowManager {
     /// - Returns: AXUIElement of the focused window, or nil if unavailable
     func focusedWindow(for pid: pid_t) -> AXUIElement? {
         // P-INST-52: AX focusedWindow 读取耗时（kAXFocusedWindowAttribute；resolveWindow fast path / hook 路径调用，跨屏可阻塞 1-2s；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let fwAxStart = Date()
+        #endif
         let appElement = AXUIElementCreateApplication(pid)
         var windowRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef)
+        #if PERF_INSTRUMENT
         let fwDurMs = elapsedMilliseconds(since: fwAxStart)
         if fwDurMs >= 50 {
             log("[WindowManager] focusedWindow slow AX", level: .warn, fields: ["pid": String(pid), "durationMs": String(fwDurMs)])
         }
+        #endif
         guard status == .success, let windowRef else {
             log(
                 "[WindowManager] focusedWindow: AX query failed",

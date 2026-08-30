@@ -83,12 +83,14 @@ extension TitleEditorService {
 
     func writeTTYSequence(_ sequence: String, to ttyPath: String) -> Bool {
         // P-INST-72: TTY 设备写耗时（open O_WRONLY + write OSC 序列；applyViaTTY P-INST-48 子阶段，设备繁忙可阻塞）。
+        #if PERF_INSTRUMENT
         let wtsStart = Date()
         defer {
             log("[TitleEditorService] writeTTYSequence finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: wtsStart))
             ])
         }
+        #endif
         guard let data = sequence.data(using: .utf8) else { return false }
 
         let fd = open(ttyPath, O_WRONLY | O_NOCTTY)

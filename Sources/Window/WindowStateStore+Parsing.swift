@@ -12,12 +12,14 @@ extension WindowStateStore {
 
     func parseWindowStateRow(_ stmt: OpaquePointer) -> WindowState? {
         // P-INST-155: WindowState 行解析耗时（34 列 sqlite3_column_int64/int/double/text/type 读取 + optionalStringCol + Date 构造；loadAllWindowStates/findWindowState P-INST-68 每行调用，SQLite 列读取）。
+        #if PERF_INSTRUMENT
         let pwsrStart = Date()
         defer {
             log("[WindowStateStore] parseWindowStateRow finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: pwsrStart))
             ])
         }
+        #endif
         let windowID = UInt32(sqlite3_column_int64(stmt, 0))
         let pid = sqlite3_column_int(stmt, 1)
         let tty = String(cString: sqlite3_column_text(stmt, 2))
@@ -92,12 +94,14 @@ extension WindowStateStore {
 
     func parseToggleRecord(_ stmt: OpaquePointer) -> ToggleRecord? {
         // P-INST-156: ToggleRecord 行解析耗时（19 列 sqlite3_column_int64/int/double/text 读取 + String(cString:) + Date 构造；loadToggleRecord P-INST-18/loadByPID P-INST-67 每行调用，SQLite 列读取）。
+        #if PERF_INSTRUMENT
         let ptrStart = Date()
         defer {
             log("[WindowStateStore] parseToggleRecord finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: ptrStart))
             ])
         }
+        #endif
         let wID = UInt32(sqlite3_column_int64(stmt, 0))
         let pid = sqlite3_column_int(stmt, 1)
         let bundleID: String? = sqlite3_column_text(stmt, 2).map { String(cString: $0) }

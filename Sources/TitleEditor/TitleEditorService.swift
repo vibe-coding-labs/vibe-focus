@@ -38,10 +38,12 @@ final class TitleEditorService {
     ///   （用户命名优先于自动命名）。
     func editTitle() {
         // P-INST-218: 标题编辑入口端到端耗时（NSWorkspace.frontmostApplication + WindowManager.focusedWindow P-INST-52 + title AX + NSApp.activate；用户 Ctrl+T 手动触发，非 toggle 热路径）。
+        #if PERF_INSTRUMENT
         let etStart = Date()
         defer {
             log("[TitleEditorService] editTitle finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: etStart))])
         }
+        #endif
         guard !isEditing else {
             log("[TitleEditorService] editTitle: already editing, ignoring")
             return
@@ -147,11 +149,13 @@ final class TitleEditorService {
     ///   且该标记进程内永久有效（不随 hook 事件清除）。
     func autoSetTitle(cwd: String?, pid: pid_t, bundleID: String, window: AXUIElement) {
         // P-INST-250: autoSetTitle 编排耗时（windowHandle AX 查询 + userRenamedWindowIDs 检查 + applyTitle P-INST-40 三路 AX/AppleScript/TTY 写；SessionStart hook 路径调用，归因 title 阶段延迟；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let astStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: astStart)
             if durMs >= 50 { log("[TitleEditorService] autoSetTitle slow", level: .warn, fields: ["pid": String(pid), "bundleID": bundleID, "durationMs": String(durMs)]) }
         }
+        #endif
         if let windowID = WindowManager.shared.windowHandle(for: window),
            userRenamedWindowIDs.contains(windowID) {
             log("[TitleEditorService] autoSetTitle: skipping, user has manually renamed this window", fields: ["windowID": String(windowID)])

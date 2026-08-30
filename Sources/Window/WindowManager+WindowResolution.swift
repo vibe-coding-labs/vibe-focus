@@ -84,6 +84,7 @@ extension WindowManager {
     /// internal：仅 resolveWindow 调用；AX 全量遍历可阻塞，勿在热路径直接使用。
     private func allWindows(for pid: pid_t) -> [AXUIElement] {
         // P-INST-46: AX 全量窗口枚举耗时（kAXWindowsAttribute；resolveWindow 退化路径，AX 可阻塞；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let allWinStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: allWinStart)
@@ -91,6 +92,7 @@ extension WindowManager {
                 log("[WindowManager] allWindows slow AX", level: .warn, fields: ["pid": String(pid), "durationMs": String(durMs)])
             }
         }
+        #endif
         let appElement = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)

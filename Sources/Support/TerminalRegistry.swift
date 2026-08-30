@@ -97,11 +97,13 @@ enum TerminalRegistry {
 
     private static func getProcessComm(_ pid: Int32) -> String? {
         // P-INST-248: 终端进程 comm 查询耗时（/bin/ps -o comm= fork + stdout 解析；终端上下文识别 parent chain walk 循环调用，每次 fork 可阻塞；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let gpcStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: gpcStart)
             if durMs >= 50 { log("[TerminalRegistry] getProcessComm slow", level: .warn, fields: ["pid": String(pid), "durationMs": String(durMs)]) }
         }
+        #endif
         let output = ShellRunner.run(executable: "/bin/ps", arguments: ["-o", "comm=", "-p", String(pid)])?
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return output.isEmpty ? nil : output
@@ -109,11 +111,13 @@ enum TerminalRegistry {
 
     private static func getParentPID(_ pid: Int32) -> Int32? {
         // P-INST-249: 终端进程父 PID 查询耗时（/bin/ps -o ppid= fork + stdout 解析；终端上下文识别 parent chain walk 循环调用，每次 fork 可阻塞；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let gppStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: gppStart)
             if durMs >= 50 { log("[TerminalRegistry] getParentPID slow", level: .warn, fields: ["pid": String(pid), "durationMs": String(durMs)]) }
         }
+        #endif
         let output = ShellRunner.run(executable: "/bin/ps", arguments: ["-o", "ppid=", "-p", String(pid)])?
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return Int32(output)

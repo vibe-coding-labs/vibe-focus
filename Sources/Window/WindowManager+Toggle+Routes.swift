@@ -26,12 +26,14 @@ extension WindowManager {
     /// display != currentDisplay 的 visible space，映射与 yabai 一致。
     func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String) {
         // P-INST-10: stuck 路径总耗时（defer 汇总，所有 return 路径）+ AX lookup 耗时。
+        #if PERF_INSTRUMENT
         let stuckStart = Date()
         defer {
             log("[WindowManager] moveStuckWindowToSecondaryScreen finished", fields: [
                 "op": operationID, "stuckMs": String(elapsedMilliseconds(since: stuckStart))
             ])
         }
+        #endif
         let axLookupStart = Date()
         let windowID = NSWorkspace.shared.frontmostApplication
             .flatMap { focusedWindow(for: $0.processIdentifier) }

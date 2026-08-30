@@ -17,10 +17,14 @@ extension WindowManager {
 
     func runShellCommand(_ executable: String, args: [String]) -> String? {
         // P-INST-195: WindowManager shell 命令执行入口耗时（委托 ShellRunner.run fork P-INST-49；窗口移动相关 shell 调用，≥50ms warn 归因调用点）。
+        #if PERF_INSTRUMENT
         let rscStart = Date()
+        #endif
         let stdout = ShellRunner.run(executable: executable, arguments: args)?.stdout
+        #if PERF_INSTRUMENT
         let durMs = elapsedMilliseconds(since: rscStart)
         if durMs >= 50 { log("[WindowManager] runShellCommand slow", level: .warn, fields: ["executable": executable, "durationMs": String(durMs)]) }
+        #endif
         return stdout
     }
 

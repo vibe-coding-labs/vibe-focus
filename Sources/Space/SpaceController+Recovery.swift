@@ -7,10 +7,12 @@ extension SpaceController {
     func requestScriptingAdditionLoad() {
         let op = makeOperationID(prefix: "sa-load")
         // P-INST-207: 手动 SA 加载请求耗时（UserDefaults.standard.removeObject CFPreferences 写 + attemptScriptingAdditionRecovery fork + refreshAvailability；设置面板用户按钮触发）。
+        #if PERF_INSTRUMENT
         let rsalStart = Date()
         defer {
             log("[SpaceController] requestScriptingAdditionLoad finished", fields: ["op": op, "durationMs": String(elapsedMilliseconds(since: rsalStart))])
         }
+        #endif
         log(
             "[SpaceController] manual scripting-addition load requested",
             fields: ["op": op]
@@ -91,6 +93,7 @@ extension SpaceController {
     func attemptScriptingAdditionRecovery(trigger: String, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
         // P-INST-34: recovery 总耗时（yabai --load-sa fork + 可能的 admin 权限对话框，发生时可能秒级；偶发，result 见各路径 log 用 op 关联，归因 runYabaiVariants durationMs 中 recovery vs fork）。
+        #if PERF_INSTRUMENT
         let recoveryStart = Date()
         defer {
             log("[SpaceController] scripting-addition recovery finished", fields: [
@@ -98,6 +101,7 @@ extension SpaceController {
                 "durationMs": String(elapsedMilliseconds(since: recoveryStart))
             ])
         }
+        #endif
         if didAttemptScriptingAdditionRecovery {
             return scriptingAdditionRecoverySucceeded
         }
@@ -196,6 +200,7 @@ extension SpaceController {
     func executeWithAdminPrivileges(_ command: String, operationID: String? = nil) -> (Bool, String) {
         let op = operationID ?? "none"
         // P-INST-51: admin 权限执行耗时（NSAppleScript with administrator privileges，admin 对话框可秒级阻塞用户输入；attemptScriptingAdditionRecovery P-INST-34 总耗时含此，此埋点归因 admin 等待）。
+        #if PERF_INSTRUMENT
         let adminStart = Date()
         defer {
             log("[SpaceController] executeWithAdminPrivileges finished", level: .debug, fields: [
@@ -203,6 +208,7 @@ extension SpaceController {
                 "durationMs": String(elapsedMilliseconds(since: adminStart))
             ])
         }
+        #endif
         // 转义命令中的双引号和反斜杠，防止 AppleScript 注入
         let escapedCommand = command
             .replacingOccurrences(of: "\\", with: "\\\\")

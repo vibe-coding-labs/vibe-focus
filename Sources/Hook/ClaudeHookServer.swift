@@ -273,11 +273,13 @@ final class ClaudeHookServer: ObservableObject {
 
     private func makeJSONResponse(statusCode: Int, response: ClaudeHookResponse) -> GCDWebServerDataResponse {
         // P-INST-213: hook 响应 JSON 编码耗时（JSONEncoder.encode + GCDWebServerDataResponse 构造；每个 hook 请求响应路径调用，encode 通常 <1ms 但归因 hook 响应延迟；slow-op ≥5ms warn）。
+        #if PERF_INSTRUMENT
         let mjrStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: mjrStart)
             if durMs >= 5 { log("[HookServer] makeJSONResponse slow", level: .warn, fields: ["statusCode": String(statusCode), "durationMs": String(durMs)]) }
         }
+        #endif
         let encoder = JSONEncoder()
         let bodyData = (try? encoder.encode(response)) ?? Data("{\"ok\":false}".utf8)
         let httpResponse = GCDWebServerDataResponse(data: bodyData, contentType: "application/json")

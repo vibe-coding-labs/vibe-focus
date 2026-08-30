@@ -41,12 +41,16 @@ extension SettingsView {
 
                     Button("复制重置命令") {
                         // P-INST-243: 复制权限重置命令到剪贴板耗时（NSPasteboard.clearContents + setString；权限设置 UI 按钮触发；slow-op ≥5ms warn）。
+                        #if PERF_INSTRUMENT
                         let crsStart = Date()
+                        #endif
                         let pasteboard = NSPasteboard.general
                         pasteboard.clearContents()
                         pasteboard.setString(resetAccessCommand, forType: .string)
+                        #if PERF_INSTRUMENT
                         let durMs = elapsedMilliseconds(since: crsStart)
                         if durMs >= 5 { log("[PermissionsSection] copy reset cmd slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+                        #endif
                     }
                     .buttonStyle(.bordered)
                 }

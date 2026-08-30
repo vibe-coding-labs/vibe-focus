@@ -24,11 +24,13 @@ final class VoiceAnnouncementManager: ObservableObject {
     @Published private(set) var preferences: VoiceAnnouncementPreferences {
         didSet {
             // P-INST-269: 语音播报偏好变更触发持久化入口（savePreferences P-INST-270 JSONEncoder+UserDefaults 写；偏好 UI 变更触发 didSet，归因持久化触发频率；slow-op ≥5ms warn）。
+            #if PERF_INSTRUMENT
             let dslStart = Date()
             defer {
                 let durMs = elapsedMilliseconds(since: dslStart)
                 if durMs >= 5 { log("[VoiceAnnouncementManager] preferences didSet→save slow", level: .warn, fields: ["durationMs": String(durMs)]) }
             }
+            #endif
             savePreferences()
         }
     }
@@ -54,6 +56,7 @@ final class VoiceAnnouncementManager: ObservableObject {
     ///   上一次播放并取消上一次 LLM 请求。
     func announceCompletion(payload: ClaudeHookPayload) {
         // P-INST-271: 语音播报完成触发总耗时（按 mode 分发 template/audioFile/llmSummary；Stop hook 异步 fire-and-forget 路径，不阻塞 hook 响应；LLM 模式含网络请求 P-INST-273）。
+        #if PERF_INSTRUMENT
         let acStart = Date()
         defer {
             log("[VoiceAnnouncementManager] announceCompletion finished", level: .debug, fields: [
@@ -62,6 +65,7 @@ final class VoiceAnnouncementManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: acStart))
             ])
         }
+        #endif
         guard preferences.mode != .none else {
             log("[VoiceAnnouncementManager] mode is none, skipping announcement")
             return
@@ -103,6 +107,7 @@ final class VoiceAnnouncementManager: ObservableObject {
     /// - 设置界面「试听」按钮调用；LLM 模式会真实发起网络请求（15s 超时）。
     func preview() {
         // P-INST-272: 语音播报试听耗时（按 mode 分发；设置 UI 试听按钮调用；LLM 模式含网络请求 P-INST-273）。
+        #if PERF_INSTRUMENT
         let pvStart = Date()
         defer {
             log("[VoiceAnnouncementManager] preview finished", level: .debug, fields: [
@@ -110,6 +115,7 @@ final class VoiceAnnouncementManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: pvStart))
             ])
         }
+        #endif
         guard preferences.mode != .none else { return }
         stopAll()
 
@@ -154,12 +160,14 @@ final class VoiceAnnouncementManager: ObservableObject {
     /// - announceCompletion/preview 开头防重入 + 设置界面停止按钮。
     func stopAll() {
         // P-INST-274: 语音播报停止耗时（NSSpeechSynthesizer.stopSpeaking + NSSound.stop + llmTask.cancel；announceCompletion 防重入 + UI 停止按钮调用）。
+        #if PERF_INSTRUMENT
         let saStart = Date()
         defer {
             log("[VoiceAnnouncementManager] stopAll finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: saStart))
             ])
         }
+        #endif
         speechSynthesizer?.stopSpeaking()
         speechSynthesizer = nil
         currentSound?.stop()
@@ -180,6 +188,7 @@ final class VoiceAnnouncementManager: ObservableObject {
 
     func updateAudioFilePath(_ path: String?) {
         // P-INST-275: 音频文件路径更新耗时（preferences.audioFilePath didSet 持久化写；设置 UI 选择/清除文件按钮调用）。
+        #if PERF_INSTRUMENT
         let uapStart = Date()
         defer {
             log("[VoiceAnnouncementManager] updateAudioFilePath finished", level: .debug, fields: [
@@ -187,6 +196,7 @@ final class VoiceAnnouncementManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: uapStart))
             ])
         }
+        #endif
         preferences.audioFilePath = path
     }
 
@@ -224,6 +234,7 @@ final class VoiceAnnouncementManager: ObservableObject {
     /// - 空文本静默跳过（fallback 链末端已保证非空，此处再防御）。
     func speak(_ text: String) {
         // P-INST-277: TTS 朗读耗时（NSSpeechSynthesizer 构造 + set rate/volume + startSpeaking；announceCompletion P-INST-271 / preview P-INST-272 / summarizeAndSpeak 子阶段；startSpeaking 异步但合成器构造在调用线程）。
+        #if PERF_INSTRUMENT
         let spStart = Date()
         defer {
             log("[VoiceAnnouncementManager] speak finished", level: .debug, fields: [
@@ -231,6 +242,7 @@ final class VoiceAnnouncementManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: spStart))
             ])
         }
+        #endif
         guard !text.isEmpty else {
             log("[VoiceAnnouncementManager] speak: empty text, skipping")
             return
@@ -250,6 +262,7 @@ final class VoiceAnnouncementManager: ObservableObject {
     /// 播放本地音频文件；文件缺失或解码失败回退 TTS「对话完成」。
     private func playAudioFile(path: String) {
         // P-INST-278: 本地音频播放耗时（NSSound(contentsOfFile:byReference:) 加载解码 + play；announceCompletion P-INST-271 audioFile 分支 / preview P-INST-272 子阶段；音频解码在调用线程可阻塞）。
+        #if PERF_INSTRUMENT
         let pfStart = Date()
         defer {
             log("[VoiceAnnouncementManager] playAudioFile finished", level: .debug, fields: [
@@ -257,6 +270,7 @@ final class VoiceAnnouncementManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: pfStart))
             ])
         }
+        #endif
         guard FileManager.default.fileExists(atPath: path) else {
             log("[VoiceAnnouncementManager] audio file not found: \(path)", level: .warn)
             speak("对话完成")

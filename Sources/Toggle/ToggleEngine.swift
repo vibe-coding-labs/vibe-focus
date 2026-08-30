@@ -19,11 +19,13 @@ final class ToggleEngine: ToggleRecordStore {
 
     var displayCount: Int {
         // P-INST-267: 显示器数量计算属性（NSScreen.screens.count 读 + max(...,1) 保证 ≥1；toggle 入口判断单屏/多屏调用，NSScreen.screens 可能阻塞 WindowServer；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let dcStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: dcStart)
             if durMs >= 30 { log("[ToggleEngine] displayCount slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         return max(NSScreen.screens.count, 1)
     }
 
@@ -54,10 +56,12 @@ final class ToggleEngine: ToggleRecordStore {
         sessionID: String?
     ) {
         // P-INST-231: toggle record 保存编排端到端耗时（NSScreen.screens 主屏验证 + shouldRejectSave + ToggleRecord 构造 + store.saveToggleRecord SQLite 写 P-INST-17/P-INST-202；toggle 热路径每次调用，区分 NSScreen/构造 vs SQLite dbMs）。
+        #if PERF_INSTRUMENT
         let saveTotalStart = Date()
         defer {
             log("[ToggleEngine] save finished", level: .debug, fields: ["windowID": String(windowID), "durationMs": String(elapsedMilliseconds(since: saveTotalStart))])
         }
+        #endif
         // 验证 origFrame 不在主屏上 — 如果 origFrame 在主屏，说明数据异常
         let mainScreen = NSScreen.screens.first { $0.frame.origin == .zero }
         if Self.shouldRejectSave(origFrame: origFrame, mainScreenFrame: mainScreen?.frame) {
@@ -147,11 +151,13 @@ final class ToggleEngine: ToggleRecordStore {
         appName: String?
     ) -> ToggleRecord? {
         // P-INST-211: 合成 toggle record 创建耗时（NSScreen.screens x2 枚举显示器 + CoordinateKit.quartzVisibleFrame x2；UserPromptSubmit UPS fallback 路径，窗口在主屏无历史记录时调用；NSScreen.screens 可能阻塞；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let cstrStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: cstrStart)
             if durMs >= 30 { log("[ToggleEngine] createSyntheticToggleRecord slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(durMs)]) }
         }
+        #endif
         guard let secondaryScreen = NSScreen.screens.first(where: { $0.frame.origin != .zero }) else {
             log("[ToggleEngine] createSyntheticToggleRecord: no secondary screen found", level: .warn, fields: [
                 "windowID": String(windowID),

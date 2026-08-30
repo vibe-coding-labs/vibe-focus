@@ -9,12 +9,14 @@ import Foundation
 @MainActor
 func updateCrashSnapshotFromRuntime() {
     // P-INST-117: 运行时崩溃快照更新耗时（NSWorkspace.frontmostApplication + NSScreen.screens.count + WindowManager/HotKeyManager 状态读取 + 写入 crash snapshot buffer；toggle 入口 WindowManager+Toggle:32 + hook 请求 ClaudeHookServer:137 双热路径调用，每次 toggle/hook 都执行）。
+    #if PERF_INSTRUMENT
     let ucsrStart = Date()
     defer {
         log("CrashContext.updateCrashSnapshotFromRuntime finished", level: .debug, fields: [
             "durationMs": String(elapsedMilliseconds(since: ucsrStart))
         ])
     }
+    #endif
     updateCrashSnapshot { buf, capacity in
         var pos = 0
         func append(_ str: String) {
@@ -65,6 +67,7 @@ func updateCrashSnapshotFromRuntime() {
 @MainActor
 func logRuntimeStateSnapshot(context: String) {
     // P-INST-118: 运行时状态快照日志耗时（WindowManager/HotKeyManager/ClaudeHookServer 状态读取 + 字段字典构造 + log 写；toggle 入口 WindowManager+Toggle:33 + hook 请求 ClaudeHookServer:138 双热路径调用，每次 toggle/hook 都执行）。
+    #if PERF_INSTRUMENT
     let lrssStart = Date()
     defer {
         log("CrashContext.logRuntimeStateSnapshot finished", level: .debug, fields: [
@@ -72,6 +75,7 @@ func logRuntimeStateSnapshot(context: String) {
             "context": context
         ])
     }
+    #endif
     let wm = WindowManager.shared
     let hkm = HotKeyManager.shared
     let hookServer = ClaudeHookServer.shared

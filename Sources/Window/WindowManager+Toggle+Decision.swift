@@ -61,6 +61,7 @@ extension WindowManager {
     /// isWindowOnMainScreen 与 store.load 均按 windowID 走 CGWindowList / SQLite，非阻塞。
     func shouldRestoreCurrentWindow(windowID: UInt32?, store: ToggleRecordStore) -> Bool {
         // P-INST-76: shouldRestore 决策总耗时（toggle 决策核心，plan P0.2 gap2 优化点；windowID 传入走 CGWindowList+SQLite 非阻塞，windowID==nil 走 AX focusedWindow/windowHandle 可阻塞；子调用 hasAccessibilityPermission P-INST-64 / isWindowOnMainScreen P-INST-61 / store.load P-INST-18 / store.clear P-INST-67 已埋，此为顶层聚合归因）。
+        #if PERF_INSTRUMENT
         let srStart = Date()
         defer {
             log("[WindowManager] shouldRestoreCurrentWindow finished", level: .debug, fields: [
@@ -68,6 +69,7 @@ extension WindowManager {
                 "durationMs": String(elapsedMilliseconds(since: srStart))
             ])
         }
+        #endif
         if !hasAccessibilityPermission() {
             log(
                 "[WindowManager] shouldRestoreCurrentWindow: no AX permission, cannot determine",

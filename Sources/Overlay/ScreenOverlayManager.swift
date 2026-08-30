@@ -102,11 +102,13 @@ final class ScreenOverlayManager: ObservableObject {
 
     func startRefreshTimer() {
         // P-INST-217: overlay 刷新定时器创建耗时（NSScreen.screens.count + Timer.scheduledTimer 注册；启动 + 屏幕配置变化调用；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let srtStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: srtStart)
             if durMs >= 30 { log("[Overlay] startRefreshTimer slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         guard crashLoopSuppressed == false else {
             log("[Overlay] startRefreshTimer skipped (crash loop suppression)", level: .debug)
             return
@@ -184,12 +186,14 @@ final class ScreenOverlayManager: ObservableObject {
 
     func refreshOverlays() {
         // P-INST-123: overlay UI 刷新耗时（cancel pending work item + hideOverlays + isEnabled 检查 + showOverlays P-INST-74 重建窗口；screen 变化 handleScreenChange P-INST-126 + space 刷新 applyRefreshResults P-INST-42 + toggle 后调用）。
+        #if PERF_INSTRUMENT
         let roStart = Date()
         defer {
             log("[ScreenOverlayManager] refreshOverlays finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: roStart))
             ])
         }
+        #endif
         pendingPreferenceRefreshWorkItem?.cancel()
         pendingPreferenceRefreshWorkItem = nil
         hideOverlays()
@@ -200,10 +204,12 @@ final class ScreenOverlayManager: ObservableObject {
 
     func suspendAutomaticRefreshes(reason: String) {
         // P-INST-259: overlay 自动刷新挂起（refreshTimer.invalidate Timer 停止 + 状态置位；设置窗口获焦/toggle 期间调用，归因挂起时机）。
+        #if PERF_INSTRUMENT
         let sarStart = Date()
         defer {
             log("[Overlay] suspendAutomaticRefreshes finished", level: .debug, fields: ["reason": reason, "durationMs": String(elapsedMilliseconds(since: sarStart))])
         }
+        #endif
         guard !automaticRefreshSuspended else {
             return
         }
@@ -215,10 +221,12 @@ final class ScreenOverlayManager: ObservableObject {
 
     func resumeAutomaticRefreshes(reason: String) {
         // P-INST-260: overlay 自动刷新恢复（startRefreshTimer P-INST-217 Timer 重建 + 状态置位；设置窗口失焦/toggle 结束后调用）。
+        #if PERF_INSTRUMENT
         let rarStart = Date()
         defer {
             log("[Overlay] resumeAutomaticRefreshes finished", level: .debug, fields: ["reason": reason, "durationMs": String(elapsedMilliseconds(since: rarStart))])
         }
+        #endif
         guard automaticRefreshSuspended else {
             return
         }
@@ -245,12 +253,14 @@ final class ScreenOverlayManager: ObservableObject {
     // MARK: - Cleanup
     func unregisterYabaiSignals() {
         // P-INST-127: yabai 信号注销耗时（YabaiClient.run -m signal --remove fork P-INST-37；registerYabaiSignals P-INST-93 的逆操作，禁用 overlay/卸载时调用）。
+        #if PERF_INSTRUMENT
         let uysStart = Date()
         defer {
             log("[ScreenOverlayManager] unregisterYabaiSignals finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: uysStart))
             ])
         }
+        #endif
         let _ = YabaiClient.run(arguments: ["-m", "signal", "--remove", "vibefocus-space-changed"])
     }
 }

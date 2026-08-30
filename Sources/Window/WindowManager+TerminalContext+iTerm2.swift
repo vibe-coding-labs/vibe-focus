@@ -13,12 +13,14 @@ extension WindowManager {
     /// 遍历 iTerm2 所有窗口的 session，匹配 UUID 部分找到目标窗口
     func matchiTerm2WindowBySessionID(itermSessionID: String, windows: [WindowIdentity]) -> WindowIdentity? {
         // P-INST-90: iTerm2 session UUID 窗口匹配耗时（runShellCommand /bin/bash -c osascript fork 遍历 iTerm2 windows/tabs/sessions 匹配 UUID；findWindowByTerminalContext P-INST-39 的 iTerm2 AppleScript 策略子归因；osascript IPC 到 iTerm2 进程是主要成本）。
+        #if PERF_INSTRUMENT
         let mtwStart = Date()
         defer {
             log("[WindowManager] matchiTerm2WindowBySessionID finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: mtwStart))
             ])
         }
+        #endif
         guard let uuidPart = Self.parseItermSessionUUID(itermSessionID) else { return nil }
 
         // Allowlist validation: iTerm2 session UUID 只含 hex + hyphen
@@ -84,12 +86,14 @@ extension WindowManager {
     /// Terminal.app 不在 CGWindowList 中暴露窗口标题，用 osascript 获取 TTY→窗口ID 映射
     func matchTerminalWindowByAppleScript(tty: String, terminalPID: Int32, windows: [WindowIdentity]) -> WindowIdentity? {
         // P-INST-91: Terminal.app TTY 窗口匹配耗时（runShellCommand /bin/bash -c osascript fork 遍历 Terminal windows/tabs 按 tty 匹配；findWindowByTerminalContext P-INST-39 的 Terminal AppleScript 策略子归因；osascript IPC 到 Terminal.app 是主要成本）。
+        #if PERF_INSTRUMENT
         let mtwaStart = Date()
         defer {
             log("[WindowManager] matchTerminalWindowByAppleScript finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: mtwaStart))
             ])
         }
+        #endif
         let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
 
         // Allowlist validation: TTY 必须匹配 /dev/ttys### 或 /dev/pty### 格式
@@ -154,12 +158,14 @@ extension WindowManager {
     /// 通过 TTY 上的进程 command 在候选窗口中精确匹配
     func matchWindowByTTYProcess(tty: String, windows: [WindowIdentity]) -> WindowIdentity? {
         // P-INST-55: matchWindowByTTYProcess 耗时（ps -t fork + 命令匹配；findWindowByTerminalContext P-INST-39 的 TTY 策略子归因；底层 ps fork P-INST-49 slow-op 覆盖）。
+        #if PERF_INSTRUMENT
         let mwtpStart = Date()
         defer {
             log("[WindowManager] matchWindowByTTYProcess finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: mwtpStart))
             ])
         }
+        #endif
         let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
         let ttyName = String(fullTTY.dropFirst(5))
 
@@ -192,6 +198,7 @@ extension WindowManager {
     /// 即使 hook-forwarder 自身 tty 命令返回 "not a tty"
     func resolveTTY(forPID pid: Int32) -> String? {
         // P-INST-56: resolveTTY 耗时（ps -o tty= fork；findWindowByTerminalContext P-INST-39 进程树 TTY 解析子归因）。
+        #if PERF_INSTRUMENT
         let rtStart = Date()
         defer {
             log("[WindowManager] resolveTTY finished", level: .debug, fields: [
@@ -199,6 +206,7 @@ extension WindowManager {
                 "durationMs": String(elapsedMilliseconds(since: rtStart))
             ])
         }
+        #endif
         log(
             "[WindowManager] resolveTTY called",
             level: .debug,

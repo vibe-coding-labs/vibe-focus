@@ -6,11 +6,13 @@ extension ScreenOverlayManager {
 
     func setupSignalHandler() {
         // P-INST-244: SIGUSR1 信号监听安装耗时（signal SIG_IGN 注册 + DispatchSource.makeSignalSource GCD 内核信号源创建 + resume 激活；启动路径调用，内核信号注册可能阻塞；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let sshStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: sshStart)
             if durMs >= 50 { log("[Overlay] setupSignalHandler slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         signal(SIGUSR1, SIG_IGN)
 
         let source = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
@@ -41,10 +43,12 @@ extension ScreenOverlayManager {
 
     func scheduleSignalFollowUpRefreshes() {
         // P-INST-257: SIGUSR1 space 切换后多次 follow-up 刷新调度入口（N 个 DispatchWorkItem 构造 + asyncAfter 调度 refreshSpaceIndices P-INST-245；space 切换触发，实际刷新在闭包内已覆盖，此处归因调度入口）。
+        #if PERF_INSTRUMENT
         let ssfStart = Date()
         defer {
             log("[Overlay] scheduleSignalFollowUpRefreshes finished", level: .debug, fields: ["count": String(signalFollowUpRefreshDelays.count), "durationMs": String(elapsedMilliseconds(since: ssfStart))])
         }
+        #endif
         for (offset, delay) in signalFollowUpRefreshDelays.enumerated() {
             let isLast = offset == signalFollowUpRefreshDelays.count - 1
             let workItem = DispatchWorkItem { [weak self] in
@@ -64,10 +68,12 @@ extension ScreenOverlayManager {
 
     func triggerForceRefresh(reason: String) {
         // P-INST-246: force refresh 编排端到端耗时（cancelPendingSignalRefreshes + clearSpaceIndexCache + refreshSpaceIndices P-INST-245 + scheduleSignalFollowUpRefreshes DispatchWorkItem 调度；SIGUSR1 信号/handleScreenChange/toggle 后调用，force refresh 主线程归因）。
+        #if PERF_INSTRUMENT
         let tfrStart = Date()
         defer {
             log("[Overlay] triggerForceRefresh finished", level: .debug, fields: ["reason": reason, "durationMs": String(elapsedMilliseconds(since: tfrStart))])
         }
+        #endif
         guard !automaticRefreshSuspended else {
             log("[FORCE_REFRESH] Skipped while automatic refresh is suspended, reason=\(reason)")
             return
@@ -94,10 +100,12 @@ extension ScreenOverlayManager {
     /// 300ms 窗口覆盖典型连续 toggle 间隔（~2s），仅在用户停止 toggle 后补一次 overlay 刷新。
     func schedulePostToggleRefresh(reason: String) {
         // P-INST-256: toggle 后防抖刷新调度入口（cancel 旧 workItem + DispatchWorkItem 0.3s 后调度 triggerForceRefresh P-INST-246；toggle 后调用，实际刷新在闭包内已覆盖，此处归因调度入口/去抖频率）。
+        #if PERF_INSTRUMENT
         let sptStart = Date()
         defer {
             log("[Overlay] schedulePostToggleRefresh finished", level: .debug, fields: ["reason": reason, "durationMs": String(elapsedMilliseconds(since: sptStart))])
         }
+        #endif
         pendingPostToggleRefreshWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -110,12 +118,14 @@ extension ScreenOverlayManager {
 
     func registerYabaiSignals() {
         // P-INST-93: yabai space_changed 信号注册耗时（2x YabaiClient.run fork：signal --list 检查 + signal --add 注册；+ Bundle/FileManager 解析 yabai-space-changed.sh 路径；启动/overlay 初始化调用；yabai fork 已由 P-INST-37 chokepoint 内部覆盖，此为顶层聚合）。
+        #if PERF_INSTRUMENT
         let rysStart = Date()
         defer {
             log("[ScreenOverlayManager] registerYabaiSignals finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: rysStart))
             ])
         }
+        #endif
         guard let checkResult = YabaiClient.run(arguments: ["-m", "signal", "--list"]),
               checkResult.exitCode == 0 else { return }
 

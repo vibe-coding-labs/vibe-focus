@@ -239,6 +239,7 @@ struct LANSettingsView: View {
 
     private func mapCurrentWindow(for label: String) {
         // P-INST-165: 远程绑定映射当前窗口耗时（captureFocusedWindowIdentity 4 AX P-INST-25 + LANHookPreferences.remoteBindings set CFPreferences 写 P-INST-145；设置 UI「映射当前窗口」按钮调用，AX 在副屏可阻塞）。
+        #if PERF_INSTRUMENT
         let mcwStart = Date()
         defer {
             log("[LANSettings] mapCurrentWindow finished", level: .debug, fields: [
@@ -246,6 +247,7 @@ struct LANSettingsView: View {
                 "durationMs": String(elapsedMilliseconds(since: mcwStart))
             ])
         }
+        #endif
         guard let identity = WindowManager.shared.captureFocusedWindowIdentity() else {
             return
         }

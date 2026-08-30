@@ -208,11 +208,13 @@ extension SpaceController {
 
     func decodeArray<T: Decodable>(_ type: T.Type, from text: String) -> [T]? {
         // P-INST-223: yabai 结果数组解码耗时（JSONDecoder.decode [T]；yabai query 返回大窗口列表时 decode 可能累积；slow-op ≥5ms warn）。
+        #if PERF_INSTRUMENT
         let daStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: daStart)
             if durMs >= 5 { log("[SpaceController+Yabai] decodeArray slow", level: .warn, fields: ["textLen": String(text.count), "durationMs": String(durMs)]) }
         }
+        #endif
         let data = Data(text.utf8)
         let decoder = JSONDecoder()
         if let array = try? decoder.decode([T].self, from: data) {
@@ -223,11 +225,13 @@ extension SpaceController {
 
     static func staticDecodeSingleOrFirst<T: Decodable>(_ type: T.Type, from text: String) -> T? {
         // P-INST-224: yabai 结果单值/首元素解码耗时（JSONDecoder.decode T 或 [T].first；查询解析路径；slow-op ≥5ms warn）。
+        #if PERF_INSTRUMENT
         let sdsStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: sdsStart)
             if durMs >= 5 { log("[SpaceController+Yabai] staticDecodeSingleOrFirst slow", level: .warn, fields: ["textLen": String(text.count), "durationMs": String(durMs)]) }
         }
+        #endif
         let data = Data(text.utf8)
         let decoder = JSONDecoder()
         if let single = try? decoder.decode(T.self, from: data) {

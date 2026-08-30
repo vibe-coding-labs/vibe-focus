@@ -46,11 +46,13 @@ extension ScreenOverlayManager {
 
     func hideOverlays() {
         // P-INST-265: 隐藏所有 overlay 窗口（NSWindow.close 循环 + 字典清空；偏好禁用/设置窗口获焦时调用，close 触发 WindowServer 同步；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let hoStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: hoStart)
             if durMs >= 30 { log("[Overlay] hideOverlays slow", level: .warn, fields: ["count": String(overlayWindows.count), "durationMs": String(durMs)]) }
         }
+        #endif
         for (_, overlay) in overlayWindows {
             overlay.close()
         }
@@ -59,11 +61,13 @@ extension ScreenOverlayManager {
 
     func updateOverlayPositions() {
         // P-INST-216: overlay 位置批量更新耗时（NSScreen.screens 枚举 + uuidForScreen + overlay.updatePosition N 屏循环；屏幕变化/overlay 刷新调用，轻量版仅更新位置；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let uopStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: uopStart)
             if durMs >= 30 { log("[Overlay] updateOverlayPositions slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         let screens = NSScreen.screens
 
         for screen in screens {
@@ -118,10 +122,12 @@ extension ScreenOverlayManager {
 
     func schedulePreferenceSave() {
         // P-INST-254: 偏好持久化调度入口（cancel 旧 workItem + preferenceSignature 计算 + DispatchWorkItem 异步调度 save；偏好 UI 变更触发，实际 save 在闭包内 logOperationDuration 已覆盖，此处归因调度入口/频率）。
+        #if PERF_INSTRUMENT
         let spsStart = Date()
         defer {
             log("[Overlay] schedulePreferenceSave finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: spsStart))])
         }
+        #endif
         pendingPreferenceSaveWorkItem?.cancel()
         let snapshot = preferences
         let signature = preferenceSignature(snapshot)
@@ -153,10 +159,12 @@ extension ScreenOverlayManager {
 
     func schedulePreferenceRefresh() {
         // P-INST-255: overlay 偏好刷新调度入口（cancel 旧 workItem + DispatchWorkItem 异步调度 applyPreferenceRefresh；偏好 UI 变更触发，实际 applyPreferenceRefresh 已 logOperationDuration 覆盖，此处归因调度入口/频率）。
+        #if PERF_INSTRUMENT
         let sprStart = Date()
         defer {
             log("[Overlay] schedulePreferenceRefresh finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: sprStart))])
         }
+        #endif
         pendingPreferenceRefreshWorkItem?.cancel()
         let signature = preferenceSignature(preferences)
 
@@ -236,11 +244,13 @@ extension ScreenOverlayManager {
 
     func uuidForScreen(_ screen: NSScreen) -> UUID {
         // P-INST-226: 屏幕 UUID 解析耗时（screen.deviceDescription NSScreenNumber 字典访问 + uuidFromDisplayID；overlay 每屏循环调用，deviceDescription 通常轻量缓存；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let usStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: usStart)
             if durMs >= 30 { log("[Overlay] uuidForScreen slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         if let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
             return Self.uuidFromDisplayID(screenID.uint32Value)
         }

@@ -20,6 +20,7 @@ enum YabaiClient {
     /// 获取 yabai 可执行文件路径（带缓存 + shell fallback）
     static func yabaiPath() -> String? {
         // P-INST-178: yabai 可执行路径解析耗时（缓存命中 fileExists 检查 / 未命中时 7 个候选路径 FileManager.fileExists stat 扫描 + findViaUserShell + findViaBashWhich fork 兜底；首次查询后缓存，所有 yabai fork 前调用）。
+        #if PERF_INSTRUMENT
         let ypStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: ypStart)
@@ -27,6 +28,7 @@ enum YabaiClient {
                 log("[YabaiClient] yabaiPath slow", level: .warn, fields: ["durationMs": String(durMs)])
             }
         }
+        #endif
         if let cached = cachedPath, FileManager.default.fileExists(atPath: cached) {
             return cached
         }
@@ -65,11 +67,13 @@ enum YabaiClient {
 
     private static func findViaUserShell() -> String? {
         // P-INST-183: 用户 shell 查找 yabai 路径耗时（2x 裸 Process fork：env bash -l -c 'echo $SHELL' + $SHELL -l -c 'which yabai' + FileManager.fileExists 校验；yabaiPath P-INST-178 缓存未命中 fallback，登录 shell 加载可阻塞）。
+        #if PERF_INSTRUMENT
         let fusStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: fusStart)
             if durMs >= 50 { log("[YabaiClient] findViaUserShell slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         let task = Process()
         task.launchPath = "/usr/bin/env"
         task.arguments = ["bash", "-l", "-c", "echo $SHELL"]
@@ -103,11 +107,13 @@ enum YabaiClient {
 
     private static func findViaBashWhich() -> String? {
         // P-INST-184: bash which 查找 yabai 路径耗时（裸 Process fork /bin/bash -l -c 'which yabai' + FileManager.fileExists 校验；yabaiPath P-INST-178 末级 fallback，登录 shell 加载可阻塞）。
+        #if PERF_INSTRUMENT
         let fbwStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: fbwStart)
             if durMs >= 50 { log("[YabaiClient] findViaBashWhich slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         let task = Process()
         task.launchPath = "/bin/bash"
         task.arguments = ["-l", "-c", "which yabai"]
@@ -141,11 +147,13 @@ enum YabaiClient {
         timeout: TimeInterval
     ) -> YabaiResult? {
         // P-INST-185: yabai 进程执行原语耗时（Process fork + run + DispatchSemaphore waitUntilExit 超时 + pipe 读 stdout/stderr；run/runAsync P-INST-37 的 fork 叶子，timeout=2.0s 超时返回 nil）。
+        #if PERF_INSTRUMENT
         let exStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: exStart)
             if durMs >= 50 { log("[YabaiClient] execute slow", level: .warn, fields: ["path": path, "durationMs": String(durMs)]) }
         }
+        #endif
         let task = Process()
         task.launchPath = path
         task.arguments = arguments
@@ -217,11 +225,13 @@ enum YabaiClient {
     /// 执行 yabai 命令并解码 JSON 输出（同步）
     static func queryJSON<T: Decodable>(_ type: T.Type, arguments: [String]) -> T? {
         // P-INST-221: yabai 同步 JSON 查询端到端耗时（run fork P-INST-37 + JSONDecoder.decode；overlay space index / display 查询入口，fork 是主要成本；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let qjStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: qjStart)
             if durMs >= 50 { log("[YabaiClient] queryJSON slow", level: .warn, fields: ["args": arguments.joined(separator: " "), "durationMs": String(durMs)]) }
         }
+        #endif
         guard let result = run(arguments: arguments), result.exitCode == 0 else { return nil }
         return try? JSONDecoder().decode(type, from: Data(result.stdout.utf8))
     }
@@ -229,11 +239,13 @@ enum YabaiClient {
     /// 异步执行 yabai 查询并解码 JSON — 用于读路径的 Space/Display 查询。
     static func queryJSONAsync<T: Decodable>(_ type: T.Type, arguments: [String]) async -> T? {
         // P-INST-222: yabai 异步 JSON 查询端到端耗时（runAsync fork + JSONDecoder.decode；overlay 读路径 Space/Display 查询入口，fork 是主要成本；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let qjaStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: qjaStart)
             if durMs >= 50 { log("[YabaiClient] queryJSONAsync slow", level: .warn, fields: ["args": arguments.joined(separator: " "), "durationMs": String(durMs)]) }
         }
+        #endif
         guard let result = await runAsync(arguments: arguments), result.exitCode == 0 else { return nil }
         return try? JSONDecoder().decode(type, from: Data(result.stdout.utf8))
     }

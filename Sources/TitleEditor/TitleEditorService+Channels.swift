@@ -162,7 +162,9 @@ extension TitleEditorService {
     /// NSAlert.runModal 模态阻塞主线程直到用户操作，仅在权限真正缺失时进入。
     private func showAutomationPermissionAlert(bundleID: String) {
         // P-INST-192: Automation 权限弹窗耗时（NSAlert.runModal 模态阻塞主线程 + 用户确认后 NSWorkspace.shared.open 启动 System Settings；applyTitle 检测到 Automation 权限缺失调用，runModal 阻塞直到用户操作）。
+        #if PERF_INSTRUMENT
         let sapaStart = Date()
+        #endif
         let terminalName: String
         switch bundleID {
         case "com.googlecode.iterm2": terminalName = "iTerm2"
@@ -184,8 +186,10 @@ extension TitleEditorService {
                     NSWorkspace.shared.open(url)
                 }
             }
+        #if PERF_INSTRUMENT
             let durMs = elapsedMilliseconds(since: sapaStart)
             if durMs >= 50 { log("[TitleEditor] showAutomationPermissionAlert slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        #endif
         }
     }
 }

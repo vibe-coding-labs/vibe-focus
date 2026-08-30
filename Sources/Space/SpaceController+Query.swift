@@ -6,12 +6,14 @@ extension SpaceController {
 
     func queryFocusedSpace() -> YabaiSpaceInfo? {
         // P-INST-57: queryFocusedSpace 耗时（runYabai query --spaces --space fork + decode；overlay refreshSpaceIndices P-INST-42 的 focused space 查询，底层 runYabai P-INST-27 已覆盖 fork，此埋点补顶层归因）。
+        #if PERF_INSTRUMENT
         let qfsStart = Date()
         defer {
             log("[SpaceController] queryFocusedSpace finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: qfsStart))
             ])
         }
+        #endif
         guard let result = runYabai(arguments: ["-m", "query", "--spaces", "--space"]),
               result.exitCode == 0 else {
             return nil

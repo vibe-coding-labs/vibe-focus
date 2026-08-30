@@ -160,11 +160,13 @@ func truncateForLog(_ text: String, limit: Int = 260) -> String {
 
 func frontmostAppDescriptor() -> String {
     // P-INST-210: 前台应用 descriptor 构建耗时（NSWorkspace.shared.frontmostApplication + bundleIdentifier/localizedName/pid 访问；日志/crash context 高频调用，frontmostApplication IPC 可能阻塞；slow-op ≥50ms warn）。
+    #if PERF_INSTRUMENT
     let fadStart = Date()
     defer {
         let durMs = elapsedMilliseconds(since: fadStart)
         if durMs >= 50 { log("[Support] frontmostAppDescriptor slow", level: .warn, fields: ["durationMs": String(durMs)]) }
     }
+    #endif
     guard let app = NSWorkspace.shared.frontmostApplication else {
         return "nil"
     }

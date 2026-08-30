@@ -25,12 +25,14 @@ enum CodexHookPreferences {
 
     static var isHookInstalled: Bool {
         // P-INST-282: Codex hook 安装状态检查耗时（Data(contentsOf codexConfigPath) + JSONSerialization 解析 + hooks 字典遍历匹配 command 含 helperScriptPath；设置面板 Codex UI 状态渲染调用）。
+        #if PERF_INSTRUMENT
         let ihiStart = Date()
         defer {
             log("CodexHookPreferences.isHookInstalled finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: ihiStart))
             ])
         }
+        #endif
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: codexConfigPath)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
@@ -56,12 +58,14 @@ enum CodexHookPreferences {
     /// 复用 ClaudeHookPreferences 的 helper script 安装、配置文件写入与 hooks 字典生成
     static func installHookToCodexSettings() -> (Bool, String) {
         // P-INST-283: Codex hooks.json 安装耗时（installHelperScript P-INST-88 + writeConfigFile P-INST-87 + 读/清理/合并/原子写 hooks.json；设置面板 Codex 安装按钮调用；与 installHookToClaudeSettings P-INST-78 对称）。
+        #if PERF_INSTRUMENT
         let ihStart = Date()
         defer {
             log("[CodexHookPreferences] installHookToCodexSettings finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: ihStart))
             ])
         }
+        #endif
         // 确保已有 token（hook-config.json 需要）
         ClaudeHookPreferences.ensureTokenGenerated()
 
@@ -131,12 +135,14 @@ enum CodexHookPreferences {
     /// 从 Codex ~/.codex/hooks.json 移除 VibeFocus hook
     static func uninstallHookFromCodexSettings() -> (Bool, String) {
         // P-INST-284: Codex hook 卸载耗时（Data(contentsOf codexConfigPath) 读 + JSONSerialization 解析 + cleanVibeFocusHooks 清理 + JSONSerialization 编码 + atomic write；设置面板 Codex 卸载按钮调用）。
+        #if PERF_INSTRUMENT
         let uhStart = Date()
         defer {
             log("[CodexHookPreferences] uninstallHookFromCodexSettings finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: uhStart))
             ])
         }
+        #endif
         let path = codexConfigPath
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               var hooks = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

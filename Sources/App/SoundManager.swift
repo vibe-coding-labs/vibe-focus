@@ -60,11 +60,13 @@ final class SoundManager: ObservableObject {
     @Published private(set) var preferences: SoundPreferences {
         didSet {
             // P-INST-253: 声音偏好变更触发持久化入口（savePreferences P-INST-208 UserDefaults+JSONEncoder 写；偏好 UI 变更/apply 路径触发 didSet，归因持久化触发频率；slow-op ≥5ms warn）。
+            #if PERF_INSTRUMENT
             let dslStart = Date()
             defer {
                 let durMs = elapsedMilliseconds(since: dslStart)
                 if durMs >= 5 { log("[SoundManager] preferences didSet→save slow", level: .warn, fields: ["durationMs": String(durMs)]) }
             }
+            #endif
             savePreferences()
         }
     }
@@ -79,12 +81,14 @@ final class SoundManager: ObservableObject {
 
     func playCompletionSound() {
         // P-INST-99: 完成音效播放耗时（resolveSound 加载 NSSound 音频文件 + sound.play；hook window-move 路径 HookEventHandler+WindowMove+Execute:217 调用，属热路径；play 本身异步但音频文件加载/解码在调用线程可阻塞）。
+        #if PERF_INSTRUMENT
         let pcsStart = Date()
         defer {
             log("[SoundManager] playCompletionSound finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: pcsStart))
             ])
         }
+        #endif
         guard preferences.soundType != .none else {
             log("[SoundManager] sound type is none, skipping")
             return
@@ -115,6 +119,7 @@ final class SoundManager: ObservableObject {
 
     func previewSound(_ soundType: CompletionSoundType, customPath: String? = nil, volume: Float) {
         // P-INST-160: 音效预览播放耗时（resolveSound 加载 NSSound P-INST-99 子路径 + sound.play 音频设备开声；设置 UI 试听按钮调用，文件加载/解码在调用线程可阻塞）。
+        #if PERF_INSTRUMENT
         let psStart = Date()
         defer {
             log("[SoundManager] previewSound finished", level: .debug, fields: [
@@ -122,6 +127,7 @@ final class SoundManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: psStart))
             ])
         }
+        #endif
         let sound = resolveSound(soundType: soundType, customPath: customPath)
         guard let sound else {
             log("[SoundManager] preview failed to resolve sound", level: .warn, fields: [
@@ -162,6 +168,7 @@ final class SoundManager: ObservableObject {
 
     func updateCustomSoundPath(_ path: String?) {
         // P-INST-162: 自定义音频路径更新耗时（preferences.customSoundPath didSet 持久化写；设置 UI 选择/清除文件按钮调用，触发偏好持久化）。
+        #if PERF_INSTRUMENT
         let ucspStart = Date()
         defer {
             log("[SoundManager] updateCustomSoundPath finished", level: .debug, fields: [
@@ -169,6 +176,7 @@ final class SoundManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: ucspStart))
             ])
         }
+        #endif
         preferences.customSoundPath = path
     }
 
@@ -217,6 +225,7 @@ final class SoundManager: ObservableObject {
 
     private func bundledSound(named name: String) -> NSSound? {
         // P-INST-164: 内置音频资源查找耗时（Bundle.main.url forResource 多扩展名 m4a/wav/mp3 × 2 路径查 + NSSound(contentsOf:byReference:) 加载解码；resolveSound P-INST-163 builtin 分支调用）。
+        #if PERF_INSTRUMENT
         let bsStart = Date()
         defer {
             log("[SoundManager] bundledSound finished", level: .debug, fields: [
@@ -224,6 +233,7 @@ final class SoundManager: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: bsStart))
             ])
         }
+        #endif
         let extensions = ["m4a", "wav", "mp3"]
         for ext in extensions {
             if let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: "Sounds") {
@@ -260,11 +270,13 @@ final class SoundManager: ObservableObject {
 
     private static func loadPreferences() -> SoundPreferences {
         // P-INST-208: 声音偏好加载耗时（UserDefaults.standard.data CFPreferences 读 + JSONDecoder.decode；声音偏好变更 + 启动加载调用；slow-op ≥5ms warn）。
+        #if PERF_INSTRUMENT
         let lprStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: lprStart)
             if durMs >= 5 { log("[SoundManager] loadPreferences slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         guard let data = UserDefaults.standard.data(forKey: preferencesKey) else {
             return .default
         }

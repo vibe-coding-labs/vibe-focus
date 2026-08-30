@@ -246,23 +246,27 @@ curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
 
     static var claudeSettingsExists: Bool {
         // P-INST-84: claude settings.json 存在性探测耗时（FileManager.fileExists stat 调用；设置面板 UI 状态 + isHookInstalled 前置条件检查；通常 <1ms）。
+        #if PERF_INSTRUMENT
         let cseStart = Date()
         defer {
             log("ClaudeHookPreferences.claudeSettingsExists checked", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: cseStart))
             ])
         }
+        #endif
         return FileManager.default.fileExists(atPath: claudeSettingsPath)
     }
 
     static var isHookInstalled: Bool {
         // P-INST-82: hook 安装状态检查耗时（Data(contentsOf claudeSettingsPath) + JSONSerialization 解析 + hooks 字典遍历匹配；设置面板 UI 状态渲染调用；文件读 + JSON 解析在 settings 较大时可阻塞）。
+        #if PERF_INSTRUMENT
         let ihiStart = Date()
         defer {
             log("ClaudeHookPreferences.isHookInstalled finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: ihiStart))
             ])
         }
+        #endif
         log("ClaudeHookPreferences.isHookInstalled checking", level: .debug)
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: claudeSettingsPath)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

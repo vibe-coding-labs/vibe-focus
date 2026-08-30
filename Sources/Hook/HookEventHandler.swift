@@ -59,6 +59,7 @@ final class HookEventHandler {
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         let traceID = makeOperationID(prefix: "ups")
         // P-INST-29: handleUserPromptSubmit 总耗时（hook 同步响应延迟；defer 统一记，outcome 见各路径 code 字段，用 traceID 关联）。
+        #if PERF_INSTRUMENT
         let upsStart = Date()
         defer {
             log("[HookEventHandler] UserPromptSubmit finished", fields: [
@@ -67,6 +68,7 @@ final class HookEventHandler {
                 "durationMs": String(elapsedMilliseconds(since: upsStart))
             ])
         }
+        #endif
 
         log(
             "[HookEventHandler] UserPromptSubmit triggered",

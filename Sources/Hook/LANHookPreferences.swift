@@ -34,12 +34,14 @@ enum LANHookPreferences {
     static var remoteBindings: [String: UInt32?] {
         get {
             // P-INST-145: remoteBindings UserDefaults 读耗时（string(forKey:) + JSONDecoder.decode / dictionary(forKey:) 旧格式迁移 + 可能触发写回 set；hook remote 事件路径 HookEventHandler+Remote:19 activeRemoteBindings 委托 + 设置 UI 读取）。
+            #if PERF_INSTRUMENT
             let rbgStart = Date()
             defer {
                 log("[LANHookPreferences] remoteBindings get finished", level: .debug, fields: [
                     "durationMs": String(elapsedMilliseconds(since: rbgStart))
                 ])
             }
+            #endif
             if let jsonStr = UserDefaults.standard.string(forKey: remoteBindingsKey),
                let data = jsonStr.data(using: .utf8),
                let decoded = try? JSONDecoder().decode([String: UInt32].self, from: data) {
@@ -61,12 +63,14 @@ enum LANHookPreferences {
         }
         set {
             // P-INST-145: remoteBindings UserDefaults 写耗时（JSONEncoder.encode + CFPreferences 同步写；设置 UI bind/unbind/remap 写）。
+            #if PERF_INSTRUMENT
             let rbsStart = Date()
             defer {
                 log("[LANHookPreferences] remoteBindings set finished", level: .debug, fields: [
                     "durationMs": String(elapsedMilliseconds(since: rbsStart))
                 ])
             }
+            #endif
             let active: [String: UInt32] = newValue.compactMapValues { $0 }
             if let data = try? JSONEncoder().encode(active),
                let jsonStr = String(data: data, encoding: .utf8) {
@@ -83,12 +87,14 @@ enum LANHookPreferences {
     /// 获取本机 en0 的 IPv4 地址
     static func currentLANIP() -> String {
         // P-INST-146: 本机 en0 IPv4 地址查询耗时（getifaddrs 链表遍历 + getnameinfo 反向解析 syscall + freeifaddrs；HookInstaller:33 写 config host + LANSettingsView 显示调用）。
+        #if PERF_INSTRUMENT
         let clipStart = Date()
         defer {
             log("[LANHookPreferences] currentLANIP finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: clipStart))
             ])
         }
+        #endif
         var address = "127.0.0.1"
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return address }

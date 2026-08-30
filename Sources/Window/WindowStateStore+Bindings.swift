@@ -10,11 +10,13 @@ extension WindowStateStore {
             return
         }
         // P-INST-68: hook session bind 写 SQLite 耗时（SessionWindowRegistry.saveWindowState 调用，hook 热路径；INSERT...ON CONFLICT UPDATE；WAL 写通常 <1ms，≥5ms 异常）。
+        #if PERF_INSTRUMENT
         let swStart = Date()
         defer {
             let ms = elapsedMilliseconds(since: swStart)
             if ms >= 5 { log("[WindowStateStore] saveWindowState slow", level: .warn, fields: ["windowID": String(state.windowID), "durationMs": String(ms)]) }
         }
+        #endif
         var stmt: OpaquePointer?
         let sql = """
             INSERT INTO windows (
@@ -168,11 +170,13 @@ extension WindowStateStore {
 
     func deleteAllWindowsStates() {
         // P-INST-173: 清空全部绑定耗时（runSchema DELETE FROM windows P-INST-169；clearAllBindings 调用，hook 清除绑定 UI 操作）。
+        #if PERF_INSTRUMENT
         let dasStart = Date()
         defer {
             let ms = elapsedMilliseconds(since: dasStart)
             if ms >= 5 { log("[WindowStateStore] deleteAllWindowsStates slow", level: .warn, fields: ["durationMs": String(ms)]) }
         }
+        #endif
         guard let db else {
             log("[WindowStateStore] deleteAllWindowsStates: db not available", level: .warn)
             return
@@ -210,11 +214,13 @@ extension WindowStateStore {
 
     func loadAllWindowStates() -> [WindowState] {
         // P-INST-175: 全量加载绑定耗时（SELECT * prepare/step 每行 + parseWindowStateRow P-INST-155；SessionWindowRegistry.init 启动加载，行数 ∝ 绑定数）。
+        #if PERF_INSTRUMENT
         let laStart = Date()
         defer {
             let ms = elapsedMilliseconds(since: laStart)
             if ms >= 5 { log("[WindowStateStore] loadAllWindowStates slow", level: .warn, fields: ["durationMs": String(ms)]) }
         }
+        #endif
         guard let db else { return [] }
         var stmt: OpaquePointer?
         let sql = "SELECT * FROM windows ORDER BY updated_at ASC;"
@@ -232,11 +238,13 @@ extension WindowStateStore {
 
     func deleteWindowState(windowID: UInt32) {
         // P-INST-176: 单窗口删除耗时（DELETE prepare/bind_int64/step；SessionWindowRegistry remapWindowID/purgeClosedWindow/init 清理损坏绑定调用，hook 路径）。
+        #if PERF_INSTRUMENT
         let dwStart = Date()
         defer {
             let ms = elapsedMilliseconds(since: dwStart)
             if ms >= 5 { log("[WindowStateStore] deleteWindowState slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(ms)]) }
         }
+        #endif
         guard let db else {
             log("[WindowStateStore] deleteWindowState: db not available", level: .warn)
             return

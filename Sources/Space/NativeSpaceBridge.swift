@@ -24,11 +24,13 @@ enum NativeSpaceBridge {
 
     private static func load<T>(_ name: String) -> T? {
         // P-INST-229: SkyLight 符号动态查找耗时（dlsym 符号解析 + unsafeBitCast；fnMainConnectionID/fnMoveWindowsToManagedSpace 计算属性每次访问调用，首次解析后 OS 缓存；slow-op ≥5ms warn）。
+        #if PERF_INSTRUMENT
         let ldStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: ldStart)
             if durMs >= 5 { log("[NativeSpaceBridge] load slow", level: .warn, fields: ["symbol": name, "durationMs": String(durMs)]) }
         }
+        #endif
         guard let handle = skyLightHandle,
               let sym = dlsym(handle, name) else { return nil }
         return unsafeBitCast(sym, to: T.self)
@@ -46,10 +48,12 @@ enum NativeSpaceBridge {
 
     static func logAvailability() {
         // P-INST-230: SLS 符号可用性诊断耗时（访问 fnMainConnectionID/fnMoveWindowsToManagedSpace 计算属性触发 load P-INST-229 dlsym + 循环 log；诊断/启动调用）。
+        #if PERF_INSTRUMENT
         let laStart = Date()
         defer {
             log("[NativeSpaceBridge] logAvailability finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: laStart))])
         }
+        #endif
         let symbols: [(String, Any?)] = [
             ("SLSMainConnectionID", fnMainConnectionID as Any),
             ("SLSMoveWindowsToManagedSpace", fnMoveWindowsToManagedSpace as Any),
@@ -295,11 +299,13 @@ enum NativeSpaceBridge {
 
     private static func postMouse(_ type: CGEventType, position: CGPoint) {
         // P-INST-206: 合成鼠标事件注入耗时（CGEvent 构造 + event.post cghidEventTap HID 注入；NativeSpaceBridge space 拖拽恢复路径调用，post 可能阻塞 WindowServer；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let pmStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: pmStart)
             if durMs >= 30 { log("[NativeSpaceBridge] postMouse slow", level: .warn, fields: ["type": String(type.rawValue), "durationMs": String(durMs)]) }
         }
+        #endif
         guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
                                   mouseCursorPosition: position, mouseButton: .left) else { return }
         event.post(tap: .cghidEventTap)

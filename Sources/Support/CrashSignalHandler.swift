@@ -195,11 +195,13 @@ func installCrashSignalHandlers() {
     // .capturePreviousCrashFatalDate()（fatal 文件 mtime 是崩溃循环熔断的判定输入）。
     archivePreviousCrashFatalIfNeeded()
     _ = crashFatalFD  // 触发 lazy open（O_CREAT | O_APPEND，不截断）
+    #if PERF_INSTRUMENT
     let icshStart = Date()
     defer {
         let durMs = elapsedMilliseconds(since: icshStart)
         if durMs >= 5 { log("[CrashContext] installCrashSignalHandlers slow", level: .warn, fields: ["durationMs": String(durMs)]) }
     }
+    #endif
     for sig in [SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL] {
         signal(sig, crashSignalHandler)
     }
@@ -208,11 +210,13 @@ func installCrashSignalHandlers() {
 
 func installAtExitHandler() {
     // P-INST-193: atexit handler 注册耗时（atexit syscall 注册退出回调；应用启动调用，注册的回调在进程退出时执行 open/write/close 文件 I/O 写崩溃快照日志）。
+    #if PERF_INSTRUMENT
     let iaeStart = Date()
     defer {
         let durMs = elapsedMilliseconds(since: iaeStart)
         if durMs >= 5 { log("[CrashContext] installAtExitHandler slow", level: .warn, fields: ["durationMs": String(durMs)]) }
     }
+    #endif
     atexit {
         let msg = "VibeFocus exiting via atexit (likely normal termination)\n"
         msg.withCString { ptr in

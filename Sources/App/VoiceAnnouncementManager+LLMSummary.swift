@@ -100,12 +100,14 @@ extension VoiceAnnouncementManager {
         message: String, apiBase: String, apiKey: String, model: String, maxChars: Int
     ) async throws -> String {
         // P-INST-279: LLM API 网络请求耗时（URLSession POST /chat/completions + JSON 解析 choices[0].message.content；summarizeAndSpeak P-INST-273 子阶段；超时 15s，后台 Task 不阻塞 hook 响应）。
+        #if PERF_INSTRUMENT
         let rlStart = Date()
         defer {
             log("[VoiceAnnouncementManager] requestLLMSummary finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: rlStart))
             ])
         }
+        #endif
 
         // 截断消息到 2000 字，避免超长输入
         let truncated: String
@@ -163,12 +165,14 @@ extension VoiceAnnouncementManager {
     /// - LLM 配置缺失、请求失败、返回空总结三种情况的兜底；保证任何路径都有声音反馈。
     func speakFallback(message: String, maxChars: Int) {
         // P-INST-280: 语音播报 fallback 耗时（截断 lastAssistantMessage + speak；LLM 失败时调用）。
+        #if PERF_INSTRUMENT
         let sfStart = Date()
         defer {
             log("[VoiceAnnouncementManager] speakFallback finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: sfStart))
             ])
         }
+        #endif
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             let truncated = trimmed.count > maxChars ? String(trimmed.prefix(maxChars)) : trimmed

@@ -68,6 +68,7 @@ extension WindowManager {
     /// 通过 PID 查询 CGWindowList 中属于该 PID 的所有窗口
     func findWindowsForPID(_ pid: Int32) -> [WindowIdentity] {
         // P-INST-60: findWindowsForPID 耗时（cgWindowListAll P-INST-45 + NSRunningApplication + 可能 ps fork P-INST-49；findWindowByTerminalContext P-INST-39 子归因）。
+        #if PERF_INSTRUMENT
         let fwspStart = Date()
         defer {
             log("[WindowManager] findWindowsForPID finished", level: .debug, fields: [
@@ -75,6 +76,7 @@ extension WindowManager {
                 "durationMs": String(elapsedMilliseconds(since: fwspStart))
             ])
         }
+        #endif
         let windows = cgWindowListAll()
         let appName = NSRunningApplication(processIdentifier: pid)?.localizedName
             ?? (runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(pid)])?

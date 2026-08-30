@@ -55,12 +55,14 @@ final class OverlayWindow: NSWindow {
 
     init(screen: NSScreen) {
         // P-INST-128: overlay 窗口创建耗时（NSWindow super.init borderless 窗口服务器资源 + contentView + setupTextLayer P-INST-129；showOverlays P-INST-74 每 display 创建一个；窗口服务器 IPC 可阻塞）。
+        #if PERF_INSTRUMENT
         let oiStart = Date()
         defer {
             log("[OverlayWindow] init finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: oiStart))
             ])
         }
+        #endif
         let initialFrame = NSRect(x: 0, y: 0, width: 200, height: 100)
         super.init(
             contentRect: initialFrame,
@@ -89,12 +91,14 @@ final class OverlayWindow: NSWindow {
 
     private func setupTextLayer() {
         // P-INST-129: 文本图层设置耗时（CATextLayer 创建/配置 + addSublayer；init P-INST-128 子阶段，overlay 渲染）。
+        #if PERF_INSTRUMENT
         let stlStart = Date()
         defer {
             log("[OverlayWindow] setupTextLayer finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: stlStart))
             ])
         }
+        #endif
         let layer = CATextLayer()
         layer.alignmentMode = .center
         // FIX: 屏幕热插拔时 NSScreen.main 可能指向已移除的屏幕，访问其属性会触发 WindowServer race。
@@ -108,12 +112,14 @@ final class OverlayWindow: NSWindow {
 
     func update(screenIndex: Int, spaceIndex: Int, preferences: ScreenIndexPreferences) {
         // P-INST-130: overlay 内容更新耗时（字体/颜色/尺寸计算 + setContentSize + contentView/layer 属性设置 + textLayer frame/string 更新 + needsDisplay 重绘；updateOverlaysInPlace P-INST-74 调用，overlay 文本变化）。
+        #if PERF_INSTRUMENT
         let ouStart = Date()
         defer {
             log("[OverlayWindow] update finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: ouStart))
             ])
         }
+        #endif
         self.screenIndex = screenIndex
         self.spaceIndex = spaceIndex
 
@@ -170,12 +176,14 @@ final class OverlayWindow: NSWindow {
 
     func updatePosition(for screen: NSScreen, position: IndexPosition = .topRight, margin: CGFloat = 20) {
         // P-INST-131: overlay 位置更新耗时（screen.frame 读取 + calculateOverlayOrigin 纯计算 + setFrameOrigin 窗口服务器定位；updateOverlayPositions 调用，overlay 位置变更）。
+        #if PERF_INSTRUMENT
         let upStart = Date()
         defer {
             log("[OverlayWindow] updatePosition finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: upStart))
             ])
         }
+        #endif
         let screenFrame = screen.frame
         let windowSize = self.contentView?.bounds.size ?? CGSize(width: 100, height: 60)
         let origin = Self.calculateOverlayOrigin(
@@ -189,23 +197,27 @@ final class OverlayWindow: NSWindow {
 
     func show() {
         // P-INST-132: overlay 显示耗时（orderFrontRegardless 窗口服务器置前；showOverlays P-INST-74 调用）。
+        #if PERF_INSTRUMENT
         let osStart = Date()
         defer {
             log("[OverlayWindow] show finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: osStart))
             ])
         }
+        #endif
         self.orderFrontRegardless()
     }
 
     func hide() {
         // P-INST-133: overlay 隐藏耗时（orderOut 窗口服务器移除；refreshOverlays P-INST-123 hideOverlays 调用）。
+        #if PERF_INSTRUMENT
         let ohStart = Date()
         defer {
             log("[OverlayWindow] hide finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: ohStart))
             ])
         }
+        #endif
         self.orderOut(nil)
     }
 }

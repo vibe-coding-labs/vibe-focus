@@ -7,11 +7,13 @@ extension WindowStateStore {
     /// 原子性保存 toggle record 到 windows 表
     func saveToggleRecord(_ record: ToggleRecord) {
         // P-INST-202: toggle record 保存耗时（UPDATE prepare/bind_double x12+ bind_int64/step + 必要时 INSERT upsert；ToggleEngine.save/restore 调用，hook+toggle 热路径 SQLite 写，WAL 通常 <1ms ≥5ms 异常）。
+        #if PERF_INSTRUMENT
         let strStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: strStart)
             if durMs >= 5 { log("[WindowStateStore] saveToggleRecord slow", level: .warn, fields: ["windowID": String(record.windowID), "durationMs": String(durMs)]) }
         }
+        #endif
         guard let db else {
             log("saveToggleRecord: db is nil", level: .error)
             return
@@ -160,11 +162,13 @@ extension WindowStateStore {
     /// 按 windowID 读取 toggle record
     func loadToggleRecord(windowID: UInt32) -> ToggleRecord? {
         // P-INST-203: toggle record 按 windowID 读取耗时（SELECT prepare/bind_int64/step + parseToggleRecord P-INST-156；ToggleEngine.load 调用，shouldRestore 决策 SQLite 读，WAL 通常 <1ms ≥5ms 异常。P-INST-18 在 ToggleEngine.load 编排层）。
+        #if PERF_INSTRUMENT
         let ltrStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: ltrStart)
             if durMs >= 5 { log("[WindowStateStore] loadToggleRecord slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(durMs)]) }
         }
+        #endif
         guard let db else { return nil }
         var stmt: OpaquePointer?
         let sql = """
@@ -221,11 +225,13 @@ extension WindowStateStore {
     func clearToggleRecord(windowID: UInt32) {
         guard let db else { return }
         // P-INST-67: clear SQLite 写耗时（restore 后清除 toggle state，UPDATE 操作；WAL 写通常 <1ms，≥5ms 异常）。
+        #if PERF_INSTRUMENT
         let clrStart = Date()
         defer {
             let ms = elapsedMilliseconds(since: clrStart)
             if ms >= 5 { log("[WindowStateStore] clearToggleRecord slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(ms)]) }
         }
+        #endif
         let sql = """
             UPDATE windows SET
                 orig_x = NULL, orig_y = NULL, orig_w = NULL, orig_h = NULL,

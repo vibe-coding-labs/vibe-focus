@@ -23,14 +23,18 @@ extension WindowManager {
     /// - Returns: CGWindowID if extraction succeeds, nil otherwise
     func windowHandle(for window: AXUIElement) -> UInt32? {
         // P-INST-44: _AXUIElementGetWindow AX 耗时（slow-op ≥50ms warn；AX 正常 <10ms，阻塞 >>50ms）。
+        #if PERF_INSTRUMENT
         let whAxStart = Date()
+        #endif
         var windowID: CGWindowID = 0
         let status = _AXUIElementGetWindow(window, &windowID)
         let found = status == .success && windowID != 0
+        #if PERF_INSTRUMENT
         let whDurMs = elapsedMilliseconds(since: whAxStart)
         if whDurMs >= 50 {
             log("[WindowManager] windowHandle slow AX", level: .warn, fields: ["durationMs": String(whDurMs), "found": String(found)])
         }
+        #endif
         guard found else {
             return nil
         }
@@ -40,13 +44,17 @@ extension WindowManager {
     /// 读取 AX windowNumber（CGWindowNumber，跨 space move 稳定）。
     func windowNumber(for window: AXUIElement) -> Int? {
         // P-INST-44: AX windowNumber 读取耗时（slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let wnAxStart = Date()
+        #endif
         var numberRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(window, axWindowNumberAttribute as CFString, &numberRef)
+        #if PERF_INSTRUMENT
         let wnDurMs = elapsedMilliseconds(since: wnAxStart)
         if wnDurMs >= 50 {
             log("[WindowManager] windowNumber slow AX", level: .warn, fields: ["durationMs": String(wnDurMs)])
         }
+        #endif
         guard status == .success, let number = numberRef as? NSNumber else {
             return nil
         }
@@ -56,13 +64,17 @@ extension WindowManager {
     /// 读取 AX 窗口标题。
     func title(of window: AXUIElement) -> String? {
         // P-INST-44: AX title 读取耗时（slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let titleAxStart = Date()
+        #endif
         var titleRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+        #if PERF_INSTRUMENT
         let titleDurMs = elapsedMilliseconds(since: titleAxStart)
         if titleDurMs >= 50 {
             log("[WindowManager] title(of:) slow AX", level: .warn, fields: ["durationMs": String(titleDurMs)])
         }
+        #endif
         guard status == .success else {
             return nil
         }
@@ -81,12 +93,14 @@ extension WindowManager {
     /// - Returns: The window's frame in global coordinates, or nil on failure
     func frame(of window: AXUIElement) -> CGRect? {
         // P-INST-44: AX frame 读取耗时（已知阻塞元凶，副屏独立 Space 可阻塞 1-2s；memory feedback_toggle_ctxms_cgwindowlist 铁律 toggle 热路径禁用此函数，always debug 用于监控违规调用 + 阻塞归因）。
+        #if PERF_INSTRUMENT
         let frameAxStart = Date()
         defer {
             log("[WindowManager] AX frame(of:) finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: frameAxStart))
             ])
         }
+        #endif
         var frameRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(window, axFrameAttribute as CFString, &frameRef)
         guard status == .success, let frameRef else {
@@ -112,13 +126,17 @@ extension WindowManager {
     /// - Returns: true if the attribute is settable
     func isAttributeSettable(_ element: AXUIElement, attribute: String) -> Bool {
         // P-INST-44: AX isAttributeSettable 耗时（slow-op ≥50ms warn；每次 window move 前调用）。
+        #if PERF_INSTRUMENT
         let settableAxStart = Date()
+        #endif
         var settable = DarwinBoolean(false)
         let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
+        #if PERF_INSTRUMENT
         let settableDurMs = elapsedMilliseconds(since: settableAxStart)
         if settableDurMs >= 50 {
             log("[WindowManager] isAttributeSettable slow AX", level: .warn, fields: ["attribute": attribute, "durationMs": String(settableDurMs)])
         }
+        #endif
         if status != .success {
             log("Settable check failed for \(attribute): \(status.rawValue)")
             return false

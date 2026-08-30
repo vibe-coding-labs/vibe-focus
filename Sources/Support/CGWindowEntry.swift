@@ -38,6 +38,7 @@ struct CGWindowEntry {
 
 func cgWindowListAll() -> [CGWindowEntry] {
     // P-INST-45: CGWindowList 全量读耗时（非阻塞 ~5ms 正常；slow-op ≥30ms warn 抓阻塞或循环滥用 O(N²)，memory feedback_window_lookup_perf）。
+    #if PERF_INSTRUMENT
     let cgListStart = Date()
     defer {
         let durMs = elapsedMilliseconds(since: cgListStart)
@@ -45,6 +46,7 @@ func cgWindowListAll() -> [CGWindowEntry] {
             log("[CGWindowList] cgWindowListAll slow", level: .warn, fields: ["durationMs": String(durMs)])
         }
     }
+    #endif
     guard let rawList = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else {
         return []
     }
@@ -59,6 +61,7 @@ func cgWindowListAll() -> [CGWindowEntry] {
 /// （WindowServer 快照，diag 实测 cgWindowListAll() 含副屏 windowID frame ~5ms）。
 func cgWindowBounds(for windowID: UInt32) -> CGRect? {
     // P-INST-45: CGWindowList 单窗口读耗时（非阻塞 ~2ms 正常；slow-op ≥30ms warn，apply readback/postMoveCheck 热路径）。
+    #if PERF_INSTRUMENT
     let cgBoundsStart = Date()
     defer {
         let durMs = elapsedMilliseconds(since: cgBoundsStart)
@@ -66,6 +69,7 @@ func cgWindowBounds(for windowID: UInt32) -> CGRect? {
             log("[CGWindowList] cgWindowBounds slow", level: .warn, fields: ["windowID": String(windowID), "durationMs": String(durMs)])
         }
     }
+    #endif
     guard let rawList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]] else {
         return nil
     }

@@ -9,12 +9,14 @@ extension HotKeyManager {
 
     func setupCGEventTap() -> Bool {
         // P-INST-120: CGEvent tap 安装耗时（CGEvent.tapCreate 创建系统级 keyDown 事件 tap + CFMachPortCreateRunLoopSource + CFRunLoopAddSource main runloop + CGEvent.tapEnable；启动路径调用；系统事件 tap 注册涉及 WindowServer 可阻塞）。
+        #if PERF_INSTRUMENT
         let scgStart = Date()
         defer {
             log("[HotKey] setupCGEventTap finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: scgStart))
             ])
         }
+        #endif
         guard accessibilityStatus else {
             log(
                 "[HotKey] setupCGEventTap: accessibility not granted",
@@ -136,6 +138,7 @@ extension HotKeyManager {
 
     func reenableEventTap(reason: String) {
         // P-INST-122: 事件 tap 重启用耗时（CGEvent.tapEnable + 可能 installFallbackMonitors 回退；event tap 被 timeout/user_input 禁用时调用，低频但含系统调用）。
+        #if PERF_INSTRUMENT
         let retStart = Date()
         defer {
             log("[HotKey] reenableEventTap finished", level: .debug, fields: [
@@ -143,6 +146,7 @@ extension HotKeyManager {
                 "durationMs": String(elapsedMilliseconds(since: retStart))
             ])
         }
+        #endif
         log(
             "[HotKey] reenableEventTap called",
             level: .debug,

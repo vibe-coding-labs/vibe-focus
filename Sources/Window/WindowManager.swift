@@ -41,11 +41,13 @@ final class WindowManager {
     /// - Returns: The main NSScreen, or nil if unavailable
     func getMainScreen() -> NSScreen? {
         // P-INST-214: 主屏获取耗时（NSScreen.screens 枚举 + first filter + NSScreen.main fallback；toggle/move 多路径调用，NSScreen.screens 可能阻塞 WindowServer；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let gmsStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: gmsStart)
             if durMs >= 30 { log("[WindowManager] getMainScreen slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         return NSScreen.screens.first { $0.isMainScreen } ?? NSScreen.main
     }
 
@@ -57,12 +59,16 @@ final class WindowManager {
     /// - Returns: true if accessibility permission is granted
     func hasAccessibilityPermission() -> Bool {
         // P-INST-64: AX 权限检查耗时（AXIsProcessTrustedWithOptions 系统调用；启动 + toggle 前置检查，通常 ~5ms 但系统繁忙时可阻塞；slow-op ≥50ms warn）。
+        #if PERF_INSTRUMENT
         let hapStart = Date()
+        #endif
         let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
+        #if PERF_INSTRUMENT
         let hapMs = elapsedMilliseconds(since: hapStart)
         if hapMs >= 50 {
             log("[WindowManager] hasAccessibilityPermission slow", level: .warn, fields: ["trusted": String(trusted), "durationMs": String(hapMs)])
         }
+        #endif
         return trusted
     }
 

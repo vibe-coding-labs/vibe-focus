@@ -82,11 +82,13 @@ extension WindowManager {
     /// - Returns: Tuple of (screen array index, CGDisplayID), either may be nil if no match
     func displayContext(for frame: CGRect) -> (index: Int?, displayID: UInt32?) {
         // P-INST-215: 显示器上下文解析耗时（NSScreen.screens.count + enumerated 遍历 contains/intersects + CoordinateKit.cgDisplayID；toggle 路径确定窗口所在屏，NSScreen.screens 可能阻塞；slow-op ≥30ms warn）。
+        #if PERF_INSTRUMENT
         let dcStart = Date()
         defer {
             let durMs = elapsedMilliseconds(since: dcStart)
             if durMs >= 30 { log("[WindowManager] displayContext slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
+        #endif
         log(
             "[WindowManager] displayContext called",
             level: .debug,

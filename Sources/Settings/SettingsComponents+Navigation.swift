@@ -9,12 +9,14 @@ import SwiftUI
 
 func bundledAppIconImage() -> NSImage? {
     // P-INST-103: 应用图标加载耗时（Bundle.main.url(forResource:) stat 查找 + NSImage(contentsOf:) 读+解码 icns/png 图像文件；applyApplicationIcon P-INST-102 启动路径 + settings AppLogoBadge SwiftUI body 渲染调用；图像解码可阻塞）。
+    #if PERF_INSTRUMENT
     let baiStart = Date()
     defer {
         log("[Settings] bundledAppIconImage finished", level: .debug, fields: [
             "durationMs": String(elapsedMilliseconds(since: baiStart))
         ])
     }
+    #endif
     if let icnsURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
        let image = NSImage(contentsOf: icnsURL) {
         return image
