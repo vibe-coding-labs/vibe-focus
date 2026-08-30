@@ -242,7 +242,28 @@ SpaceController+Context 4、Toggle 3、WindowQuery 3 等）。
 部分替代；一次性改造成本 3-5 天且引入协议层间接性。**建议**：不做专项改造，
 下一个功能迭代触碰某单例时顺带对其增量注入。
 
-### 2.9 已知环境问题（第一轮发现，未解决）
+### 2.9 第八轮完成（2026-08-31 续，编译警告清零）
+
+clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告」验收项：
+
+| 警告 | 修复 |
+|------|------|
+| ToggleEngine → ToggleRecordStore conformance crossing | 协议标 `@MainActor`
+  （唯一 conformer 为 @MainActor，SQLite 读写不线程安全） |
+| NativeSpaceBridge skyLightHandle/_moveWindowFailures 共享可变状态 | enum 标
+  `@MainActor`（全部调用方在主线程） |
+| CrashSignalHandler 3× 悬垂指针（& 局部数组 → iovec） | 写盘段重构：
+  withUnsafeMutableBytes 内取基址 + writev 同作用域，写入行为不变 |
+| SettingsView+Helpers completion @Sendable 捕获 | `nonisolated(unsafe)` 绑定
+  （原语义即回调线程执行，行为不变） |
+| LANHookPreferences getter 内访问自身 | 抽 `persistBindings` 辅助函数 |
+| Shortcuts Coordinator doubleValue 非隔离访问 | Coordinator 标 `@MainActor` |
+| CrashContextRecorder bootstrap newState 死代码 | **顺带修复真 bug**：成功 ingest
+  分支构造的 newState 从未赋给 state（`state?.lastIngestedCrashReport` 在 state 为
+  nil 时是 no-op）→ 同一 .ips 报告被重复 ingest；改为 `state = newState` |
+| 未使用变量（wm ×2 / 返回值 / guard let db） | 删除或改可用性检查 |
+
+### 2.10 已知环境问题（第一轮发现，未解决）
 
 - **`swift test` 在当前工具链下不可用**：本机仅有 CommandLineTools（Swift 6.2.3，无完整
   Xcode）。两种配置均验证失败——保留显式依赖 `apple/swift-testing 0.7.0` 时
@@ -254,7 +275,7 @@ SpaceController+Context 4、Toggle 3、WindowQuery 3 等）。
   编译运行，不依赖 swift-testing）——当前 31/31 通过，新增解析逻辑同套件覆盖
   （`Tests/Standalone/SpaceSnapshotParsingStandaloneTests.swift`，18 项检查）。
 
-### 2.10 待办（按优先级）
+### 2.11 待办（按优先级）
 
 | 优先级 | 项目 | 参照 |
 |--------|------|------|
@@ -264,13 +285,16 @@ SpaceController+Context 4、Toggle 3、WindowQuery 3 等）。
   300 行上限按 1.1 定义为评估触发线而非硬砍线 | 本手册 1.1 |
 | ~~P3 埋点收敛~~ | **收官（2026-08-31）**：第一阶段 103 处开关化 + 第二阶段评估
   保留 47 处关键路径归因常开，Phase 7 完成（见 2.8） | 07-23 计划 Phase 7 |
-| P3 | 单例依赖注入（影响面大，需专门排期） | 07-23 计划 Phase 3 |
+| P3 | 单例依赖注入（11 类型 ~120 引用点，评估见 2.8；不专项改造，随功能迭代增量注入） | 07-23 计划 Phase 3 |
+| P1 | 【用户本机】重新构建替换运行中的 8-11 旧二进制（崩溃修复需新构建生效）+
+  `bash scripts/install-keepalive.sh` 替换裸 keepalive | 2026-08-31 诊断 |
 
-### 2.11 验收标准
+### 2.12 验收标准
 
 - [ ] 新增/被拆分文件的公共 API 100% 有含「场景」段的文档注释
 - [ ] 对外部系统的解析逻辑全部为纯函数 + fixture 测试覆盖
-- [ ] 每次拆分后 `swift build` 零警告、`bash Tests/run_all_tests.sh` 全绿
+- [x] `swift build` 零警告（2026-08-31 达成，clean build 16 类 → 0）
+- [x] `bash Tests/run_all_tests.sh` 全绿（32/32）
       （`swift test` 待 2.4 工具链问题解决后恢复为准入门槛）
 - [ ] 单文件 ≤ 300 行（存量逐步收敛，新增代码即时遵守）
 
