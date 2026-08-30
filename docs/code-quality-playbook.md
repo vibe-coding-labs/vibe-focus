@@ -207,7 +207,42 @@ Phase 7 执行时用编译开关 `#if PERF_INSTRUMENT` 收敛，届时按本手�
   批量重跑曾造成 2 文件双重包裹（git checkout 恢复后加幂等保护）——
   机械改写必须以 build 为闸门、小批试点先行 |
 
-### 2.8 已知环境问题（第一轮发现，未解决）
+### 2.8 第七轮完成（2026-08-31 续，Phase 7 收官 + 单例注入评估）
+
+**埋点第二阶段评估（外泄型归因埋点）**：
+
+脚本扫描（计时变量在 elapsed 之后仍被引用）实测 75 个外泄变量 / 27 文件，
+剔除 `logOperationDuration` 返回值（业务日志 API，非埋点）后，
+**真实外泄型归因埋点约 47 处**，全部位于 toggle / move / restore 关键路径编排
+（MoveWindow 13、ToggleEngine+Restore 6、AXWrite 5、FocusResolution 5、Routes 4、
+SpaceController+Context 4、Toggle 3、WindowQuery 3 等）。
+
+**决策：保留常开，不收敛。** 依据：
+1. 占比仅 15%，且全部是 2026-07~08 排查副屏 AX 阻塞（ctxMs=1918）、半屏 bug
+   （sizeDrift=372）、toggle 卡顿（p2SpaceMoveMs）的直接证据链字段；
+2. 收敛需把「计时→累积→fields 字典→finished 日志」整链包 #if，函数体碎片化，
+   可读性倒退（违背治理目标）；
+3. 其开销与每操作必打的 started/finished 业务日志绑死，单独关闭收益趋零。
+
+**Phase 7 状态：完成。** 最终格局：标准形态埋点 103 处开关化（默认零开销）+
+关键路径归因埋点 ~47 处常开 + 其余为业务日志（非埋点）。
+
+**单例注入范围评估（维持 P3 待办，暂不启动）**：
+
+| 单例 | 引用点 | 评估 |
+|------|--------|------|
+| CrashContextRecorder | 29 | 纯诊断记录器，单例语义合理 |
+| WindowManager | 26 | 核心门面，注入需协议抽象 |
+| SessionWindowRegistry | 24 | 会话状态中心，注入价值高但影响大 |
+| HotKeyManager | 10 | 全局热键状态，07-23 计划已标注"保留" |
+| ScreenOverlayManager | 9 | 已有 crashLoopSuppressed 等内部状态 |
+| 其余 6 个 | 各 ≤5 | 引用少，随用随改 |
+
+合计 ~120 引用点 × 11 类型。收益（可测性）已被 Standalone 镜像测试模式
+部分替代；一次性改造成本 3-5 天且引入协议层间接性。**建议**：不做专项改造，
+下一个功能迭代触碰某单例时顺带对其增量注入。
+
+### 2.9 已知环境问题（第一轮发现，未解决）
 
 - **`swift test` 在当前工具链下不可用**：本机仅有 CommandLineTools（Swift 6.2.3，无完整
   Xcode）。两种配置均验证失败——保留显式依赖 `apple/swift-testing 0.7.0` 时
@@ -219,7 +254,7 @@ Phase 7 执行时用编译开关 `#if PERF_INSTRUMENT` 收敛，届时按本手�
   编译运行，不依赖 swift-testing）——当前 31/31 通过，新增解析逻辑同套件覆盖
   （`Tests/Standalone/SpaceSnapshotParsingStandaloneTests.swift`，18 项检查）。
 
-### 2.9 待办（按优先级）
+### 2.10 待办（按优先级）
 
 | 优先级 | 项目 | 参照 |
 |--------|------|------|
@@ -227,10 +262,11 @@ Phase 7 执行时用编译开关 `#if PERF_INSTRUMENT` 收敛，届时按本手�
   声明共享，拆分散内聚）与 `WindowStateStore+Database.swift`（306 行，单 extension
   数据库层单一职责）评估后均不拆；剩余 >300 行共 5 个文件全部有书面评估结论，
   300 行上限按 1.1 定义为评估触发线而非硬砍线 | 本手册 1.1 |
-| P3 | 埋点收敛第二阶段：剩余 ~160 处外泄型归因埋点评估（可采样化或保留） | 07-23 计划 Phase 7 |
+| ~~P3 埋点收敛~~ | **收官（2026-08-31）**：第一阶段 103 处开关化 + 第二阶段评估
+  保留 47 处关键路径归因常开，Phase 7 完成（见 2.8） | 07-23 计划 Phase 7 |
 | P3 | 单例依赖注入（影响面大，需专门排期） | 07-23 计划 Phase 3 |
 
-### 2.10 验收标准
+### 2.11 验收标准
 
 - [ ] 新增/被拆分文件的公共 API 100% 有含「场景」段的文档注释
 - [ ] 对外部系统的解析逻辑全部为纯函数 + fixture 测试覆盖
