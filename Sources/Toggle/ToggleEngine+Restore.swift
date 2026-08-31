@@ -110,21 +110,29 @@ extension ToggleEngine {
         let floatMs = 0
         let applyMs = 0
 
-        // 6b. 检测 macOS 自动切换 space（AX frame set 把焦点窗口移到了其他 display）
-        // 当 yabai/space move 都失败时，AX 设置坐标会触发 macOS 自动跟随到目标 space，
-        // 导致用户视角从 main screen 跳到 secondary screen。这里检测并切回。
+        // 6b. 视角守卫：frame 直写会把 macOS 键盘焦点/视角跟随到目标 display
+        // （实测 restore 后 preSpace=1 → postSpace=5，用户被拖离原屏）。
+        // 切回分两层，按可靠性排序：
+        //   1) yabai space --focus 精确切回（依赖 SA；SA 失效时报
+        //      "error with the scripting-addition"，本机已失效）；
+        //   2) 聚焦原 space 上的任意可管理窗口（AX/CG 通道不依赖 SA，实测可靠；原
+        //      CGEvent 方向键法在 separate-Spaces 下无法跨 display，已废弃）。
         var focusSpaceMs = 0
-        if !moved, let preMoveSpace {
+        if let preMoveSpace {
             let postMoveSpace = sc.currentSpaceIndex()
             if let postMoveSpace, postMoveSpace != preMoveSpace {
-                let steps = preMoveSpace - postMoveSpace
-                log("[ToggleEngine] restore: macOS auto-switched space, switching back", level: .info, fields: [
+                log("[ToggleEngine] restore: macOS auto-switched space, refocusing original screen", level: .info, fields: [
                     "traceID": trace, "preSpace": String(preMoveSpace),
-                    "postSpace": String(postMoveSpace), "steps": String(steps)
+                    "postSpace": String(postMoveSpace)
                 ])
                 let focusSpaceStart = Date()
-                if NativeSpaceBridge.focusSpace(steps: steps, operationID: trace) {
-                    // 清除 queryWindow 缓存，因为 space 切换后窗口位置可能已变
+                var refocused = sc.focusSpace(.yabaiIndex(preMoveSpace), operationID: trace)
+                if !refocused {
+                    // SA 失效环境：聚焦原 space 上的窗口带动视角回切
+                    refocused = sc.refocusWindowOnSpace(preMoveSpace, excludingWindowID: axLookupID, operationID: trace)
+                }
+                if refocused {
+                    // space 切换后窗口位置可能已变，清除查询缓存
                     sc.clearQueryCache()
                 }
                 focusSpaceMs = elapsedMilliseconds(since: focusSpaceStart)
