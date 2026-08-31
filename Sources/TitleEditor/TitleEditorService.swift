@@ -19,6 +19,10 @@ final class TitleEditorService {
 
     private var isEditing = false
 
+    /// Automation 权限引导弹窗（-1743）每次进程生命周期只弹一次，避免连续改名时重复打扰
+    /// （跨文件 extension 的 showAutomationPermissionAlert 访问，需 internal 可见性）
+    var hasShownAutomationPermissionAlert = false
+
     /// Tracks windows the user has manually renamed via Ctrl+T — autoSetTitle skips these
     private var userRenamedWindowIDs: Set<UInt32> = []
 

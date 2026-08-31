@@ -159,12 +159,25 @@ extension TitleEditorService {
     }
 
     /// Automation 权限缺失引导弹窗（error -1743 时由 applyViaAppleScript 触发）。
-    /// NSAlert.runModal 模态阻塞主线程直到用户操作，仅在权限真正缺失时进入。
+    ///
+    /// ## 场景
+    /// - applyViaAppleScript 检测到 -1743 调用；调用链（editTitle/autoSetTitle → applyTitle →
+    ///   applyViaAppleScript → 本方法）全程在主线程上下文，直接同步 runModal。
+    /// - 历史教训：曾包 DispatchQueue.main.async —— 在 GCD main queue drain 点开模态
+    ///   会导致弹窗静默不显示（2026-08-31 实测复现后修复）。
+    /// - 每次进程生命周期只弹一次（hasShownAutomationPermissionAlert），避免用户
+    ///   未授权期间每次改名都被弹窗打断。
     private func showAutomationPermissionAlert(bundleID: String) {
         // P-INST-192: Automation 权限弹窗耗时（NSAlert.runModal 模态阻塞主线程 + 用户确认后 NSWorkspace.shared.open 启动 System Settings；applyTitle 检测到 Automation 权限缺失调用，runModal 阻塞直到用户操作）。
         #if PERF_INSTRUMENT
         let sapaStart = Date()
         #endif
+        guard !hasShownAutomationPermissionAlert else {
+            log("[TitleEditorService] Automation permission alert already shown this session, skipping", level: .debug)
+            return
+        }
+        hasShownAutomationPermissionAlert = true
+
         let terminalName: String
         switch bundleID {
         case "com.googlecode.iterm2": terminalName = "iTerm2"
@@ -172,24 +185,24 @@ extension TitleEditorService {
         default: terminalName = "terminal"
         }
 
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "需要 Automation 权限"
-            alert.informativeText = "VibeFocus 需要授权才能修改 \(terminalName) 的窗口标题。\n\n请前往：系统设置 → 隐私与安全性 → Automation → 勾选 VibeFocus 对 \(terminalName) 的控制权限。"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "打开系统设置")
-            alert.addButton(withTitle: "取消")
-            alert.window.level = .floating
+        log("[TitleEditorService] showing Automation permission alert", fields: ["bundleID": bundleID])
 
-            if alert.runModal() == .alertFirstButtonReturn {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
-                    NSWorkspace.shared.open(url)
-                }
+        let alert = NSAlert()
+        alert.messageText = "需要 Automation 权限"
+        alert.informativeText = "VibeFocus 需要授权才能修改 \(terminalName) 的窗口标题。\n\n请前往：系统设置 → 隐私与安全性 → Automation → 勾选 VibeFocus 对 \(terminalName) 的控制权限。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "取消")
+        alert.window.level = .floating
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                NSWorkspace.shared.open(url)
             }
-        #if PERF_INSTRUMENT
-            let durMs = elapsedMilliseconds(since: sapaStart)
-            if durMs >= 50 { log("[TitleEditor] showAutomationPermissionAlert slow", level: .warn, fields: ["durationMs": String(durMs)]) }
-        #endif
         }
+        #if PERF_INSTRUMENT
+        let durMs = elapsedMilliseconds(since: sapaStart)
+        if durMs >= 50 { log("[TitleEditor] showAutomationPermissionAlert slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        #endif
     }
 }
