@@ -72,6 +72,15 @@ L3 行为健康:    space 布局 profile 已知（bsp/float），关键命令按
 | P2 | 抽 `WindowServicing` 协议；AX 原生实现 + yabai 实现并立；业务层改依赖协议 | 现有 32 测试 + 新协议 mock 测试全绿；yabai 停用场景端到端 |
 | P3 | focus 倒置（AX 主路）；Settings UI 暴露 backend 状态 | 手动矩阵过一遍（有/无 yabai × float/bsp） |
 
+### 2.16 space 精确恢复（2026-09-01 补全）
+
+windows 表的五列空间字段（source_space/source_display/source_yabai_disp/
+source_disp_space/target_display）一直都在写，但 restore 曾只按 origFrame 坐标
+直写——源屏被切到别的 space 时窗口落错 space。现 restore 前比对源屏可见 space
+与 record.sourceSpace，不等则先聚焦源 space 的窗口切回源屏（refocusWindowOnSpace，
+不依赖 SA），再 frame 直写，实现精确落位。视角基准必须在切换前采集（实测修正）。
+极端焦点竞争（用户焦点恰在目标屏其他 space）仍可能偏差，见 commit 64abb62。
+
 ## 五、过程纪律（从事故中固化的规则）
 
 1. **禁止无断言落码**：行为改动前必须有失败→通过的断言（夹具窗口自动化，不碰用户窗口）。
