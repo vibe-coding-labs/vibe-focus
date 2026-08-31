@@ -317,6 +317,30 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
       （`swift test` 待 2.4 工具链问题解决后恢复为准入门槛）
 - [ ] 单文件 ≤ 300 行（存量逐步收敛，新增代码即时遵守）
 
+### 2.14 追加修复记录（2026-08-31，title-editor Ctrl+T 改名不生效）
+
+- **根因链**（日志考古 + 按键复现 + TCC 实证）：① 5 月 `6333b77` 把
+  `NSAppleEventsUsageDescription` 只加进了 `scripts/dev-build.sh`，打包脚本迁移到
+  `run.sh`/`build-release.sh` 时丢失 → Info.plist 缺 Usage 描述时 macOS TCC
+  **不弹授权框直接静默拒绝** AppleEvent（-1743）；② 三路写对 iTerm2 全废：
+  AX not settable + AppleScript -1743 + TTY OSC 被 shell prompt 覆盖 → 标题改不了；
+  ③ `showAutomationPermissionAlert` 包 `DispatchQueue.main.async` 在 GCD main
+  queue drain 点开 `NSAlert.runModal()` —— 弹窗静默不显示（实测复现），权限缺失
+  时用户得不到任何引导。
+- **修复**（commit `7e7eac6`）：两个打包脚本的 plist 模板补回
+  `NSAppleEventsUsageDescription`；引导弹窗改同步（调用链本就在主线程上下文）+
+  每进程只弹一次 + 展示日志。
+- **验证**：重建部署后首次改名触发系统 TCC 授权框（文案即 Usage 描述）→ Allow 后
+  AppleScript 通道 success、iTerm2 session name 真实变更；授权后常规路径 63ms；
+  32/32 测试绿。
+- **遗留认知**：iTerm2 的 session name 是否显示在标题栏由该 profile 的
+  *Title Components* 决定（用户 Default profile 为 6=Job+Profile，不含 Session
+  name）——通道层修复已完备，标题栏可见性属 iTerm2 用户配置；
+  Apple Terminal 的 custom title 通道无此问题。
+- **教训**：多打包脚本并存时 plist 键是隐性契约——新增 Usage 类 key 必须同步到
+  所有 bundle 组装模板（run.sh / build-release.sh / dev-build.sh），并在部署后
+  `plutil -p` 抽查实际产物。
+
 ---
 
 ## 三、拆分操作流程（checklist）
