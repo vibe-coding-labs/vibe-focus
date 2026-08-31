@@ -67,16 +67,42 @@ extension ToggleEngine {
             "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.width))x\(Int(record.targetFrame.height))"
         ])
 
+        // 视角基准：必须在 4-pre 切换源屏之前采集（否则守卫看到的是切换后的 space，漏切回）。
+        // 记录移动前的 focused space — 用于检测 macOS 是否自动切换了 space
+        let preMoveSpace = sc.currentSpaceIndex()
+
+        // 4-pre. space 精确恢复前置（ToggleRecord 的 source_space/source_display 列启用）：
+        // record 记录了窗口原始所属的 space（record.sourceSpace）与 display（record.sourceYabaiDisp）。
+        // frame 直写只能落到"目标屏当前可见 space"——若源屏已被用户切到别的 space，窗口会落错。
+        // 处理：源屏可见 space ≠ sourceSpace 时，先把源屏切回 sourceSpace（聚焦该 space 上的
+        // 可管理窗口带动视角切换，refocusWindowOnSpace 不依赖 SA），窗口归属即精确。
+        // sourceSpace 上无可聚焦窗口（空 space）时无法切换，退化为落源屏可见 space + WARN。
+        if record.sourceSpace > 0, record.sourceYabaiDisp > 0,
+           let visibleOnSourceDisplay = sc.visibleSpaceIndex(forDisplayIndex: record.sourceYabaiDisp)?.yabaiIndex,
+           visibleOnSourceDisplay != record.sourceSpace {
+            log("[ToggleEngine] restore: source display is on a different space, switching it back", level: .info, fields: [
+                "traceID": trace, "windowID": String(windowID),
+                "sourceDisplay": String(record.sourceYabaiDisp),
+                "visibleSpace": String(visibleOnSourceDisplay),
+                "sourceSpace": String(record.sourceSpace)
+            ])
+            let switchStart = Date()
+            let switched = sc.refocusWindowOnSpace(record.sourceSpace, operationID: trace)
+            if switched {
+                usleep(400_000)  // 等视角切换与 yabai 状态落定，再写窗口 frame
+            }
+            log("[ToggleEngine] restore: source display space switch result", level: switched ? .info : .warn, fields: [
+                "traceID": trace, "switched": String(switched),
+                "durationMs": String(elapsedMilliseconds(since: switchStart))
+            ])
+        }
+
         // 4. Move back to original frame（2026-09-01 重构：float 脱管 → yabai --move/--resize 直写 origFrame）
         // 原 `yabai --space` 在 yabai v7 float 布局下静默失效（exit 0 但窗口不动，
         // Tests/AXMoveValidation.swift T3 断言实测）；frame 直写经断言验证跨 display 可靠，
         // macOS 窗口归属跟随物理位置自动回到源 display 的 visible space。
-        // （局限：源 space 为源屏非可见 space 时，窗口回到源屏可见 space——yabai float 布局
-        // 无精确 space 寻址能力，此为当前环境约束下的最优可达。）
         // queryMs 覆盖 currentSpaceIndex + queryWindow（移动前查询，命中缓存 ~0ms）。
         let queryStart = Date()
-        // 记录移动前的 focused space — 用于检测 macOS 是否自动切换了 space
-        let preMoveSpace = sc.currentSpaceIndex()
         let windowInfo = sc.queryWindow(windowID: axLookupID)
         let queryMs = elapsedMilliseconds(since: queryStart)
         var moveMs = 0
