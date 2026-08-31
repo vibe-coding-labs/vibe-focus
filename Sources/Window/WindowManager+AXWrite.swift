@@ -244,4 +244,55 @@ extension WindowManager {
         }
         return true
     }
+
+    /// 写入后闭环验证：读 CGWindow 实际 frame 与目标比对，不符则重写 position+size。
+    ///
+    /// ## 场景（2026-09-01 新增，toggle 尺寸/位置错乱修复）
+    /// - yabai v7 float 布局下 float toggle 会触发 yabai 默认重摆，与 apply 的 AX 写异步竞争，
+    ///   单次写可能被覆盖（实测 post-move 出现 762,-555 1000x620 之类的中间态）。
+    /// - 本方法在 apply 之后调用：读实际 frame → 与目标比对（origin+size 双维度）→
+    ///   不符则重写并等待 WindowServer 落定 → 再验证。重写次数用尽仍不符时落 ERROR 日志。
+    /// - 返回累计耗时（ms）供上层诊断字段使用。
+    func ensureWindowAtFrame(
+        windowAX: AXUIElement,
+        windowID: UInt32,
+        targetFrame: CGRect,
+        op: String,
+        stage: String,
+        maxRewrites: Int = 2
+    ) -> Int {
+        let start = Date()
+        for attempt in 1...maxRewrites {
+            guard let current = cgWindowBounds(for: windowID) else { break }
+            let originDrift = abs(current.origin.x - targetFrame.origin.x) + abs(current.origin.y - targetFrame.origin.y)
+            let sizeDrift = abs(current.width - targetFrame.width) + abs(current.height - targetFrame.height)
+            guard originDrift > frameTolerance || sizeDrift > frameTolerance else {
+                log("[WindowManager] ensureWindowAtFrame: verified", level: .debug, fields: [
+                    "op": op, "stage": stage, "windowID": String(windowID),
+                    "attempt": String(attempt),
+                    "frame": "\(Int(current.origin.x)),\(Int(current.origin.y)) \(Int(current.width))x\(Int(current.height))"
+                ])
+                break
+            }
+            log("[WindowManager] ensureWindowAtFrame: rewriting frame", level: .warn, fields: [
+                "op": op, "stage": stage, "windowID": String(windowID),
+                "attempt": String(attempt),
+                "current": "\(Int(current.origin.x)),\(Int(current.origin.y)) \(Int(current.width))x\(Int(current.height))",
+                "target": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.width))x\(Int(targetFrame.height))",
+                "originDrift": String(Int(originDrift)),
+                "sizeDrift": String(Int(sizeDrift))
+            ])
+            var rewriteOrigin = CGPoint(x: targetFrame.origin.x, y: targetFrame.origin.y)
+            if let originValue = AXValueCreate(.cgPoint, &rewriteOrigin) {
+                _ = AXUIElementSetAttributeValue(windowAX, kAXPositionAttribute as CFString, originValue)
+            }
+            var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
+            if let sizeValue = AXValueCreate(.cgSize, &rewriteSize) {
+                _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, sizeValue)
+            }
+            // 250ms：AX 写异步生效 + yabai/WindowServer 重摆落定（实测中间态在 ~150ms 内收敛）
+            usleep(250_000)
+        }
+        return elapsedMilliseconds(since: start)
+    }
 }

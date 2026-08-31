@@ -28,6 +28,50 @@ extension WindowManager {
         return stdout
     }
 
+    /// 经 yabai `--move abs` + `--resize abs` 把窗口 frame 直写到位（跨 display 可靠）。
+    ///
+    /// ## 场景（2026-09-01 toggle 跨屏失效修复）
+    /// - yabai v7 float 布局下 `window --space` 静默失效（exit 0 窗口不动，
+    ///   Tests/AXMoveValidation.swift T3 断言实测），跨 display 移动改用 frame 直写：
+    ///   macOS 窗口归属跟随物理位置，自动切到目标 display 的 visible space
+    ///   （T3 断言 PASS：space 1→5、display 1→3，挪回亦 PASS）。
+    /// - 前置条件：窗口已 float（managed 窗口的 --move 被拒或被 re-tile 对抗）。
+    /// - 写后 400ms 读 CGWindow frame 验证（origin+size 双维度），不符重写一次。
+    /// - Returns: 最终验证是否收敛到目标 frame。
+    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String) -> Bool {
+        for attempt in 1...2 {
+            _ = spaceController.runYabai(
+                arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
+                operation: "\(stage).move(windowID=\(windowID))",
+                operationID: op
+            )
+            _ = spaceController.runYabai(
+                arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
+                operation: "\(stage).resize(windowID=\(windowID))",
+                operationID: op
+            )
+            usleep(400_000)
+            if let current = cgWindowBounds(for: windowID) {
+                let originDrift = abs(current.origin.x - frame.origin.x) + abs(current.origin.y - frame.origin.y)
+                let sizeDrift = abs(current.width - frame.width) + abs(current.height - frame.height)
+                if originDrift <= frameTolerance && sizeDrift <= frameTolerance {
+                    log("[WindowManager] moveWindowToFrameViaYabai: verified", level: .debug, fields: [
+                        "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attempt)
+                    ])
+                    return true
+                }
+                log("[WindowManager] moveWindowToFrameViaYabai: frame mismatch, retrying", level: .warn, fields: [
+                    "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attempt),
+                    "current": "\(Int(current.origin.x)),\(Int(current.origin.y)) \(Int(current.width))x\(Int(current.height))",
+                    "target": "\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.width))x\(Int(frame.height))",
+                    "originDrift": String(Int(originDrift)),
+                    "sizeDrift": String(Int(sizeDrift))
+                ])
+            }
+        }
+        return false
+    }
+
     /// Move a specific window to the main screen with proper space and size handling.
     ///
     /// This is the implementation method for `moveToMainScreen`, handling:
@@ -104,10 +148,12 @@ extension WindowManager {
         // P-INST-3: yabai 路径子阶段计时（visibleSpaceIndex + resolveWindow，AX 路径恒 0）。
         var visibleSpaceIndexMs = 0
         var resolveWindowMs = 0
+        // P2 路径是否已完成 float 脱管（决定 apply 段是否跳过 setWindowFloat，防止二次 toggle）
+        var preFloatApplied = false
         if let knownAX = knownWindowAX {
             windowAX = knownAX
         } else {
-            // P-INST-3: visibleSpaceIndexMs 诊断主屏 visible space 查询（querySpaces 缓存命中应 <1ms）。
+            // 主屏 visible space 编号（restore record 需要；窗口归属由 frame 直写自动跟随）
             let visibleSpaceStart = Date()
             let visibleSpace = spaceController.visibleSpaceIndex(forDisplayIndex: 1)?.yabaiIndex
             visibleSpaceIndexMs = elapsedMilliseconds(since: visibleSpaceStart)
@@ -115,32 +161,32 @@ extension WindowManager {
                 log("moveWindowToMainScreen P2 failed: cannot resolve main screen visible space", level: .error, fields: ["op": op])
                 return false
             }
-            let spaceMoveStart = Date()
-            let moved = spaceController.moveWindow(
-                identity.windowID,
-                toSpace: .yabai(mainScreenSpaceIndex),
-                focus: false,
-                operationID: op
-            )
-            p2YabaiSpaceMoveMs = elapsedMilliseconds(since: spaceMoveStart)
-            log("[WindowManager] moveWindowToMainScreen P2: yabai space move to main", fields: [
+            // 2026-09-01 重构（toggle 跨屏移动失效修复）：
+            // yabai v7 float 布局下 `window --space` 静默失效（exit 0 但窗口不动，
+            // Tests/AXMoveValidation.swift T3 断言实测），不再使用。跨屏移动改为：
+            // float 脱管（--toggle float；yabai 会对新 float 窗口默认重摆，必须等 300ms
+            // 重摆落定）→ `--move abs` + `--resize abs` 直写主屏目标 frame（窗口归属跟随
+            // 物理位置自动切 display，T3 断言 PASS）。p2YabaiSpaceMoveMs 字段语义变更为
+            // float+settle 耗时（诊断字段名兼容保留）。
+            preFloatApplied = true
+            let preFloatStart = Date()
+            if let info = spaceController.queryWindow(windowID: identity.windowID), !info.isFloating {
+                spaceController.setWindowFloat(identity.windowID, operationID: op, knownWindowInfo: info)
+            }
+            usleep(300_000)
+            p2YabaiSpaceMoveMs = elapsedMilliseconds(since: preFloatStart)
+            log("[WindowManager] moveWindowToMainScreen P2: float + settle", fields: [
                 "op": op, "windowID": String(identity.windowID),
                 "mainScreenSpace": String(mainScreenSpaceIndex),
-                "moved": String(moved), "spaceMoveMs": String(p2YabaiSpaceMoveMs)
+                "durationMs": String(p2YabaiSpaceMoveMs)
             ])
-            // yabai space move 改变窗口 space，clear queryWindow 缓存（否则后续 queryWindow 返回
-            // 移动前副屏陈旧值，影响 windowInfo.display 判断）。仅清 windowQueryCache：focus=false 不切
-            // 任何 display 的 visible space（visible/index/display 映射不变），spacesQueryCache 保留供
-            // 连续 toggle 的 captureSpaceContext 命中省 querySpaces fork（has-focus 字段 SpaceController
-            // 侧无消费方）。restore 路径仍用 clearQueryCache（清两个，restore 涉及 space 移回）。
-            if moved { spaceController.clearWindowQueryCache() }
-            // 窗口已到主屏 space（yabai display 1），AX resolveWindow + frame read 不被副屏阻塞。
-            // P-INST-3: resolveWindowMs 诊断窗口主屏后的 AX resolveWindow（focused fast path + 全量遍历 fallback）。
+            spaceController.clearWindowQueryCache()
+            // 窗口物理仍在源屏，AX resolveWindow 可能跨屏阻塞一次（~68ms，可接受）
             let resolveStart = Date()
             let resolvedAXOpt = resolveWindow(identity: identity)
             resolveWindowMs = elapsedMilliseconds(since: resolveStart)
             guard let resolvedAX = resolvedAXOpt else {
-                log("moveWindowToMainScreen P2 failed: cannot resolve window after space move", level: .error, fields: ["op": op])
+                log("moveWindowToMainScreen P2 failed: cannot resolve window", level: .error, fields: ["op": op])
                 return false
             }
             windowAX = resolvedAX
@@ -226,28 +272,37 @@ extension WindowManager {
         let targetDisplayID = displayID(for: mainScreen)
         let targetDisplayIndex = displayIndex(forDisplayID: targetDisplayID)
 
-        // 先 float 脱离 yabai 管理，再 apply 设全屏 size —— 顺序关键。
-        // 若窗口被 yabai 管理（tiled），apply 的 AX size write 会被 yabai re-tile 覆盖，
-        // 导致 move_to_main 后窗口 height 不全屏（实测 lingdongditu: width 生效到主屏宽 1646，
-        // 但 height 卡在副屏高 707，未达主屏全屏高 1079）。先 toggle float 让窗口脱离 yabai，
-        // apply 的 size 才能可靠生效。复用上方 windowInfo（缓存命中），避免再次 queryWindow fork。
-        // CGWindowID 跨屏移动后不变，提前计算并复用给 setWindowFloat 和 save record。
+        // CGWindowID 跨屏移动后不变，提前计算并复用给 save record。
         let effectiveWindowID = windowHandle(for: windowAX) ?? identity.windowID
-        let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
-        let floatStart = Date()
-        spaceController.setWindowFloat(effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
-        let floatMs = elapsedMilliseconds(since: floatStart)
+        // floatMs：float 脱管+settle 的耗时（P2 路径=p2YabaiSpaceMoveMs；AX 路径=固定 300ms settle）
+        let floatMs = preFloatApplied ? p2YabaiSpaceMoveMs : 300
 
-        // AX apply: move window to main screen + set fullscreen size
-        // P3.1: positionFirst 按路径选择（详见文件头"两条解析路径"）。
-        // maxAttempts: 3 + 回读验证确保 size 可靠生效，避免单次模式下异步窗口（Electron 等）size 未应用就返回。
-        let p2PositionFirst = (knownWindowAX == nil)
         let applyStart = Date()
-        guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3, positionFirst: p2PositionFirst, windowID: effectiveWindowID) else {
-            log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
-                "op": op, "targetFrame": String(describing: targetFrame)
-            ])
-            return false
+        if preFloatApplied {
+            // P2 路径：float 已在 resolve 前完成（见上方"float + settle"注释）。
+            // 跨屏移动用 yabai --move abs/--resize abs 直写主屏目标 frame（T3 断言验证：
+            // 裸 AX position 写会被 WindowServer clamp 在源屏，只有 yabai 的 frame 写能跨 display）。
+            guard moveWindowToFrameViaYabai(windowID: identity.windowID, frame: targetFrame, op: op, stage: "move_to_main") else {
+                log("moveWindowToMainScreen failed: yabai frame move did not converge", level: .error, fields: [
+                    "op": op, "targetFrame": String(describing: targetFrame)
+                ])
+                return false
+            }
+        } else {
+            // AX 路径：窗口已在主屏 display（同 display AX 写有效），保留 float + apply 原逻辑。
+            // 先 float 脱离 yabai 管理，再 apply 设全屏 size —— 顺序关键。
+            // 若窗口被 yabai 管理（tiled），apply 的 AX size write 会被 yabai re-tile 覆盖
+            // （实测 height 卡副屏高 707）。float toggle 会触发 yabai 默认重摆，
+            // 等 300ms 落定后再写（否则写被重摆覆盖，2026-09-01 toggle 尺寸错乱根因）。
+            let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
+            spaceController.setWindowFloat(effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
+            usleep(300_000)
+            guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3, positionFirst: false, windowID: effectiveWindowID) else {
+                log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
+                    "op": op, "targetFrame": String(describing: targetFrame)
+                ])
+                return false
+            }
         }
         let applyMs = elapsedMilliseconds(since: applyStart)
 

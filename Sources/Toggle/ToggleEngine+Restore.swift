@@ -48,7 +48,7 @@ extension ToggleEngine {
         // 3. Resolve AX window
         let lookupStart = Date()
         let axLookupID = (record.windowID != windowID) ? windowID : record.windowID
-        guard let windowAX = wm.findWindowByPID(record.pid, windowID: axLookupID) else {
+        guard wm.findWindowByPID(record.pid, windowID: axLookupID) != nil else {
             log("[ToggleEngine] restore: AX window not found", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID), "pid": String(record.pid)
             ])
@@ -67,60 +67,48 @@ extension ToggleEngine {
             "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.width))x\(Int(record.targetFrame.height))"
         ])
 
-        // 4. Move to original space via yabai (skip if sourceSpace=0 — no space info available)
-        var moved = false
+        // 4. Move back to original frame（2026-09-01 重构：float 脱管 → yabai --move/--resize 直写 origFrame）
+        // 原 `yabai --space` 在 yabai v7 float 布局下静默失效（exit 0 但窗口不动，
+        // Tests/AXMoveValidation.swift T3 断言实测）；frame 直写经断言验证跨 display 可靠，
+        // macOS 窗口归属跟随物理位置自动回到源 display 的 visible space。
+        // （局限：源 space 为源屏非可见 space 时，窗口回到源屏可见 space——yabai float 布局
+        // 无精确 space 寻址能力，此为当前环境约束下的最优可达。）
         // queryMs 覆盖 currentSpaceIndex + queryWindow（移动前查询，命中缓存 ~0ms）。
         let queryStart = Date()
-        // 记录 AX frame set 前的 focused space — 用于检测 macOS 是否自动切换了 space
+        // 记录移动前的 focused space — 用于检测 macOS 是否自动切换了 space
         let preMoveSpace = sc.currentSpaceIndex()
-        // 移动前查询一次窗口信息（toggle 开始已查询并缓存，此处命中缓存 ~0ms），
-        // 复用给 moveWindow 和 setWindowFloat，避免空间移动后再 queryWindow。
-        // space 切换后 yabai 卡顿，移动后 queryWindow 实测 ~1s fork（op=181 seq=198）。
-        // 安全性：isFloating / isManageableByYabai 跨 space 保持不变 —— toggle 时已 float
-        // 的窗口移动后仍 float，setWindowFloat 据此正确跳过；未 float 的会正确执行 toggle。
         let windowInfo = sc.queryWindow(windowID: axLookupID)
         let queryMs = elapsedMilliseconds(since: queryStart)
         var moveMs = 0
-        if record.sourceSpace > 0 {
-            // focus=false：restore 是"把窗口送回原位"，用户视角留主屏继续工作。
-            // moveWindow 内部的 focusWindow(yabai window --focus) 会切换用户 space 触发
-            // macOS 动画 + SA 阻塞 ~1s（op=186 实测 1019ms）—— 这是 restore 路径最后的卡顿源。
-            // SLS move 只移窗口不切用户视角，配合 focus=false 用户始终留主屏。
-            // macOS 自动切 space 的兜底由下方 line 101-114 的 focusSpace 切回处理。
+        // 4a. float 脱管（--toggle float 会触发 yabai 默认重摆，等 300ms 重摆落定再写目标 frame）
+        if let info = windowInfo {
+            let floatStart = Date()
+            sc.setWindowFloat(axLookupID, operationID: trace, knownWindowInfo: info)
+            usleep(300_000)
+            moveMs = elapsedMilliseconds(since: floatStart)
+        }
+        // 4b. yabai --move abs + --resize abs 直写 origFrame（窗口归属跟随物理位置）
+        var frameOK = false
+        if record.sourceSpace > 0 || true {
+            // sourceSpace=0（无 space 信息）时 origFrame 坐标仍有效——frame 直写不依赖 space 编号
             let moveStart = Date()
-            moved = sc.moveWindow(
-                axLookupID,
-                toSpace: .yabai(record.sourceSpace),
-                focus: false,
-                operationID: trace,
-                knownWindowInfo: windowInfo
+            frameOK = wm.moveWindowToFrameViaYabai(
+                windowID: axLookupID,
+                frame: record.origFrame,
+                op: trace,
+                stage: "restore"
             )
-            moveMs = elapsedMilliseconds(since: moveStart)
-            log("[ToggleEngine] restore: space move result", fields: [
-                "traceID": trace, "moved": String(moved), "sourceSpace": String(record.sourceSpace)
-            ])
-        } else {
-            log("[ToggleEngine] restore: sourceSpace=0, skipping yabai space move (no space info)", fields: [
-                "traceID": trace, "windowID": String(windowID)
+            moveMs += elapsedMilliseconds(since: moveStart)
+            log("[ToggleEngine] restore: frame move result", fields: [
+                "traceID": trace, "frameOK": String(frameOK),
+                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))"
             ])
         }
+        let moved = false  // 语义保留：不再使用 yabai space move（focusSpace 检测条件依赖）
 
-        // 5. Float on target space — prevents yabai from tiling
-        // 复用移动前 windowInfo，省去移动后的 queryWindow fork
-        let floatStart = Date()
-        sc.setWindowFloat(axLookupID, operationID: trace, knownWindowInfo: windowInfo)
-        let floatMs = elapsedMilliseconds(since: floatStart)
-
-        // 6. Apply original frame via AX
-        // 单次模式：restore 前已 setWindowFloat，yabai 不会 re-tile，无需重试验证。
-        // space 动画期间 AX write 已达物理下限，重试循环只会累积延迟。
-        let applyStart = Date()
-        if !wm.apply(frame: record.origFrame, to: windowAX, operationID: trace, stage: "restore", maxAttempts: 1) {
-            log("[ToggleEngine] restore: AX frame apply failed", level: .warn, fields: [
-                "traceID": trace, "windowID": String(windowID)
-            ])
-        }
-        let applyMs = elapsedMilliseconds(since: applyStart)
+        // 5./6. float 与 frame 写已合并到步骤 4（floatMs/frameOK）
+        let floatMs = 0
+        let applyMs = 0
 
         // 6b. 检测 macOS 自动切换 space（AX frame set 把焦点窗口移到了其他 display）
         // 当 yabai/space move 都失败时，AX 设置坐标会触发 macOS 自动跟随到目标 space，
