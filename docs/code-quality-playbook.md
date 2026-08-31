@@ -343,6 +343,36 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 
 ---
 
+### 2.15 追加修复记录（2026-09-01，toggle 跨屏切换失效）
+
+- **根因链**（先断言后落码，Tests/AXMoveValidation.swift T0-T4）：用户环境 yabai
+  v7.1.18 全部 space 为 float 布局（无 yabairc，v7 默认）；float 布局下
+  `window --space` **静默失效**（exit 0 窗口不动，bsp 布局同命令立即生效）——
+  toggle 跨屏移动全部落空；失效移动后 AX 写与 yabai float 重摆并发竞争，
+  窗口弹回原位/尺寸错乱。
+- **修复**（commit 见 09-01）：move_to_main/restore 改为 float 脱管 → settle
+  300ms（隔离 yabai 默认重摆）→ `--move abs`+`--resize abs` 直写目标 frame
+  （macOS 窗口归属跟随物理位置）→ 写后 400ms 验证不符重写。移动原语
+  `moveWindowToFrameViaYabai` 带闭环验证。
+- **验证**：T0-T4 全 PASS 后落码；端到端实测窗口从副屏 (966,-437 533x499)
+  精确到达主屏 (72,38 1656x1079)；32/32 测试绿。
+- **过程教训（反面教材，必须吸取）**：
+  1. **禁止无断言的试错式修复**——本轮前半段在未固化事实链的情况下连续改代码
+     + 部署 + 按键实验，两次部署错误版本，且实验窗口误触用户环境（space 1 被
+     切 bsp 重排、Chrome/ZCode 窗口被 toggle 扔屏）。正确姿势即本轮后半段：
+     事实清单（F1-F7）→ 断言脚本（自建/无害夹具窗口）→ 全 PASS → 落码 → 单次
+     端到端。
+  2. **环境事实先于代码假设**：`yabai --space` 在 bsp 时代的经验不适用于 float
+     布局；排查窗口操作类 BUG 第一步先导出环境全貌（yabai --version、
+     query --spaces 的 type、query --windows 的 is-floating 分布）。
+  3. **日志 success ≠ 事实成功**：yabai exit 0 不代表窗口移动了；所有窗口操作
+     后必须读回验证（闭环断言），静默失败要有 WARN/ERROR。
+- **遗留**：yabai float 布局 `--space` 失效疑似 yabai 侧 bug（upstream 已有
+  v7.1.25），可选升级；restore 对"源 space 为源屏非可见 space"场景退化为回到
+  源屏可见 space（float 布局无精确 space 寻址）。
+
+---
+
 ## 三、拆分操作流程（checklist）
 
 1. 读透目标文件，按 1.1 分层标出职责边界；
