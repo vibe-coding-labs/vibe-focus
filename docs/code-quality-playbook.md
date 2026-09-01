@@ -371,9 +371,40 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
   v7.1.25），可选升级；restore 对"源 space 为源屏非可见 space"场景退化为回到
   源屏可见 space（float 布局无精确 space 寻址）。
 
+### 2.16 第十轮完成（2026-09-01，逻辑混乱专项重构「四刀」）
+
+> 背景：机械层治理（拆文件/访问控制/警告清零）收官后，全仓扫描发现剩余混乱集中在
+> **逻辑层**——同一决策/同一条知识多处各写一套且互相矛盾，是历次 BUG 的根源
+> （半屏 sizeDrift、stuck 死循环、跨屏 toggle 失效均源于此）。本轮按风险从小到大
+> 分四刀 + 一个独立修复，每刀以 swift build 零警告 + Standalone 测试全绿为闸门独立提交。
+
+| 刀 | 提交 | 内容 |
+|------|------|------|
+| fix(hook) | 6661712 | installCooldown 只拦截"无变化重装"：此前关开关后 3s 内 applyPreferences 被整体跳过却返回成功，settings.json 残留已禁用 hook（防抖误用于状态收敛的真 bug） |
+| 第二刀 refactor(store) | e52c1e0 | **windows 表列所有权收敛**：saveToggleRecord 的 UPDATE 不再写 session_id（手动 toggle 曾把 SessionWindowRegistry 已绑定的 session 在 DB 里抹成 NULL，静默数据丢失）；ToggleRecord 增加 reason 字段，WindowMoveReason 全链透传到 toggle_reason 列（此前硬编码 manual_hotkey，hook 触发的移动审计全错） |
+| 第一刀 refactor(toggle) | ff65f95 | **决策统一**：evaluateRestoreDecision 成为决策主实现（输入收集 + 纯函数 decideRestore 出 6-case 枚举），消除"纯函数仅测试引用、生产内联重写一份"的影子决策；ToggleWindowResolution 增加 windowFrame/onMainScreen typed 字段，toggle 路由按 case 分发；删 parseFrameString（CGRect→String→正则解析回 CGRect 的日志字典数据总线）；CoordinateKit.isOnMainScreen(_:mainScreenFrame:) 成为唯一主屏归属判定；finished 日志 mode 字段如实反映 stuck 分支（schema 变更）。新增 ToggleDecisionRoutingTests（26 项）锁定决策树+路由表契约 |
+| 第三刀 refactor(restore) | 50c6a04 | **尸体清理**：删恒真条件 `if record.sourceSpace > 0 || true`；删假指标 moved=false/floatMs=0/applyMs=0（诊断日志不再撒谎，改记真实 frameOK）；restore 接收 toggle 已解析的 windowID（消除 toggle 内第 3 次重复 AX 焦点解析，此前违反"禁止中途重新解析焦点"铁律）；双份 restore_success 审计收敛为 ToggleEngine 一处；死代码删除：findBestCandidate（+2 个仅测它的测试文件）、ensureWindowAtFrame、apply(positionFirst:) 死分支、WindowManager.framesMatch、CoordinateKit.quartzFrame、createSyntheticToggleRecord、refreshOverlays()（SIGSEGV 历史执行者）、resolveRestoreRecord（+其测试文件） |
+| 第四刀 refactor(space) | 74a4335 | **yabai 层收敛**（净删 259 行）：stuck 解堵从已知静默失效的 `window --space` 迁移到 float→settle→frame 直写已验证路径；删 SpaceController.moveWindow（Strategy 1=静默失效命令，Strategy 2=SLS 权限不足从未可用）与 NativeSpaceBridge 死通道（318 行→60 行）；负缓存修复（命令失败/解码失败不再缓存 2s 冒充"不存在"）；YabaiSpaceInfo/YabaiWindowInfo 布尔字段 Bool/Int 双形态容错解码（yabai 类型漂移防御，此前 Space 层缺防御、yabai 一漂移 toggle 核心路径查询全瘫） |
+
+**过程约束**：全程遵守「试错式修复反面教材」教训（2.15）——先 grep 全仓验证每个
+死代码结论为零调用再删；行为等价性靠 RoutingTests 契约 + 既有 33 个 Standalone
+测试守护；日志 schema 变更（mode/spaceMoveResult/floatMs/applyMs）在提交信息中明示。
+
+### 2.17 待办（第十轮后的遗留清单，按优先级）
+
+| 优先级 | 项目 | 说明 |
+|--------|------|------|
+| P2 | **Hook 事件决策统一** | decideWindowMove / decideWindowResolution / decideRestoreEligibility 生产零调用（仅测试引用），生产在 handleWindowMoveTrigger 内联重写且顺序不一致（remoteOnly 判定后置：被拒事件已产生 binding 持久化副作用）。做法与第一刀同构：让生产真正调纯函数，remoteOnly 前移到任何 bind/IO 之前 |
+| P2 | **restoreStrategy 死设置** | SpacePreferences.restoreStrategy 有 Picker 有偏好定义但主逻辑零消费，"拉到当前工作区"选项完全无效。要么在 restore 入口消费，要么下线设置项（骗用户） |
+| P3 | WindowManager→HookEventHandler 反向依赖切断 | WindowManager（引擎层）直接增删 HookEventHandler 冷却字典（Hook→Window→Hook 环）。改回调/通知由 hook 层自管冷却 |
+| P3 | CoordinateKit 副屏转换修正 | screenForRect/displayContext 用 Quartz 点直接比 Cocoa frame——主屏数值等价、副屏（非对称纵向偏移）会错位。涉及 sourceDisplay 派生等行为变化，需专项 + 断言脚本先行（2.15 教训） |
+| P3 | frame 收敛循环统一 | "写 frame→等落定→读回→重写"仍有 3 份平行实现（moveWindowToFrameViaYabai/verifyAndCorrectPostMoveSize/writeSizeWithReadback），等待 15/25/300/400ms 各拍脑袋。收敛为单一 convergeFrame(write:verify:deadline:) |
+| P3 | spaceMoveTrusted 探测接线 | YabaiEnvironmentProbe.spaceMoveTrusted 建成但生产零调用（stuck 路径已绕开该问题，接线属纵深防御）；YabaiError 分类器（4 处 stderr 字符串协议收敛）可同批做 |
+| P3 | settle 魔法数收敛 | 25/250/300/400ms 裸 usleep 散落 4 文件，收敛为一个带语义命名的常量表；条件等待（轮询 isFloating/frame 稳定）按 2.15 的闭环验证思路渐进替换 |
+
 ---
 
-## 三、拆分操作流程（checklist）
+
 
 1. 读透目标文件，按 1.1 分层标出职责边界；
 2. `git mv` 不适用（Swift 无需移动即改文件组织）——新建目标文件 → 剪切代码 →
