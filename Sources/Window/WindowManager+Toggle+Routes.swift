@@ -92,7 +92,7 @@ extension WindowManager {
                 "windowID": String(windowID),
                 "currentDisplay": String(currentDisplay ?? 0),
                 "targetScreen": String(describing: targetScreen.localizedName),
-                "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.width))x\(Int(targetFrame.height))",
+                "targetFrame": QuartzRect(targetFrame).description,
                 "moved": String(moved),
                 "queryMs": String(queryMs),
                 "moveMs": String(moveMs)

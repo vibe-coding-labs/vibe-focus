@@ -63,8 +63,8 @@ extension WindowManager {
                 if !CoordinateKit.isFrameConverged(actual: current, target: frame, tolerance: frameTolerance) {
                     log("[WindowManager] moveWindowToFrameViaYabai: frame mismatch, retrying", level: .warn, fields: [
                         "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attemptNo),
-                        "current": "\(Int(current.origin.x)),\(Int(current.origin.y)) \(Int(current.width))x\(Int(current.height))",
-                        "target": "\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.width))x\(Int(frame.height))",
+                        "current": QuartzRect(current).description,
+                        "target": QuartzRect(frame).description,
                         "originDrift": String(Int(CoordinateKit.originDrift(current.origin, frame.origin))),
                         "sizeDrift": String(Int(CoordinateKit.sizeDrift(current.size, frame.size)))
                     ])
@@ -216,7 +216,7 @@ extension WindowManager {
             log("[WindowManager] moveWindowToMainScreen: using pre-captured origFrame (P2 yabai path)", fields: [
                 "op": op,
                 "windowID": String(identity.windowID),
-                "origFrame": "\(Int(preCapturedFrame.origin.x)),\(Int(preCapturedFrame.origin.y)) \(Int(preCapturedFrame.width))x\(Int(preCapturedFrame.height))",
+                "origFrame": QuartzRect(preCapturedFrame).description,
                 "source": "knownOrigFrame"
             ])
         } else {
@@ -241,7 +241,7 @@ extension WindowManager {
             "sourceSpaceIndex": spaceContext.sourceSpaceIndex.map { String(describing: $0) } ?? "nil",
             "sourceDisplayIndex": spaceContext.sourceDisplayIndex.map { String(describing: $0) } ?? "nil",
             "sourceDisplaySpaceIndex": String(spaceContext.sourceDisplaySpaceIndex ?? -1),
-            "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.width))x\(Int(origFrame.height))"
+            "origFrame": QuartzRect(origFrame).description
         ])
 
         // Skip if already on main screen — 仅 AX 路径检查。

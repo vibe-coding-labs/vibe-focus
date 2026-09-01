@@ -87,8 +87,8 @@ extension WindowStateStore {
                 "sourceDisplay": String(record.sourceDisplay),
                 "sourceYabaiDisp": String(record.sourceYabaiDisp),
                 "sourceDispSpace": String(record.sourceDispSpace),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
-                "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y))"
+                "origFrame": QuartzRect(record.origFrame).originDescription,
+                "targetFrame": QuartzRect(record.targetFrame).originDescription
             ])
             return
         }
@@ -158,8 +158,8 @@ extension WindowStateStore {
         log("saveToggleRecord inserted new row", level: .info, fields: [
             "windowID": String(record.windowID),
             "sourceSpace": String(record.sourceSpace),
-            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
-            "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y))"
+            "origFrame": QuartzRect(record.origFrame).originDescription,
+            "targetFrame": QuartzRect(record.targetFrame).originDescription
         ])
     }
 

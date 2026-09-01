@@ -55,8 +55,8 @@ extension ToggleEngine {
             "pid": String(record.pid),
             "sourceSpace": String(record.sourceSpace),
             "triggerSource": triggerSource,
-            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))",
-            "targetFrame": "\(Int(record.targetFrame.origin.x)),\(Int(record.targetFrame.origin.y)) \(Int(record.targetFrame.width))x\(Int(record.targetFrame.height))"
+            "origFrame": QuartzRect(record.origFrame).description,
+            "targetFrame": QuartzRect(record.targetFrame).description
         ])
 
         // 视角基准：必须在 4-pre 切换源屏之前采集（否则守卫看到的是切换后的 space，漏切回）。
@@ -118,7 +118,7 @@ extension ToggleEngine {
         moveMs += elapsedMilliseconds(since: moveStart)
         log("[ToggleEngine] restore: frame move result", fields: [
             "traceID": trace, "frameOK": String(frameOK),
-            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))"
+            "origFrame": QuartzRect(record.origFrame).description
         ])
 
         // 5. 视角守卫：frame 直写会把 macOS 键盘焦点/视角跟随到目标 display
@@ -158,7 +158,7 @@ extension ToggleEngine {
             "windowID": String(windowID),
             "targetSpace": String(record.sourceSpace),
             "frameOK": String(frameOK),
-            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
+            "origFrame": QuartzRect(record.origFrame).originDescription,
             "lookupMs": String(lookupMs),
             "queryMs": String(queryMs),
             "moveMs": String(moveMs),

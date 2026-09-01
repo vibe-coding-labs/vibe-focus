@@ -44,8 +44,8 @@ extension WindowManager {
             log("[WindowManager] moveWindowToMainScreen: post-move frame check", fields: [
                 "op": op,
                 "windowID": String(windowID),
-                "finalFrame": "\(Int(finalFrame.origin.x)),\(Int(finalFrame.origin.y)) \(Int(finalFrame.width))x\(Int(finalFrame.height))",
-                "targetSize": "\(Int(targetFrame.width))x\(Int(targetFrame.height))",
+                "finalFrame": QuartzRect(finalFrame).description,
+                "targetSize": QuartzRect(targetFrame).sizeDescription,
                 "sizeDrift": String(Int(sizeDrift))
             ])
             if sizeDrift > frameTolerance {
@@ -55,9 +55,9 @@ extension WindowManager {
                     "op": op,
                     "windowID": String(windowID),
                     "sizeDrift": String(Int(sizeDrift)),
-                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.width))x\(Int(origFrame.height))",
-                    "finalFrame": "\(Int(finalFrame.origin.x)),\(Int(finalFrame.origin.y)) \(Int(finalFrame.width))x\(Int(finalFrame.height))",
-                    "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.width))x\(Int(targetFrame.height))",
+                    "origFrame": QuartzRect(origFrame).description,
+                    "finalFrame": QuartzRect(finalFrame).description,
+                    "targetFrame": QuartzRect(targetFrame).description,
                     "mainScreenDPI": String(describing: mainScreenDPI),
                     "frameTolerance": String(Int(frameTolerance))
                 ])
@@ -84,7 +84,7 @@ extension WindowManager {
                         log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
                             "op": op, "windowID": String(windowID),
                             "rewriteAttempt": String(rewriteAttemptNo),
-                            "postRewriteFrame": "\(Int(postRewriteFrame.width))x\(Int(postRewriteFrame.height))",
+                            "postRewriteFrame": QuartzRect(postRewriteFrame).sizeDescription,
                             "postDrift": String(Int(postDrift)),
                             "rewriteMs": String(elapsedMilliseconds(since: rewriteAttemptStart))
                         ])
@@ -147,8 +147,8 @@ extension WindowManager {
             "op": op,
             "windowID": String(windowID),
             "sourceSpace": String(describing: sourceSpaceIndex),
-            "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y))",
-            "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y))",
+            "origFrame": QuartzRect(origFrame).originDescription,
+            "targetFrame": QuartzRect(targetFrame).originDescription,
             "reason": reason.rawValue,
             "sessionID": sessionID ?? "nil"
         ])

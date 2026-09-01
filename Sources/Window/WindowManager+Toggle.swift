@@ -121,7 +121,7 @@ extension WindowManager {
         if let winID = resolvedWindowID {
             if let record = ToggleEngine.shared.load(windowID: winID) {
                 decisionFields["toggleRecordExists"] = "true"
-                decisionFields["toggleRecordOrigFrame"] = "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.size.width))x\(Int(record.origFrame.size.height))"
+                decisionFields["toggleRecordOrigFrame"] = QuartzRect(record.origFrame).description
                 decisionFields["toggleRecordSourceSpace"] = String(record.sourceSpace)
                 if let mainScreen = cachedMainScreen {
                     decisionFields["toggleRecordValid"] = String(record.isValid(mainScreenFrame: mainScreen.frame))

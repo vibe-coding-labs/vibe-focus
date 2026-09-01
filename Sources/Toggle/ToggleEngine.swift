@@ -71,8 +71,8 @@ final class ToggleEngine: ToggleRecordStore {
                 level: .warn,
                 fields: [
                     "windowID": String(windowID),
-                    "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-                    "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))",
+                    "origFrame": QuartzRect(origFrame).description,
+                    "targetFrame": QuartzRect(targetFrame).description,
                     "sourceSpace": String(describing: sourceSpace),
                     "sourceYabaiDisp": String(describing: sourceYabaiDisp)
                 ]
@@ -108,8 +108,8 @@ final class ToggleEngine: ToggleRecordStore {
             "sourceDisplay": String(describing: sourceDisplay.yabaiIndex ?? 0),
             "sourceYabaiDisp": String(describing: sourceYabaiDisp.yabaiIndex ?? 0),
             "sourceDispSpace": String(sourceDispSpace),
-            "origFrame": "\(Int(origFrame.origin.x)),\(Int(origFrame.origin.y)) \(Int(origFrame.size.width))x\(Int(origFrame.size.height))",
-            "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.size.width))x\(Int(targetFrame.size.height))",
+            "origFrame": QuartzRect(origFrame).description,
+            "targetFrame": QuartzRect(targetFrame).description,
             "dbMs": String(saveDbMs)
         ])
     }

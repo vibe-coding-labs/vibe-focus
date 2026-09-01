@@ -83,7 +83,18 @@ struct QuartzRect: Equatable, CustomStringConvertible {
 
     var cgRect: CGRect { CGRect(origin: origin, size: size) }
 
+    // MARK: 日志描述族（唯一事实源，2.16a 第十五刀）
+    // 此前 27 处调用点各自内联同一 Int() 截断格式串，格式漂移即日志 grep 失真。
+    // 数值转换语义 = Int() 向零截断（-1.9 → -1），非四舍五入、非 floor。
+
+    /// 全帧描述 "x,y WxH"
     var description: String { "\(Int(x)),\(Int(y)) \(Int(width))x\(Int(height))" }
+
+    /// origin-only 描述 "x,y"（log 字段只关心位置时）
+    var originDescription: String { "\(Int(x)),\(Int(y))" }
+
+    /// size-only 描述 "WxH"（log 字段只关心尺寸时）
+    var sizeDescription: String { "\(Int(width))x\(Int(height))" }
 
     func centerIsInside(_ screenFrame: CGRect) -> Bool {
         screenFrame.contains(CGPoint(x: midX, y: midY))
