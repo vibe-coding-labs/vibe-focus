@@ -84,71 +84,37 @@ extension HookEventHandler {
             return Self.httpResponse(for: .localBindingSkip, triggerName: triggerName, sessionID: payload.sessionID)!
         }
 
-        // ③ 尝试获取 binding，无 binding 时通过 machineLabel 自愈远程 session
+        // ③④ 绑定解析（含 machineLabel 自愈）+ 活性校验 —— 与 UPS 共用同一编排
+        // （resolveSessionBinding；此前两路各写一份，校验时序与日志文案漂移）
         let binding: WindowState
-        if let existing = SessionWindowRegistry.shared.binding(for: payload.sessionID) {
-            binding = existing
-        } else if let label = payload.terminalCtx?.machineLabel, !label.isEmpty,
-                  let identity = resolveRemoteBinding(label: label, sessionID: payload.sessionID) {
-            log(
-                "[HookEventHandler] \(triggerName) self-heal: resolved remote binding via machineLabel",
-                level: .info,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "machineLabel": label,
-                    "windowID": String(identity.windowID),
-                    "app": identity.appName ?? "unknown"
-                ]
-            )
-            SessionWindowRegistry.shared.bind(
-                sessionID: payload.sessionID,
-                windowIdentity: identity,
-                terminalTTY: payload.terminalCtx?.tty,
-                terminalSessionID: payload.terminalCtx?.termSessionID,
-                itermSessionID: payload.terminalCtx?.itermSessionID,
-                cwd: payload.cwd,
-                model: payload.model,
-                bindingType: .remote
-            )
-            guard let healed = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
-                decision = .noBindingSkip
-                return (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true, code: "no_binding_skip",
-                        message: "Self-heal binding lost after registration",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
-            }
-            binding = healed
-        } else {
-            decision = .noBindingSkip
-            log(
-                "[HookEventHandler] \(triggerName) no binding found, skipping",
-                level: .warn,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "machineLabel": payload.terminalCtx?.machineLabel ?? "nil",
-                    "isRemote": String(payload.terminalCtx?.isRemote ?? false)
-                ]
-            )
-            return Self.httpResponse(for: .noBindingSkip, triggerName: triggerName, sessionID: payload.sessionID)!
-        }
-
-        // ④ 绑定活性校验（窗口是否仍存活且归属同一进程）
-        guard SessionWindowRegistry.shared.verifyBinding(binding) else {
+        switch resolveSessionBinding(payload: payload, traceID: triggerName) {
+        case .bound(let resolved), .healed(let resolved):
+            binding = resolved
+        case .verificationFailed(let resolved):
             decision = .bindingVerificationFailed
             log(
                 "[HookEventHandler] \(triggerName) binding verification failed",
                 level: .warn,
                 fields: [
                     "sessionID": payload.sessionID,
-                    "windowID": String(describing: binding.windowID),
-                    "pid": String(binding.pid)
+                    "windowID": String(resolved.windowID),
+                    "pid": String(resolved.pid)
                 ]
             )
             return Self.httpResponse(for: .bindingVerificationFailed, triggerName: triggerName, sessionID: payload.sessionID)!
+        case .healLost:
+            decision = .noBindingSkip
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "no_binding_skip",
+                    message: "Self-heal binding lost after registration",
+                    sessionID: payload.sessionID, handled: false
+                )
+            )
+        case .none:
+            decision = .noBindingSkip
+            return Self.httpResponse(for: .noBindingSkip, triggerName: triggerName, sessionID: payload.sessionID)!
         }
 
         // ⑤ 尾部决策统一走 decideWindowMove（唯一决策树）。
