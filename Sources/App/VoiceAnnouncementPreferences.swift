@@ -93,6 +93,43 @@ enum VoiceAnnouncementTemplate {
     }
 }
 
+// MARK: - 多会话播报队列（纯类型 + 纯函数）
+
+/// 播报队列条目：已解析完成的发声任务（模板文本 / 本地音频路径）。
+/// 存"渲染结果"而非 payload——LLM 总结模式不入队（时效性 + 15s 网络请求，
+/// 见 VoiceAnnouncementManager 类注释的多会话语义）。
+enum QueuedAnnouncement: Equatable {
+    /// 模板插值后的 TTS 文本（非空，空文本在入队前已兜底为「对话完成」）
+    case text(String)
+    /// 本地音频文件绝对路径
+    case audioFile(path: String)
+}
+
+/// 播报队列入队策略（纯函数命名空间）。
+///
+/// ## 场景
+/// - `VoiceAnnouncementManager.enqueueAnnouncement` 的唯一入队实现；
+/// - 有界队列：满则丢最旧（世界状态以最新为准，相邻完成的少量会话仍能被完整听到）；
+/// - 纯函数 + fixture 可测（见 Standalone 同名队列测试）。
+enum VoiceAnnouncementQueuePolicy {
+
+    /// 返回入队后的新队列：追加 `item`；超过 `capacity` 时从最旧端丢弃。
+    /// 值语义，不修改入参；`capacity < 1` 防御性按 1 处理（保证新条目总在队列中）。
+    static func appendedQueue(
+        _ current: [QueuedAnnouncement],
+        appending item: QueuedAnnouncement,
+        capacity: Int
+    ) -> [QueuedAnnouncement] {
+        var next = current
+        let effectiveCapacity = max(capacity, 1)
+        while next.count >= effectiveCapacity {
+            next.removeFirst()
+        }
+        next.append(item)
+        return next
+    }
+}
+
 // MARK: - Voice Announcement Errors
 
 enum VoiceAnnouncementError: LocalizedError {

@@ -14,12 +14,23 @@ import Foundation
 /// 按 preferences.mode 分发到模板插值 TTS / 本地音频 / LLM 总结 TTS 三种模式。
 /// 镜像 SoundManager 的偏好持久化模式：@Published private(set) + didSet→savePreferences()，
 /// init 只读不写（遵守偏好持久化铁律）。
+///
+/// ## 多会话语义（第二十二刀）
+/// - template / audioFile：进入有界队列串行播报（容量 maxQueuedAnnouncements，满则丢最旧）
+///   ——相邻完成的多个会话都能被完整听到，模板变量（{project_name} 等）负责听感区分；
+/// - llmSummary：保持"最新优先"（stopAll 抢占 + llmTask 取消）——总结有时效性，
+///   且 15s 超时的网络请求串行排队会堆延迟；
+/// - stopAll（UI 停止按钮 / preview 入口）：清空队列并停当前，语义不变。
 @MainActor
-final class VoiceAnnouncementManager: ObservableObject {
+final class VoiceAnnouncementManager: NSObject, ObservableObject {
     static let shared = VoiceAnnouncementManager()
 
     /// UserDefaults key。internal：由 +Persistence.swift（跨文件 extension）读写。
     static let preferencesKey = "voiceAnnouncementPreferences"
+
+    /// 播报队列容量上限。防堆叠（2.16 第四刀提及的 54 远程会话场景）与丢播报的折中：
+    /// 满则丢最旧——世界状态以最新为准，但相邻完成的少量会话都能被完整听到。
+    static let maxQueuedAnnouncements = 3
 
     @Published private(set) var preferences: VoiceAnnouncementPreferences {
         didSet {
@@ -35,25 +46,32 @@ final class VoiceAnnouncementManager: ObservableObject {
         }
     }
 
-    private var speechSynthesizer: NSSpeechSynthesizer?
-    private var currentSound: NSSound?
+    /// 当前 TTS 合成器（命名避开 delegate 方法 speechSynthesizer(_:didFinishSpeaking:)，
+    /// 同名属性会被方法遮蔽导致引用歧义）。
+    var activeSynthesizer: NSSpeechSynthesizer?
+/// 当前在播的本地音频。internal：由 +Queue.swift（跨文件 extension）的完成回调读取。
+    var currentSound: NSSound?
     /// 当前进行中的 LLM 请求任务，新播报或 stopAll 时取消。
     /// internal：由 VoiceAnnouncementManager+LLMSummary.swift（跨文件 extension）写入。
     var llmTask: Task<Void, Never>?
+    /// 多会话播报队列（编排逻辑见 +Queue.swift）。主类声明：Swift extension 不允许存属性。
+    var pendingAnnouncements: [QueuedAnnouncement] = []
+    /// 是否有播报正在发声（TTS 或音频），队列推进闸门。
+    var isAnnouncing = false
 
-    private init() {
+    override private init() {
         self.preferences = Self.loadPreferences()
     }
 
     // MARK: - Public API
 
     /// 会话完成时触发语音播报（由 ClaudeHookServer Stop 分支异步调用）。
-    /// 无条件入口：mode == .none 直接返回。开头先 stopAll() 防重入。
+    /// 无条件入口：mode == .none 直接返回。
     ///
     /// ## 场景
     /// - ClaudeHookServer 收到 Stop 事件的 fire-and-forget 异步路径，不阻塞 hook 响应；
-    /// - 防重入：连续多次 Stop（多会话并发完成）时只播最后一个——先 stopAll 停掉
-    ///   上一次播放并取消上一次 LLM 请求。
+    /// - 多会话语义（第二十二刀）：template/audioFile 入队串播不抢占在播内容；
+    ///   llmSummary 保持 stopAll 抢占（最新优先，理由见类注释）。
     func announceCompletion(payload: ClaudeHookPayload) {
         // P-INST-271: 语音播报完成触发总耗时（按 mode 分发 template/audioFile/llmSummary；Stop hook 异步 fire-and-forget 路径，不阻塞 hook 响应；LLM 模式含网络请求 P-INST-273）。
         #if PERF_INSTRUMENT
@@ -71,32 +89,23 @@ final class VoiceAnnouncementManager: ObservableObject {
             return
         }
 
-        // 防重入：停掉上一次播放 / 取消上一次 LLM 请求
-        stopAll()
-
         switch preferences.mode {
         case .none:
             return
         case .template:
             let text = VoiceAnnouncementTemplate.interpolate(preferences.templateText, payload: payload)
-            let resolved = text.isEmpty ? "对话完成" : text
-            speak(resolved)
-            log("[VoiceAnnouncementManager] template announcement", fields: [
-                "text": resolved,
-                "sessionID": payload.sessionID
-            ])
+            enqueueAnnouncement(.text(text.isEmpty ? "对话完成" : text), sessionID: payload.sessionID)
         case .audioFile:
-            guard let path = preferences.audioFilePath, !path.isEmpty else {
+            if let path = preferences.audioFilePath, !path.isEmpty {
+                enqueueAnnouncement(.audioFile(path: path), sessionID: payload.sessionID)
+            } else {
+                // 文件缺失 fallback 到「对话完成」（原行为），经队列保序
                 log("[VoiceAnnouncementManager] audioFile mode but path empty, falling back", level: .warn)
-                speak("对话完成")
-                return
+                enqueueAnnouncement(.text("对话完成"), sessionID: payload.sessionID)
             }
-            playAudioFile(path: path)
-            log("[VoiceAnnouncementManager] audioFile announcement", fields: [
-                "path": path,
-                "sessionID": payload.sessionID
-            ])
         case .llmSummary:
+            // 最新优先：抢占在播内容并取消旧 LLM 请求（llmTask 取消机制）
+            stopAll()
             summarizeAndSpeak(payload: payload)
         }
     }
@@ -154,12 +163,14 @@ final class VoiceAnnouncementManager: ObservableObject {
         }
     }
 
-    /// 停止所有播放与进行中的 LLM 请求
+    /// 停止所有播放与进行中的 LLM 请求，并清空播报队列
     ///
     /// ## 场景
-    /// - announceCompletion/preview 开头防重入 + 设置界面停止按钮。
+    /// - 设置界面停止按钮：用户显式要求全部静默，队列一并清空；
+    /// - preview 入口防重入：试听优先，队列让位；
+    /// - llmSummary 模式的 announceCompletion 入口（最新优先抢占）。
     func stopAll() {
-        // P-INST-274: 语音播报停止耗时（NSSpeechSynthesizer.stopSpeaking + NSSound.stop + llmTask.cancel；announceCompletion 防重入 + UI 停止按钮调用）。
+        // P-INST-274: 语音播报停止耗时（NSSpeechSynthesizer.stopSpeaking + NSSound.stop + llmTask.cancel + 队列清空；announceCompletion 防重入 + UI 停止按钮调用）。
         #if PERF_INSTRUMENT
         let saStart = Date()
         defer {
@@ -168,8 +179,10 @@ final class VoiceAnnouncementManager: ObservableObject {
             ])
         }
         #endif
-        speechSynthesizer?.stopSpeaking()
-        speechSynthesizer = nil
+        pendingAnnouncements.removeAll()
+        isAnnouncing = false
+        activeSynthesizer?.stopSpeaking()
+        activeSynthesizer = nil
         currentSound?.stop()
         currentSound = nil
         llmTask?.cancel()
@@ -231,7 +244,8 @@ final class VoiceAnnouncementManager: ObservableObject {
     ///
     /// ## 场景
     /// - template / llmSummary / fallback 三种文案来源共用的最终发声口；
-    /// - 空文本静默跳过（fallback 链末端已保证非空，此处再防御）。
+    /// - 空文本静默跳过（fallback 链末端已保证非空，此处再防御）；
+    /// - 置 isAnnouncing + delegate：朗读完成回调推进播报队列（+Queue.swift）。
     func speak(_ text: String) {
         // P-INST-277: TTS 朗读耗时（NSSpeechSynthesizer 构造 + set rate/volume + startSpeaking；announceCompletion P-INST-271 / preview P-INST-272 / summarizeAndSpeak 子阶段；startSpeaking 异步但合成器构造在调用线程）。
         #if PERF_INSTRUMENT
@@ -250,7 +264,9 @@ final class VoiceAnnouncementManager: ObservableObject {
         let synthesizer = NSSpeechSynthesizer()
         synthesizer.rate = preferences.speechRate
         synthesizer.volume = preferences.volume
-        speechSynthesizer = synthesizer
+        synthesizer.delegate = self
+        activeSynthesizer = synthesizer
+        isAnnouncing = true
         synthesizer.startSpeaking(text)
         log("[VoiceAnnouncementManager] TTS speaking", fields: [
             "rate": String(preferences.speechRate),
@@ -260,7 +276,9 @@ final class VoiceAnnouncementManager: ObservableObject {
     }
 
     /// 播放本地音频文件；文件缺失或解码失败回退 TTS「对话完成」。
-    private func playAudioFile(path: String) {
+    /// internal：由 +Queue.swift（跨文件 extension）的队列推进调用。
+    /// 置 isAnnouncing + delegate：播放完成回调推进播报队列。
+    func playAudioFile(path: String) {
         // P-INST-278: 本地音频播放耗时（NSSound(contentsOfFile:byReference:) 加载解码 + play；announceCompletion P-INST-271 audioFile 分支 / preview P-INST-272 子阶段；音频解码在调用线程可阻塞）。
         #if PERF_INSTRUMENT
         let pfStart = Date()
@@ -282,8 +300,10 @@ final class VoiceAnnouncementManager: ObservableObject {
             return
         }
         sound.volume = preferences.volume
+        sound.delegate = self
         sound.play()
         currentSound = sound
+        isAnnouncing = true
         log("[VoiceAnnouncementManager] playing audio file", fields: [
             "path": path,
             "volume": String(preferences.volume)
