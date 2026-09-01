@@ -432,6 +432,34 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | 第十八刀 refactor(window) | acf394b | **TTY 归一化判据统一（十六刀误判清偿）**：normalizeTTY 曾被扫描器判"影子零调用"删除，实为 5 份内联副本掩盖真实消费者。恢复完整版 + 抽出前缀半边 fullDevicePath（iTerm2×3/TitleEditor 共用），6 处全量接线，行为零变化 | TTYNormalizationTests（12 项：两函数分支穷尽 + 精确匹配怪癖锁定 + 组合一致性） |
 | 第十九刀 refactor(window) | 随并行会话「fix(sound): SoundManager 播放互斥（第二十刀）」提交入库（哈希被该会话 amend 改写，按提交标题寻址），本会话原作者 | **Claude Code 窗口定位决策纯函数化**：findClaudeCodeWindow 内联的 cwd→项目名提取与三级策略匹配抽为 projectName(fromCwd:)（nil/空/全斜杠→nil，isEmpty 守卫折叠进契约）+ matchClaudeCodeCandidate（返回 candidate+strategy 供分策略日志，hostApp 谓词注入）；顺带修正策略 2 注释的"非主屏幕"doc 漂移（约束从未实现）。行为零变化 | ClaudeCodeWindowMatchTests（24 项：cwd 边界矩阵 11 项/策略顺序与条件穷尽/两条端到端组合） |
 
+### 2.16b 第十二轮完成（2026-09-02，提示音/语音播报/Claude 集成整体审查与重构「settings 线五刀」）
+
+> 用户要求对提示音 / 语音播报 / Claude 集成设置与多会话链路做整体审查与重构。
+> 刀号沿用本会话（settings 线）提交信息编号，与 2.16a 全局刀号**互不可比**（口径见上节警示）；
+> 提交行按**提交标题**寻址（勿引哈希）；提交一律 pathspec 定向 add（add -A 教训落地）。
+
+**审查结论（功能面）**：
+- 自定义提示音（`CompletionSoundType.custom` 文件选择器，WAV/MP3/M4A/AIFF）与自定义语音播报
+  （本地音频 / 固定文案模板 / LLM 总结三模式）审查确认**已完备**，本轮未新增能力；
+- 多会话区分现状：session_id 主键 + SessionStart TTY/PPID 绑定 + itermSessionID 分屏 +
+  machineLabel 远程 + 同窗口 alias 机制——绑定链健全（全局第十一步刀已统一解析），
+  真正缺口在**播报层**（本线第二十二刀补齐）；
+- 功能归属修正：提示音/语音播报设置从「外观与反馈」标签页移交「Claude 集成」标签页
+  （用户裁决：二者系 Claude/Codex Stop hook 触发，与 Hook 服务同链路）；
+  「外观与反馈」仅剩窗口标题编辑。
+
+| 刀（settings 线） | 提交（标题寻址） | 内容 | 配套 |
+|------|------|------|------|
+| 第十八刀 refactor(settings) | 「titleEditorSection 归位独立文件」 | **结构归位**：titleEditorSection 从 SettingsView+SoundSection.swift（原文件头"提示音 & 标题编辑 & LAN"混装且注释过时）拆出独立文件；纯移动零行为变化 | 无（UI 代码原样） |
+| 第十九刀 refactor(settings-ui) | 「提示音/语音播报三处成对重复收敛为共享组件」 | **UI 成对重复收敛**：两区块各自手写的音量滑杆行、试听按钮（复位秒数 3s/5s 保留注入）、文件选择行收敛为 SettingsComponents+Audio.swift 三组件；fileImporter 内聚组件，SettingsView 删两份 importer @State + .fileImporter 修饰符 | 无（UI 呈现零变化） |
+| 第二十刀 fix(sound) | 「SoundManager 播放互斥 + 停止定时器身份校验」 | **播放互斥修复**：play/preview 不停上一个就播下一个（旧 NSSound 继续出声），且两处各自的 5s asyncAfter 闭包 stop currentSound 引用——旧定时器把新音频提前掐断（多会话并发完成场景真 bug）。抽 startPlayback 唯一编排（停旧+取消其 DispatchWorkItem → 播 → 5s 兜底），兜底闭包捕获具体实例 + `===` 身份校验 | 无新测试（运行时音频行为）；全量门禁守护 |
+| 第二十一刀 fix(models) | 「hasUsefulContext 影子判定收敛为单一谓词」 | **影子判定收敛**：日志前算一份内联表达式（result 仅喂日志）、返回值走另一份 if-let 链，两处漂移则日志说谎。收敛为具名子谓词 + 单一 result，日志与返回值同源；语义零变化 | DataModelTests 既有 13 项分支守护 |
+| 第二十二刀 fix(voice) | 「多会话语音播报队列——不再只播最后一个」 | **播报层多会话缺口补齐**：旧 announceCompletion 开头 stopAll() 抢占——并发完成只播最后一条。template/audioFile 改有界队列串播（容量 3 满丢最旧，模板变量提供听感区分）；llmSummary 保持最新优先（总结时效性 + 15s 请求串行会堆延迟，裁决不排队）；stopAll 清队列语义不变。新增 +Queue.swift 编排 + VoiceAnnouncementQueuePolicy.appendedQueue 纯函数（纯类型入 Preferences.swift） | VoiceAnnouncementQueueTests（14 项：FIFO/满队丢最旧/capacity 边界/值语义/空文本兜底） |
+
+**过程记录**：本轮曾因 `git add -A` 把并行会话已暂存的 WIP 扫入第二十刀提交，
+`reset --soft` + pathspec 重提交无损拆出（对方文件原样保留在暂存区）——即 2.16a 警示的实例，
+自此本会话全部提交走 pathspec 定向。
+
 ### 2.17 待办（第十一轮后的遗留清单，按优先级）
 
 | 优先级 | 项目 | 说明 |
@@ -457,7 +485,10 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 - TTY 前缀补全 5 处内联 + normalizeTTY 误删 → 第十八刀恢复统一（教训：
   "零调用"候选须先 grep 内联同构逻辑再裁决，扫描器只认函数名不认语义）；
 - spaceMoveTrusted 接线 → 评估后不接线：生产 `window --space` 变更类调用已清零
-  （第四刀），探测器保留作能力档案（YabaiEnvironmentProfileTests 已覆盖），无消费者不造通道。
+  （第四刀），探测器保留作能力档案（YabaiEnvironmentProfileTests 已覆盖），无消费者不造通道；
+- 语音播报 llmSummary 多会话排队 → 评估后不排队（settings 线第二十二刀裁决）：
+  总结有时效性且 LLM 请求 15s 超时，串行队列会把第 N 条的播报延迟推到分钟级；
+  保持"最新优先"抢占语义，trade-off 记录在 VoiceAnnouncementManager 类注释。
 
 ---
 
