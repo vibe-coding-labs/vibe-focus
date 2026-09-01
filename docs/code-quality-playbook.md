@@ -390,11 +390,11 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 死代码结论为零调用再删；行为等价性靠 RoutingTests 契约 + 既有 33 个 Standalone
 测试守护；日志 schema 变更（mode/spaceMoveResult/floatMs/applyMs）在提交信息中明示。
 
-### 2.16a 第十一轮完成（2026-09-01/02，遗留清单清剿「五~十六刀」，重构与单测同批交付）
+### 2.16a 第十一轮完成（2026-09-01/02，遗留清单清剿「五~十七刀」，重构与单测同批交付）
 
 > 背景与上轮同源：把 2.17 遗留清单里的 P2 全部 + P3 大半清掉，
-> 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 10 个 Standalone 测试文件、
-> 189 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
+> 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 11 个 Standalone 测试文件、
+> 215 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
 
 | 刀 | 提交 | 内容 | 配套测试 |
 |------|------|------|------|
@@ -410,6 +410,7 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | 第十四刀 refactor(window) | f56497c | **帧收敛循环统一**（2.17 收官项）："写 frame→等落定→读回→重写"三份平行实现（moveWindowToFrameViaYabai / writeSizeWithReadback / PostMove rewrite）收敛为 FrameConvergence.convergeFrame 唯一骨架，写机制/读机制/判据/时长由调用点注入；15ms postRewriteSettle 档与 25ms axWriteSettle 同语义归一并入 25ms（保守大值），原常量下线；writeSizeWithReadback inout 五参回传改结果元组。有意微调：PostMove rewrite 读失败 break→重试（与另两处对齐）+ 耗尽新增 exhausted warn；写硬失败短路当轮 settle/read | FrameConvergenceLoopTests（19 项：骨架契约——尝试计数/事件时序 write→settle→read/读失败重试/写失败短路/attempts 归一 + 三调用点策略表 + frame vs size 判据分工）；WindowSettleTimingTests 同步（11→10 项） |
 | 第十五刀 refactor(coord) | 864f5e5 | **帧日志描述族统一**：三种帧日志格式串（"x,y WxH" 17 处 / "x,y" 5 处 / "WxH" 3 处）内联散落 7 文件 26 处，收敛为 QuartzRect 描述族唯一事实源（description 既有实现确认为规范 + originDescription/sizeDescription 新增变体，同一 Int() 向零截断语义）；26 处纯接线，abs:x:y yabai CLI 参数格式不动。行为零变化（防漂移测试逐字符断言与历史内联等价） | FrameDescriptionTests（10 项：三变体格式锁、负坐标向零截断语义、组合一致性矩阵、与历史内联逐字符等价防漂移） |
 | 第十六刀 refactor / 扫描器驱动 | ad55907 | **零调用/影子函数清扫 + token 纯函数接线**：444 函数全量引用计数扫描，23 候选 triage——影子接线 1 组（ClaudeHookServer token 验证：生产内联改调 resolveProvidedToken/isTokenValid，语义同构零变化，配套 TokenValidationLogicTests 15 项）；删死函数 12 个（displayVisibleSpace/windowSpaceIndex/windowDisplayIndex/isFrameOnExpectedScreen/centerIsInside/screenArray/isCorrupted/SpaceIndexResolver 整枚举/hookCommandExample/normalizeTTY/parseVersion/findBinding）；测试侧清偿 7 个死文件 + 12 处死镜像段。净 −971 行 | TokenValidationLogicTests（15 项：取值优先级/判定契约/接线路径端到端） |
+| 第十七刀 fix(hook) | b2103d3 | **hooks 设置编排纯函数化**（逻辑混乱重写 + 覆盖率100% 样例）："VibeFocus hook 条目"判据曾三处各写一份且 install 对用户 settings.json 有破坏性写入——开关关闭时 removeValue 整键删除连带清掉用户自装同事件 hook；merge 整键覆盖丢弃外部条目。收敛为 HookSettingsComposition 四纯函数（识别/摘除/终态编排/判定），install/uninstall/isHookInstalled 全接线，cleanVibeFocusHooks 删除；两个真 bug 修复（外部 hook 一律保留）| HookSettingsCompositionTests（26 项：四函数分支穷尽 + 两 bug 防回退断言） |
 
 ### 2.17 待办（第十一轮后的遗留清单，按优先级）
 
@@ -430,6 +431,9 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
   convergeFrame 唯一骨架（判据/时长注入式，条件等待替换时骨架的 sleep/read 即唯一缝隙）；
 - 零调用函数/影子纯函数（"extracted for testability" 无生产消费者）→ 第十六刀
   扫描器驱动清扫（引用计数法可复用：全量函数名 grep 计数，defs==refs 即候选）；
+- hooks 设置判据三处内联 + install 整键删除外部 hook → 第十七刀
+  HookSettingsComposition 纯函数族（换端口后旧 HTTP 条目不识别的判据局限留档，
+  变更影响用户文件删除范围，须真实环境验证后另行走刀）；
 - spaceMoveTrusted 接线 → 评估后不接线：生产 `window --space` 变更类调用已清零
   （第四刀），探测器保留作能力档案（YabaiEnvironmentProfileTests 已覆盖），无消费者不造通道。
 
