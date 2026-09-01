@@ -219,22 +219,35 @@ struct TerminalContext: Codable, Equatable {
         case machineLabel = "machine_label"
     }
 
-    /// 是否包含可用于窗口匹配的有用上下文
+    /// 是否包含可用于窗口匹配的有用上下文。
+    ///
+    /// ## 场景
+    /// - SessionStart 绑定入口（handleSessionStart）的绑定前置判据：false 时直接拒绝绑定；
+    /// - 判定字段：TTY / termSessionID / itermSessionID / 有效 PPID（>1）/ machineLabel 任一非空。
+    ///
+    /// ## 竞态风险
+    /// 无（纯值判定）。历史上"日志用一份内联表达式、返回值用另一份 if 链"两份逻辑各算各的，
+    /// 一旦漂移日志会说谎——现收敛为单一谓词，日志与返回值消费同一 result。
     var hasUsefulContext: Bool {
-        let result = tty?.isEmpty == false || termSessionID?.isEmpty == false || itermSessionID?.isEmpty == false || (ppid.flatMap { Int32($0) }).map { $0 > 1 } ?? false || machineLabel?.isEmpty == false
+        let hasTTY = tty?.isEmpty == false
+        let hasTermSessionID = termSessionID?.isEmpty == false
+        let hasItermSessionID = itermSessionID?.isEmpty == false
+        let hasLivePPID: Bool
+        if let ppid, let pid = Int32(ppid) {
+            hasLivePPID = pid > 1
+        } else {
+            hasLivePPID = false
+        }
+        let hasMachineLabel = machineLabel?.isEmpty == false
+        let result = hasTTY || hasTermSessionID || hasItermSessionID || hasLivePPID || hasMachineLabel
         log("TerminalContext.hasUsefulContext evaluated", level: .debug, fields: [
             "result": String(result),
-            "hasTTY": String(tty?.isEmpty == false),
-            "hasTermSessionID": String(termSessionID?.isEmpty == false),
-            "hasItermSessionID": String(itermSessionID?.isEmpty == false),
-            "hasMachineLabel": String(machineLabel?.isEmpty == false)
+            "hasTTY": String(hasTTY),
+            "hasTermSessionID": String(hasTermSessionID),
+            "hasItermSessionID": String(hasItermSessionID),
+            "hasMachineLabel": String(hasMachineLabel)
         ])
-        if let tty, !tty.isEmpty { return true }
-        if let termSessionID, !termSessionID.isEmpty { return true }
-        if let itermSessionID, !itermSessionID.isEmpty { return true }
-        if let ppid, let pid = Int32(ppid), pid > 1 { return true }
-        if let machineLabel, !machineLabel.isEmpty { return true }
-        return false
+        return result
     }
 
     /// 是否来自远程机器（有 machine_label）
