@@ -7,6 +7,8 @@
 // 改谁都说不清影响面。本测试锁定两级语义（yabai 级 vs WindowServer 级）的
 // 关系不变量与当前基准值——任何数值调整都必须是看过本表的显式决定，
 // 且按 2.15 教训需真实窗口闭环验证后才能改。
+// 2.16a 第十四刀：15ms postRewrite 档与 25ms axWriteSettle 同语义不同值，
+// 随 convergeFrame 循环统一并入 25ms 档，原常量下线。
 
 import Foundation
 
@@ -17,7 +19,6 @@ enum MirrorWindowSettle {
     static let floatRelayoutSettleMicros: UInt32 = 300_000
     static let yabaiFrameWriteSettleMicros: UInt32 = 400_000
     static let axWriteSettleMicros: UInt32 = 25_000
-    static let postRewriteSettleMicros: UInt32 = 15_000
     static let missionControlDismissSettleMicros: UInt32 = 150_000
 }
 
@@ -37,8 +38,8 @@ print("1. 基准值锁定")
 
 check("float 重摆落定 = 300ms", MirrorWindowSettle.floatRelayoutSettleMicros == 300_000)
 check("yabai 直写落定 = 400ms", MirrorWindowSettle.yabaiFrameWriteSettleMicros == 400_000)
-check("AX 写读回节拍 = 25ms", MirrorWindowSettle.axWriteSettleMicros == 25_000)
-check("PostMove 重写节拍 = 15ms", MirrorWindowSettle.postRewriteSettleMicros == 15_000)
+check("AX 写读回节拍唯一 = 25ms（writeSizeWithReadback 与 PostMove rewrite 共用；原 15ms 档已归一下线）",
+      MirrorWindowSettle.axWriteSettleMicros == 25_000)
 check("MC 动画结束 = 150ms", MirrorWindowSettle.missionControlDismissSettleMicros == 150_000)
 
 // MARK: 2. 两级语义不变量 — yabai 级必须比 WindowServer 级高一个量级
@@ -46,7 +47,7 @@ check("MC 动画结束 = 150ms", MirrorWindowSettle.missionControlDismissSettleM
 print("\n2. 两级语义不变量")
 
 let yabaiMin = min(MirrorWindowSettle.floatRelayoutSettleMicros, MirrorWindowSettle.yabaiFrameWriteSettleMicros)
-let axMax = max(MirrorWindowSettle.axWriteSettleMicros, MirrorWindowSettle.postRewriteSettleMicros)
+let axMax = MirrorWindowSettle.axWriteSettleMicros
 check("yabai 级最短等待 ≥ WindowServer 级最长等待的 10 倍（重摆是异步布局动画，AX 写是同步 IPC）",
       yabaiMin >= axMax * 10)
 check("yabai 直写落定 ≥ float 重摆落定（move+resize 两条命令需更多余量）",
@@ -60,8 +61,8 @@ check("MC 动画等待 ≥ 100ms（系统动画 ~0.2s，过短 dismiss 未完 sp
       MirrorWindowSettle.missionControlDismissSettleMicros >= 100_000)
 check("MC 动画等待 ≤ 500ms（dismiss 在 space 操作关键路径上）",
       MirrorWindowSettle.missionControlDismissSettleMicros <= 500_000)
-check("AX 读回节拍 ≤ 50ms（PostMove rewrite 循环最多 2 轮，过大会拖慢 hook 同步响应）",
-      max(MirrorWindowSettle.axWriteSettleMicros, MirrorWindowSettle.postRewriteSettleMicros) <= 50_000)
+check("AX 读回节拍 ≤ 50ms（writeSizeWithReadback 最多 3 轮 + PostMove rewrite 最多 2 轮共用本档，过大会拖慢 hook 同步响应）",
+      MirrorWindowSettle.axWriteSettleMicros <= 50_000)
 check("yabai 级等待 ≤ 1s（toggle/hook 移动都在用户可感知路径上）",
       max(MirrorWindowSettle.floatRelayoutSettleMicros, MirrorWindowSettle.yabaiFrameWriteSettleMicros) <= 1_000_000)
 

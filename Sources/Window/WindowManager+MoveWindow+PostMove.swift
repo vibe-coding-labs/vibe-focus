@@ -61,24 +61,42 @@ extension WindowManager {
                     "mainScreenDPI": String(describing: mainScreenDPI),
                     "frameTolerance": String(Int(frameTolerance))
                 ])
-                for rewriteAttempt in 1...2 {
-                    // P-INST-11: 每次 rewrite 耗时（AX write + usleep15 + cgWindowBounds readback，正常 ~17ms）。
-                    let rewriteAttemptStart = Date()
-                    var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
-                    if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
-                        _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
-                    }
-                    usleep(WindowSettle.postRewriteSettleMicros)
-                    guard let postRewriteFrame = cgWindowBounds(for: windowID) else { break }
-                    let postDrift = CoordinateKit.sizeDrift(postRewriteFrame.size, targetFrame.size)
-                    log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
+                var rewriteAttemptStart = Date()
+                var rewriteAttemptNo = 0
+                let outcome = FrameConvergence.convergeFrame(
+                    attempts: 2,
+                    // 第十四刀归一：原 postRewriteSettle 15ms 与 axWriteSettle 25ms 同语义（AX size 写后
+                    // 等 WindowServer 落定再读回），取保守大值 25ms；15ms 档已从 WindowSettle 下线。
+                    settleMicros: WindowSettle.axWriteSettleMicros,
+                    write: {
+                        rewriteAttemptNo += 1
+                        rewriteAttemptStart = Date()
+                        var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
+                        if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
+                            _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
+                        }
+                        // AX 结果照历史吞掉（兜底路径，读回判据说话）。
+                        return true
+                    },
+                    read: {
+                        guard let postRewriteFrame = cgWindowBounds(for: windowID) else { return nil }
+                        let postDrift = CoordinateKit.sizeDrift(postRewriteFrame.size, targetFrame.size)
+                        log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
+                            "op": op, "windowID": String(windowID),
+                            "rewriteAttempt": String(rewriteAttemptNo),
+                            "postRewriteFrame": "\(Int(postRewriteFrame.width))x\(Int(postRewriteFrame.height))",
+                            "postDrift": String(Int(postDrift)),
+                            "rewriteMs": String(elapsedMilliseconds(since: rewriteAttemptStart))
+                        ])
+                        return postRewriteFrame
+                    },
+                    isConverged: { CoordinateKit.isSizeConverged(actual: $0.size, target: targetFrame.size, tolerance: frameTolerance) }
+                )
+                if case .mismatched = outcome {
+                    log("[WindowManager] moveWindowToMainScreen: post-rewrite exhausted", level: .warn, fields: [
                         "op": op, "windowID": String(windowID),
-                        "rewriteAttempt": String(rewriteAttempt),
-                        "postRewriteFrame": "\(Int(postRewriteFrame.width))x\(Int(postRewriteFrame.height))",
-                        "postDrift": String(Int(postDrift)),
-                        "rewriteMs": String(elapsedMilliseconds(since: rewriteAttemptStart))
+                        "hint": "两次重写后仍 size 漂移——app 硬 clamp，可考虑 yabai --resize 更强手段"
                     ])
-                    if postDrift <= frameTolerance { break }
                 }
             }
         }

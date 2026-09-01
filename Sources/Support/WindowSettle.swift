@@ -26,13 +26,11 @@ enum WindowSettle {
 
     // MARK: - WindowServer 级（AX 写 → 读回节拍）
 
-    /// writeSizeWithReadback 主循环：AX size 写后等落定再 readback。25ms。
-    /// （与 postRewriteSettleMicros 同语义不同值，属历史拍脑袋不一致；
-    /// 待 P3"frame 收敛循环统一"以 convergeFrame 一并归一。）
+    /// AX size 写后等落定再 readback 的唯一节拍：25ms。
+    /// 使用点：writeSizeWithReadback 主循环、verifyAndCorrectPostMoveSize rewrite 循环
+    /// （第十四刀归一：原 postRewriteSettle 15ms 与本值同语义不同值，属历史拍脑袋不一致，
+    /// 随 convergeFrame 循环统一并入本档，取保守大值）。
     static let axWriteSettleMicros: useconds_t = 25_000
-
-    /// PostMove verify-rewrite 循环：AX size 重写后等落定再读回。15ms。
-    static let postRewriteSettleMicros: useconds_t = 15_000
 
     /// Mission Control dismiss 后等动画结束再操作 space。150ms。
     /// 使用点：NativeSpaceBridge.dismissMissionControl。

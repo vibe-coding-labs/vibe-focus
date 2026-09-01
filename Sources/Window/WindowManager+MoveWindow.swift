@@ -39,37 +39,50 @@ extension WindowManager {
     /// - 写后 400ms 读 CGWindow frame 验证（origin+size 双维度），不符重写一次。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String) -> Bool {
-        for attempt in 1...2 {
-            _ = spaceController.runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
-                operation: "\(stage).move(windowID=\(windowID))",
-                operationID: op
-            )
-            _ = spaceController.runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
-                operation: "\(stage).resize(windowID=\(windowID))",
-                operationID: op
-            )
-            usleep(WindowSettle.yabaiFrameWriteSettleMicros)
-            if let current = cgWindowBounds(for: windowID) {
-                let originDrift = CoordinateKit.originDrift(current.origin, frame.origin)
-                let sizeDrift = CoordinateKit.sizeDrift(current.size, frame.size)
-                if CoordinateKit.isFrameConverged(actual: current, target: frame, tolerance: frameTolerance) {
-                    log("[WindowManager] moveWindowToFrameViaYabai: verified", level: .debug, fields: [
-                        "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attempt)
+        var attemptNo = 0
+        let outcome = FrameConvergence.convergeFrame(
+            attempts: 2,
+            settleMicros: WindowSettle.yabaiFrameWriteSettleMicros,
+            write: {
+                attemptNo += 1
+                _ = spaceController.runYabai(
+                    arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
+                    operation: "\(stage).move(windowID=\(windowID))",
+                    operationID: op
+                )
+                _ = spaceController.runYabai(
+                    arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
+                    operation: "\(stage).resize(windowID=\(windowID))",
+                    operationID: op
+                )
+                // yabai 写不返回硬失败（exit code 吞掉，最终以读回判据为准）。
+                return true
+            },
+            read: {
+                guard let current = cgWindowBounds(for: windowID) else { return nil }
+                if !CoordinateKit.isFrameConverged(actual: current, target: frame, tolerance: frameTolerance) {
+                    log("[WindowManager] moveWindowToFrameViaYabai: frame mismatch, retrying", level: .warn, fields: [
+                        "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attemptNo),
+                        "current": "\(Int(current.origin.x)),\(Int(current.origin.y)) \(Int(current.width))x\(Int(current.height))",
+                        "target": "\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.width))x\(Int(frame.height))",
+                        "originDrift": String(Int(CoordinateKit.originDrift(current.origin, frame.origin))),
+                        "sizeDrift": String(Int(CoordinateKit.sizeDrift(current.size, frame.size)))
                     ])
-                    return true
                 }
-                log("[WindowManager] moveWindowToFrameViaYabai: frame mismatch, retrying", level: .warn, fields: [
-                    "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attempt),
-                    "current": "\(Int(current.origin.x)),\(Int(current.origin.y)) \(Int(current.width))x\(Int(current.height))",
-                    "target": "\(Int(frame.origin.x)),\(Int(frame.origin.y)) \(Int(frame.width))x\(Int(frame.height))",
-                    "originDrift": String(Int(originDrift)),
-                    "sizeDrift": String(Int(sizeDrift))
-                ])
-            }
+                return current
+            },
+            isConverged: { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: frameTolerance) }
+        )
+        switch outcome {
+        case .converged(let attempt, _):
+            log("[WindowManager] moveWindowToFrameViaYabai: verified", level: .debug, fields: [
+                "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attempt)
+            ])
+            return true
+        case .mismatched, .writeFailed:
+            // mismatch 已在读回闭包按轮 warn；writeFailed 对 yabai 写不可达（防御分支）。
+            return false
         }
-        return false
     }
 
     /// Move a specific window to the main screen with proper space and size handling.
