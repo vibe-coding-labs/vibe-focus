@@ -390,7 +390,21 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 死代码结论为零调用再删；行为等价性靠 RoutingTests 契约 + 既有 33 个 Standalone
 测试守护；日志 schema 变更（mode/spaceMoveResult/floatMs/applyMs）在提交信息中明示。
 
-### 2.17 待办（第十轮后的遗留清单，按优先级）
+### 2.16a 第十一轮完成（2026-09-01，遗留清单清剿「五~九刀」，重构与单测同批交付）
+
+> 背景与上轮同源：把 2.17 遗留清单里的 P2 全部 + P3 大半清掉，
+> 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 4 个 Standalone 测试文件、
+> 105 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
+
+| 刀 | 提交 | 内容 | 配套测试 |
+|------|------|------|------|
+| 第五刀 refactor(hook) | 7085f77 | **WindowMove 决策统一**（与第一刀同构）：生产 handleWindowMoveTrigger 真正调 decideWindowMove 纯函数；remoteOnly 拒绝前移到一切绑定 IO 之前（此前后置在 self-heal 之后，被拒事件留下 binding 持久化副作用）；新增 httpResponse(for:) 纯函数收敛决策→响应码对照；删 moveBindingToMainScreen（决策上收，双重 onMain 预检收敛为一）；删 alreadyCompleted 死 case、proceed source 死三元、isLocalBinding/hasMachineLabel 死参数 | HookWindowMoveRoutingTests（39 项：决策树 9 case + remoteOnly 顺序契约 + stale 1800 严格边界 + 响应映射表） |
+| 第六刀 refactor(settings) | 2658da5 | **restoreStrategy 死设置下线**：pullToCurrent"拉到当前工作区"依赖 yabai v7 float 布局下静默失效的 `window --space`，无法诚实实现（第四刀实证），按"要么消费要么下线"取下线；删 SpaceRestoreStrategy/Picker/@AppStorage 全链，恢复恒为切回原工作区语义，行为零变化 | 5 个 XCTest 文件同步摘除死类型断言 |
+| 第七刀 refactor(arch) | b7ee821 | **反向依赖切断**：冷却状态从 HookEventHandler 私有字典抽为中立 MoveCooldownRegistry（Support/），WindowManager restore/move_to_main 后直接写注册表——Hook→Window→Hook 单例环断开（Window/Toggle 目录 grep 零 HookEventHandler 引用）；冷却语义/时长/时序零变化 | MoveCooldownRegistryTests（24 项：30s 严格边界、覆盖写重置、clear 放行、窗口隔离、Stop↔UPS↔手动归位流转） |
+| 第八刀 refactor(space) | 472a12f | **YabaiErrorClassifier**：4 处各自裸写的 stderr.contains 收敛为表驱动的六类纯函数分类（SA 缺失/MC 阻塞/无焦点/窗口不存在/未识别/空），大小写不敏感统一、优先级=表序；4 个调用点判定语义与历史一致。spaceMoveTrusted 评估后不强行接线（生产 `window --space` 变更调用已清零，无消费者） | YabaiErrorClassifierTests（16 项：真实 yabai 报错 fixture、大小写漂移、优先级、空白串边界） |
+| 第九刀 refactor(timing) | bac8a25 | **WindowSettle 常量表**：9 处裸 usleep（300/400/25/15/150ms）收敛为 5 个带语义命名的常量，两级分组（yabai 级 vs WindowServer 级），注明实测依据与全部使用点；行为零变化，25/15ms 归一留给 frame 收敛循环统一 | WindowSettleTimingTests（11 项：基准值锁定 + 两级不变量 + 有界性） |
+
+### 2.17 待办（第十一轮后的遗留清单，按优先级）
 
 | 优先级 | 项目 | 说明 |
 |--------|------|------|

@@ -150,22 +150,3 @@ struct LiveIntegrationTests {
         #expect(mock.clearCalls.isEmpty) // No clears for noRecord
     }
 }
-
-// MARK: - Helpers
-
-extension LiveIntegrationTests {
-    private func assertEligibility(
-        _ result: HookEventHandler.RestoreEligibility,
-        expected: String
-    ) {
-        let actual: String
-        switch result {
-        case .eligible: actual = "eligible"
-        case .toggleInFlight: actual = "toggleInFlight"
-        case .windowNotOnMainScreen: actual = "windowNotOnMainScreen"
-        case .noRecord: actual = "noRecord"
-        case .recordInvalid: actual = "recordInvalid"
-        }
-        #expect(actual == expected, "Expected \(expected), got \(actual)")
-    }
-}

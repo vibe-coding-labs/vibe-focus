@@ -10,25 +10,11 @@ extension HookEventHandler {
 
     // MARK: - Window Identity Resolution
 
-    /// Window identity resolution decision — extracted for testability.
-    enum WindowResolutionSource {
-        case binding(WindowIdentity)
-    }
-
-    /// Pure decision logic for resolveWindowIdentity.
-    static func decideWindowResolution(
-        hasBinding: Bool,
-        bindingVerified: Bool,
-        bindingIdentity: WindowIdentity?
-    ) -> WindowResolutionSource? {
-        if hasBinding {
-            if bindingVerified, let identity = bindingIdentity {
-                return .binding(identity)
-            }
-            return nil
-        }
-        return nil
-    }
+    // 历史注（playbook 2.16a）：decideWindowResolution/WindowResolutionSource 与
+    // decideRestoreEligibility/RestoreEligibility 两套"仅测试引用"的影子决策已删除——
+    // 前者只覆盖 hasBinding 分支、无法表达 self-heal 路径（真实决策在下方
+    // resolveWindowIdentity 内联且无分歧语义可收敛）；后者已废弃（UPS 改为
+    // 单向 moveWindowToMainScreen）。
 
     func resolveWindowIdentity(
         payload: ClaudeHookPayload,
@@ -127,34 +113,5 @@ extension HookEventHandler {
             ]
         )
         return nil
-    }
-
-    // MARK: - Restore Eligibility (Deprecated — kept for test compatibility)
-
-    /// Restore eligibility decision — extracted for testability.
-    /// ⚠️ 注意：此 enum 及 decideRestoreEligibility 仅被测试引用，生产代码不再使用。
-    /// UserPromptSubmit 现在直接使用 moveWindowToMainScreen（单向移动到主屏）。
-    enum RestoreEligibility {
-        case eligible(record: ToggleRecord, mainScreenFrame: CGRect)
-        case toggleInFlight
-        case windowNotOnMainScreen
-        case noRecord
-        case recordInvalid(windowID: UInt32)
-    }
-
-    /// Pure decision logic for validateRestoreEligibility.
-    static func decideRestoreEligibility(
-        isToggleInFlight: Bool,
-        isWindowOnMainScreen: Bool,
-        record: ToggleRecord?,
-        mainScreenFrame: CGRect?
-    ) -> RestoreEligibility {
-        if isToggleInFlight { return .toggleInFlight }
-        // 不再要求窗口必须在主屏 — 窗口在副屏但有 ToggleRecord 时也应该可以 restore
-        guard let record else { return .noRecord }
-        guard let mainScreenFrame, record.isValid(mainScreenFrame: mainScreenFrame) else {
-            return .recordInvalid(windowID: record.windowID)
-        }
-        return .eligible(record: record, mainScreenFrame: mainScreenFrame)
     }
 }

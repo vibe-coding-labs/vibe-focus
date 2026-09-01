@@ -81,109 +81,7 @@ struct RestoreIntegrationTests {
         #expect(assertDecisionIs(decision, expectedCase: "noRecord"))
     }
 
-    // MARK: - validateRestoreEligibility decision tests
-
-    @Test("decideRestoreEligibility: all valid → eligible")
-    func eligibilityAllValid() {
-        let record = makeRecord(
-            origFrame: CGRect(x: 100, y: -1000, width: 800, height: 600),
-            targetFrame: CGRect(x: 500, y: 300, width: 800, height: 600)
-        )
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        let result = HookEventHandler.decideRestoreEligibility(
-            isToggleInFlight: false,
-            isWindowOnMainScreen: true,
-            record: record,
-            mainScreenFrame: mainScreen
-        )
-        if case .eligible = result { } else {
-            #expect(Bool(false), "Expected .eligible, got \(result)")
-        }
-    }
-
-    @Test("decideRestoreEligibility: toggle in flight → toggleInFlight")
-    func eligibilityToggleInFlight() {
-        let result = HookEventHandler.decideRestoreEligibility(
-            isToggleInFlight: true,
-            isWindowOnMainScreen: true,
-            record: nil,
-            mainScreenFrame: nil
-        )
-        assertEligibility(result, expected: "toggleInFlight")
-    }
-
-    @Test("decideRestoreEligibility: window off main, no record → noRecord")
-    func eligibilityOffMain() {
-        // No record → noRecord, regardless of window position.
-        // The caller decides whether to moveWindowToMainScreen.
-        let result = HookEventHandler.decideRestoreEligibility(
-            isToggleInFlight: false,
-            isWindowOnMainScreen: false,
-            record: nil,
-            mainScreenFrame: nil
-        )
-        assertEligibility(result, expected: "noRecord")
-    }
-
-    @Test("decideRestoreEligibility: no record → noRecord")
-    func eligibilityNoRecord() {
-        let result = HookEventHandler.decideRestoreEligibility(
-            isToggleInFlight: false,
-            isWindowOnMainScreen: true,
-            record: nil,
-            mainScreenFrame: nil
-        )
-        assertEligibility(result, expected: "noRecord")
-    }
-
-    @Test("decideRestoreEligibility: no record and window off main → noRecord (caller handles fallback)")
-    func eligibilityNoRecordOffMain() {
-        // When no toggle record exists, decideRestoreEligibility returns noRecord
-        // regardless of window position — the caller (handleUserPromptSubmit) decides
-        // whether to fallback to moveWindowToMainScreen
-        let result = HookEventHandler.decideRestoreEligibility(
-            isToggleInFlight: false,
-            isWindowOnMainScreen: false,
-            record: nil,
-            mainScreenFrame: nil
-        )
-        assertEligibility(result, expected: "noRecord")
-    }
-
-    @Test("decideRestoreEligibility: corrupted record → recordInvalid")
-    func eligibilityCorrupted() {
-        let record = makeRecord(
-            origFrame: CGRect(x: 100, y: 200, width: 800, height: 600),
-            targetFrame: CGRect(x: 500, y: 300, width: 800, height: 600)
-        )
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        let result = HookEventHandler.decideRestoreEligibility(
-            isToggleInFlight: false,
-            isWindowOnMainScreen: true,
-            record: record,
-            mainScreenFrame: mainScreen
-        )
-        if case .recordInvalid(let windowID) = result {
-            #expect(windowID == 42)
-        } else {
-            #expect(Bool(false), "Expected .recordInvalid, got \(result)")
-        }
-    }
-
-    @Test("decideRestoreEligibility: valid record but nil mainScreen → recordInvalid")
-    func eligibilityNilMainScreen() {
-        let record = makeRecord(
-            origFrame: CGRect(x: 100, y: -1000, width: 800, height: 600),
-            targetFrame: CGRect(x: 500, y: 300, width: 800, height: 600)
-        )
-        let result = HookEventHandler.decideRestoreEligibility(
-            isToggleInFlight: false,
-            isWindowOnMainScreen: true,
-            record: record,
-            mainScreenFrame: nil
-        )
-        assertEligibility(result, expected: "recordInvalid")
-    }
+    // MARK: - validateRestoreEligibility（已随 decideRestoreEligibility 影子函数删除，见 2.16a 第五~十刀台账）
 
     // MARK: - Full pipeline: mock → decide → clear verification
 
@@ -200,47 +98,11 @@ struct RestoreIntegrationTests {
         #expect(bt == .local)
         #expect(bt.rawValue == "local")
     }
-
-    @Test("Full pipeline: Window resolution with binding → no mock interaction needed")
-    func windowResolutionBindingPipeline() {
-        let bindingIdentity = WindowIdentity(
-            windowID: 42, pid: 1234,
-            bundleIdentifier: "com.apple.Terminal",
-            appName: "Terminal", title: "bash"
-        )
-
-        let result = HookEventHandler.decideWindowResolution(
-            hasBinding: true,
-            bindingVerified: true,
-            bindingIdentity: bindingIdentity
-        )
-
-        if case .binding(let identity) = result {
-            #expect(identity.windowID == 42) // binding wins
-        } else {
-            #expect(Bool(false), "Expected .binding")
-        }
-    }
 }
 
 // MARK: - Helpers
 
 extension RestoreIntegrationTests {
-    private func assertEligibility(
-        _ result: HookEventHandler.RestoreEligibility,
-        expected: String
-    ) {
-        let actual: String
-        switch result {
-        case .eligible: actual = "eligible"
-        case .toggleInFlight: actual = "toggleInFlight"
-        case .windowNotOnMainScreen: actual = "windowNotOnMainScreen"
-        case .noRecord: actual = "noRecord"
-        case .recordInvalid: actual = "recordInvalid"
-        }
-        #expect(actual == expected, "Expected \(expected), got \(actual)")
-    }
-
     private func assertDecisionIs(
         _ result: WindowManager.RestoreDecision,
         expectedCase: String
