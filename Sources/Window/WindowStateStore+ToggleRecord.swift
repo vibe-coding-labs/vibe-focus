@@ -4,6 +4,14 @@ import SQLite3
 extension WindowStateStore {
     // MARK: - ToggleRecord (Single Source of Truth)
 
+    /// windows 表列所有权约定（2026-09-01 收敛）：
+    /// - toggle 列（orig_*/target_*/source_*/target_display/toggle_reason/toggled_at）
+    ///   → ToggleEngine（本组 API 独占写）
+    /// - session 绑定列（session_id/tty/cwd/model…）→ SessionWindowRegistry（saveWindowState）
+    /// saveToggleRecord 的 UPDATE 不写 session_id：手动 toggle 的 record.sessionID 恒为 nil，
+    /// 写 NULL 会把 registry 已绑定的 session 抹掉（内存与 DB 静默分叉，重启后绑定丢失）。
+    /// INSERT（行不存在）例外：新行没有可被覆盖的既有绑定，照常落 record.sessionID。
+
     /// 原子性保存 toggle record 到 windows 表
     func saveToggleRecord(_ record: ToggleRecord) {
         // P-INST-202: toggle record 保存耗时（UPDATE prepare/bind_double x12+ bind_int64/step + 必要时 INSERT upsert；ToggleEngine.save/restore 调用，hook+toggle 热路径 SQLite 写，WAL 通常 <1ms ≥5ms 异常）。
@@ -21,7 +29,7 @@ extension WindowStateStore {
         let now = Date().timeIntervalSince1970
         var stmt: OpaquePointer?
 
-        // 1. 尝试 UPDATE 已有行
+        // 1. 尝试 UPDATE 已有行（只写 toggle 列；session_id 归 SessionWindowRegistry，见文件头所有权约定）
         let updateSQL = """
             UPDATE windows SET
                 orig_x = ?, orig_y = ?, orig_w = ?, orig_h = ?,
@@ -29,9 +37,8 @@ extension WindowStateStore {
                 source_space = ?, source_display = ?,
                 source_yabai_disp = ?, source_disp_space = ?,
                 target_display = ?,
-                toggle_reason = 'manual_hotkey',
+                toggle_reason = ?,
                 toggled_at = ?,
-                session_id = ?,
                 updated_at = ?
             WHERE window_id = ?
         """
@@ -56,12 +63,8 @@ extension WindowStateStore {
         sqlite3_bind_int(stmt, 11, Int32(record.sourceYabaiDisp))
         sqlite3_bind_int(stmt, 12, Int32(record.sourceDispSpace))
         sqlite3_bind_int(stmt, 13, Int32(record.targetDisplay))
-        sqlite3_bind_double(stmt, 14, record.toggledAt.timeIntervalSince1970)
-        if let sid = record.sessionID, !sid.isEmpty {
-            sqlite3_bind_text(stmt, 15, sid, -1, SQLITE_TRANSIENT)
-        } else {
-            sqlite3_bind_null(stmt, 15)
-        }
+        sqlite3_bind_text(stmt, 14, record.reason, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 15, record.toggledAt.timeIntervalSince1970)
         sqlite3_bind_double(stmt, 16, now)
         sqlite3_bind_int64(stmt, 17, Int64(record.windowID))
 
@@ -104,7 +107,7 @@ extension WindowStateStore {
                 source_space, source_display, source_yabai_disp, source_disp_space,
                 target_display, toggle_reason, toggled_at, session_id,
                 is_completed, created_at
-            ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_hotkey', ?, ?, 0, ?)
+            ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         """
 
         guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
@@ -132,13 +135,14 @@ extension WindowStateStore {
         sqlite3_bind_int(stmt, 16, Int32(record.sourceYabaiDisp))
         sqlite3_bind_int(stmt, 17, Int32(record.sourceDispSpace))
         sqlite3_bind_int(stmt, 18, Int32(record.targetDisplay))
-        sqlite3_bind_double(stmt, 19, record.toggledAt.timeIntervalSince1970)
+        sqlite3_bind_text(stmt, 19, record.reason, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 20, record.toggledAt.timeIntervalSince1970)
         if let sid = record.sessionID, !sid.isEmpty {
-            sqlite3_bind_text(stmt, 20, sid, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 21, sid, -1, SQLITE_TRANSIENT)
         } else {
-            sqlite3_bind_null(stmt, 20)
+            sqlite3_bind_null(stmt, 21)
         }
-        sqlite3_bind_double(stmt, 21, now)
+        sqlite3_bind_double(stmt, 22, now)
 
         let insertResult = sqlite3_step(stmt)
         sqlite3_finalize(stmt)
@@ -176,7 +180,7 @@ extension WindowStateStore {
                    orig_x, orig_y, orig_w, orig_h,
                    target_x, target_y, target_w, target_h,
                    source_space, source_display, source_yabai_disp, source_disp_space,
-                   target_display, toggled_at, session_id
+                   target_display, toggled_at, session_id, toggle_reason
             FROM windows
             WHERE window_id = ? AND toggle_reason IS NOT NULL AND orig_x IS NOT NULL
         """
@@ -205,7 +209,7 @@ extension WindowStateStore {
                    orig_x, orig_y, orig_w, orig_h,
                    target_x, target_y, target_w, target_h,
                    source_space, source_display, source_yabai_disp, source_disp_space,
-                   target_display, toggled_at, session_id
+                   target_display, toggled_at, session_id, toggle_reason
             FROM windows
             WHERE pid = ? AND toggle_reason IS NOT NULL AND orig_x IS NOT NULL
             ORDER BY toggled_at DESC

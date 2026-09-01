@@ -123,6 +123,7 @@ extension WindowStateStore {
         let targetDisplay = Int(sqlite3_column_int(stmt, 16))
         let toggledAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 17))
         let sessionID: String? = sqlite3_column_text(stmt, 18).map { String(cString: $0) }
+        let reason: String? = sqlite3_column_text(stmt, 19).map { String(cString: $0) }
 
         return ToggleRecord(
             windowID: wID, pid: pid,
@@ -132,7 +133,8 @@ extension WindowStateStore {
             sourceYabaiDisp: sourceYabaiDisp, sourceDispSpace: sourceDispSpace,
             targetFrame: CGRect(x: tx, y: ty, width: tw, height: th),
             targetDisplay: targetDisplay,
-            toggledAt: toggledAt, sessionID: sessionID
+            toggledAt: toggledAt, sessionID: sessionID,
+            reason: reason ?? WindowMoveReason.manualHotkey.rawValue
         )
     }
 

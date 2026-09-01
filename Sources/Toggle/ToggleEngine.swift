@@ -53,7 +53,8 @@ final class ToggleEngine: ToggleRecordStore {
         sourceDispSpace: Int,
         targetFrame: CGRect,
         targetDisplay: Int,
-        sessionID: String?
+        sessionID: String?,
+        reason: WindowMoveReason = .manualHotkey
     ) {
         // P-INST-231: toggle record 保存编排端到端耗时（NSScreen.screens 主屏验证 + shouldRejectSave + ToggleRecord 构造 + store.saveToggleRecord SQLite 写 P-INST-17/P-INST-202；toggle 热路径每次调用，区分 NSScreen/构造 vs SQLite dbMs）。
         #if PERF_INSTRUMENT
@@ -92,7 +93,8 @@ final class ToggleEngine: ToggleRecordStore {
             targetFrame: targetFrame,
             targetDisplay: targetDisplay,
             toggledAt: Date(),
-            sessionID: sessionID
+            sessionID: sessionID,
+            reason: reason.rawValue
         )
 
         // P-INST-17: save SQLite 写耗时（saveMs 外部已记 moveWindowToMainScreen 的 saveMs 总耗时，此处拆 store.saveToggleRecord 的 SQLite 成本）。

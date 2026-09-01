@@ -154,6 +154,42 @@ struct ToggleRecord: Equatable {
     // MARK: - 元数据
     let toggledAt: Date
     let sessionID: String?
+    /// 移动原因（WindowMoveReason.rawValue），落库到 windows.toggle_reason。
+    /// 列所有权：本记录的写入方（ToggleEngine）只允许写 toggle 列；
+    /// session_id 等绑定列归 SessionWindowRegistry 独占写。
+    let reason: String
+
+    init(
+        windowID: UInt32,
+        pid: Int32,
+        bundleIdentifier: String?,
+        appName: String?,
+        origFrame: CGRect,
+        sourceSpace: Int,
+        sourceDisplay: Int,
+        sourceYabaiDisp: Int,
+        sourceDispSpace: Int,
+        targetFrame: CGRect,
+        targetDisplay: Int,
+        toggledAt: Date,
+        sessionID: String?,
+        reason: String = WindowMoveReason.manualHotkey.rawValue
+    ) {
+        self.windowID = windowID
+        self.pid = pid
+        self.bundleIdentifier = bundleIdentifier
+        self.appName = appName
+        self.origFrame = origFrame
+        self.sourceSpace = sourceSpace
+        self.sourceDisplay = sourceDisplay
+        self.sourceYabaiDisp = sourceYabaiDisp
+        self.sourceDispSpace = sourceDispSpace
+        self.targetFrame = targetFrame
+        self.targetDisplay = targetDisplay
+        self.toggledAt = toggledAt
+        self.sessionID = sessionID
+        self.reason = reason
+    }
 
     /// toggle state 是否有效（origFrame 不在主屏上，targetFrame 在主屏上）
     /// origFrame/targetFrame 是 Quartz 坐标，mainScreenFrame 是 Cocoa 坐标

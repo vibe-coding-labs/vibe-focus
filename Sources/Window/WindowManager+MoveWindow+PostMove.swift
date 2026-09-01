@@ -120,7 +120,8 @@ extension WindowManager {
             sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
             targetFrame: targetFrame,
             targetDisplay: targetDisplayIndex ?? 0,
-            sessionID: sessionID
+            sessionID: sessionID,
+            reason: reason
         )
         let saveMs = elapsedMilliseconds(since: saveStart)
 
