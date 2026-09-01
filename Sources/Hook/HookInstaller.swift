@@ -103,6 +103,13 @@ extension ClaudeHookPreferences {
 
     /// 安全 merge Hook 到 Claude settings.json
     /// 只覆盖 SessionStart/Stop/SessionEnd/UserPromptSubmit 四个 key，保留用户其他 hooks 和配置
+    ///
+    /// ## 场景
+    /// - 触发时机：AppDelegate 启动、hook 偏好变更（applyPreferences）、设置页手动安装
+    /// - 冷却语义：3s 冷却只拦截"期望内容与磁盘一致"的无变化重装；内容有变化
+    ///   （如刚关闭 triggerOnSessionEnd 需要摘除 SessionEnd hook）必须落盘——
+    ///   否则开关切换后 3s 内的同步被吞，settings.json 残留已禁用的 hook 而 UI
+    ///   显示成功（曾发生的静默不一致 bug）。
     static func installHookToClaudeSettings() -> (Bool, String) {
         // P-INST-78: claude settings 安装耗时（读 settings.json + JSONSerialization 解析 + cleanVibeFocusHooks + 编码 + atomic 写；含 3s 冷却防抖跳过；memory feedback_hook_forwarder_verification 关注的配置正确性路径；applyPreferences P-INST-77 子阶段）。
         #if PERF_INSTRUMENT
@@ -113,15 +120,6 @@ extension ClaudeHookPreferences {
             ])
         }
         #endif
-        // 防止 3 秒内重复调用
-        let now = Date()
-        let lastInstall = UserDefaults.standard.object(forKey: lastInstallAtKey) as? Date ?? .distantPast
-        guard now.timeIntervalSince(lastInstall) >= installCooldown else {
-            log("[ClaudeHookPreferences] install skipped: cooldown active")
-            return (true, "安装冷却中，请稍候")
-        }
-        UserDefaults.standard.set(now, forKey: lastInstallAtKey)
-
         ensureTokenGenerated()
         let path = claudeSettingsPath
         let dir = claudeSettingsDir
@@ -162,6 +160,20 @@ extension ClaudeHookPreferences {
         if !autoRestoreOnPromptSubmit { existingHooks.removeValue(forKey: "UserPromptSubmit") }
         settings["hooks"] = existingHooks
 
+        guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) else {
+            return (false, "无法序列化 JSON")
+        }
+
+        // 冷却判定放在内容计算之后：只有期望内容与磁盘字节一致（真正的无变化重装）
+        // 才允许跳过；lastInstallAt 也只在真实落盘时更新
+        let lastInstall = UserDefaults.standard.object(forKey: lastInstallAtKey) as? Date ?? .distantPast
+        if Date().timeIntervalSince(lastInstall) < installCooldown,
+           let existingData = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           existingData == data {
+            log("[ClaudeHookPreferences] install skipped: cooldown active, content unchanged")
+            return (true, "配置无变化")
+        }
+
         log(
             "[ClaudeHookPreferences] installing hooks",
             fields: [
@@ -172,11 +184,9 @@ extension ClaudeHookPreferences {
             ]
         )
 
-        guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) else {
-            return (false, "无法序列化 JSON")
-        }
         do {
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            UserDefaults.standard.set(Date(), forKey: lastInstallAtKey)
             log("[ClaudeHookPreferences] hooks installed successfully to \(path)")
             return (true, "已安装到 \(path)")
         } catch {
