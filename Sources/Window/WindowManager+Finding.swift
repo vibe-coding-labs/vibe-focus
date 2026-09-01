@@ -16,6 +16,39 @@ extension WindowManager {
         let title: String
     }
 
+    /// 窗口定位命中策略（日志归因用，2.16a 第十九刀随决策纯函数化引入）
+    enum ClaudeCodeMatchStrategy {
+        case hostAppProjectName    // 策略 1：hostApp + 标题含 cwd 项目名
+        case hostAppClaudeCodeTitle // 策略 2：hostApp + 标题含 "claude code"
+    }
+
+    /// cwd → 项目名（末段路径，小写归一）。nil/空串/全斜杠路径 → nil。
+    /// 纯函数（2.16a 第十九刀从 findClaudeCodeWindow 内联抽出）。
+    static func projectName(fromCwd cwd: String?) -> String? {
+        guard let cwd else { return nil }
+        let trimmed = cwd.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let last = trimmed.components(separatedBy: "/").last, !last.isEmpty else { return nil }
+        return last.lowercased()
+    }
+
+    /// Claude Code 窗口三级策略的候选匹配（纯函数，hostApp 判定由调用方注入）。
+    /// 策略 1（projectName 非空才启用）优先于策略 2，均未中返回 nil（调用方回退前台窗口）。
+    /// 标题匹配均为小写化 contains 子串语义。
+    static func matchClaudeCodeCandidate(
+        _ candidates: [WindowCandidate],
+        projectName: String?,
+        isHostApp: (WindowCandidate) -> Bool
+    ) -> (candidate: WindowCandidate, strategy: ClaudeCodeMatchStrategy)? {
+        if let projectName, !projectName.isEmpty,
+           let match = candidates.first(where: { isHostApp($0) && $0.title.lowercased().contains(projectName) }) {
+            return (match, .hostAppProjectName)
+        }
+        if let match = candidates.first(where: { isHostApp($0) && $0.title.lowercased().contains("claude code") }) {
+            return (match, .hostAppClaudeCodeTitle)
+        }
+        return nil
+    }
+
     /// Capture the identity of the currently focused window.
     ///
     /// Uses AX (not CGWindowList) for windowID because `resolveWindow(identity:)` later
@@ -104,12 +137,8 @@ extension WindowManager {
         let windows = cgWindowListAll()
         let cgListMs = elapsedMilliseconds(since: cgListStart)
 
-        // 从 cwd 中提取项目名（最后一段路径）
-        let projectName = cwd?
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .components(separatedBy: "/")
-            .last?
-            .lowercased()
+        // 从 cwd 中提取项目名（末段路径，纯函数；nil 表示无可用的项目名约束）
+        let projectName = Self.projectName(fromCwd: cwd)
 
         // Claude Code 常用的终端/IDE — 通过 TerminalRegistry 统一判断
         let isHostApp = { (c: WindowCandidate) in
@@ -140,43 +169,36 @@ extension WindowManager {
             ))
         }
 
-        // 策略 1：Claude Host App 窗口中标题包含 cwd 项目名
-        if let projectName, !projectName.isEmpty {
-            let match = candidates.first(where: { c in
-                return isHostApp(c) && c.title.lowercased().contains(projectName)
-            })
-            if let match {
+        // 三级策略匹配（纯决策，2.16a 第十九刀抽出；策略顺序与匹配条件的唯一事实源）
+        if let match = Self.matchClaudeCodeCandidate(candidates, projectName: projectName, isHostApp: isHostApp) {
+            switch match.strategy {
+            case .hostAppProjectName:
+                // 策略 1：Claude Host App 窗口中标题包含 cwd 项目名
                 log(
                     "[WindowManager] findClaudeCodeWindow matched strategy 1: hostApp+cwd",
                     fields: [
-                        "app": match.appName,
-                        "title": truncateForLog(match.title, limit: 80),
-                        "windowID": String(match.windowID),
-                        "projectName": projectName,
+                        "app": match.candidate.appName,
+                        "title": truncateForLog(match.candidate.title, limit: 80),
+                        "windowID": String(match.candidate.windowID),
+                        "projectName": projectName ?? "nil",
                         "cgListMs": String(cgListMs),
                         "durationMs": String(elapsedMilliseconds(since: fcStart))
                     ]
                 )
-                return makeIdentity(from: match)
+            case .hostAppClaudeCodeTitle:
+                // 策略 2：Claude Host App 窗口中标题包含 "claude code"（无屏幕约束）
+                log(
+                    "[WindowManager] findClaudeCodeWindow matched strategy 2: hostApp+claudeCode",
+                    fields: [
+                        "app": match.candidate.appName,
+                        "title": truncateForLog(match.candidate.title, limit: 80),
+                        "windowID": String(match.candidate.windowID),
+                        "cgListMs": String(cgListMs),
+                        "durationMs": String(elapsedMilliseconds(since: fcStart))
+                    ]
+                )
             }
-        }
-
-        // 策略 2：Claude Host App 窗口中标题包含 "Claude Code" 且在非主屏幕
-        let claudeMatch = candidates.first(where: { c in
-            return isHostApp(c) && c.title.lowercased().contains("claude code")
-        })
-        if let claudeMatch {
-            log(
-                "[WindowManager] findClaudeCodeWindow matched strategy 2: hostApp+claudeCode",
-                fields: [
-                    "app": claudeMatch.appName,
-                    "title": truncateForLog(claudeMatch.title, limit: 80),
-                    "windowID": String(claudeMatch.windowID),
-                    "cgListMs": String(cgListMs),
-                    "durationMs": String(elapsedMilliseconds(since: fcStart))
-                ]
-            )
-            return makeIdentity(from: claudeMatch)
+            return makeIdentity(from: match.candidate)
         }
 
         // 策略 4：回退到前台窗口
