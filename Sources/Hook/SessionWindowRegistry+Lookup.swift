@@ -81,19 +81,6 @@ extension SessionWindowRegistry {
         return nil
     }
 
-    /// 根据 windowID 查找绑定信息（返回轻量结构，不暴露内部 WindowState）
-    func findBinding(forWindowID windowID: UInt32) -> (tty: String?, termSessionID: String?, itermSessionID: String?, sessionID: String?, cwd: String?, model: String?)? {
-        guard let state = windowStates[windowID] else { return nil }
-        return (
-            tty: state.tty,
-            termSessionID: state.termSessionID,
-            itermSessionID: state.itermSessionID,
-            sessionID: state.sessionID,
-            cwd: state.cwd,
-            model: state.model
-        )
-    }
-
     // MARK: - UI Support
 
     var activeBindingsForUI: [WindowState] {

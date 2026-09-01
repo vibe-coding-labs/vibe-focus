@@ -8,15 +8,6 @@ import Foundation
 @MainActor
 extension WindowManager {
 
-    // MARK: - TTY Normalization (extracted for testability)
-
-    /// Normalize a TTY string to a full device path.
-    /// Returns nil for empty, "not a tty", or nil input.
-    static func normalizeTTY(_ tty: String?) -> String? {
-        guard let tty, !tty.isEmpty, tty != "not a tty" else { return nil }
-        return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
-    }
-
     // MARK: - Static Helpers (extracted for testability)
 
     /// Filter CGWindowEntry list to visible windows for a given PID — extracted for testability.

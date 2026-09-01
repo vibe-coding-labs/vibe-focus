@@ -198,22 +198,6 @@ extension SpaceController {
         return Self.resolveVisibleSpaceIndex(displayIndex: displayIndex, spaces: resolvedSpaces)
     }
 
-    func windowSpaceIndex(windowID: UInt32) -> SpaceIdentifier? {
-        refreshAvailabilityIfNeeded()
-        guard isEnabled, let window = queryWindow(windowID: windowID) else {
-            return nil
-        }
-        return window.space.map { .yabai($0) }
-    }
-
-    func windowDisplayIndex(windowID: UInt32) -> DisplayIdentifier? {
-        refreshAvailabilityIfNeeded()
-        guard isEnabled, let window = queryWindow(windowID: windowID) else {
-            return nil
-        }
-        return window.display.map { .yabai($0) }
-    }
-
     func currentSpaceIndex() -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let space = queryFocusedSpace() else {

@@ -100,35 +100,6 @@ struct WindowStateTests {
         #expect(state.targetFrame == nil)
     }
 
-    // MARK: - isCorrupted
-
-    @Test("isCorrupted: both frames on main screen → true")
-    func corruptedBothOnMain() {
-        let state = makeState(
-            origX: 100, origY: 200, origW: 800, origH: 600,
-            targetX: 500, targetY: 300, targetW: 800, targetH: 600
-        )
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(state.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
-    @Test("isCorrupted: origFrame off-screen → false")
-    func corruptedOrigOffScreen() {
-        let state = makeState(
-            origX: 100, origY: -1000, origW: 800, origH: 600,
-            targetX: 500, targetY: 300, targetW: 800, targetH: 600
-        )
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(!state.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
-    @Test("isCorrupted: missing frames → false")
-    func corruptedMissingFrames() {
-        let state = makeState(origX: 100, targetX: 500)
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(!state.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
     // MARK: - Equatable
 
     @Test("WindowState Equatable: same values are equal")

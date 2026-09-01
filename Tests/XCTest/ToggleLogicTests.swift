@@ -7,55 +7,6 @@ import CoreGraphics
 @MainActor
 struct ToggleLogicTests {
 
-    // MARK: - WindowState.isCorrupted
-
-    @Test("WindowState.isCorrupted: both frames on main screen → corrupted")
-    func isCorruptedBothOnMain() {
-        var state = WindowState(
-            windowID: 1, pid: 100, tty: nil, axWindowNumber: 1,
-            appName: "App", bundleIdentifier: "com.app", title: "Test",
-            termSessionID: nil, itermSessionID: nil,
-            sessionID: "s1", isCompleted: false,
-            createdAt: Date(), updatedAt: Date()
-        )
-        // Both frames centered on main screen (0,0 1920x1080)
-        state.origX = 100; state.origY = 100; state.origW = 800; state.origH = 600
-        state.targetX = 500; state.targetY = 300; state.targetW = 800; state.targetH = 600
-
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(state.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
-    @Test("WindowState.isCorrupted: orig off-screen → not corrupted")
-    func isCorruptedOrigOffScreen() {
-        var state = WindowState(
-            windowID: 1, pid: 100, tty: nil, axWindowNumber: 1,
-            appName: "App", bundleIdentifier: "com.app", title: "Test",
-            termSessionID: nil, itermSessionID: nil,
-            sessionID: "s1", isCompleted: false,
-            createdAt: Date(), updatedAt: Date()
-        )
-        // orig above screen, target on screen
-        state.origX = 100; state.origY = -1000; state.origW = 800; state.origH = 600
-        state.targetX = 500; state.targetY = 300; state.targetW = 800; state.targetH = 600
-
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(!state.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
-    @Test("WindowState.isCorrupted: nil frames → not corrupted")
-    func isCorruptedNilFrames() {
-        let state = WindowState(
-            windowID: 1, pid: 100, tty: nil, axWindowNumber: 1,
-            appName: "App", bundleIdentifier: "com.app", title: "Test",
-            termSessionID: nil, itermSessionID: nil,
-            sessionID: "s1", isCompleted: false,
-            createdAt: Date(), updatedAt: Date()
-        )
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(!state.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
     // MARK: - WindowState.hasToggleState
 
     @Test("WindowState.hasToggleState: both present → true")

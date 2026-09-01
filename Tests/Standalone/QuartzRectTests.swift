@@ -34,10 +34,6 @@ struct QuartzRect: Equatable, CustomStringConvertible {
     var cgRect: CGRect { CGRect(origin: origin, size: size) }
 
     var description: String { "\(Int(x)),\(Int(y)) \(Int(width))x\(Int(height))" }
-
-    func centerIsInside(_ screenFrame: CGRect) -> Bool {
-        screenFrame.contains(CGPoint(x: midX, y: midY))
-    }
 }
 
 // MARK: - Coordinate conversion (mirrors CoordinateKit.swift:156-162)
@@ -95,22 +91,6 @@ print("\n3. QuartzRect description")
 do {
     let r = QuartzRect(x: 1480, y: -707, width: 1146, height: 707)
     checkEqual("description", r.description, "1480,-707 1146x707")
-}
-
-// MARK: - centerIsInside
-
-print("\n4. QuartzRect.centerIsInside")
-do {
-    let mainScreen = CGRect(x: 0, y: 0, width: 1728, height: 1117)
-
-    let onMain = QuartzRect(x: 500, y: 300, width: 800, height: 600)
-    check("center on main screen", onMain.centerIsInside(mainScreen))
-
-    let offScreen = QuartzRect(x: 1480, y: -710, width: 1145, height: 710)
-    check("center off-screen (secondary above)", !offScreen.centerIsInside(mainScreen))
-
-    let edgeCase = QuartzRect(x: 0, y: 0, width: 1, height: 1)
-    check("1x1 at origin on main screen", edgeCase.centerIsInside(mainScreen))
 }
 
 // MARK: - Coordinate conversion symmetry

@@ -45,7 +45,6 @@ enum SpaceIdentifier: Equatable, CustomStringConvertible {
 extension DisplayIdentifier {
     var yabaiIndex: Int? { if case .yabaiIndex(let i) = self { return i } else { return nil } }
     static func yabai(_ index: Int) -> DisplayIdentifier { .yabaiIndex(index) }
-    static func screenArray(_ index: Int) -> DisplayIdentifier { .screenArrayIndex(index) }
     static func cgDisplay(_ id: UInt32) -> DisplayIdentifier { .cgDirectDisplayID(id) }
 }
 
@@ -95,10 +94,6 @@ struct QuartzRect: Equatable, CustomStringConvertible {
 
     /// size-only 描述 "WxH"（log 字段只关心尺寸时）
     var sizeDescription: String { "\(Int(width))x\(Int(height))" }
-
-    func centerIsInside(_ screenFrame: CGRect) -> Bool {
-        screenFrame.contains(CGPoint(x: midX, y: midY))
-    }
 }
 
 // MARK: - 坐标转换
@@ -288,11 +283,6 @@ enum CoordinateKit {
     static func isFrameConverged(actual: CGRect, target: CGRect, tolerance: CGFloat) -> Bool {
         originDrift(actual.origin, target.origin) <= tolerance &&
         sizeDrift(actual.size, target.size) <= tolerance
-    }
-
-    static func isFrameOnExpectedScreen(_ frame: CGRect, expectedScreen: NSScreen) -> Bool {
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        return expectedScreen.frame.contains(center)
     }
 }
 

@@ -113,9 +113,4 @@ extension SpaceController {
         markOperationError(from: result.failure, fallback: "Failed to focus window \(windowID)", operationID: op)
         return false
     }
-
-    func displayVisibleSpace(displayIndex: DisplayIdentifier?) -> SpaceIdentifier? {
-        guard let idx = displayIndex?.yabaiIndex else { return nil }
-        return visibleSpaceIndex(forDisplayIndex: idx)
-    }
 }

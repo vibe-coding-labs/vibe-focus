@@ -63,12 +63,6 @@ struct TestWindowState: Equatable {
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
-    func isCorrupted(mainScreenFrame: CGRect) -> Bool {
-        guard let orig = originalFrame, let tgt = targetFrame else { return false }
-        let origCenter = CGPoint(x: orig.midX, y: orig.midY)
-        let tgtCenter = CGPoint(x: tgt.midX, y: tgt.midY)
-        return mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
-    }
 }
 
 // MARK: - Test harness
@@ -228,24 +222,6 @@ do {
     var ws2 = TestWindowState()
     ws2.targetX = 100; ws2.targetY = 200; ws2.targetW = nil; ws2.targetH = 500
     check("missing targetW → nil targetFrame", ws2.targetFrame == nil)
-}
-
-// MARK: - WindowState.isCorrupted
-
-print("\n6. WindowState.isCorrupted")
-do {
-    var ws1 = TestWindowState()
-    ws1.origX = 100; ws1.origY = 100; ws1.origW = 500; ws1.origH = 500
-    ws1.targetX = 200; ws1.targetY = 200; ws1.targetW = 600; ws1.targetH = 600
-    check("both on main screen → corrupted", ws1.isCorrupted(mainScreenFrame: mainScreenFrame))
-
-    var ws2 = TestWindowState()
-    ws2.origX = 1480; ws2.origY = -710; ws2.origW = 1145; ws2.origH = 710
-    ws2.targetX = 75; ws2.targetY = 38; ws2.targetW = 1656; ws2.targetH = 1070
-    check("orig off-screen → NOT corrupted", !ws2.isCorrupted(mainScreenFrame: mainScreenFrame))
-
-    let ws3 = TestWindowState()
-    check("no frames → NOT corrupted", !ws3.isCorrupted(mainScreenFrame: mainScreenFrame))
 }
 
 // MARK: - Summary

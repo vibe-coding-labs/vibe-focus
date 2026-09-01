@@ -21,28 +21,6 @@ func endpointURLString(port: Int, token: String?) -> String {
     return "http://127.0.0.1:\(effectivePort)\(endpointPath)"
 }
 
-func hookCommandExample(port: Int, token: String?) -> String {
-    let effectivePort = normalizePort(port)
-    let tokenHeader = token?.isEmpty == false
-        ? "  \\\n  -H 'X-VibeFocus-Token: \(token ?? "")'"
-        : ""
-    return """
-#!/bin/bash
-set -euo pipefail
-
-EVENT="$1" # SessionStart or SessionEnd
-PAYLOAD="$(cat)"
-SESSION_ID="$(echo "$PAYLOAD" | jq -r '.session_id // .sessionId // empty' 2>/dev/null || true)"
-if [ -z "$SESSION_ID" ]; then
-  SESSION_ID="unknown-session"
-fi
-
-curl -sS -X POST "http://127.0.0.1:\(effectivePort)/claude/hook" \
-  -H "Content-Type: application/json"\(tokenHeader) \
-  --data "{\"event\":\"$EVENT\",\"session_id\":\"$SESSION_ID\",\"source\":\"claude-code-hook\"}" >/dev/null || true
-"""
-}
-
 func makeHookEntry(helperScriptPath: String) -> [String: Any] {
     [
         "matcher": "",
@@ -138,31 +116,6 @@ do {
     checkEqual("port 99999 → 65535",
         endpointURLString(port: 99999, token: nil),
         "http://127.0.0.1:65535/claude/hook")
-}
-
-// MARK: - hookCommandExample
-
-print("\n4. hookCommandExample — without token")
-do {
-    let script = hookCommandExample(port: 39277, token: nil)
-    check("contains bash shebang", script.hasPrefix("#!/bin/bash"))
-    check("contains set -euo pipefail", script.contains("set -euo pipefail"))
-    check("contains correct port", script.contains("http://127.0.0.1:39277/claude/hook"))
-    check("contains Content-Type header", script.contains("Content-Type: application/json"))
-    check("NO token header when nil", !script.contains("X-VibeFocus-Token"))
-}
-
-print("\n5. hookCommandExample — with token")
-do {
-    let script = hookCommandExample(port: 39277, token: "my-secret-token")
-    check("contains token header", script.contains("X-VibeFocus-Token: my-secret-token"))
-    check("contains correct port", script.contains("http://127.0.0.1:39277/claude/hook"))
-}
-
-print("\n6. hookCommandExample — port normalization in script")
-do {
-    let script = hookCommandExample(port: 80, token: nil)
-    check("port normalized to 1024 in script", script.contains("http://127.0.0.1:1024/claude/hook"))
 }
 
 // MARK: - makeHookEntry

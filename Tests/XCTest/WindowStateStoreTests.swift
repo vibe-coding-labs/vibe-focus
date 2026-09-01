@@ -305,34 +305,6 @@ struct WindowStateStoreTests {
         #expect(found!.isCompleted == true)
     }
 
-    // MARK: - isCorrupted detection via stored state
-
-    @Test("isCorrupted detects both frames on main screen after roundtrip")
-    func isCorruptedAfterRoundtrip() {
-        let store = makeStore()
-        let state = WindowState(
-            windowID: 50, pid: 100, tty: nil,
-            axWindowNumber: nil, appName: "App", bundleIdentifier: "com.app",
-            title: "Test",
-            termSessionID: nil, itermSessionID: nil,
-            kittyWindowID: nil, weztermPane: nil, envWindowID: nil,
-            sessionID: "s1", cwd: nil, model: nil,
-            origX: 100, origY: 200, origW: 800, origH: 600,
-            targetX: 500, targetY: 300, targetW: 800, targetH: 600,
-            sourceSpace: nil, sourceDisplay: nil,
-            sourceYabaiDisp: nil, sourceDispSpace: nil,
-            targetDisplay: nil, toggleReason: nil, toggledAt: nil,
-            isCompleted: false, completedAt: nil,
-            createdAt: fixedDate, updatedAt: fixedDate
-        )
-        store.saveWindowState(state)
-
-        let found = store.findWindowState(windowID: 50)
-        #expect(found != nil)
-        let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(found!.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
     // MARK: - toggle record + window state interaction
 
     @Test("toggle record and window state coexist for same windowID")

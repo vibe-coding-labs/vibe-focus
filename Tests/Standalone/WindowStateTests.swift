@@ -31,13 +31,6 @@ struct WindowState {
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
-    func isCorrupted(mainScreenFrame: CGRect) -> Bool {
-        guard let orig = originalFrame, let tgt = targetFrame else { return false }
-        let origCenter = CGPoint(x: orig.midX, y: orig.midY)
-        let tgtCenter = CGPoint(x: tgt.midX, y: tgt.midY)
-        return mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
-    }
-
     func isNearTarget(currentFrame: CGRect, tolerance: CGFloat = 150) -> Bool {
         guard let tgt = targetFrame else { return true }
         return abs(currentFrame.origin.x - tgt.origin.x) <= tolerance &&
@@ -84,28 +77,6 @@ print("Test 4: hasToggleState — neither")
 do {
     let state = makeState()
     check("neither set", !state.hasToggleState)
-}
-
-print("Test 5: isCorrupted — both on main screen")
-do {
-    var state = makeState()
-    state.origX = 100; state.origY = 100; state.origW = 500; state.origH = 500
-    state.targetX = 200; state.targetY = 200; state.targetW = 600; state.targetH = 600
-    check("both on main screen = corrupted", state.isCorrupted(mainScreenFrame: mainScreenFrame))
-}
-
-print("Test 6: isCorrupted — orig off screen")
-do {
-    var state = makeState()
-    state.origX = 1480; state.origY = -710; state.origW = 1145; state.origH = 710
-    state.targetX = 75; state.targetY = 38; state.targetW = 1656; state.targetH = 1070
-    check("orig off screen = not corrupted", !state.isCorrupted(mainScreenFrame: mainScreenFrame))
-}
-
-print("Test 7: isCorrupted — missing frames")
-do {
-    let state = makeState()
-    check("no frames = not corrupted", !state.isCorrupted(mainScreenFrame: mainScreenFrame))
 }
 
 print("Test 8: isNearTarget — within tolerance")

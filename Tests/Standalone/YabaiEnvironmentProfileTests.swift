@@ -93,13 +93,6 @@ enum YabaiEnvironmentProbe {
         }
     }
 
-    static func parseVersion(_ text: String) -> (major: Int, minor: Int, patch: Int)? {
-        let token = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard token.hasPrefix("yabai-v") else { return nil }
-        let parts = token.dropFirst("yabai-v".count).split(separator: ".").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        return (parts[0], parts[1], parts[2])
-    }
 }
 
 // MARK: - 断言框架
@@ -180,14 +173,6 @@ check("S8 缺 type 字段 → layout 兜底 unknown", missingType.count == 1 && 
 
 let missingIndex = YabaiEnvironmentProbe.parseSpaces("[{\"display\":1,\"type\":\"float\"},{\"index\":2,\"display\":1,\"type\":\"bsp\"}]")
 check("S9 缺 index/display 的条目被跳过，其余保留", missingIndex.count == 1 && missingIndex[0].index == 2)
-
-// MARK: - parseVersion 边界
-
-check("V1 标准版本解析", YabaiEnvironmentProbe.parseVersion("yabai-v7.1.18").map { $0.major == 7 && $0.minor == 1 && $0.patch == 18 } == true)
-check("V2 无前缀拒绝", YabaiEnvironmentProbe.parseVersion("7.1.18") == nil)
-check("V3 段数不足拒绝", YabaiEnvironmentProbe.parseVersion("yabai-v7.1") == nil)
-check("V4 空串拒绝", YabaiEnvironmentProbe.parseVersion("") == nil)
-check("V5 非数字段拒绝", YabaiEnvironmentProbe.parseVersion("yabai-v7.x.18") == nil)
 
 // MARK: - probe 三层判定（runner 注入，零真实 I/O）
 

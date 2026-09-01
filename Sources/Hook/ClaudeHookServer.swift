@@ -137,29 +137,29 @@ final class ClaudeHookServer: ObservableObject {
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "hook_request")
 
-        if let expectedToken = configuredToken, !expectedToken.isEmpty {
-            let queryToken = query["token"]
-            let headerToken = Self.resolveHeaderValue(from: headers, forKey: "X-VibeFocus-Token")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let providedToken = queryToken ?? headerToken
-            guard providedToken == expectedToken else {
-                log(
-                    "[ClaudeHookServer] token validation failed",
-                    level: .warn,
-                    fields: [
-                        "hasQueryToken": String(queryToken != nil),
-                        "hasHeaderToken": String(!headerToken.isEmpty),
-                        "tokenPrefix": String(providedToken.prefix(8)) + "..."
-                    ]
+        // token 验证：provided 取值与判定走纯函数（2.16a 第十六刀影子接线——
+        // 此前生产内联同一逻辑、纯函数零调用，两份语义漂移风险）。
+        let providedToken = Self.resolveProvidedToken(query: query, headers: headers)
+        if !Self.isTokenValid(expectedToken: configuredToken, providedToken: providedToken) {
+            let headerToken = Self.resolveHeaderValue(from: headers, forKey: "X-VibeFocus-Token")?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            log(
+                "[ClaudeHookServer] token validation failed",
+                level: .warn,
+                fields: [
+                    "hasQueryToken": String(query["token"] != nil),
+                    "hasHeaderToken": String(!headerToken.isEmpty),
+                    "tokenPrefix": String(providedToken.prefix(8)) + "..."
+                ]
+            )
+            return (
+                401,
+                ClaudeHookResponse(
+                    ok: false, code: "unauthorized",
+                    message: "Missing or invalid hook token",
+                    sessionID: nil, handled: false
                 )
-                return (
-                    401,
-                    ClaudeHookResponse(
-                        ok: false, code: "unauthorized",
-                        message: "Missing or invalid hook token",
-                        sessionID: nil, handled: false
-                    )
-                )
-            }
+            )
         }
 
         totalRequestCount += 1
@@ -255,8 +255,8 @@ final class ClaudeHookServer: ObservableObject {
     }
 
     /// Pure token validation — extracted for testability.
-    /// Returns the effective token from query params or headers, or nil if no token needed.
-    static func resolveProvidedToken(query: [String: String], headers: [String: String]) -> String? {
+    /// Returns the effective token from query params or headers (empty string when absent — never nil).
+    static func resolveProvidedToken(query: [String: String], headers: [String: String]) -> String {
         let queryToken = query["token"]
         let headerToken = resolveHeaderValue(from: headers, forKey: "X-VibeFocus-Token")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

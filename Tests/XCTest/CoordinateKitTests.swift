@@ -66,8 +66,6 @@ struct CoordinateKitTests {
         let yabai = DisplayIdentifier.yabai(1)
         #expect(yabai == DisplayIdentifier.yabaiIndex(1))
 
-        let screen = DisplayIdentifier.screenArray(2)
-        #expect(screen == DisplayIdentifier.screenArrayIndex(2))
 
         let cg = DisplayIdentifier.cgDisplay(42)
         #expect(cg == DisplayIdentifier.cgDirectDisplayID(42))
@@ -189,28 +187,6 @@ struct CoordinateKitTests {
         #expect(rect.description == "100,200 800x600")
     }
 
-    @Test("QuartzRect centerIsInside returns true when center is within screen")
-    func quartzRectCenterInsideTrue() {
-        let window = QuartzRect(x: 100, y: 100, width: 800, height: 600)
-        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(window.centerIsInside(screen))
-    }
-
-    @Test("QuartzRect centerIsInside returns false when center is outside screen")
-    func quartzRectCenterInsideFalse() {
-        let window = QuartzRect(x: 2000, y: 100, width: 800, height: 600)
-        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        #expect(!window.centerIsInside(screen))
-    }
-
-    @Test("QuartzRect centerIsInside boundary: center exactly on edge")
-    func quartzRectCenterInsideBoundary() {
-        // midX = 1920, midY = 540 — exactly on right edge of screen
-        let window = QuartzRect(x: 1520, y: 0, width: 800, height: 1080)
-        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        // CGRect.contains excludes max edge
-        #expect(!window.centerIsInside(screen))
-    }
 
     // MARK: - framesMatch（已删除，判据统一为 CoordinateKit 漂移和系列，见 FrameConvergenceTests 镜像）
 }

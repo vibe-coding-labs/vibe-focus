@@ -114,13 +114,4 @@ enum YabaiEnvironmentProbe {
             )
         }
     }
-
-    /// 解析 `yabai --version` 输出（"yabai-v7.1.18"）→ 语义化版本。
-    static func parseVersion(_ text: String) -> (major: Int, minor: Int, patch: Int)? {
-        let token = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard token.hasPrefix("yabai-v") else { return nil }
-        let parts = token.dropFirst("yabai-v".count).split(separator: ".").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        return (parts[0], parts[1], parts[2])
-    }
 }

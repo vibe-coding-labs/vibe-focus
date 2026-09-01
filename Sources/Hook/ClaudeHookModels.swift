@@ -121,14 +121,6 @@ struct WindowState: Codable, Equatable {
         guard let x = targetX, let y = targetY, let w = targetW, let h = targetH else { return nil }
         return CGRect(x: x, y: y, width: w, height: h)
     }
-
-    /// 是否被污染（originalFrame 和 targetFrame 都在主屏幕上）
-    func isCorrupted(mainScreenFrame: CGRect) -> Bool {
-        guard let orig = originalFrame, let tgt = targetFrame else { return false }
-        let origCenter = CGPoint(x: orig.midX, y: orig.midY)
-        let tgtCenter = CGPoint(x: tgt.midX, y: tgt.midY)
-        return mainScreenFrame.contains(origCenter) && mainScreenFrame.contains(tgtCenter)
-    }
 }
 
 /// Toggle 操作的完整快照 — 单一事实来源

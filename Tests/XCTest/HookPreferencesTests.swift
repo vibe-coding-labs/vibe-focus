@@ -5,7 +5,7 @@ import Foundation
 @Suite("ClaudeHookPreferences", .serialized)
 struct HookPreferencesTests {
 
-    // MARK: - normalizePort (tested indirectly via endpointURLString and hookCommandExample)
+    // MARK: - normalizePort (tested indirectly via endpointURLString)
 
     @Test("endpointURLString with default port uses 39277")
     func endpointURLDefaultPort() {
@@ -54,40 +54,6 @@ struct HookPreferencesTests {
 
         let url = ClaudeHookPreferences.endpointURLString(port: 5000)
         #expect(url.contains("?token=test-token-123"))
-    }
-
-    // MARK: - hookCommandExample
-
-    @Test("hookCommandExample contains curl POST to correct port")
-    func hookCommandExampleContainsPort() {
-        let example = ClaudeHookPreferences.hookCommandExample(port: 12345)
-        #expect(example.contains("127.0.0.1:12345"))
-        #expect(example.contains("/claude/hook"))
-        #expect(example.contains("#!/bin/bash"))
-    }
-
-    @Test("hookCommandExample without token has no X-VibeFocus-Token header")
-    func hookCommandExampleNoToken() {
-        let example = ClaudeHookPreferences.hookCommandExample(port: 39277, token: nil)
-        #expect(!example.contains("X-VibeFocus-Token"))
-    }
-
-    @Test("hookCommandExample with token includes X-VibeFocus-Token header")
-    func hookCommandExampleWithToken() {
-        let example = ClaudeHookPreferences.hookCommandExample(port: 39277, token: "my-secret")
-        #expect(example.contains("X-VibeFocus-Token: my-secret"))
-    }
-
-    @Test("hookCommandExample clamps port")
-    func hookCommandExampleClampsPort() {
-        let example = ClaudeHookPreferences.hookCommandExample(port: 50)
-        #expect(example.contains("127.0.0.1:1024"))
-    }
-
-    @Test("hookCommandExample contains Content-Type json header")
-    func hookCommandExampleContentType() {
-        let example = ClaudeHookPreferences.hookCommandExample(port: 39277)
-        #expect(example.contains("Content-Type: application/json"))
     }
 
     // MARK: - generateHooksDict

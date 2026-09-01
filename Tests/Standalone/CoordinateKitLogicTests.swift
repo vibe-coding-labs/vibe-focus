@@ -65,9 +65,6 @@ struct QuartzRect: Equatable, CustomStringConvertible {
 
     var description: String { "\(Int(x)),\(Int(y)) \(Int(width))x\(Int(height))" }
 
-    func centerIsInside(_ screenFrame: CGRect) -> Bool {
-        screenFrame.contains(CGPoint(x: midX, y: midY))
-    }
 }
 
 // MARK: - Test harness
@@ -197,38 +194,6 @@ do {
     let c = QuartzRect(x: 101, y: 200, width: 800, height: 600)
     check("same rect equal", a == b)
     check("different x not equal", a != c)
-}
-
-print("\n14. QuartzRect — centerIsInside (main screen)")
-do {
-    let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1117)
-    let window = QuartzRect(x: 500, y: 300, width: 800, height: 600)
-    check("center on main screen", window.centerIsInside(mainScreen))
-}
-
-print("\n15. QuartzRect — centerIsInside (off screen)")
-do {
-    let mainScreen = CGRect(x: 0, y: 0, width: 1920, height: 1117)
-    let aboveScreen = QuartzRect(x: 100, y: -800, width: 800, height: 600)
-    check("center above main → false", !aboveScreen.centerIsInside(mainScreen))
-
-    let rightScreen = QuartzRect(x: 2000, y: 100, width: 800, height: 600)
-    check("center right of main → false", !rightScreen.centerIsInside(mainScreen))
-
-    let belowScreen = QuartzRect(x: 100, y: 1200, width: 800, height: 600)
-    check("center below main → false", !belowScreen.centerIsInside(mainScreen))
-}
-
-print("\n16. QuartzRect — centerIsInside at boundary")
-do {
-    let screen = CGRect(x: 0, y: 0, width: 1920, height: 1117)
-    // Center at (960, 558.5) — clearly inside
-    let inside = QuartzRect(x: 560, y: 258.5, width: 800, height: 600)
-    check("center clearly inside", inside.centerIsInside(screen))
-
-    // Center exactly at right edge (1920, 300) — CGRect.contains excludes max edge
-    let atEdge = QuartzRect(x: 1520, y: 0, width: 800, height: 600)
-    check("center at maxX → CGRect excludes max edge", !screen.contains(CGPoint(x: 1920, y: 300)))
 }
 
 print("\n17. QuartzRect — negative Y (secondary above)")

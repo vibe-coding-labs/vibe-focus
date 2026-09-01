@@ -184,21 +184,6 @@ struct WindowStateAdvancedTests {
         #expect(frame?.height == 0)
     }
 
-    @Test("WindowState.isCorrupted: target center on boundary")
-    func corruptionBoundaryCheck() {
-        var state = makeMinimal()
-        // origFrame center at (400, 300) — inside 0,0 800x600
-        state.origX = 0; state.origY = 0; state.origW = 800; state.origH = 600
-        // targetFrame center at (800, 300) — on maxX boundary
-        state.targetX = 400; state.targetY = 0; state.targetW = 800; state.targetH = 600
-
-        let mainScreen = CGRect(x: 0, y: 0, width: 800, height: 600)
-        // CGRect.contains does NOT include maxX boundary
-        // origCenter = (400, 300) → inside
-        // targetCenter = (800, 300) → NOT inside (on boundary)
-        #expect(!state.isCorrupted(mainScreenFrame: mainScreen))
-    }
-
     // MARK: - Equatable comprehensive
 
     @Test("WindowState Equatable: different pid → not equal")
