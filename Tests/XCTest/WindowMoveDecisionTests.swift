@@ -186,12 +186,12 @@ struct WindowMoveDecisionTests {
             isWindowOnMainScreen: false, isInCooldown: false,
             bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: true,
-            remoteOnly: true, isLocalBinding: true
+            remoteOnly: true
         )
         assertDecision(result, expected: "localBindingSkip")
     }
 
-    @Test("remoteOnly + remote binding → proceedToMove")
+    @Test("remoteOnly + remote binding → localBindingSkip")
     func remoteOnlyRemoteBindingProceeds() {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
@@ -199,7 +199,7 @@ struct WindowMoveDecisionTests {
             isWindowOnMainScreen: false, isInCooldown: false,
             bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: true,
-            remoteOnly: true, isLocalBinding: false
+            remoteOnly: true
         )
         // remoteOnly now skips ALL bindings regardless of type
         if case .localBindingSkip = result { } else {
@@ -215,7 +215,7 @@ struct WindowMoveDecisionTests {
             isWindowOnMainScreen: false, isInCooldown: false,
             bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: true,
-            remoteOnly: true, isLocalBinding: true
+            remoteOnly: true
         )
         assertDecision(result, expected: "autoFocusDisabled")
     }
@@ -228,26 +228,26 @@ struct WindowMoveDecisionTests {
             isWindowOnMainScreen: false, isInCooldown: false,
             bindingAge: 100,
             pidMatches: true, isTerminalOrIDE: true,
-            remoteOnly: false, isLocalBinding: true
+            remoteOnly: false
         )
         if case .proceedToMove = result { } else {
             #expect(Bool(false), "Expected .proceedToMove, got \(result)")
         }
     }
 
-    @Test("remoteOnly + local binding + hasMachineLabel → localBindingSkip (all local bindings skipped in remoteOnly mode)")
-    func remoteOnlyLocalBindingWithMachineLabel() {
+    @Test("remoteOnly takes priority over binding lookup (no binding → localBindingSkip, not noBindingSkip)")
+    func remoteOnlyPriorityOverBindingLookup() {
         let result = HookEventHandler.decideWindowMove(
             autoFocusEnabled: true,
-            hasBinding: true, bindingVerified: true,
+            hasBinding: false, bindingVerified: false,
             isWindowOnMainScreen: false, isInCooldown: false,
-            bindingAge: 100,
-            pidMatches: true, isTerminalOrIDE: true,
-            remoteOnly: true, isLocalBinding: true, hasMachineLabel: true
+            bindingAge: 0,
+            pidMatches: nil, isTerminalOrIDE: true,
+            remoteOnly: true
         )
-        if case .localBindingSkip = result { } else {
-            #expect(Bool(false), "Expected .localBindingSkip, got \(result)")
-        }
+        // 生产侧契约：remoteOnly 拒绝发生在 binding 查找/self-heal 之前，
+        // 不产生任何 bind 持久化副作用
+        assertDecision(result, expected: "localBindingSkip")
     }
 
     // MARK: - Guard priority (decision order matters)
@@ -288,7 +288,6 @@ struct WindowMoveDecisionTests {
         case .localBindingSkip: actual = "localBindingSkip"
         case .noBindingSkip: actual = "noBindingSkip"
         case .bindingVerificationFailed: actual = "bindingVerificationFailed"
-        case .alreadyCompleted: actual = "alreadyCompleted"
         case .alreadyOnMainScreen: actual = "alreadyOnMainScreen"
         case .restoreCooldownActive: actual = "restoreCooldownActive"
         case .staleBindingPIDMismatch: actual = "staleBindingPIDMismatch"

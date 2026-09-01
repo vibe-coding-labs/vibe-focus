@@ -1,6 +1,7 @@
 // HookEventHandler+WindowMove+Execute.swift
 // VibeFocus — Window move 执行逻辑（绑定移动 + 共享响应）
 // 从 HookEventHandler+WindowMove.swift 中提取
+// 决策不在本文件：调用方必须已通过 decideWindowMove 得到 .proceedToMove 才可进入。
 
 import AppKit
 import Foundation
@@ -8,135 +9,14 @@ import Foundation
 @MainActor
 extension HookEventHandler {
 
-    // MARK: - Move Binding to Main Screen
-
-    func moveBindingToMainScreen(
-        binding: WindowState,
-        payload: ClaudeHookPayload,
-        triggerName: String
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        // P-INST-104: moveBindingToMainScreen hook window-move 执行耗时（isWindowOnMainScreen 预检 P-INST-61 + moveWindowToMainScreen P-INST-3 yabai 跨屏移动 + setWindowFloat + AX apply + 可能 refreshOverlays/playCompletionSound；handleWindowMoveTrigger P-INST-31 line 159 调用，hook 窗口移动核心执行；补本执行器各阶段归因）。
-        let mbmStart = Date()
-        var subDecision: WindowMoveDecision?
-        defer {
-            log("[HookEventHandler] moveBindingToMainScreen finished", level: .debug, fields: [
-                "sessionID": payload.sessionID, "triggerName": triggerName,
-                "windowID": String(binding.windowID),
-                "decision": subDecision?.logDescription ?? "proceed",
-                "durationMs": String(elapsedMilliseconds(since: mbmStart))
-            ])
-        }
-        let windowID = binding.windowID
-        let bindingAge = Date().timeIntervalSince(binding.createdAt)
-
-        // 预检：如果窗口已在主屏幕上，跳过移动
-        if WindowManager.shared.isWindowOnMainScreen(windowID: windowID) {
-            subDecision = .alreadyOnMainScreen
-            SessionWindowRegistry.shared.setLastEventDescription(
-                "\(triggerName) 窗口已在主屏幕，跳过移动"
-            )
-            log(
-                "[HookEventHandler] \(triggerName) window already on main screen, skipping move",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "windowID": String(windowID),
-                    "app": binding.appName ?? "unknown"
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "already_on_main_screen",
-                    message: "Window already on main screen, no action needed",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        // 冷却检查：窗口刚被用户恢复（手动热键或 UPS 自动恢复），不重复拉到主屏
-        // 多个远程 session 共享同一窗口时，防止 Stop 事件反复拉窗
-        if isWindowInMoveCooldown(windowID: windowID) {
-            subDecision = .restoreCooldownActive
-            SessionWindowRegistry.shared.setLastEventDescription(
-                "\(triggerName) 窗口刚被恢复，跳过移动（冷却中）"
-            )
-            log(
-                "[HookEventHandler] \(triggerName) window recently restored, skipping move (cooldown)",
-                level: .info,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "windowID": String(windowID),
-                    "app": binding.appName ?? "unknown"
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "restore_cooldown_active",
-                    message: "Window recently restored, skipping move (cooldown active)",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        // 绑定年龄校验：超过 30 分钟的绑定可能已过期（CGWindowNumber 被回收）
-        if bindingAge > 1800 {
-            let windows = cgWindowListAll()
-            if let matchedEntry = windows.first(where: { $0.windowID == windowID }) {
-                if matchedEntry.ownerPID != binding.pid {
-                    subDecision = .staleBindingPIDMismatch
-                    log(
-                        "[HookEventHandler] \(triggerName) stale binding: window PID mismatch (binding age: \(Int(bindingAge))s)",
-                        level: .warn,
-                        fields: [
-                            "sessionID": payload.sessionID,
-                            "windowID": String(windowID),
-                            "boundPID": String(binding.pid),
-                            "actualPID": String(matchedEntry.ownerPID),
-                            "bindingAge": String(Int(bindingAge))
-                        ]
-                    )
-                    SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
-                    return (
-                        200,
-                        ClaudeHookResponse(
-                            ok: true, code: "stale_binding_pid_mismatch",
-                            message: "Stale binding: window PID no longer matches",
-                            sessionID: payload.sessionID, handled: false
-                        )
-                    )
-                }
-            }
-        }
-
-        let identity = WindowIdentity(from: binding)
-
-        log(
-            "[HookEventHandler] \(triggerName) proceeding to move binding window",
-            fields: [
-                "sessionID": payload.sessionID,
-                "windowID": String(windowID),
-                "bindingType": binding.bindingType.rawValue,
-                "app": binding.appName ?? "unknown",
-                "bindingAge": String(Int(bindingAge)) + "s"
-            ]
-        )
-
-        return moveWindowToMainScreenAndRespond(
-            identity: identity,
-            payload: payload,
-            triggerName: triggerName,
-            source: "binding",
-            bindingAge: bindingAge,
-            onComplete: {
-                SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
-                HookEventHandler.shared.setMoveCooldown(windowID: binding.windowID)
-            }
-        )
-    }
-
     // MARK: - Shared Move + Respond
 
+    /// 执行已决策（.proceedToMove）的主屏移动并产生成功/失败响应。
+    /// 场景注释：本函数不做任何跳过类决策（onMain/冷却/非终端等已由
+    /// handleWindowMoveTrigger 内的 decideWindowMove 统一裁决），
+    /// 只负责 moveWindowToMainScreen 的结果二分与完成副作用（markCompleted + 冷却 + 声音/角标）。
+    /// 竞态风险：决策与执行之间窗口可能被并发移动——以 moveWindowToMainScreen
+    /// 的实际返回为准，不做二次预检（历史双重预检曾与决策树漂移出不同顺序）。
     func moveWindowToMainScreenAndRespond(
         identity: WindowIdentity,
         payload: ClaudeHookPayload,
@@ -145,63 +25,18 @@ extension HookEventHandler {
         bindingAge: TimeInterval? = nil,
         onComplete: (() -> Void)? = nil
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
-        // P-INST-47: moveWindowToMainScreenAndRespond 总耗时 + outcome（hook 移动核心；区分 already_on_main 快路径 vs moved 含 moveWindowToMainScreen P-INST-3 vs non_terminal/move_failed skip；P-INST-31 handleWindowMoveTrigger 已覆盖调用方总耗时，此埋点补本函数各阶段归因）。
+        // P-INST-47: moveWindowToMainScreenAndRespond 总耗时 + outcome（hook 移动核心执行；
+        // 区分 moved 含 moveWindowToMainScreen P-INST-3 vs move_failed skip；
+        // P-INST-31 handleWindowMoveTrigger 已覆盖调用方总耗时，此埋点补本函数归因）。
         let mwtStart = Date()
-        var outcome: WindowMoveDecision = .proceedToMove(source: source)
+        var outcome: String = "proceed"
         defer {
             log("[HookEventHandler] moveWindowToMainScreenAndRespond finished", level: .debug, fields: [
                 "sessionID": payload.sessionID, "triggerName": triggerName, "source": source,
-                "decision": outcome.logDescription,
+                "outcome": outcome,
                 "durationMs": String(elapsedMilliseconds(since: mwtStart))
             ])
         }
-        // 预检：如果窗口已在主屏幕上，跳过移动
-        if WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
-            outcome = .alreadyOnMainScreen
-            log(
-                "[HookEventHandler] \(triggerName) [\(source)] window already on main screen, skipping",
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "windowID": String(identity.windowID),
-                    "app": identity.appName ?? "unknown"
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "already_on_main_screen",
-                    message: "Window already on main screen, no action needed",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
-        // 安全检查：确保是终端/IDE 窗口
-        let isTerminal = Self.isTerminalOrIDEApp(
-            appName: identity.appName,
-            bundleIdentifier: identity.bundleIdentifier
-        )
-        if !isTerminal {
-            outcome = .nonTerminalWindow
-            log(
-                "[HookEventHandler] \(triggerName) [\(source)] window is non-terminal, skipping",
-                level: .warn,
-                fields: [
-                    "sessionID": payload.sessionID,
-                    "app": identity.appName ?? "unknown",
-                    "bundleID": identity.bundleIdentifier ?? "nil"
-                ]
-            )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "non_terminal_window",
-                    message: "Resolved window is not a terminal/IDE app, skipping",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
-
         log(
             "[HookEventHandler] \(triggerName) [\(source)] moving window",
             fields: [
@@ -218,7 +53,7 @@ extension HookEventHandler {
             sessionID: payload.sessionID
         )
         if moved {
-            outcome = .proceedToMove(source: "moved")
+            outcome = "moved"
             onComplete?()
             log(
                 "[HookEventHandler] \(triggerName) [\(source)] window moved successfully",
@@ -244,7 +79,7 @@ extension HookEventHandler {
             )
         }
 
-        outcome = .proceedToMove(source: "move_failed")
+        outcome = "move_failed"
         SessionWindowRegistry.shared.touch(
             sessionID: payload.sessionID,
             message: "\(triggerName) 命中绑定，但移动窗口失败"
