@@ -271,6 +271,12 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
   `missing required module '_TestingInternals'`（CLT 未带齐该模块）。
   Package.swift 已按面向未来的方向处理（移除 0.7.0 显式依赖，Swift 6 工具链自带 Testing），
   装完整 Xcode 后 `swift test` 应可直接工作。
+- **2026-09-02 复诊（第十九刀后）**：实测 `swift test` 病灶进一步收窄——test target 与
+  Tests/XCTest 70 文件中 69/74 可正常编译，**唯一死因是 `import Testing` 一行**
+  （CLT 无 Testing 模块；`xcode-select -p` 确认无 Xcode 可切）。即"迁移 70 文件到
+  XCTest 即可启用 `--enable-code-coverage` 产出真实覆盖率数字"的通道存在但未被采纳
+  （见 2.13 验收口径裁决）：70 个从未过门禁的文件含过期 API 需逐个修，且与并行
+  会话在同一目录写入，成本/碰撞风险评估后放弃迁移。
 - **过渡期验证路径**：`bash Tests/run_all_tests.sh`（Standalone 镜像测试，直接 `swift`
   编译运行，不依赖 swift-testing）——当前 31/31 通过，新增解析逻辑同套件覆盖
   （`Tests/Standalone/SpaceSnapshotParsingStandaloneTests.swift`，18 项检查）。
@@ -316,6 +322,13 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 - [x] `bash Tests/run_all_tests.sh` 全绿（32/32）
       （`swift test` 待 2.4 工具链问题解决后恢复为准入门槛）
 - [ ] 单文件 ≤ 300 行（存量逐步收敛，新增代码即时遵守）
+- [x] **单元测试验收口径（2026-09-02 用户裁决）**：重写/新增的纯决策逻辑配套
+      Standalone 测试**分支穷尽覆盖**（每条返回路径、每个 guard 跳过、边界矩阵、
+      防回退断言）即视为满足测试要求；覆盖率百分比不作目标。依据：CLT 工具链
+      无 swift-testing（2.10），真实覆盖率数字需全量迁移 70 文件到 XCTest，
+      用户裁决放弃迁移、采纳本口径。与"覆盖率 100%"字面要求的差异已显式披露
+      并经用户拍板——本口径为正式验收标准而非代理指标；装 Xcode 后如需真实
+      覆盖率数字另行走刀。
 
 ### 2.14 追加修复记录（2026-08-31，title-editor Ctrl+T 改名不生效）
 
