@@ -27,8 +27,7 @@ extension SpaceController {
         }
 
         // 检测 Mission Control 阻塞 — 如果 MC 活跃则先关闭再重试
-        let stderr = yabaiResult?.stderr ?? ""
-        let isMCBlocking = stderr.contains("mission-control")
+        let isMCBlocking = YabaiErrorClassifier.classify(stderr: yabaiResult?.stderr ?? "") == .missionControlBlocking
         if isMCBlocking {
             log("[SpaceController] switchDisplayToSpace: Mission Control blocking, dismissing", level: .info, fields: ["op": op])
             NativeSpaceBridge.dismissMissionControl(operationID: op)

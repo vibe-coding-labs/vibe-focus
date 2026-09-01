@@ -38,7 +38,7 @@ extension SpaceController {
             // - "could not retrieve window details" = 无焦点窗口，正常场景（如用户点击桌面），降级为 debug
             // - 其他错误 = 需要关注的异常，保持 warn
             let stderr = result?.stderr.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if stderr.contains("could not retrieve window details") {
+            if YabaiErrorClassifier.classify(stderr: stderr) == .noFocusedWindow {
                 // 预期失败：无焦点窗口（如用户点击桌面、所有窗口最小化）
                 log("[SpaceController] queryFocusedWindow: no focused window (expected)", level: .debug, fields: [
                     "durationMs": String(durationMs)
@@ -151,7 +151,7 @@ extension SpaceController {
         // 直接查询失败，记录诊断并尝试 fallback
         // "could not locate window" = 窗口 ID 无效（窗口已关闭），预期场景，降级为 debug
         let stderr = directResult?.stderr ?? ""
-        if stderr.contains("could not locate window") {
+        if YabaiErrorClassifier.classify(stderr: stderr) == .windowNotFound {
             log("[queryWindow] window not found (expected, window may have closed)", level: .debug, fields: [
                 "windowID": String(windowID)
             ])

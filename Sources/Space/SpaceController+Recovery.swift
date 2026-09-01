@@ -57,8 +57,7 @@ extension SpaceController {
             return hasDisplay
         }
         // query --window 失败（可能没有焦点窗口），回退到检查错误信息
-        let stderr = result.stderr.lowercased()
-        let hasSAError = stderr.contains("scripting-addition")
+        let hasSAError = YabaiErrorClassifier.classify(stderr: result.stderr) == .scriptingAdditionMissing
         csaResult = hasSAError ? "sa_error" : "no_focus_window"
         log("checkScriptingAdditionLoaded: query failed, hasSAError=\(hasSAError), stderr=\(result.stderr.prefix(100))")
         return !hasSAError
