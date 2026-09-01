@@ -163,7 +163,7 @@ extension WindowManager {
                     level: .info,
                     fields: ["op": op, "windowID": toggleContext["windowID"] ?? "nil"]
                 )
-                moveStuckWindowToSecondaryScreen(operationID: op, triggerSource: triggerSource)
+                moveStuckWindowToSecondaryScreen(operationID: op, triggerSource: triggerSource, windowID: resolvedWindowID)
                 if let winID = resolvedWindowID {
                     AuditLogger.shared.record(
                         eventType: "toggle_move_to_secondary",

@@ -4,83 +4,11 @@ import Foundation
 @MainActor
 extension SpaceController {
 
-    func moveWindow(_ windowID: UInt32, toSpace space: SpaceIdentifier, focus: Bool, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) -> Bool {
-        let op = operationID ?? "none"
-        // P-INST-43: moveWindow 总耗时（Space 跨工作区移动热路径；queryWindow + runYabaiVariants + 可能 focusWindow；底层 runYabaiVariants P-INST-27 已覆盖，此埋点补顶层编排 + 各 skip/abort 路径）。
-        let mwStart = Date()
-        var moveSuccess = false
-        var moveTarget = "space_\(space.yabaiIndex.map { String($0) } ?? "?")"
-        defer {
-            log("[SpaceController] moveWindow finished", fields: [
-                "op": op, "windowID": String(windowID),
-                "target": moveTarget, "focus": String(focus),
-                "success": String(moveSuccess),
-                "durationMs": String(elapsedMilliseconds(since: mwStart))
-            ])
-        }
-        guard let spaceIndex = space.yabaiIndex else {
-            moveTarget = "unsupported_space"
-            log("[SpaceController] moveWindow: unsupported space identifier", level: .warn, fields: ["op": op])
-            return false
-        }
-        AuditLogger.shared.record(
-            eventType: "space_move",
-            windowID: windowID,
-            details: ["targetSpace": String(spaceIndex), "focus": String(focus), "op": op]
-        )
-        refreshAvailabilityIfNeeded()
-        guard isEnabled else { return false }
-        guard canControlSpaces else {
-            markOperationError("Cannot move window to another space because cross-space control is unavailable", operationID: op)
-            return false
-        }
-
-        guard let windowInfo = knownWindowInfo ?? queryWindow(windowID: windowID) else {
-            log("[SpaceController] moveWindow aborted: window does not exist", level: .warn, fields: [
-                "op": op, "windowID": String(windowID), "targetSpace": String(spaceIndex)
-            ])
-            return false
-        }
-
-        // Strategy 1: yabai 命令 — 优先。
-        // focus=false 后 yabai `window --space` 不切用户视角、不触发 space 动画，SA 不阻塞，
-        // 实测仅 ~29ms/fork（之前 focus=true 切 space 动画时 ~1014ms）。仅当窗口可被 yabai 管理时尝试。
-        if windowInfo.isManageableByYabai {
-            let result = runYabaiVariants(
-                variants: [["-m", "window", "\(windowID)", "--space", "\(spaceIndex)"]],
-                operation: "moveWindow(windowID=\(windowID), space=\(spaceIndex))",
-                operationID: op
-            )
-            if result.success {
-                moveSuccess = true
-                if focus { _ = focusWindow(windowID, operationID: op, knownWindowInfo: windowInfo) }
-                return true
-            }
-        } else {
-            log("[SpaceController] moveWindow: skipping yabai (no AX ref)", level: .info, fields: [
-                "op": op, "windowID": String(windowID)
-            ])
-        }
-
-        // Strategy 2: NativeSpaceBridge (SLS) fallback — yabai 失败时。
-        // 注意：SLSMoveWindowsToManagedSpace 需要 "universal owner connection"（yabai issue #2593），
-        // yabai 经 SA 进程或 Dock sideload 获取。VibeFocus 是普通 GUI app，SLSMainConnectionID 返回
-        // 普通 connection，权限不足 → SLS move 始终失败（result 返回垃圾值，非 0）。
-        // 保留作为 yabai 不可用时的最后尝试，但预期失败（详见 NativeSpaceBridge.moveWindow log）。
-
-        // 增强诊断：记录详细的失败上下文
-        log("[SpaceController] moveWindow failed with detailed context", level: .error, fields: [
-            "op": op,
-            "windowID": String(windowID),
-            "targetSpace": String(spaceIndex),
-            "windowManageable": String(windowInfo.isManageableByYabai),
-            "windowDisplay": String(windowInfo.display ?? -1),
-            "windowSpace": String(windowInfo.space ?? -1),
-            "windowIsFloating": String(windowInfo.isFloating)
-        ])
-        markOperationError("Failed to move window \(windowID) to space \(spaceIndex)", operationID: op)
-        return false
-    }
+    // MARK: 历史注（2026-09-01 清理）
+    // moveWindow(toSpace:) 已删除：其 Strategy 1（yabai `window --space`）在 v7 float
+    // 布局下静默失效（exit 0 但窗口不动，Tests/AXMoveValidation.swift T3 断言实测），
+    // Strategy 2（SLS move）因权限不足从未真正可用。跨屏移动统一走
+    // WindowManager.moveWindowToFrameViaYabai（float 脱管 → settle → frame 直写 + 读回验证）。
 
     func setWindowFloat(_ windowID: UInt32, operationID: String? = nil, knownWindowInfo: YabaiWindowInfo? = nil) {
         let op = operationID ?? "none"

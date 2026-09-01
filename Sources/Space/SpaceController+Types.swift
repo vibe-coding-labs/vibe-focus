@@ -84,8 +84,18 @@ struct SpaceContext {
 
 typealias ShellResult = YabaiClient.YabaiResult
 
+/// yabai 各版本布尔字段类型漂移防御：同一字段既有 Bool 也有 Int(0/1) 两种形态
+/// （Overlay 层 SpaceSnapshot.parse 已记录同源知识）。严格 Decodable 遇到
+/// `is-visible: 1` 会整体解码失败 → querySpaces 返回 nil → toggle/restore 核心
+/// 路径全瘫而 overlay 编号照常工作。统一经此函数解码布尔字段。
+private func decodeFlexibleBool<K: CodingKey>(_ key: K, from c: KeyedDecodingContainer<K>) -> Bool? {
+    guard c.contains(key) else { return nil }
+    if let b = try? c.decode(Bool.self, forKey: key) { return b }
+    if let i = try? c.decode(Int.self, forKey: key) { return i != 0 }
+    return nil
+}
+
 /// yabai space 查询结果
-/// - `id`: macOS native space ID (CGS)，用于 NativeSpaceBridge.moveWindow
 /// - `index`: yabai 全局 space 索引 (1-based)，用于 yabai space 命令
 /// - `display`: yabai display 索引 (1-based, 1=主屏)
 struct YabaiSpaceInfo: Decodable {
@@ -99,6 +109,21 @@ struct YabaiSpaceInfo: Decodable {
         case index
         case display
         case isVisible = "is-visible"
+    }
+
+    init(id: Int?, index: Int?, display: Int?, isVisible: Bool?) {
+        self.id = id
+        self.index = index
+        self.display = display
+        self.isVisible = isVisible
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? c.decodeIfPresent(Int.self, forKey: .id)
+        index = try? c.decodeIfPresent(Int.self, forKey: .index)
+        display = try? c.decodeIfPresent(Int.self, forKey: .display)
+        isVisible = decodeFlexibleBool(.isVisible, from: c)
     }
 }
 
@@ -120,6 +145,31 @@ struct YabaiWindowInfo: Decodable {
         case id, pid, app, title, space, display, frame
         case isFloatingRaw = "is-floating"
         case hasAXReferenceRaw = "has-ax-reference"
+    }
+
+    init(id: Int?, pid: Int?, app: String?, title: String?, space: Int?, display: Int?, frame: Frame?, isFloatingRaw: Bool?, hasAXReferenceRaw: Bool?) {
+        self.id = id
+        self.pid = pid
+        self.app = app
+        self.title = title
+        self.space = space
+        self.display = display
+        self.frame = frame
+        self.isFloatingRaw = isFloatingRaw
+        self.hasAXReferenceRaw = hasAXReferenceRaw
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? c.decodeIfPresent(Int.self, forKey: .id)
+        pid = try? c.decodeIfPresent(Int.self, forKey: .pid)
+        app = try? c.decodeIfPresent(String.self, forKey: .app)
+        title = try? c.decodeIfPresent(String.self, forKey: .title)
+        space = try? c.decodeIfPresent(Int.self, forKey: .space)
+        display = try? c.decodeIfPresent(Int.self, forKey: .display)
+        frame = try? c.decodeIfPresent(Frame.self, forKey: .frame)
+        isFloatingRaw = decodeFlexibleBool(.isFloatingRaw, from: c)
+        hasAXReferenceRaw = decodeFlexibleBool(.hasAXReferenceRaw, from: c)
     }
 
     var isFloating: Bool { isFloatingRaw == true }

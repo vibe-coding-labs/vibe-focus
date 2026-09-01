@@ -91,7 +91,8 @@ extension SpaceController {
                     "durationMs": String(elapsedMilliseconds(since: startedAt))
                 ]
             )
-            spacesQueryCache = (result: nil, cachedAt: Date())
+            // 失败不写缓存：把"yabai 暂时不可用"缓存 2s 会让后续调用方把瞬时故障
+            // 当成"无 space 信息"走错误分支（负缓存 bug，2026-09-01 修复）
             return nil
         }
         let spaces = decodeArray(YabaiSpaceInfo.self, from: result.stdout)
@@ -106,7 +107,10 @@ extension SpaceController {
                 ]
             )
         }
-        spacesQueryCache = (result: spaces, cachedAt: Date())
+        // 仅缓存成功解码的结果（decode 失败同样不缓存，见上）
+        if let spaces {
+            spacesQueryCache = (result: spaces, cachedAt: Date())
+        }
         log("[SpaceController] querySpaces fork", fields: [
             "caller": caller,
             "durationMs": String(elapsedMilliseconds(since: qsStart)),
@@ -161,7 +165,7 @@ extension SpaceController {
         guard let allResult = runYabai(arguments: ["-m", "query", "--windows"]),
               allResult.exitCode == 0 else {
             log("[queryWindow] all-windows fallback also failed", level: .warn, fields: ["windowID": String(windowID)])
-            windowQueryCache[windowID] = (result: nil, cachedAt: Date())
+            // 命令失败不缓存（负缓存 bug 修复）；全量扫描成功但无此窗口的真负结果照常缓存
             return nil
         }
         let allWindows = decodeArray(YabaiWindowInfo.self, from: allResult.stdout) ?? []

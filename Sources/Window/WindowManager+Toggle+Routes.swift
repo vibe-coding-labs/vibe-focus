@@ -12,19 +12,22 @@ extension WindowManager {
     /// 把它移到副屏，让 toggle 循环恢复"主↔副"交替。
     ///
     /// ## 场景
-    /// - 仅 `toggle(operationID:triggerSource:)` 的 stuck 分支调用（shouldRestore == false
-    ///   且 onMainScreen == true）；
-    /// - 本方法自行解析焦点窗口（toggle 入口的解析结果未传入——历史行为，P-INST-10 埋点
-    ///   暴露的重复 AX 查询优化点，改动需连同 toggle 入口一起评估）。
+    /// - 仅 `toggle(operationID:triggerSource:)` 的 stuck 分支调用；
+    /// - windowID 传 toggle 入口已解析的 resolution.windowID（此前自行 AX 重解析，
+    ///   是 toggle 内重复焦点解析的已知优化点，2026-09-01 迁移；nil 时保留 AX 兜底）。
+    ///
+    /// ## 移动机制（2026-09-01 从 `window --space` 迁移）
+    /// 原 yabai `window --space` 在 v7 float 布局下静默失效（exit 0 但窗口不动，
+    /// Tests/AXMoveValidation.swift T3 断言实测），stuck 解堵全部落空且无感知。
+    /// 现改用与 restore/move_to_main 相同的已验证路径：float 脱管 → settle 等 yabai
+    /// 默认重摆 → `--move abs`/`--resize abs` 直写副屏 visibleFrame（窗口归属跟随
+    /// 物理位置切 display），moveWindowToFrameViaYabai 内置写后读回闭环验证。
     ///
     /// ## 竞态/历史 bug（必读）
-    /// 原 displayIndex(forDisplayID:) 返回 NSScreen screenArrayIndex（0-based），但
-    /// displayVisibleSpace(.yabai(...)) 期望 yabai display index（1-based）：副屏
-    /// screenArrayIndex=1 被当成 yabai display 1（主屏），window --space <主屏 space> 把
-    /// 卡住的窗口又移回主屏，toggle 进入 stuck 死循环（toggle-00000138：moved=true 但窗口
-    /// 停留主屏）。现改用 queryWindow 拿窗口当前 yabai display，从 querySpaces 找
-    /// display != currentDisplay 的 visible space，映射与 yabai 一致。
-    func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String) {
+    /// 原实现曾把 NSScreen screenArrayIndex（0-based）当 yabai display index（1-based）
+    /// 用，副屏被当成主屏导致 stuck 死循环（toggle-00000138）。现目标屏只用于取
+    /// frame，索引换算集中在 CoordinateKit.nsScreen(forYabaiDisplayIndex:)。
+    func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String, windowID knownWindowID: UInt32? = nil) {
         // P-INST-10: stuck 路径总耗时（defer 汇总，所有 return 路径）+ AX lookup 耗时。
         #if PERF_INSTRUMENT
         let stuckStart = Date()
@@ -35,11 +38,11 @@ extension WindowManager {
         }
         #endif
         let axLookupStart = Date()
-        let windowID = NSWorkspace.shared.frontmostApplication
+        let axResolvedID: UInt32? = knownWindowID ?? NSWorkspace.shared.frontmostApplication
             .flatMap { focusedWindow(for: $0.processIdentifier) }
             .flatMap { windowHandle(for: $0) }
         let axLookupMs = elapsedMilliseconds(since: axLookupStart)
-        guard let windowID = windowID else {
+        guard let windowID = axResolvedID else {
             log("[WindowManager] moveStuckWindowToSecondaryScreen: no focused window", level: .warn, fields: [
                 "op": operationID, "axLookupMs": String(axLookupMs)
             ])
@@ -52,37 +55,48 @@ extension WindowManager {
         let windowInfo = spaceController.queryWindow(windowID: windowID)
         let spaces = spaceController.querySpaces()
         let queryMs = elapsedMilliseconds(since: queryStart)
-        if let currentDisplay = windowInfo?.display,
-           let targetSpace = spaces?.first(where: {
-               $0.display != currentDisplay && $0.isVisible == true
-           })?.index.map({ SpaceIdentifier.yabai($0) }) {
-            let moveStart = Date()
-            let moved = spaceController.moveWindow(
-                windowID,
-                toSpace: targetSpace,
-                focus: false,
-                operationID: operationID
-            )
-            let moveMs = elapsedMilliseconds(since: moveStart)
-            log(
-                "[WindowManager] moveStuckWindowToSecondaryScreen: yabai space move",
-                fields: [
-                    "op": operationID,
-                    "windowID": String(windowID),
-                    "currentDisplay": String(currentDisplay),
-                    "targetSpace": String(describing: targetSpace),
-                    "moved": String(moved),
-                    "queryMs": String(queryMs),
-                    "moveMs": String(moveMs)
-                ]
-            )
-            if moved { return }
+
+        // 目标屏：与当前 display 不同且有可见 space 的 display → NSScreen；
+        // yabai display 映射不到 NSScreen 时回退第一个非主屏。
+        let currentDisplay = windowInfo?.display
+        let targetYabaiDisplay = spaces?.first(where: { $0.display != currentDisplay && $0.isVisible == true })?.display
+        let targetScreen = targetYabaiDisplay.flatMap { CoordinateKit.nsScreen(forYabaiDisplayIndex: $0) }
+            ?? NSScreen.screens.first(where: { $0.frame.origin != .zero })
+        guard let targetScreen else {
+            log("[WindowManager] moveStuckWindowToSecondaryScreen: no secondary screen", level: .warn, fields: [
+                "op": operationID, "windowID": String(windowID)
+            ])
+            return
         }
 
+        // float 脱管 + settle（等 yabai 默认重摆落定）→ frame 直写（闭环验证内置）
+        let moveStart = Date()
+        if let info = windowInfo, !info.isFloating {
+            spaceController.setWindowFloat(windowID, operationID: operationID, knownWindowInfo: info)
+        }
+        usleep(300_000)
+        spaceController.clearWindowQueryCache()
+        let targetFrame = CoordinateKit.quartzVisibleFrame(of: targetScreen)
+        let moved = moveWindowToFrameViaYabai(
+            windowID: windowID,
+            frame: targetFrame,
+            op: operationID,
+            stage: "move_to_secondary_stuck"
+        )
+        let moveMs = elapsedMilliseconds(since: moveStart)
         log(
-            "[WindowManager] moveStuckWindowToSecondaryScreen: yabai space move failed, no fallback",
-            level: .warn,
-            fields: ["op": operationID, "windowID": String(windowID)]
+            "[WindowManager] moveStuckWindowToSecondaryScreen: frame move",
+            level: moved ? .info : .error,
+            fields: [
+                "op": operationID,
+                "windowID": String(windowID),
+                "currentDisplay": String(currentDisplay ?? 0),
+                "targetScreen": String(describing: targetScreen.localizedName),
+                "targetFrame": "\(Int(targetFrame.origin.x)),\(Int(targetFrame.origin.y)) \(Int(targetFrame.width))x\(Int(targetFrame.height))",
+                "moved": String(moved),
+                "queryMs": String(queryMs),
+                "moveMs": String(moveMs)
+            ]
         )
     }
 
