@@ -72,6 +72,9 @@ final class SoundManager: ObservableObject {
     }
 
     private var currentSound: NSSound?
+    /// 当前播放的自动停止任务（5s 兜底）。新播放/手动停止时取消，
+    /// 防止旧定时器把新启的音频掐断（多会话并发完成时的真实竞态，见 startPlayback 场景注释）。
+    private var playbackStopWorkItem: DispatchWorkItem?
 
     private init() {
         self.preferences = Self.loadPreferences()
@@ -102,19 +105,15 @@ final class SoundManager: ObservableObject {
             return
         }
 
-        sound.volume = preferences.volume
-        sound.play()
-        currentSound = sound
-
-        log("[SoundManager] playing completion sound", fields: [
-            "soundType": preferences.soundType.rawValue,
-            "volume": String(preferences.volume)
-        ])
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-            self?.currentSound?.stop()
-            self?.currentSound = nil
-        }
+        startPlayback(
+            sound,
+            volume: preferences.volume,
+            logMessage: "[SoundManager] playing completion sound",
+            logFields: [
+                "soundType": preferences.soundType.rawValue,
+                "volume": String(preferences.volume)
+            ]
+        )
     }
 
     func previewSound(_ soundType: CompletionSoundType, customPath: String? = nil, volume: Float) {
@@ -135,31 +134,65 @@ final class SoundManager: ObservableObject {
             ])
             return
         }
-        sound.volume = volume
-        sound.play()
-        currentSound = sound
-
-        log("[SoundManager] preview sound", fields: [
-            "soundType": soundType.rawValue,
-            "volume": String(volume)
-        ])
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-            self?.currentSound?.stop()
-            self?.currentSound = nil
-        }
+        startPlayback(
+            sound,
+            volume: volume,
+            logMessage: "[SoundManager] preview sound",
+            logFields: [
+                "soundType": soundType.rawValue,
+                "volume": String(volume)
+            ]
+        )
     }
 
     func stopPlayback() {
-        // P-INST-161: 音效停止耗时（currentSound.stop 停止音频设备 + 清引用；设置 UI 停止按钮调用）。
+        // P-INST-161: 音效停止耗时（currentSound.stop 停止音频设备 + 清引用；设置 UI 停止按钮 + startPlayback 互斥前停调用）。
         let spStart = Date()
         defer {
             log("[SoundManager] stopPlayback finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: spStart))
             ])
         }
+        playbackStopWorkItem?.cancel()
+        playbackStopWorkItem = nil
         currentSound?.stop()
         currentSound = nil
+    }
+
+    // MARK: - Playback Orchestration
+
+    /// 播放互斥编排：停掉上一个（并取消其停止定时）→ 设音量 → 播放 → 5s 兜底停止。
+    ///
+    /// ## 场景
+    /// - playCompletionSound / previewSound 的共同执行尾巴（两处曾各写一份"播+5s 后停"，
+    ///   且都不停上一个——历史 bug：多会话并发完成时旧音频继续播、旧定时器把新音频提前掐断）。
+    ///
+    /// ## 并发约束
+    /// - 必须主线程（@MainActor 类约束；hook 路径经 Task { @MainActor } 进入）；
+    /// - 互斥：入口先 stopPlayback()，同一时刻至多一个 NSSound 在播；
+    /// - 定时器身份校验：兜底闭包捕获具体 sound 实例，仅当仍是 currentSound 时才 stop，
+    ///   杜绝"上一个播放的定时器掐断下一个播放"的互踩。
+    private func startPlayback(
+        _ sound: NSSound,
+        volume: Float,
+        logMessage: String,
+        logFields: [String: String]
+    ) {
+        stopPlayback()
+
+        sound.volume = volume
+        sound.play()
+        currentSound = sound
+
+        log(logMessage, fields: logFields)
+
+        let stopWork = DispatchWorkItem { [weak self] in
+            guard let self, self.currentSound === sound else { return }
+            sound.stop()
+            self.currentSound = nil
+        }
+        playbackStopWorkItem = stopWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: stopWork)
     }
 
     func updateSoundType(_ type: CompletionSoundType) {
