@@ -125,13 +125,6 @@ extension WindowManager {
         return CoordinateKit.quartzVisibleFrame(of: screen)
     }
 
-    func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
-        abs(lhs.origin.x - rhs.origin.x) <= frameTolerance &&
-        abs(lhs.origin.y - rhs.origin.y) <= frameTolerance &&
-        abs(lhs.width - rhs.width) <= frameTolerance &&
-        abs(lhs.height - rhs.height) <= frameTolerance
-    }
-
     /// 根据窗口 frame 确定所在屏幕的 Display ID
     func displayID(for frame: CGRect) -> UInt32? {
         let context = displayContext(for: frame)

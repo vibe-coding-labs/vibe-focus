@@ -297,7 +297,7 @@ extension WindowManager {
             let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
             spaceController.setWindowFloat(effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
             usleep(300_000)
-            guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3, positionFirst: false, windowID: effectiveWindowID) else {
+            guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3, windowID: effectiveWindowID) else {
                 log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
                     "op": op, "targetFrame": String(describing: targetFrame)
                 ])

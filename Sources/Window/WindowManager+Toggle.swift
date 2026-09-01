@@ -144,7 +144,7 @@ extension WindowManager {
         let coreOpStart = Date()
         switch decision {
         case .restore:
-            restore(operationID: op, triggerSource: triggerSource)
+            restore(operationID: op, triggerSource: triggerSource, windowID: resolvedWindowID)
             // 设置冷却期：防止 Stop 事件立即把刚恢复的窗口再次拉到主屏
             if let winID = resolvedWindowID {
                 HookEventHandler.shared.setMoveCooldown(windowID: winID)

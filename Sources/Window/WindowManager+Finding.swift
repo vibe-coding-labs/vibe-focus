@@ -14,39 +14,6 @@ extension WindowManager {
         let appName: String
         let bundleIdentifier: String?
         let title: String
-        let isOnMainScreen: Bool
-    }
-
-    /// Pure strategy logic for findClaudeCodeWindow — extracted for testability.
-    /// Returns the index of the best matching candidate, or nil if no match.
-    static func findBestCandidate(
-        candidates: [WindowCandidate],
-        cwd: String?,
-        isHostApp: (WindowCandidate) -> Bool
-    ) -> WindowCandidate? {
-        let projectName = cwd?
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .components(separatedBy: "/")
-            .last?
-            .lowercased()
-
-        // Strategy 1: Host app + cwd project name in title
-        if let projectName, !projectName.isEmpty {
-            if let match = candidates.first(where: { c in
-                return isHostApp(c) && c.title.lowercased().contains(projectName)
-            }) {
-                return match
-            }
-        }
-
-        // Strategy 2: Host app + "Claude Code" in title
-        if let match = candidates.first(where: { c in
-            return isHostApp(c) && c.title.lowercased().contains("claude code")
-        }) {
-            return match
-        }
-
-        return nil
     }
 
     /// Capture the identity of the currently focused window.
@@ -114,12 +81,17 @@ extension WindowManager {
     }
 
     /// 在所有窗口中查找最可能是 Claude Code 会话对应的窗口
-    /// 策略优先级：
-    ///   0. 通过终端上下文（TTY/SESSION_ID）精确匹配（command-type hook 提供）
-    ///   1. Terminal/Cursor 等 IDE 窗口中标题包含 cwd 项目名的窗口（在非主屏幕上）
-    ///   2. 任意窗口中标题包含 cwd 项目名（在非主屏幕上）
-    ///   3. 包含 "Claude Code" 关键词的窗口（在非主屏幕上）
-    ///   4. 当前前台窗口
+    ///
+    /// ## 场景
+    /// - SessionStart hook 的 autoFocus 路径调用（定位要最大化的终端窗口）。
+    ///
+    /// ## 实际策略（与历史 doc 注释一致化）
+    /// doc 曾宣称策略 0（TTY/SESSION_ID）/策略 2（任意窗口含 cwd）/策略 3（非主屏幕约束），
+    /// 与实现不符已删除。真实执行顺序：
+    ///   1. Terminal/IDE host app 窗口中标题包含 cwd 项目名
+    ///   2. host app 窗口中标题包含 "Claude Code"
+    ///   3. 回退当前前台窗口
+    /// （TTY/SESSION_ID 精确匹配由 findWindowByTerminalContext 承担，不在本函数。）
     func findClaudeCodeWindow(cwd: String?) -> WindowIdentity? {
         // P-INST-26: findClaudeCodeWindow 耗时（cgWindowListAll 全扫 + 候选构建 + 策略匹配；hook 路径）。
         let fcStart = Date()
@@ -151,9 +123,6 @@ extension WindowManager {
 
             let appName = entry.ownerName ?? ""
             let title = entry.name ?? ""
-            // 复用已查询的 entry.bounds，避免循环内对每个窗口再调 isWindowOnMainScreen →
-            // cgWindowListAll() 全量重扫（N 窗口 × 每次全量扫 = O(N²)）。
-            let isOnMainScreen = entry.bounds.map { CoordinateKit.isOnMainScreen($0) } ?? false
 
             let bundleIdentifier: String?
             if let app = NSRunningApplication(processIdentifier: entry.ownerPID) {
@@ -167,8 +136,7 @@ extension WindowManager {
                 pid: entry.ownerPID,
                 appName: appName,
                 bundleIdentifier: bundleIdentifier,
-                title: title,
-                isOnMainScreen: isOnMainScreen
+                title: title
             ))
         }
 

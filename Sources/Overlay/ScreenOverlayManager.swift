@@ -184,24 +184,6 @@ final class ScreenOverlayManager: ObservableObject {
         updateOverlayPositions()
     }
 
-    func refreshOverlays() {
-        // P-INST-123: overlay UI 刷新耗时（cancel pending work item + hideOverlays + isEnabled 检查 + showOverlays P-INST-74 重建窗口；screen 变化 handleScreenChange P-INST-126 + space 刷新 applyRefreshResults P-INST-42 + toggle 后调用）。
-        #if PERF_INSTRUMENT
-        let roStart = Date()
-        defer {
-            log("[ScreenOverlayManager] refreshOverlays finished", level: .debug, fields: [
-                "durationMs": String(elapsedMilliseconds(since: roStart))
-            ])
-        }
-        #endif
-        pendingPreferenceRefreshWorkItem?.cancel()
-        pendingPreferenceRefreshWorkItem = nil
-        hideOverlays()
-        if preferences.isEnabled {
-            showOverlays()
-        }
-    }
-
     func suspendAutomaticRefreshes(reason: String) {
         // P-INST-259: overlay 自动刷新挂起（refreshTimer.invalidate Timer 停止 + 状态置位；设置窗口获焦/toggle 期间调用，归因挂起时机）。
         #if PERF_INSTRUMENT

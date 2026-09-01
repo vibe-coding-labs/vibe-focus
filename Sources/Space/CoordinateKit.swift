@@ -123,14 +123,6 @@ enum CoordinateKit {
         return mainScreenQuartzFrame?.height ?? NSScreen.screens.first?.frame.height ?? 0
     }
 
-    /// NSScreen → Quartz 帧转换
-    static func quartzFrame(fromNSScreen screen: NSScreen) -> CGRect {
-        guard screen.frame.origin == .zero else {
-            return screen.frame
-        }
-        return screen.frame
-    }
-
     /// 获取屏幕的可用区域（去掉菜单栏和 Dock），返回 Quartz 坐标
     static func quartzVisibleFrame(of screen: NSScreen) -> CGRect {
         // P-INST-266: NSScreen 可见区域转 Quartz 坐标（screen.visibleFrame 动态计算去菜单栏/Dock + frame 读；窗口定位/axFrame 调用，visibleFrame 可能查 WindowServer；slow-op ≥30ms warn）。

@@ -3,22 +3,15 @@ import Cocoa
 
 // MARK: - Restore Logic (Simplified)
 //
-// Design: yabai space move → float → AX frame. One shot, no retries.
-// The old mechanism had 4 strategies, polling loops, a watchdog, and 642 lines
-// to do what these 3 steps accomplish.
+// Design: 源屏预切回 → float 脱管 → yabai --move/--resize 直写 origFrame → 视角守卫。
+// One shot, no retries. The old mechanism had 4 strategies, polling loops, a watchdog,
+// and 642 lines to do what these steps accomplish.
+//
+// 历史注：2026-09-01 起不再用 yabai `window --space`（v7 float 布局下静默失效，
+// exit 0 但窗口不动，Tests/AXMoveValidation.swift T3 断言实测）。
 
 @MainActor
 extension ToggleEngine {
-
-    /// Pure decision: which record to use for restore?
-    /// Returns record or nil if not found. No PID fallback — same-PID windows
-    /// (e.g. all iTerm2 windows) would return the wrong record.
-    static func resolveRestoreRecord(
-        windowID: UInt32,
-        loadByWindowID: (UInt32) -> ToggleRecord?
-    ) -> ToggleRecord? {
-        return loadByWindowID(windowID)
-    }
 
     @discardableResult
     func restore(windowID: UInt32, triggerSource: String, traceID: String? = nil) -> Bool {
@@ -45,10 +38,9 @@ extension ToggleEngine {
         let wm = WindowManager.shared
         let sc = SpaceController.shared
 
-        // 3. Resolve AX window
+        // 3. Resolve AX window（record 按 windowID 加载，两者恒等；存在性探测兼防窗口已关）
         let lookupStart = Date()
-        let axLookupID = (record.windowID != windowID) ? windowID : record.windowID
-        guard wm.findWindowByPID(record.pid, windowID: axLookupID) != nil else {
+        guard wm.findWindowByPID(record.pid, windowID: windowID) != nil else {
             log("[ToggleEngine] restore: AX window not found", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID), "pid": String(record.pid)
             ])
@@ -103,40 +95,33 @@ extension ToggleEngine {
         // macOS 窗口归属跟随物理位置自动回到源 display 的 visible space。
         // queryMs 覆盖 currentSpaceIndex + queryWindow（移动前查询，命中缓存 ~0ms）。
         let queryStart = Date()
-        let windowInfo = sc.queryWindow(windowID: axLookupID)
+        let windowInfo = sc.queryWindow(windowID: windowID)
         let queryMs = elapsedMilliseconds(since: queryStart)
         var moveMs = 0
         // 4a. float 脱管（--toggle float 会触发 yabai 默认重摆，等 300ms 重摆落定再写目标 frame）
         if let info = windowInfo {
             let floatStart = Date()
-            sc.setWindowFloat(axLookupID, operationID: trace, knownWindowInfo: info)
+            sc.setWindowFloat(windowID, operationID: trace, knownWindowInfo: info)
             usleep(300_000)
             moveMs = elapsedMilliseconds(since: floatStart)
         }
-        // 4b. yabai --move abs + --resize abs 直写 origFrame（窗口归属跟随物理位置）
+        // 4b. yabai --move abs + --resize abs 直写 origFrame（窗口归属跟随物理位置）。
+        // sourceSpace=0（无 space 信息）时 origFrame 坐标仍有效——frame 直写不依赖 space 编号。
         var frameOK = false
-        if record.sourceSpace > 0 || true {
-            // sourceSpace=0（无 space 信息）时 origFrame 坐标仍有效——frame 直写不依赖 space 编号
-            let moveStart = Date()
-            frameOK = wm.moveWindowToFrameViaYabai(
-                windowID: axLookupID,
-                frame: record.origFrame,
-                op: trace,
-                stage: "restore"
-            )
-            moveMs += elapsedMilliseconds(since: moveStart)
-            log("[ToggleEngine] restore: frame move result", fields: [
-                "traceID": trace, "frameOK": String(frameOK),
-                "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))"
-            ])
-        }
-        let moved = false  // 语义保留：不再使用 yabai space move（focusSpace 检测条件依赖）
+        let moveStart = Date()
+        frameOK = wm.moveWindowToFrameViaYabai(
+            windowID: windowID,
+            frame: record.origFrame,
+            op: trace,
+            stage: "restore"
+        )
+        moveMs += elapsedMilliseconds(since: moveStart)
+        log("[ToggleEngine] restore: frame move result", fields: [
+            "traceID": trace, "frameOK": String(frameOK),
+            "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y)) \(Int(record.origFrame.width))x\(Int(record.origFrame.height))"
+        ])
 
-        // 5./6. float 与 frame 写已合并到步骤 4（floatMs/frameOK）
-        let floatMs = 0
-        let applyMs = 0
-
-        // 6b. 视角守卫：frame 直写会把 macOS 键盘焦点/视角跟随到目标 display
+        // 5. 视角守卫：frame 直写会把 macOS 键盘焦点/视角跟随到目标 display
         // （实测 restore 后 preSpace=1 → postSpace=5，用户被拖离原屏）。
         // 切回分两层，按可靠性排序：
         //   1) yabai space --focus 精确切回（依赖 SA；SA 失效时报
@@ -155,7 +140,7 @@ extension ToggleEngine {
                 var refocused = sc.focusSpace(.yabaiIndex(preMoveSpace), operationID: trace)
                 if !refocused {
                     // SA 失效环境：聚焦原 space 上的窗口带动视角回切
-                    refocused = sc.refocusWindowOnSpace(preMoveSpace, excludingWindowID: axLookupID, operationID: trace)
+                    refocused = sc.refocusWindowOnSpace(preMoveSpace, excludingWindowID: windowID, operationID: trace)
                 }
                 if refocused {
                     // space 切换后窗口位置可能已变，清除查询缓存
@@ -165,20 +150,18 @@ extension ToggleEngine {
             }
         }
 
-        // 7. Clear record
+        // 6. Clear record
         clear(windowID: record.windowID)
 
         log("[ToggleEngine] restore: completed", fields: [
             "traceID": trace,
             "windowID": String(windowID),
             "targetSpace": String(record.sourceSpace),
-            "spaceMoveResult": String(moved),
+            "frameOK": String(frameOK),
             "origFrame": "\(Int(record.origFrame.origin.x)),\(Int(record.origFrame.origin.y))",
             "lookupMs": String(lookupMs),
             "queryMs": String(queryMs),
             "moveMs": String(moveMs),
-            "floatMs": String(floatMs),
-            "applyMs": String(applyMs),
             "focusSpaceMs": String(focusSpaceMs)
         ])
 
