@@ -88,41 +88,4 @@ struct ScreenIndexPreferencesCodableTests {
     func userDefaultsKey() {
         #expect(ScreenIndexPreferences.userDefaultsKey == "screenIndexPreferences")
     }
-
-    // MARK: - WindowManager.framesMatch (instance variant with fixed tolerance)
-
-    @Test("WindowManager.framesMatch: identical frames match")
-    @MainActor
-    func wmFramesMatchIdentical() {
-        let wm = WindowManager()
-        let frame = CGRect(x: 100, y: 200, width: 800, height: 600)
-        #expect(wm.framesMatch(frame, frame))
-    }
-
-    @Test("WindowManager.framesMatch: within tolerance (10pt)")
-    @MainActor
-    func wmFramesMatchWithinTolerance() {
-        let wm = WindowManager()
-        let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-        let b = CGRect(x: 105, y: 195, width: 805, height: 595)
-        #expect(wm.framesMatch(a, b))
-    }
-
-    @Test("WindowManager.framesMatch: exceeds tolerance")
-    @MainActor
-    func wmFramesMatchExceeds() {
-        let wm = WindowManager()
-        let a = CGRect(x: 0, y: 0, width: 800, height: 600)
-        let b = CGRect(x: 20, y: 0, width: 800, height: 600)
-        #expect(!wm.framesMatch(a, b))
-    }
-
-    @Test("WindowManager.framesMatch: size difference exceeds tolerance")
-    @MainActor
-    func wmFramesMatchSizeExceeds() {
-        let wm = WindowManager()
-        let a = CGRect(x: 0, y: 0, width: 800, height: 600)
-        let b = CGRect(x: 0, y: 0, width: 815, height: 600)
-        #expect(!wm.framesMatch(a, b))
-    }
 }

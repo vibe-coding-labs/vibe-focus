@@ -52,9 +52,9 @@ extension WindowManager {
             )
             usleep(WindowSettle.yabaiFrameWriteSettleMicros)
             if let current = cgWindowBounds(for: windowID) {
-                let originDrift = abs(current.origin.x - frame.origin.x) + abs(current.origin.y - frame.origin.y)
-                let sizeDrift = abs(current.width - frame.width) + abs(current.height - frame.height)
-                if originDrift <= frameTolerance && sizeDrift <= frameTolerance {
+                let originDrift = CoordinateKit.originDrift(current.origin, frame.origin)
+                let sizeDrift = CoordinateKit.sizeDrift(current.size, frame.size)
+                if CoordinateKit.isFrameConverged(actual: current, target: frame, tolerance: frameTolerance) {
                     log("[WindowManager] moveWindowToFrameViaYabai: verified", level: .debug, fields: [
                         "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attempt)
                     ])

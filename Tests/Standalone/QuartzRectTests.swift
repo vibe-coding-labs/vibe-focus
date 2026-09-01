@@ -1,6 +1,6 @@
 // Tests/Standalone/QuartzRectTests.swift
 // Verification: QuartzRect geometry and CoordinateKit math functions
-// Mirrors: Sources/Space/CoordinateKit.swift:61-91 (QuartzRect), 156-162 (coord conversion), 200-207 (framesMatch)
+// Mirrors: Sources/Space/CoordinateKit.swift (QuartzRect), (coord conversion)
 // Run: swift Tests/Standalone/QuartzRectTests.swift
 
 import Foundation
@@ -38,17 +38,6 @@ struct QuartzRect: Equatable, CustomStringConvertible {
     func centerIsInside(_ screenFrame: CGRect) -> Bool {
         screenFrame.contains(CGPoint(x: midX, y: midY))
     }
-}
-
-// MARK: - framesMatch (mirrors CoordinateKit.swift:200-207)
-
-func framesMatch(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 10, heightTolerance: CGFloat? = nil) -> Bool {
-    let ht = heightTolerance ?? tolerance * 2
-    let positionMatches = abs(a.origin.x - b.origin.x) <= tolerance &&
-                         abs(a.origin.y - b.origin.y) <= tolerance
-    let sizeMatches = abs(a.width - b.width) <= tolerance * 2 &&
-                     abs(a.height - b.height) <= ht
-    return positionMatches && sizeMatches
 }
 
 // MARK: - Coordinate conversion (mirrors CoordinateKit.swift:156-162)
@@ -122,41 +111,6 @@ do {
 
     let edgeCase = QuartzRect(x: 0, y: 0, width: 1, height: 1)
     check("1x1 at origin on main screen", edgeCase.centerIsInside(mainScreen))
-}
-
-// MARK: - framesMatch
-
-print("\n5. framesMatch — exact match")
-do {
-    let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-    check("exact match", framesMatch(a, a))
-}
-
-print("\n6. framesMatch — within tolerance")
-do {
-    let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let b = CGRect(x: 105, y: 205, width: 815, height: 615)
-    check("5px offset within 10px tolerance", framesMatch(a, b))
-    check("reversed", framesMatch(b, a))
-}
-
-print("\n7. framesMatch — outside tolerance")
-do {
-    let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let b = CGRect(x: 115, y: 200, width: 800, height: 600)
-    check("15px x-offset outside 10px tolerance", !framesMatch(a, b))
-}
-
-print("\n8. framesMatch — heightTolerance")
-do {
-    let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let b = CGRect(x: 100, y: 200, width: 800, height: 615)
-    check("15px height diff within 20px heightTolerance", framesMatch(a, b))
-
-    let c = CGRect(x: 100, y: 200, width: 800, height: 625)
-    check("25px height diff outside 20px heightTolerance", !framesMatch(a, c))
-
-    check("25px height within 30px custom heightTolerance", framesMatch(a, c, heightTolerance: 30))
 }
 
 // MARK: - Coordinate conversion symmetry

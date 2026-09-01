@@ -33,15 +33,6 @@ func decideBinding(hasTerminalCtx: Bool, hasUsefulContext: Bool, isRemote: Bool,
     return .local
 }
 
-/// ScreenPosition framesMatch — all 4 dimensions must be within tolerance
-/// WindowManager+ScreenPosition.swift:73-78
-func framesMatchExact(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
-    fabs(lhs.origin.x - rhs.origin.x) <= tolerance &&
-    fabs(lhs.origin.y - rhs.origin.y) <= tolerance &&
-    fabs(lhs.size.width - rhs.size.width) <= tolerance &&
-    fabs(lhs.size.height - rhs.size.height) <= tolerance
-}
-
 /// Log level selection based on duration threshold
 /// Support.swift:171
 func logLevelForDuration(_ durationMs: Int, warnThresholdMs: Int) -> String {
@@ -149,52 +140,6 @@ do {
     let result = decideBinding(hasTerminalCtx: true, hasUsefulContext: true, isRemote: true, machineLabel: nil)
     if case .local = result { check("nil label → .local fallback", true) }
     else { check("nil label → .local fallback", false) }
-}
-
-// MARK: - framesMatchExact
-
-print("\n12. framesMatchExact — exact match")
-do {
-    let frame = CGRect(x: 100, y: 200, width: 800, height: 600)
-    check("exact match", framesMatchExact(frame, frame, tolerance: 5))
-}
-
-print("\n13. framesMatchExact — within tolerance on all dimensions")
-do {
-    let a = CGRect(x: 102, y: 198, width: 803, height: 598)
-    let b = CGRect(x: 100, y: 200, width: 800, height: 600)
-    check("3px off all dims within 5px tolerance", framesMatchExact(a, b, tolerance: 5))
-}
-
-print("\n14. framesMatchExact — one dimension outside tolerance fails")
-do {
-    let a = CGRect(x: 100, y: 200, width: 806, height: 600) // width 6px off
-    let b = CGRect(x: 100, y: 200, width: 800, height: 600)
-    check("width 6px off outside 5px → false", !framesMatchExact(a, b, tolerance: 5))
-
-    let c = CGRect(x: 100, y: 206, width: 800, height: 600) // y 6px off
-    check("y 6px off outside 5px → false", !framesMatchExact(c, b, tolerance: 5))
-}
-
-print("\n15. framesMatchExact — all four dimensions checked independently")
-do {
-    let target = CGRect(x: 0, y: 0, width: 1920, height: 1117)
-    // Only x off by 6
-    check("x off → fail", !framesMatchExact(CGRect(x: 6, y: 0, width: 1920, height: 1117), target, tolerance: 5))
-    // Only y off by 6
-    check("y off → fail", !framesMatchExact(CGRect(x: 0, y: 6, width: 1920, height: 1117), target, tolerance: 5))
-    // Only width off by 6
-    check("width off → fail", !framesMatchExact(CGRect(x: 0, y: 0, width: 1926, height: 1117), target, tolerance: 5))
-    // Only height off by 6
-    check("height off → fail", !framesMatchExact(CGRect(x: 0, y: 0, width: 1920, height: 1123), target, tolerance: 5))
-}
-
-print("\n16. framesMatchExact — zero tolerance requires exact match")
-do {
-    let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let b = CGRect(x: 100.0001, y: 200, width: 800, height: 600)
-    check("0.0001px off with 0 tolerance → false", !framesMatchExact(a, b, tolerance: 0))
-    check("exact with 0 tolerance → true", framesMatchExact(a, a, tolerance: 0))
 }
 
 // MARK: - Log level selection

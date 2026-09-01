@@ -40,7 +40,7 @@ extension WindowManager {
         // usleep 25ms + sizeReadbackMatched 验证，紧随的 CGWindowList 读 frame 时 WindowServer 已更新。
         // drift check + rewrite 保留兜底偶发（memory feedback_apply_float_order）。
         if let finalFrame = cgWindowBounds(for: windowID) {
-            let sizeDrift = abs(finalFrame.height - targetFrame.height) + abs(finalFrame.width - targetFrame.width)
+            let sizeDrift = CoordinateKit.sizeDrift(finalFrame.size, targetFrame.size)
             log("[WindowManager] moveWindowToMainScreen: post-move frame check", fields: [
                 "op": op,
                 "windowID": String(windowID),
@@ -70,7 +70,7 @@ extension WindowManager {
                     }
                     usleep(WindowSettle.postRewriteSettleMicros)
                     guard let postRewriteFrame = cgWindowBounds(for: windowID) else { break }
-                    let postDrift = abs(postRewriteFrame.height - targetFrame.height) + abs(postRewriteFrame.width - targetFrame.width)
+                    let postDrift = CoordinateKit.sizeDrift(postRewriteFrame.size, targetFrame.size)
                     log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
                         "op": op, "windowID": String(windowID),
                         "rewriteAttempt": String(rewriteAttempt),

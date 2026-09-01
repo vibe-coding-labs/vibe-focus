@@ -7,40 +7,6 @@ import CoreGraphics
 @MainActor
 struct WindowManagerPureLogicTests {
 
-    // MARK: - WindowManager.framesMatch (instance method, single tolerance for all dimensions)
-
-    @Test("WindowManager.framesMatch: identical frames match")
-    func framesMatchIdentical() {
-        let wm = WindowManager.shared
-        let frame = CGRect(x: 100, y: 200, width: 800, height: 600)
-        #expect(wm.framesMatch(frame, frame))
-    }
-
-    @Test("WindowManager.framesMatch: within tolerance")
-    func framesMatchWithinTolerance() {
-        let wm = WindowManager.shared
-        let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-        let b = CGRect(x: 105, y: 195, width: 808, height: 592)
-        #expect(wm.framesMatch(a, b))
-    }
-
-    @Test("WindowManager.framesMatch: position exceeds tolerance")
-    func framesMatchPositionExceeds() {
-        let wm = WindowManager.shared
-        let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-        let b = CGRect(x: 115, y: 200, width: 800, height: 600)
-        #expect(!wm.framesMatch(a, b))
-    }
-
-    @Test("WindowManager.framesMatch: size exceeds tolerance")
-    func framesMatchSizeExceeds() {
-        let wm = WindowManager.shared
-        let a = CGRect(x: 0, y: 0, width: 800, height: 600)
-        let b = CGRect(x: 0, y: 0, width: 815, height: 600)
-        // tolerance is 10, delta is 15 → exceeds
-        #expect(!wm.framesMatch(a, b))
-    }
-
     // MARK: - ScriptWindowSnapshot.frame computed property
 
     @Test("ScriptWindowSnapshot.frame computes CGRect correctly")

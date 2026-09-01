@@ -155,8 +155,11 @@ extension WindowManager {
             }
             readbackMs &+= elapsedMilliseconds(since: readbackStart)
             if let appliedFrame,
-               abs(appliedFrame.width - targetFrame.width) <= frameTolerance,
-               abs(appliedFrame.height - targetFrame.height) <= frameTolerance {
+               CoordinateKit.isSizeConverged(
+                   actual: appliedFrame.size,
+                   target: targetFrame.size,
+                   tolerance: frameTolerance
+               ) {
                 matched = true
                 break  // size 已生效
             }

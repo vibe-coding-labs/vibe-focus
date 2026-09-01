@@ -1,7 +1,6 @@
 // Tests/Standalone/CoordinateKitLogicTests.swift
-// Verification: QuartzRect geometry, DisplayIdentifier/SpaceIdentifier descriptions,
-//               CoordinateKit.framesMatch tolerance logic
-// Mirrors: Sources/Space/CoordinateKit.swift:11-91, 200-207
+// Verification: QuartzRect geometry, DisplayIdentifier/SpaceIdentifier descriptions
+// Mirrors: Sources/Space/CoordinateKit.swift:11-91
 // Run: swift Tests/Standalone/CoordinateKitLogicTests.swift
 
 import Foundation
@@ -69,16 +68,6 @@ struct QuartzRect: Equatable, CustomStringConvertible {
     func centerIsInside(_ screenFrame: CGRect) -> Bool {
         screenFrame.contains(CGPoint(x: midX, y: midY))
     }
-}
-
-/// Mirrors CoordinateKit.framesMatch (CoordinateKit.swift:200-207)
-func framesMatch(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 10, heightTolerance: CGFloat? = nil) -> Bool {
-    let ht = heightTolerance ?? tolerance * 2
-    let positionMatches = abs(a.origin.x - b.origin.x) <= tolerance &&
-                         abs(a.origin.y - b.origin.y) <= tolerance
-    let sizeMatches = abs(a.width - b.width) <= tolerance * 2 &&
-                     abs(a.height - b.height) <= ht
-    return positionMatches && sizeMatches
 }
 
 // MARK: - Test harness
@@ -248,92 +237,6 @@ do {
     checkEqual("negative y", r.y, -1440.0)
     checkEqual("midY negative", r.midY, -1440.0 + 720.0)
     checkEqual("description with negative", r.description, "0,-1440 2560x1440")
-}
-
-// MARK: - framesMatch
-
-print("\n18. framesMatch — exact match")
-do {
-    let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-    check("exact match default tolerance", framesMatch(a, a))
-    check("exact match tolerance 0", framesMatch(a, a, tolerance: 0))
-}
-
-print("\n19. framesMatch — default tolerance (10)")
-do {
-    let target = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let withinPos = CGRect(x: 105, y: 195, width: 800, height: 600)
-    check("5px position offset within 10px tolerance", framesMatch(withinPos, target))
-
-    let outsidePos = CGRect(x: 115, y: 200, width: 800, height: 600)
-    check("15px position offset outside 10px tolerance", !framesMatch(outsidePos, target))
-}
-
-print("\n20. framesMatch — size tolerance is 2x position tolerance")
-do {
-    let target = CGRect(x: 100, y: 200, width: 800, height: 600)
-    // width diff 15px, tolerance*2=20 → within
-    let withinSize = CGRect(x: 100, y: 200, width: 815, height: 600)
-    check("15px width diff within 10*2=20", framesMatch(withinSize, target))
-
-    // width diff 25px, tolerance*2=20 → outside
-    let outsideSize = CGRect(x: 100, y: 200, width: 825, height: 600)
-    check("25px width diff outside 10*2=20", !framesMatch(outsideSize, target))
-}
-
-print("\n21. framesMatch — custom height tolerance")
-do {
-    let target = CGRect(x: 100, y: 200, width: 800, height: 600)
-    // height diff 15px, default ht=20 → within
-    check("15px height diff within default ht=20", framesMatch(CGRect(x: 100, y: 200, width: 800, height: 615), target))
-
-    // height diff 15px, custom heightTolerance=10 → outside
-    check("15px height diff outside custom ht=10", !framesMatch(CGRect(x: 100, y: 200, width: 800, height: 615), target, heightTolerance: 10))
-
-    // height diff 5px, custom heightTolerance=10 → within
-    check("5px height diff within custom ht=10", framesMatch(CGRect(x: 100, y: 200, width: 800, height: 605), target, heightTolerance: 10))
-}
-
-print("\n22. framesMatch — position OK but size not → fails")
-do {
-    let target = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let posOkSizeBad = CGRect(x: 100, y: 200, width: 900, height: 600)
-    check("position exact but width 100px off", !framesMatch(posOkSizeBad, target))
-}
-
-print("\n23. framesMatch — size OK but position not → fails")
-do {
-    let target = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let sizeOkPosBad = CGRect(x: 200, y: 200, width: 800, height: 600)
-    check("size exact but x 100px off", !framesMatch(sizeOkPosBad, target))
-}
-
-print("\n24. framesMatch — yabai tiling adjustment (realistic)")
-do {
-    let target = CGRect(x: 0, y: 0, width: 1920, height: 1117)
-    let yabaiAdjusted = CGRect(x: 0, y: 25, width: 1920, height: 1092)
-    // pos y diff 25px > 10 → position fails
-    check("yabai 25px y-adjust fails default tolerance", !framesMatch(yabaiAdjusted, target))
-    // With higher tolerance
-    check("yabai 25px y-adjust passes with tolerance 30", framesMatch(yabaiAdjusted, target, tolerance: 30))
-}
-
-print("\n25. framesMatch — zero tolerance requires exact")
-do {
-    let a = CGRect(x: 100, y: 200, width: 800, height: 600)
-    let b = CGRect(x: 100.0001, y: 200, width: 800, height: 600)
-    check("0.0001px off with 0 tolerance → false", !framesMatch(a, b, tolerance: 0))
-    check("exact with 0 tolerance → true", framesMatch(a, a, tolerance: 0))
-}
-
-print("\n26. framesMatch — secondary screen negative Y")
-do {
-    let a = CGRect(x: 0, y: -1440, width: 2560, height: 1440)
-    let b = CGRect(x: 0, y: -1440, width: 2560, height: 1440)
-    check("secondary screen exact match", framesMatch(a, b))
-
-    let shifted = CGRect(x: 0, y: -1435, width: 2560, height: 1440)
-    check("5px shift on negative Y within 10px", framesMatch(shifted, a))
 }
 
 // MARK: - Summary

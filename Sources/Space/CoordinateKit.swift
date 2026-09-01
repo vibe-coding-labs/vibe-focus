@@ -266,15 +266,31 @@ enum CoordinateKit {
         return nonMainScreens[nonMainIndex]
     }
 
-    // MARK: 窗口帧验证
+    // MARK: 窗口帧收敛判据（唯一事实源）
 
-    static func framesMatch(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 10, heightTolerance: CGFloat? = nil) -> Bool {
-        let ht = heightTolerance ?? tolerance * 2
-        let positionMatches = abs(a.origin.x - b.origin.x) <= tolerance &&
-                             abs(a.origin.y - b.origin.y) <= tolerance
-        let sizeMatches = abs(a.width - b.width) <= tolerance * 2 &&
-                         abs(a.height - b.height) <= ht
-        return positionMatches && sizeMatches
+    /// 位置漂移和 |dx| + |dy|（日志展示与收敛判定共用同一数值）。
+    static func originDrift(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        abs(a.x - b.x) + abs(a.y - b.y)
+    }
+
+    /// 尺寸漂移和 |dw| + |dh|（日志展示与收敛判定共用同一数值）。
+    static func sizeDrift(_ a: CGSize, _ b: CGSize) -> CGFloat {
+        abs(a.width - b.width) + abs(a.height - b.height)
+    }
+
+    /// size 收敛判定：漂移和 ≤ 容差。
+    /// 语义约定（playbook 2.16a 第十二刀统一）：全仓收敛判据一律用"漂移和"而非逐轴比较——
+    /// 逐轴允许单轴贴容差、另一轴再漂的合计超调（历史上 apply 循环逐轴、PostMove 漂移和，
+    /// 两层判据不一致曾出现 apply 判收敛、PostMove 立即重写的自我打架）。
+    static func isSizeConverged(actual: CGSize, target: CGSize, tolerance: CGFloat) -> Bool {
+        sizeDrift(actual, target) <= tolerance
+    }
+
+    /// 整 frame 收敛判定：origin 与 size 双维度漂移和均 ≤ 容差。
+    /// 使用点：moveWindowToFrameViaYabai 闭环验证。
+    static func isFrameConverged(actual: CGRect, target: CGRect, tolerance: CGFloat) -> Bool {
+        originDrift(actual.origin, target.origin) <= tolerance &&
+        sizeDrift(actual.size, target.size) <= tolerance
     }
 
     static func isFrameOnExpectedScreen(_ frame: CGRect, expectedScreen: NSScreen) -> Bool {
