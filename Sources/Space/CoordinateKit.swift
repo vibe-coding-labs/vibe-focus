@@ -161,7 +161,24 @@ enum CoordinateKit {
 
     static func isOnMainScreen(_ rect: CGRect) -> Bool {
         guard let mainFrame = mainScreenQuartzFrame else { return false }
-        return mainFrame.contains(CGPoint(x: rect.midX, y: rect.midY))
+        return isOnMainScreen(rect, mainScreenFrame: mainFrame)
+    }
+
+    /// 窗口是否在主屏 — 全仓唯一的"主屏归属"判定实现。
+    ///
+    /// ## 场景
+    /// - toggle 焦点解析（三分支共用）、isWindowOnMainScreen（hook 预检）、候选窗口筛选；
+    /// - 主屏 frame 由调用方显式传入（toggle 传入口缓存的 cachedMainScreen.frame，避免
+    ///   热路径内重复枚举 NSScreen.screens；无缓存的调用方用单参重载，内部取
+    ///   mainScreenQuartzFrame）。
+    ///
+    /// ## 坐标约定
+    /// - rect 是 Quartz（CGWindowList）坐标；主屏 Cocoa frame (0,0,W,H) 与主屏 Quartz
+    ///   rect 数值区间一致（y 轴方向相反但区间相同），对"是否在主屏"这一布尔判定
+    ///   等价——真实显示器物理上不重叠，其他屏的 Quartz 坐标不可能落入主屏区间。
+    /// - 若未来需要区分"在主屏的哪一半"，必须先做 cocoaY(fromQuartzY:) 转换。
+    static func isOnMainScreen(_ rect: CGRect, mainScreenFrame: CGRect) -> Bool {
+        mainScreenFrame.contains(CGPoint(x: rect.midX, y: rect.midY))
     }
 
     static func screenForRect(_ rect: CGRect) -> NSScreen? {

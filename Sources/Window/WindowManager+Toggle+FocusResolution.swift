@@ -13,12 +13,19 @@ extension WindowManager {
     ///
     /// ## 场景
     /// - `resolveFocusedWindowForToggle` 的返回值；windowID 供 restore 决策与冷却期使用，
-    ///   identity/AX 供 `moveToMainScreen(knownIdentity:knownWindowAX:)` 复用（省重复 AX）。
+    ///   identity/AX 供 `moveToMainScreen(knownIdentity:knownWindowAX:)` 复用（省重复 AX），
+    ///   windowFrame/onMainScreen 是 toggle 路由与 knownOrigFrame 的**类型化数据源**
+    ///   （2026-09-01 前 toggle 从 toggleContext 日志字典读字符串再正则解析回来——日志
+    ///   格式成了函数契约，已废除；日志字典只承担日志职责）。
     struct ToggleWindowResolution {
         let windowID: UInt32?
         /// 仅 AX 分支携带（CGWindowList/yabai 分支延迟 AX：move_to_main 先走 yabai space move）
         let windowAX: AXUIElement?
         let identity: WindowIdentity?
+        /// 焦点窗口 frame（Quartz 坐标）；仅在解析成功且读到 bounds 时非 nil
+        let windowFrame: CGRect?
+        /// 焦点窗口是否在主屏（CoordinateKit.isOnMainScreen 语义）；主屏不可用时为 nil
+        let onMainScreen: Bool?
         /// 命中分支："cgwindowlist" / "yabai" / "ax"（探测失败保持默认 "ax"）
         let source: String
         /// 命中分支净耗时（ms），用于日志归因三分支谁是 ctx 瓶颈
@@ -67,6 +74,27 @@ extension WindowManager {
         var resolvedWindowID: UInt32?
         var resolvedWindowAX: AXUIElement?
         var resolvedIdentity: WindowIdentity?
+        var resolvedFrame: CGRect?
+        var resolvedOnMain: Bool?
+
+        // 命中分支归一化收尾：typed 字段 + 日志字典同步填充。
+        // 主屏归属判定走 CoordinateKit.isOnMainScreen(_:mainScreenFrame:)（全仓唯一实现），
+        // 主屏来源仍是调用方缓存的 cachedMainScreen（toggle 同步执行期间屏幕配置不变）。
+        func adopt(frame: CGRect?, windowID: UInt32, ax: AXUIElement?, identity: WindowIdentity, source: String, branchMs: Int, titleForLog: String) {
+            focusedWindowSource = source
+            focusedBranchMs = branchMs
+            resolvedWindowID = windowID
+            resolvedWindowAX = ax
+            resolvedIdentity = identity
+            if let frame {
+                resolvedFrame = frame
+                resolvedOnMain = cachedMainScreen.map { CoordinateKit.isOnMainScreen(frame, mainScreenFrame: $0.frame) }
+            }
+            toggleContext["windowID"] = String(windowID)
+            if let frame { toggleContext["windowFrame"] = String(describing: frame) }
+            if let onMain = resolvedOnMain { toggleContext["onMainScreen"] = String(onMain) }
+            toggleContext["windowTitle"] = truncateForLog(titleForLog, limit: 60)
+        }
 
         if let frontApp {
             let frontPID = frontApp.processIdentifier
@@ -82,17 +110,6 @@ extension WindowManager {
             toggleContext["cgListProbeMs"] = String(cgListProbeMs)
             toggleContext["candidatesCount"] = String(candidates.count)
             if candidates.count == 1, let entry = candidates.first, let bounds = entry.bounds {
-                focusedWindowSource = "cgwindowlist"
-                focusedBranchMs = cgListProbeMs
-                resolvedWindowID = entry.windowID
-                resolvedWindowAX = nil  // 延迟 AX：move_to_main 走 yabai space move 先行
-                toggleContext["windowID"] = String(entry.windowID)
-                toggleContext["windowFrame"] = String(describing: bounds)
-                if let mainScreen = cachedMainScreen {
-                    let windowCenter = CGPoint(x: bounds.midX, y: bounds.midY)
-                    toggleContext["onMainScreen"] = String(mainScreen.frame.contains(windowCenter))
-                }
-                toggleContext["windowTitle"] = truncateForLog(entry.name ?? "", limit: 60)
                 resolvedIdentity = WindowIdentity(
                     windowID: entry.windowID,
                     pid: frontPID,
@@ -101,6 +118,9 @@ extension WindowManager {
                     windowNumber: Int(entry.windowID),
                     title: entry.name
                 )
+                if let identity = resolvedIdentity {
+                    adopt(frame: bounds, windowID: entry.windowID, ax: nil, identity: identity, source: "cgwindowlist", branchMs: cgListProbeMs, titleForLog: entry.name ?? "")
+                }
             } else {
                 // P-INST-1: yabai 分支探测计时（queryFocusedWindow fork，副屏 ~635ms 是 ctx 主因）。
                 let yabaiProbeStart = Date()
@@ -112,18 +132,7 @@ extension WindowManager {
                    let winID = UInt32(exactly: yabaiWinID),
                    focusedInfo.pid == Int(frontPID) {
                     // yabai fallback（多窗口 / CGWindowList 候选≠1）：副屏慢 648ms，但可靠拿系统焦点窗口。
-                    focusedWindowSource = "yabai"
-                    focusedBranchMs = yabaiProbeMs
-                    resolvedWindowID = winID
-                    resolvedWindowAX = nil
-                    toggleContext["windowID"] = String(winID)
                     let bounds = focusedInfo.frame?.cgRect ?? .zero
-                    toggleContext["windowFrame"] = String(describing: bounds)
-                    if let mainScreen = cachedMainScreen {
-                        let windowCenter = CGPoint(x: bounds.midX, y: bounds.midY)
-                        toggleContext["onMainScreen"] = String(mainScreen.frame.contains(windowCenter))
-                    }
-                    toggleContext["windowTitle"] = truncateForLog(focusedInfo.title ?? focusedInfo.app ?? "", limit: 60)
                     resolvedIdentity = WindowIdentity(
                         windowID: winID,
                         pid: frontPID,
@@ -132,6 +141,9 @@ extension WindowManager {
                         windowNumber: Int(winID),
                         title: focusedInfo.title ?? focusedInfo.app
                     )
+                    if let identity = resolvedIdentity {
+                        adopt(frame: bounds, windowID: winID, ax: nil, identity: identity, source: "yabai", branchMs: yabaiProbeMs, titleForLog: focusedInfo.title ?? focusedInfo.app ?? "")
+                    }
                 } else {
                     // P-INST-1: AX 分支探测计时（focusedWindow + windowHandle，副屏阻塞 ~1.5s）。
                     let axProbeStart = Date()
@@ -140,23 +152,11 @@ extension WindowManager {
                     let axProbeMs = elapsedMilliseconds(since: axProbeStart)
                     toggleContext["axProbeMs"] = String(axProbeMs)
                     if let focusedWin = focusedWin, let winID = winID {
-                        focusedWindowSource = "ax"
-                        focusedBranchMs = axProbeMs
                         // AX fallback：yabai 不可用 / query 失败 / pid 不一致时保持原逻辑（副屏阻塞 1.5s）。
                         // 热路径读 frame 禁 AX frame(of:)，故 frame/title 仍走 CGWindowList（按已知 windowID 查，非 AX）。
-                        resolvedWindowID = winID
-                        resolvedWindowAX = focusedWin
                         toggleContext["windowID"] = String(winID)
                         let cgList = cgWindowListAll()
                         if let entry = cgList.first(where: { $0.windowID == winID }) {
-                            if let bounds = entry.bounds {
-                                toggleContext["windowFrame"] = String(describing: bounds)
-                                if let mainScreen = cachedMainScreen {
-                                    let windowCenter = CGPoint(x: bounds.midX, y: bounds.midY)
-                                    toggleContext["onMainScreen"] = String(mainScreen.frame.contains(windowCenter))
-                                }
-                            }
-                            toggleContext["windowTitle"] = truncateForLog(entry.name ?? "", limit: 60)
                             resolvedIdentity = WindowIdentity(
                                 windowID: winID,
                                 pid: frontApp.processIdentifier,
@@ -165,6 +165,15 @@ extension WindowManager {
                                 windowNumber: Int(winID),
                                 title: entry.name
                             )
+                            if let identity = resolvedIdentity {
+                                adopt(frame: entry.bounds, windowID: winID, ax: focusedWin, identity: identity, source: "ax", branchMs: axProbeMs, titleForLog: entry.name ?? "")
+                            }
+                        } else {
+                            // CGWindowList 无此窗口（罕见）：仅记 windowID/AX，frame/onMain 不设
+                            focusedWindowSource = "ax"
+                            focusedBranchMs = axProbeMs
+                            resolvedWindowID = winID
+                            resolvedWindowAX = focusedWin
                         }
                     }
                 }
@@ -183,44 +192,10 @@ extension WindowManager {
             windowID: resolvedWindowID,
             windowAX: resolvedWindowAX,
             identity: resolvedIdentity,
+            windowFrame: resolvedFrame,
+            onMainScreen: resolvedOnMain,
             source: focusedWindowSource,
             branchMs: focusedBranchMs
         )
     }
-}
-
-/// Parse CGRect from string format "CGRect(x, y, w, h)" or "(x, y, w, h)".
-/// Used to parse toggleContext["windowFrame"] captured by CGWindowList.
-///
-/// ## 场景
-/// - toggle 的 move_to_main 路径：把入口日志里记录的 frame 字符串还原为 CGRect，
-///   作为 knownOrigFrame 传入（窗口被 yabai space move 后再读 AX frame 会拿到主屏新
-///   frame，必须用 move 前的快照，见 WindowManager+MoveWindow 的 origFrame 说明）。
-///
-/// ## 样例
-/// ```
-/// "CGRect(0.0, -707.0, 1920.0, 1080.0)" → (0.0, -707.0, 1920.0, 1080.0)
-/// "(10, 20, 300, 200)"                  → (10.0, 20.0, 300.0, 200.0)
-/// "not a frame"                         → nil
-/// ```
-func parseFrameString(_ s: String) -> CGRect? {
-    // Extract numbers from string like "CGRect(0.0, 0.0, 100.0, 200.0)" or "(0.0, 0.0, 100.0, 200.0)"
-    let pattern = #"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)"#
-    guard let regex = try? NSRegularExpression(pattern: pattern),
-          let match = regex.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
-          match.numberOfRanges >= 5 else {
-        return nil
-    }
-    func extractGroup(_ idx: Int) -> CGFloat? {
-        guard idx < match.numberOfRanges else { return nil }
-        let range = Range(match.range(at: idx), in: s)
-        return range.map { CGFloat((s[$0] as NSString).doubleValue) }
-    }
-    guard let x = extractGroup(1),
-          let y = extractGroup(2),
-          let w = extractGroup(3),
-          let h = extractGroup(4) else {
-        return nil
-    }
-    return CGRect(x: x, y: y, width: w, height: h)
 }
