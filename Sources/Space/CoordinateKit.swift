@@ -173,28 +173,6 @@ enum CoordinateKit {
         mainScreenFrame.contains(CGPoint(x: rect.midX, y: rect.midY))
     }
 
-    static func screenForRect(_ rect: CGRect) -> NSScreen? {
-        // P-INST-135: rect 所属屏幕查询耗时（mainScreenQuartzFrame P-INST-134 + NSScreen.screens 遍历 frame.contains；窗口定位/检测窗口在哪个屏调用）。
-        #if PERF_INSTRUMENT
-        let sfrStart = Date()
-        defer {
-            log("[CoordinateKit] screenForRect finished", level: .debug, fields: [
-                "durationMs": String(elapsedMilliseconds(since: sfrStart))
-            ])
-        }
-        #endif
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        if let mainFrame = mainScreenQuartzFrame, mainFrame.contains(center) {
-            return NSScreen.screens.first { $0.frame.origin == .zero }
-        }
-        for screen in NSScreen.screens where screen.frame.origin != .zero {
-            if screen.frame.contains(center) {
-                return screen
-            }
-        }
-        return nil
-    }
-
     // MARK: 坐标系转换
 
     static func cocoaY(fromQuartzY quartzY: CGFloat) -> CGFloat {
@@ -203,13 +181,6 @@ enum CoordinateKit {
 
     static func quartzY(fromCocoaY cocoaY: CGFloat) -> CGFloat {
         mainScreenHeight - cocoaY
-    }
-
-    static func convertQuartzToCocoa(_ point: CGPoint, screenFrame: CGRect) -> CGPoint {
-        if screenFrame.origin == .zero {
-            return CGPoint(x: point.x, y: mainScreenHeight - point.y)
-        }
-        return point
     }
 
     // MARK: 显示器索引转换
@@ -264,6 +235,21 @@ enum CoordinateKit {
         let nonMainIndex = index - 2
         guard nonMainIndex >= 0, nonMainIndex < nonMainScreens.count else { return nil }
         return nonMainScreens[nonMainIndex]
+    }
+
+    /// NSScreen → yabai display index (1-based)。nsScreen(forYabaiDisplayIndex:) 的逆映射：
+    /// 主屏（origin .zero）= 1，非主屏按 NSScreen.screens 中的先后次序 = 2, 3, …
+    /// 消费方必须经本函数取 yabai 索引，禁止把 NSScreen 数组下标直接当 yabai 索引写入
+    /// （2.16a 第十三刀前 ToggleRecord.sourceDisplay 曾因此把副屏记成 yabai(1)=主屏）。
+    static func yabaiDisplayIndex(for screen: NSScreen) -> Int? {
+        let screens = NSScreen.screens
+        if screen.frame.origin == .zero { return 1 }
+        var yabaiIndex = 2
+        for candidate in screens where candidate.frame.origin != .zero {
+            if candidate == screen { return yabaiIndex }
+            yabaiIndex += 1
+        }
+        return nil
     }
 
     // MARK: 窗口帧收敛判据（唯一事实源）

@@ -62,14 +62,4 @@ struct CoordinateKitLiveTests {
         let backToQuartz = CoordinateKit.quartzY(fromCocoaY: cocoaY)
         #expect(backToQuartz == quartzY)
     }
-
-    @Test("screenForRect returns a screen for origin rect")
-    func screenForOriginRect() {
-        let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
-        let screen = CoordinateKit.screenForRect(rect)
-        // In test env with screens, should find the main screen
-        if NSScreen.screens.count > 0 {
-            #expect(screen != nil)
-        }
-    }
 }

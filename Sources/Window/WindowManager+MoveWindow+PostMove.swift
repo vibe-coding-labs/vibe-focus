@@ -107,7 +107,7 @@ extension WindowManager {
         let saveStart = Date()
         let sourceSpaceIndex = spaceContext.sourceSpaceIndex ?? .yabai(0)
         let sourceContext = displayContext(for: origFrame)
-        let sourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.index.map { .yabai($0) } ?? .yabai(0)
+        let sourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.yabaiIndex.map { .yabai($0) } ?? .yabai(0)
         ToggleEngine.shared.save(
             windowID: windowID,
             pid: identity.pid,

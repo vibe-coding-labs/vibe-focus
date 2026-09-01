@@ -80,7 +80,21 @@ extension WindowManager {
     ///
     /// - Parameter frame: The window frame to locate
     /// - Returns: Tuple of (screen array index, CGDisplayID), either may be nil if no match
-    func displayContext(for frame: CGRect) -> (index: Int?, displayID: UInt32?) {
+    /// 判定 Quartz frame 所属显示器。
+    ///
+    /// ## 场景
+    /// - saveToggleRecordForMainMove 的 sourceDisplay 派生兜底（yabai 拿不到 sourceDisplayIndex 时）；
+    /// - displayID(for:)。
+    ///
+    /// ## 坐标约定（2.16a 第十三刀修正）
+    /// - 入参 frame 是 Quartz 坐标（CGWindowList）；NSScreen.frame 是 Cocoa 坐标。
+    ///   必须先做全局 Quartz→Cocoa 变换（cocoaY = 主屏高 − quartzY）再比较——
+    ///   此前直接比 Quartz 点，仅主屏和与主屏垂直对齐的副屏碰巧正确，
+    ///   纵向偏移副屏永远 miss（Quartz 负 y 段 vs Cocoa 正 y 段）。
+    /// - 返回的 index 是 yabai display index（1-based，主屏=1），
+    ///   经 CoordinateKit.yabaiDisplayIndex(for:) 派生；此前返回 NSScreen 数组
+    ///   0-based 下标，消费端按 yabai 索引写入审计列时倒置（副屏记成主屏）。
+    func displayContext(for frame: CGRect) -> (yabaiIndex: Int?, displayID: UInt32?) {
         // P-INST-215: 显示器上下文解析耗时（NSScreen.screens.count + enumerated 遍历 contains/intersects + CoordinateKit.cgDisplayID；toggle 路径确定窗口所在屏，NSScreen.screens 可能阻塞；slow-op ≥30ms warn）。
         #if PERF_INSTRUMENT
         let dcStart = Date()
@@ -99,19 +113,28 @@ extension WindowManager {
                 "screenCount": String(NSScreen.screens.count)
             ]
         )
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        for (index, screen) in NSScreen.screens.enumerated() {
-            if screen.frame.contains(center) || screen.frame.intersects(frame) {
+        // 全局 Quartz→Cocoa 变换（变换常量恒为主屏高，与点在哪块屏无关）
+        let cocoaFrame = CGRect(
+            x: frame.origin.x,
+            y: CoordinateKit.mainScreenHeight - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+        let cocoaCenter = CGPoint(x: cocoaFrame.midX, y: cocoaFrame.midY)
+        for (screenIndex, screen) in NSScreen.screens.enumerated() {
+            if screen.frame.contains(cocoaCenter) || screen.frame.intersects(cocoaFrame) {
+                let yabaiIndex = CoordinateKit.yabaiDisplayIndex(for: screen)
                 let dID = CoordinateKit.cgDisplayID(for: screen)
                 log(
                     "[WindowManager] displayContext matched screen",
                     level: .debug,
                     fields: [
-                        "index": String(index),
+                        "screenArrayIndex": String(screenIndex),
+                        "yabaiIndex": String(describing: yabaiIndex),
                         "displayID": String(describing: dID)
                     ]
                 )
-                return (index, dID)
+                return (yabaiIndex, dID)
             }
         }
         log(
