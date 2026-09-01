@@ -390,11 +390,11 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 死代码结论为零调用再删；行为等价性靠 RoutingTests 契约 + 既有 33 个 Standalone
 测试守护；日志 schema 变更（mode/spaceMoveResult/floatMs/applyMs）在提交信息中明示。
 
-### 2.16a 第十一轮完成（2026-09-01，遗留清单清剿「五~九刀」，重构与单测同批交付）
+### 2.16a 第十一轮完成（2026-09-01，遗留清单清剿「五~十刀」，重构与单测同批交付）
 
 > 背景与上轮同源：把 2.17 遗留清单里的 P2 全部 + P3 大半清掉，
 > 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 4 个 Standalone 测试文件、
-> 105 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
+> 90 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
 
 | 刀 | 提交 | 内容 | 配套测试 |
 |------|------|------|------|
@@ -403,18 +403,23 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | 第七刀 refactor(arch) | b7ee821 | **反向依赖切断**：冷却状态从 HookEventHandler 私有字典抽为中立 MoveCooldownRegistry（Support/），WindowManager restore/move_to_main 后直接写注册表——Hook→Window→Hook 单例环断开（Window/Toggle 目录 grep 零 HookEventHandler 引用）；冷却语义/时长/时序零变化 | MoveCooldownRegistryTests（24 项：30s 严格边界、覆盖写重置、clear 放行、窗口隔离、Stop↔UPS↔手动归位流转） |
 | 第八刀 refactor(space) | 472a12f | **YabaiErrorClassifier**：4 处各自裸写的 stderr.contains 收敛为表驱动的六类纯函数分类（SA 缺失/MC 阻塞/无焦点/窗口不存在/未识别/空），大小写不敏感统一、优先级=表序；4 个调用点判定语义与历史一致。spaceMoveTrusted 评估后不强行接线（生产 `window --space` 变更调用已清零，无消费者） | YabaiErrorClassifierTests（16 项：真实 yabai 报错 fixture、大小写漂移、优先级、空白串边界） |
 | 第九刀 refactor(timing) | bac8a25 | **WindowSettle 常量表**：9 处裸 usleep（300/400/25/15/150ms）收敛为 5 个带语义命名的常量，两级分组（yabai 级 vs WindowServer 级），注明实测依据与全部使用点；行为零变化，25/15ms 归一留给 frame 收敛循环统一 | WindowSettleTimingTests（11 项：基准值锁定 + 两级不变量 + 有界性） |
+| 第十刀 refactor(hook) | 62edeca | **影子决策清尾**：删 decideWindowResolution/WindowResolutionSource（只覆盖 hasBinding 分支、无法表达 self-heal，真实决策在 resolveWindowIdentity 内联且无分歧语义可收敛）与已废弃的 decideRestoreEligibility/RestoreEligibility（UPS 改单向移动后仅测试引用）；连带删 WindowResolutionTests 及另两个测试文件的死类型段落，净 −240 行 | 无新增（删除的是纯死代码及其测试）；全量门禁守护 |
 
 ### 2.17 待办（第十一轮后的遗留清单，按优先级）
 
 | 优先级 | 项目 | 说明 |
 |--------|------|------|
-| P2 | **Hook 事件决策统一** | decideWindowMove / decideWindowResolution / decideRestoreEligibility 生产零调用（仅测试引用），生产在 handleWindowMoveTrigger 内联重写且顺序不一致（remoteOnly 判定后置：被拒事件已产生 binding 持久化副作用）。做法与第一刀同构：让生产真正调纯函数，remoteOnly 前移到任何 bind/IO 之前 |
-| P2 | **restoreStrategy 死设置** | SpacePreferences.restoreStrategy 有 Picker 有偏好定义但主逻辑零消费，"拉到当前工作区"选项完全无效。要么在 restore 入口消费，要么下线设置项（骗用户） |
-| P3 | WindowManager→HookEventHandler 反向依赖切断 | WindowManager（引擎层）直接增删 HookEventHandler 冷却字典（Hook→Window→Hook 环）。改回调/通知由 hook 层自管冷却 |
 | P3 | CoordinateKit 副屏转换修正 | screenForRect/displayContext 用 Quartz 点直接比 Cocoa frame——主屏数值等价、副屏（非对称纵向偏移）会错位。涉及 sourceDisplay 派生等行为变化，需专项 + 断言脚本先行（2.15 教训） |
-| P3 | frame 收敛循环统一 | "写 frame→等落定→读回→重写"仍有 3 份平行实现（moveWindowToFrameViaYabai/verifyAndCorrectPostMoveSize/writeSizeWithReadback），等待 15/25/300/400ms 各拍脑袋。收敛为单一 convergeFrame(write:verify:deadline:) |
-| P3 | spaceMoveTrusted 探测接线 | YabaiEnvironmentProbe.spaceMoveTrusted 建成但生产零调用（stuck 路径已绕开该问题，接线属纵深防御）；YabaiError 分类器（4 处 stderr 字符串协议收敛）可同批做 |
-| P3 | settle 魔法数收敛 | 25/250/300/400ms 裸 usleep 散落 4 文件，收敛为一个带语义命名的常量表；条件等待（轮询 isFloating/frame 稳定）按 2.15 的闭环验证思路渐进替换 |
+| P3 | frame 收敛循环统一 | "写 frame→等落定→读回→重写"仍有 3 份平行实现（moveWindowToFrameViaYabai/verifyAndCorrectPostMoveSize/writeSizeWithReadback），收敛为单一 convergeFrame(write:verify:deadline:)；等待时长已收敛为 WindowSettle 常量表（2.16a 第九刀），其中 axWriteSettle(25ms)/postRewriteSettle(15ms) 同语义不同值的归一随本项一并处理 |
+| P3 | 条件等待渐进替换 | 固定 usleep 已全部常量化（WindowSettle），下一步按 2.15 的闭环验证思路渐进替换为条件等待（轮询 isFloating/frame 稳定），缩短固定等待的手感损耗 |
+
+已裁决销项（不再列入待办）：
+- Hook 事件决策统一、restoreStrategy 死设置（P2 两项）→ 2.16a 第五/六刀；
+- WindowManager→HookEventHandler 反向依赖 → 第七刀 MoveCooldownRegistry；
+- YabaiError 分类器 → 第八刀；settle 魔法数 → 第九刀 WindowSettle；
+- decideWindowResolution/decideRestoreEligibility 影子 → 第十刀删除；
+- spaceMoveTrusted 接线 → 评估后不接线：生产 `window --space` 变更类调用已清零
+  （第四刀），探测器保留作能力档案（YabaiEnvironmentProfileTests 已覆盖），无消费者不造通道。
 
 ---
 
