@@ -32,31 +32,12 @@ extension SettingsView {
                     title: "音量",
                     detail: "TTS 与音频文件的播放音量"
                 ) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "speaker.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 11))
-
-                        DraggableSlider(
-                            value: Binding(
-                                get: { Double(voiceAnnouncementManager.preferences.volume) },
-                                set: { voiceAnnouncementManager.updateVolume(Float($0)) }
-                            ),
-                            minValue: 0.0,
-                            maxValue: 1.0,
-                            step: 0.1
+                    VolumeSliderRow(
+                        volume: Binding(
+                            get: { Double(voiceAnnouncementManager.preferences.volume) },
+                            set: { voiceAnnouncementManager.updateVolume(Float($0)) }
                         )
-                        .frame(width: 120)
-
-                        Text("\(Int(voiceAnnouncementManager.preferences.volume * 100))%")
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 40)
-
-                        Image(systemName: "speaker.wave.3.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 11))
-                    }
+                    )
                 }
 
                 Divider()
@@ -95,23 +76,12 @@ extension SettingsView {
 
                 Divider()
 
-                HStack(spacing: 12) {
-                    Button(isVoicePreviewPlaying ? "停止" : "试听") {
-                        if isVoicePreviewPlaying {
-                            voiceAnnouncementManager.stopAll()
-                            isVoicePreviewPlaying = false
-                        } else {
-                            voiceAnnouncementManager.preview()
-                            isVoicePreviewPlaying = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                                isVoicePreviewPlaying = false
-                            }
-                        }
-                    }
-                    .buttonStyle(.bordered)
-
-                    Spacer()
-                }
+                PreviewPlaybackButton(
+                    isPlaying: $isVoicePreviewPlaying,
+                    resetAfter: 5.0,
+                    onPlay: { voiceAnnouncementManager.preview() },
+                    onStop: { voiceAnnouncementManager.stopAll() }
+                )
 
                 Text("点击试听当前播报效果")
                     .font(.system(size: 12))
@@ -147,26 +117,16 @@ extension SettingsView {
             if voiceAnnouncementManager.preferences.mode == .audioFile {
                 Divider()
 
-                SettingsRow(
+                AudioFilePickerRow(
                     title: "音频文件",
-                    detail: voiceAnnouncementManager.preferences.audioFilePath ?? "未选择文件"
-                ) {
-                    HStack(spacing: 10) {
-                        Button("选择文件") {
-                            showVoiceFileImporter = true
-                        }
-                        .buttonStyle(.bordered)
-
-                        if voiceAnnouncementManager.preferences.audioFilePath != nil {
-                            Button("清除") {
-                                voiceAnnouncementManager.updateAudioFilePath(nil)
-                            }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.red)
-                            .font(.system(size: 11))
-                        }
-                    }
-                }
+                    detail: voiceAnnouncementManager.preferences.audioFilePath ?? "未选择文件",
+                    path: voiceAnnouncementManager.preferences.audioFilePath,
+                    onPick: { path in
+                        log("[Settings] selected voice announcement audio file", fields: ["path": path])
+                        voiceAnnouncementManager.updateAudioFilePath(path)
+                    },
+                    onClear: { voiceAnnouncementManager.updateAudioFilePath(nil) }
+                )
 
                 Text("支持 WAV、MP3、M4A、AIFF 格式。文件缺失时自动 fallback 到「对话完成」。")
                     .font(.system(size: 12))

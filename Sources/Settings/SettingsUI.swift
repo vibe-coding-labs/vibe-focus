@@ -22,16 +22,14 @@ public struct SettingsView: View {
     @AppStorage(ClaudeHookPreferences.enabledKey) var hookEnabled = ClaudeHookPreferences.defaultEnabled
     @AppStorage(ClaudeHookPreferences.portKey) var hookPort = ClaudeHookPreferences.defaultPort
 
-    // 提示音
+    // 提示音（设置卡片见 SettingsView+SoundSection.swift）
     @StateObject var soundManager = SoundManager.shared
     @State var isPreviewPlaying = false
-    @State var showFileImporter = false
     @State var selectedTab: SettingsTab = .general
 
-    // 语音播报
+    // 语音播报（设置卡片见 SettingsView+VoiceAnnouncementSection.swift）
     @StateObject var voiceAnnouncementManager = VoiceAnnouncementManager.shared
     @State var isVoicePreviewPlaying = false
-    @State var showVoiceFileImporter = false
 
     // Hook token / 安装状态
     @State var hookToken = ""
@@ -205,42 +203,6 @@ public struct SettingsView: View {
                     "hasToken": String(!newValue.isEmpty)
                 ]
             )
-        }
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: [.audio, .wav, .mp3, .aiff],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                if let url = urls.first {
-                    let path = url.path
-                    log("[Settings] selected custom sound file", fields: ["path": path])
-                    soundManager.updateCustomSoundPath(path)
-                }
-            case .failure(let error):
-                log("[Settings] file importer failed", level: .error, fields: [
-                    "error": error.localizedDescription
-                ])
-            }
-        }
-        .fileImporter(
-            isPresented: $showVoiceFileImporter,
-            allowedContentTypes: [.audio, .wav, .mp3, .aiff],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                if let url = urls.first {
-                    let path = url.path
-                    log("[Settings] selected voice announcement audio file", fields: ["path": path])
-                    voiceAnnouncementManager.updateAudioFilePath(path)
-                }
-            case .failure(let error):
-                log("[Settings] voice file importer failed", level: .error, fields: [
-                    "error": error.localizedDescription
-                ])
-            }
         }
     }
 }

@@ -32,56 +32,28 @@ extension SettingsView {
                     title: "音量",
                     detail: "调整提示音的音量大小"
                 ) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "speaker.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 11))
-
-                        DraggableSlider(
-                            value: Binding(
-                                get: { Double(soundManager.preferences.volume) },
-                                set: { soundManager.updateVolume(Float($0)) }
-                            ),
-                            minValue: 0.0,
-                            maxValue: 1.0,
-                            step: 0.1
+                    VolumeSliderRow(
+                        volume: Binding(
+                            get: { Double(soundManager.preferences.volume) },
+                            set: { soundManager.updateVolume(Float($0)) }
                         )
-                        .frame(width: 120)
-
-                        Text("\(Int(soundManager.preferences.volume * 100))%")
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 40)
-
-                        Image(systemName: "speaker.wave.3.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 11))
-                    }
+                    )
                 }
 
                 Divider()
 
-                HStack(spacing: 12) {
-                    Button(isPreviewPlaying ? "停止" : "试听") {
-                        if isPreviewPlaying {
-                            soundManager.stopPlayback()
-                            isPreviewPlaying = false
-                        } else {
-                            soundManager.previewSound(
-                                soundManager.preferences.soundType,
-                                customPath: soundManager.preferences.customSoundPath,
-                                volume: soundManager.preferences.volume
-                            )
-                            isPreviewPlaying = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                                isPreviewPlaying = false
-                            }
-                        }
-                    }
-                    .buttonStyle(.bordered)
-
-                    Spacer()
-                }
+                PreviewPlaybackButton(
+                    isPlaying: $isPreviewPlaying,
+                    resetAfter: 3.0,
+                    onPlay: {
+                        soundManager.previewSound(
+                            soundManager.preferences.soundType,
+                            customPath: soundManager.preferences.customSoundPath,
+                            volume: soundManager.preferences.volume
+                        )
+                    },
+                    onStop: { soundManager.stopPlayback() }
+                )
 
                 Text("点击试听当前选择的提示音效果")
                     .font(.system(size: 12))
@@ -91,26 +63,16 @@ extension SettingsView {
             if soundManager.preferences.soundType == .custom {
                 Divider()
 
-                SettingsRow(
+                AudioFilePickerRow(
                     title: "自定义音频文件",
-                    detail: soundManager.preferences.customSoundPath ?? "未选择文件"
-                ) {
-                    HStack(spacing: 10) {
-                        Button("选择文件") {
-                            showFileImporter = true
-                        }
-                        .buttonStyle(.bordered)
-
-                        if soundManager.preferences.customSoundPath != nil {
-                            Button("清除") {
-                                soundManager.updateCustomSoundPath(nil)
-                            }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.red)
-                            .font(.system(size: 11))
-                        }
-                    }
-                }
+                    detail: soundManager.preferences.customSoundPath ?? "未选择文件",
+                    path: soundManager.preferences.customSoundPath,
+                    onPick: { path in
+                        log("[Settings] selected custom sound file", fields: ["path": path])
+                        soundManager.updateCustomSoundPath(path)
+                    },
+                    onClear: { soundManager.updateCustomSoundPath(nil) }
+                )
 
                 Text("支持 WAV、MP3、M4A、AIFF 格式。选择后可点击「试听」验证效果。")
                     .font(.system(size: 12))
