@@ -252,29 +252,18 @@ enum ClaudeHookPreferences {
             log("ClaudeHookPreferences.isHookInstalled: no hooks found in settings", level: .debug)
             return false
         }
-        // 兼容检测 command-type hooks（新）和 HTTP-type hooks（旧）
-        let targetURL = endpointURLString()
-        let scriptPath = helperScriptPath
-        for (key, entries) in hooks {
-            guard let entryList = entries as? [[String: Any]] else { continue }
-            for entry in entryList {
-                guard let hookList = entry["hooks"] as? [[String: Any]] else { continue }
-                for hook in hookList {
-                    // 新版 command-type hook
-                    if let command = hook["command"] as? String, command.contains(scriptPath) {
-                        log("ClaudeHookPreferences.isHookInstalled: found command hook", level: .debug, fields: ["event": key])
-                        return true
-                    }
-                    // 旧版 HTTP-type hook（向后兼容）
-                    if let url = hook["url"] as? String, url == targetURL {
-                        log("ClaudeHookPreferences.isHookInstalled: found HTTP hook", level: .debug, fields: ["event": key])
-                        return true
-                    }
-                }
-            }
+        // 识别判据走 HookSettingsComposition 唯一事实源（2.16a 第十七刀——此前三处内联各写一份）
+        let installed = HookSettingsComposition.containsVibeFocusHook(
+            hooks: hooks,
+            targetURL: endpointURLString(),
+            scriptPath: helperScriptPath
+        )
+        if installed {
+            log("ClaudeHookPreferences.isHookInstalled: found matching hook", level: .debug)
+        } else {
+            log("ClaudeHookPreferences.isHookInstalled: no matching hooks found", level: .debug)
         }
-        log("ClaudeHookPreferences.isHookInstalled: no matching hooks found", level: .debug)
-        return false
+        return installed
     }
 
     // 脚本生成逻辑已移至 HookScriptGenerator.swift

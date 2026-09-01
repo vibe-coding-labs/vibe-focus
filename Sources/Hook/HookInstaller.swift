@@ -148,17 +148,17 @@ extension ClaudeHookPreferences {
             log("[ClaudeHookPreferences] read existing settings, keys: \(settings.keys.sorted().joined(separator: ","))")
         }
 
-        var existingHooks = (settings["hooks"] as? [String: Any]) ?? [:]
-        // 先清理旧的 VibeFocus hooks（HTTP 和 command 类型）
-        cleanVibeFocusHooks(from: &existingHooks)
-        let ourHooks = generateHooksDict()
-        for (key, value) in ourHooks {
-            existingHooks[key] = value
-        }
-        // Stop 不再根据 triggerOnStop 移除 — handleStop 内部区分本地/远程
-        if !triggerOnSessionEnd { existingHooks.removeValue(forKey: "SessionEnd") }
-        if !autoRestoreOnPromptSubmit { existingHooks.removeValue(forKey: "UserPromptSubmit") }
-        settings["hooks"] = existingHooks
+        let existingHooks = (settings["hooks"] as? [String: Any]) ?? [:]
+        // 期望终态编排（2.16a 第十七刀）：识别判据与合并顺序收敛到 HookSettingsComposition
+        // 纯函数；外部 hook 一律保留（旧实现开关关闭时 removeValue 整键删除，连带清掉
+        // 用户自装的同事件 hook——真 bug，随本刀修复）。
+        let desiredHooks = HookSettingsComposition.composeDesiredHooks(
+            existing: existingHooks,
+            generated: generateHooksDict(),
+            targetURL: endpointURLString(),
+            scriptPath: helperScriptPath
+        )
+        settings["hooks"] = desiredHooks
 
         guard let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) else {
             return (false, "无法序列化 JSON")
@@ -178,7 +178,7 @@ extension ClaudeHookPreferences {
             "[ClaudeHookPreferences] installing hooks",
             fields: [
                 "path": path,
-                "hookEvents": existingHooks.keys.sorted().joined(separator: ","),
+                "hookEvents": desiredHooks.keys.sorted().joined(separator: ","),
                 "totalSettingsKeys": String(settings.count),
                 "helperScript": helperScriptPath
             ]
@@ -192,32 +192,6 @@ extension ClaudeHookPreferences {
         } catch {
             log("[ClaudeHookPreferences] install write failed: \(error.localizedDescription)", level: .error)
             return (false, "写入失败: \(error.localizedDescription)")
-        }
-    }
-
-    /// 从 hooks 字典中清理所有 VibeFocus 相关的 hook 条目（HTTP 和 command 类型）
-    private static func cleanVibeFocusHooks(from hooks: inout [String: Any]) {
-        log("ClaudeHookPreferences.cleanVibeFocusHooks() entered", level: .debug, fields: [
-            "keysBefore": hooks.keys.sorted().joined(separator: ",")
-        ])
-        let targetURL = endpointURLString()
-        let scriptPath = helperScriptPath
-        for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
-            guard var entries = hooks[key] as? [[String: Any]] else { continue }
-            let countBefore = entries.count
-            entries.removeAll { entry in
-                guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
-                return hookList.contains { hook in
-                    if let url = hook["url"] as? String, url == targetURL { return true }
-                    if let command = hook["command"] as? String, command.contains(scriptPath) { return true }
-                    return false
-                }
-            }
-            if entries.isEmpty { hooks.removeValue(forKey: key) }
-            else { hooks[key] = entries }
-            log("ClaudeHookPreferences.cleanVibeFocusHooks() cleaned \(key)", level: .debug, fields: [
-                "removed": String(countBefore - entries.count)
-            ])
         }
     }
 
@@ -235,12 +209,18 @@ extension ClaudeHookPreferences {
         let path = claudeSettingsPath
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var hooks = settings["hooks"] as? [String: Any] else {
+              let hooks = settings["hooks"] as? [String: Any] else {
             return (false, "无法读取 Claude 配置")
         }
 
-        cleanVibeFocusHooks(from: &hooks)
-        settings["hooks"] = hooks.isEmpty ? nil : hooks
+        // 卸载 = 期望终态为空生成集的编排（与 install 共用同一判据，2.16a 第十七刀）
+        let desiredHooks = HookSettingsComposition.composeDesiredHooks(
+            existing: hooks,
+            generated: [:],
+            targetURL: endpointURLString(),
+            scriptPath: helperScriptPath
+        )
+        settings["hooks"] = desiredHooks.isEmpty ? nil : desiredHooks
 
         log("[ClaudeHookPreferences] uninstalling hooks from \(path)", fields: ["remainingEvents": hooks.keys.sorted().joined(separator: ",")])
 
