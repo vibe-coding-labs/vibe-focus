@@ -172,7 +172,7 @@ extension WindowManager {
             knownWindowAX: knownWindowAX,
             knownOrigFrame: knownOrigFrame
         )
-        HookEventHandler.shared.clearAutoRestoreCooldown(windowID: identity.windowID)
+        MoveCooldownRegistry.shared.clearCooldown(windowID: identity.windowID)
         if moved {
             // P-INST-4: focusMs 诊断 move_to_main 结尾的 AX raise+focus 隐藏开销（内部含 findWindowByPID
             // AX 查找 + CGWindowListCopyWindowInfo 全扫，主屏窗口应 <20ms，若高说明跨屏阻塞未消除）。

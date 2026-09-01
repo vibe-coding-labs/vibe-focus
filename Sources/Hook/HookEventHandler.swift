@@ -5,8 +5,8 @@ import Cocoa
 final class HookEventHandler {
     static let shared = HookEventHandler()
 
-    private static let autoRestoreCooldownSeconds: TimeInterval = 30
-    private var lastAutoRestoreByWindowID: [UInt32: Date] = [:]
+    // 窗口移动冷却状态已抽至 MoveCooldownRegistry（Support/）——
+    // 引擎层 restore/move_to_main 后直接写注册表，不再回调本类（断开 Hook→Window→Hook 环）。
 
     // MARK: - Per-session UPS rate tracking
     // Prevents automated/loop sessions from endlessly moving the same window.
@@ -30,20 +30,6 @@ final class HookEventHandler {
     private static let upsRateMaxEvents: Int = 20
 
     private init() {}
-
-    // MARK: - Pure Decision Helpers (extracted for testability)
-
-    /// Pure: is a window still in the auto-restore cooldown period?
-    static func isInCooldown(lastRestore: Date?, now: Date = Date(), cooldownSeconds: TimeInterval = 30) -> Bool {
-        guard let lastRestore else { return false }
-        return now.timeIntervalSince(lastRestore) < cooldownSeconds
-    }
-
-    /// Check if a window is in move cooldown — recently restored by user or UPS.
-    /// Used by Stop handler to avoid re-moving a window the user just put back.
-    func isWindowInMoveCooldown(windowID: UInt32) -> Bool {
-        return Self.isInCooldown(lastRestore: lastAutoRestoreByWindowID[windowID])
-    }
 
     // handleSessionStart 已移至 HookEventHandler+SessionStart.swift
 
@@ -173,9 +159,8 @@ final class HookEventHandler {
         }
 
         // 3. 冷却检查：同一窗口在冷却期内不重复移动
-        if let lastRestore = lastAutoRestoreByWindowID[identity.windowID],
-           Date().timeIntervalSince(lastRestore) < Self.autoRestoreCooldownSeconds {
-            let remaining = Int(Self.autoRestoreCooldownSeconds - Date().timeIntervalSince(lastRestore))
+        if MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID) {
+            let remaining = MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID)
             log(
                 "[HookEventHandler] UserPromptSubmit: cooldown active, skipping",
                 level: .info,
@@ -214,7 +199,7 @@ final class HookEventHandler {
         )
 
         if moved {
-            lastAutoRestoreByWindowID[identity.windowID] = Date()
+            MoveCooldownRegistry.shared.setCooldown(windowID: identity.windowID)
             SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
         }
 
@@ -241,23 +226,6 @@ final class HookEventHandler {
         // triggerOnStop=false: 仅处理远程 session（跳过本地绑定）
         let remoteOnly = !ClaudeHookPreferences.triggerOnStop
         return handleWindowMoveTrigger(payload: payload, triggerName: "Stop", remoteOnly: remoteOnly)
-    }
-
-    func clearAutoRestoreCooldown(windowID: UInt32) {
-        lastAutoRestoreByWindowID.removeValue(forKey: windowID)
-        // P-INST-30: 冷却期清除追踪（move_to_main 后调用，允许后续 UPS autoRestore；字典操作 ~0ms 故记状态非 durationMs）。
-        log("[HookEventHandler] clearAutoRestoreCooldown", level: .debug, fields: [
-            "windowID": String(windowID)
-        ])
-    }
-
-    /// Stop 移动窗口后设置冷却期，阻止 UserPromptSubmit 立即 restore 同一窗口
-    func setMoveCooldown(windowID: UInt32) {
-        lastAutoRestoreByWindowID[windowID] = Date()
-        // P-INST-30: 冷却期设置追踪（restore 后调用，阻止 Stop→UPS 立即再次 restore 同一窗口）。
-        log("[HookEventHandler] setMoveCooldown", level: .debug, fields: [
-            "windowID": String(windowID)
-        ])
     }
 
 }

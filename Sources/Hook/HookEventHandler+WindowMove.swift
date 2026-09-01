@@ -170,7 +170,7 @@ extension HookEventHandler {
             hasBinding: true,         // ③ 已排除
             bindingVerified: true,    // ④ 已排除
             isWindowOnMainScreen: WindowManager.shared.isWindowOnMainScreen(windowID: windowID),
-            isInCooldown: isWindowInMoveCooldown(windowID: windowID),
+            isInCooldown: MoveCooldownRegistry.shared.isInCooldown(windowID: windowID),
             bindingAge: bindingAge,
             pidMatches: pidMatches,
             isTerminalOrIDE: Self.isTerminalOrIDEApp(
@@ -200,7 +200,7 @@ extension HookEventHandler {
                 bindingAge: bindingAge,
                 onComplete: {
                     SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
-                    HookEventHandler.shared.setMoveCooldown(windowID: windowID)
+                    MoveCooldownRegistry.shared.setCooldown(windowID: windowID)
                 }
             )
 
