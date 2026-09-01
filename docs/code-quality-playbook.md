@@ -390,11 +390,11 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 死代码结论为零调用再删；行为等价性靠 RoutingTests 契约 + 既有 33 个 Standalone
 测试守护；日志 schema 变更（mode/spaceMoveResult/floatMs/applyMs）在提交信息中明示。
 
-### 2.16a 第十一轮完成（2026-09-01/02，遗留清单清剿「五~十二刀」，重构与单测同批交付）
+### 2.16a 第十一轮完成（2026-09-01/02，遗留清单清剿「五~十三刀」，重构与单测同批交付）
 
 > 背景与上轮同源：把 2.17 遗留清单里的 P2 全部 + P3 大半清掉，
-> 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 6 个 Standalone 测试文件、
-> 131 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
+> 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 7 个 Standalone 测试文件、
+> 146 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
 
 | 刀 | 提交 | 内容 | 配套测试 |
 |------|------|------|------|
@@ -406,12 +406,12 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | 第十刀 refactor(hook) | 62edeca | **影子决策清尾**：删 decideWindowResolution/WindowResolutionSource（只覆盖 hasBinding 分支、无法表达 self-heal，真实决策在 resolveWindowIdentity 内联且无分歧语义可收敛）与已废弃的 decideRestoreEligibility/RestoreEligibility（UPS 改单向移动后仅测试引用）；连带删 WindowResolutionTests 及另两个测试文件的死类型段落，净 −240 行 | 无新增（删除的是纯死代码及其测试）；全量门禁守护 |
 | 第十一步刀 refactor(hook) | d61f5a0 | **会话绑定解析统一**："绑定查找 + machineLabel 自愈 + 注册 + 活性校验"曾于 UPS（resolveWindowIdentity）与 Stop（handleWindowMoveTrigger）各写一份，校验时序漂移（UPS 自愈后不校验）。收敛为 resolveSessionBinding 唯一编排 + SessionBindingOutcome 五态 + decideSessionBindingStep 纯决策；统一不变量"凡交付必先过 verifyBinding"（UPS 行为强化：易主窗口不再下发放移动） | HookSessionBindingTests（23 项：分支顺序、自愈全失败形态、双调用方映射表、端到端序列） |
 | 第十二步刀 refactor(window) | d0d2217 | **帧收敛判据统一**（收敛循环统一的安全步）：三份循环各写一种判据（yabai 漂移和 / apply 逐轴 / PostMove 漂移和，曾互相打架），统一为 CoordinateKit 漂移和系列（originDrift/sizeDrift/isSizeConverged/isFrameConverged）唯一事实源；apply 逐轴→漂移和为唯一行为微调（更严格，不再放过 PostMove 会重写的合计超调）；删生产零调用的 framesMatch（第四种判据变体）及其全部测试镜像 + knife-3 遗留的 wm.framesMatch 死测试引用，净 −300 行 | FrameConvergenceTests（18 项：漂移和算法、≤ 边界、漂移和 vs 逐轴差异锁定、半屏高场景） |
+| 第十三刀 fix(coord) | c5e045b | **displayContext 副屏归属修正**（2.15"断言脚本先行"执行样例）：Quartz 点直接比 Cocoa frame 仅主屏/垂直对齐副屏碰巧正确，纵向偏移副屏永远 miss → 先做全局 Quartz→Cocoa 变换再比较；NSScreen 数组 0-based 下标被当 yabai 1-based 索引写入 sourceDisplay 审计列（副屏记成主屏）→ 新增 yabaiDisplayIndex(for:)（nsScreen(forYabaiDisplayIndex:) 逆映射）；删生产零调用的 screenForRect/convertQuartzToCocoa。行为变化仅审计列取值（无决策读取方），移动/restore 决策零变化 | DisplayContextTests（15 项：全局变换不变量、多布局归属矩阵、旧判据缺陷防回退断言、yabai 索引 roundtrip） |
 
 ### 2.17 待办（第十一轮后的遗留清单，按优先级）
 
 | 优先级 | 项目 | 说明 |
 |--------|------|------|
-| P3 | CoordinateKit 副屏转换修正 | screenForRect/displayContext 用 Quartz 点直接比 Cocoa frame——主屏数值等价、副屏（非对称纵向偏移）会错位。涉及 sourceDisplay 派生等行为变化，需专项 + 断言脚本先行（2.15 教训） |
 | P3 | frame 收敛循环统一 | "写 frame→等落定→读回→重写"仍有 3 份平行实现（moveWindowToFrameViaYabai/verifyAndCorrectPostMoveSize/writeSizeWithReadback），收敛为单一 convergeFrame(write:verify:deadline:)；收敛判据已统一为 CoordinateKit 漂移和系列（2.16a 第十二刀）、等待时长已收敛为 WindowSettle 常量表（第九刀），axWriteSettle(25ms)/postRewriteSettle(15ms) 同语义不同值的归一随本项一并处理 |
 | P3 | 条件等待渐进替换 | 固定 usleep 已全部常量化（WindowSettle），下一步按 2.15 的闭环验证思路渐进替换为条件等待（轮询 isFloating/frame 稳定），缩短固定等待的手感损耗 |
 
@@ -422,6 +422,8 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 - decideWindowResolution/decideRestoreEligibility 影子 → 第十刀删除；
 - UPS/Stop 绑定解析两份编排 → 第十一步刀 resolveSessionBinding；
 - 帧收敛判据三种写法 + 死 framesMatch → 第十二步刀 CoordinateKit 漂移和系列；
+- CoordinateKit 副屏转换错位 → 第十三刀 displayContext 修正（多屏闭环验证仍建议
+  随下次部署做一轮真实双屏 toggle 观察 sourceDisplay 审计列取值）；
 - spaceMoveTrusted 接线 → 评估后不接线：生产 `window --space` 变更类调用已清零
   （第四刀），探测器保留作能力档案（YabaiEnvironmentProfileTests 已覆盖），无消费者不造通道。
 
