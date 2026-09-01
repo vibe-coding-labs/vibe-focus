@@ -29,7 +29,7 @@ enum NativeSpaceBridge {
         escapeDown?.post(tap: .cghidEventTap)
         let escapeUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: false)
         escapeUp?.post(tap: .cghidEventTap)
-        usleep(150_000) // 等待 Mission Control 动画结束
+        usleep(WindowSettle.missionControlDismissSettleMicros) // 等待 Mission Control 动画结束
         log("[NativeSpaceBridge] dismissMissionControl done", fields: [
             "op": op,
             "durationMs": String(elapsedMilliseconds(since: dismissStart))

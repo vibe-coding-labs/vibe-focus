@@ -50,7 +50,7 @@ extension WindowManager {
                 operation: "\(stage).resize(windowID=\(windowID))",
                 operationID: op
             )
-            usleep(400_000)
+            usleep(WindowSettle.yabaiFrameWriteSettleMicros)
             if let current = cgWindowBounds(for: windowID) {
                 let originDrift = abs(current.origin.x - frame.origin.x) + abs(current.origin.y - frame.origin.y)
                 let sizeDrift = abs(current.width - frame.width) + abs(current.height - frame.height)
@@ -173,7 +173,7 @@ extension WindowManager {
             if let info = spaceController.queryWindow(windowID: identity.windowID), !info.isFloating {
                 spaceController.setWindowFloat(identity.windowID, operationID: op, knownWindowInfo: info)
             }
-            usleep(300_000)
+            usleep(WindowSettle.floatRelayoutSettleMicros)
             p2YabaiSpaceMoveMs = elapsedMilliseconds(since: preFloatStart)
             log("[WindowManager] moveWindowToMainScreen P2: float + settle", fields: [
                 "op": op, "windowID": String(identity.windowID),
@@ -296,7 +296,7 @@ extension WindowManager {
             // 等 300ms 落定后再写（否则写被重摆覆盖，2026-09-01 toggle 尺寸错乱根因）。
             let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
             spaceController.setWindowFloat(effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
-            usleep(300_000)
+            usleep(WindowSettle.floatRelayoutSettleMicros)
             guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3, windowID: effectiveWindowID) else {
                 log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
                     "op": op, "targetFrame": String(describing: targetFrame)

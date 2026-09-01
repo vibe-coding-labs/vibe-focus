@@ -28,7 +28,7 @@ extension WindowManager {
         let op = operationID ?? "none"
         let startedAt = Date()
         let attempts = max(1, maxAttempts)
-        let settleDelayMicros: useconds_t = 25_000
+        let settleDelayMicros: useconds_t = WindowSettle.axWriteSettleMicros
 
         var sizeAttemptsUsed = 0
         var sizeReadbackMatched = false

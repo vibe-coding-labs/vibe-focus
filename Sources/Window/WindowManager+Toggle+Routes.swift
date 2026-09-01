@@ -74,7 +74,7 @@ extension WindowManager {
         if let info = windowInfo, !info.isFloating {
             spaceController.setWindowFloat(windowID, operationID: operationID, knownWindowInfo: info)
         }
-        usleep(300_000)
+        usleep(WindowSettle.floatRelayoutSettleMicros)
         spaceController.clearWindowQueryCache()
         let targetFrame = CoordinateKit.quartzVisibleFrame(of: targetScreen)
         let moved = moveWindowToFrameViaYabai(

@@ -81,7 +81,7 @@ extension ToggleEngine {
             let switchStart = Date()
             let switched = sc.refocusWindowOnSpace(record.sourceSpace, operationID: trace)
             if switched {
-                usleep(400_000)  // 等视角切换与 yabai 状态落定，再写窗口 frame
+                usleep(WindowSettle.yabaiFrameWriteSettleMicros)  // 等视角切换与 yabai 状态落定，再写窗口 frame
             }
             log("[ToggleEngine] restore: source display space switch result", level: switched ? .info : .warn, fields: [
                 "traceID": trace, "switched": String(switched),
@@ -102,7 +102,7 @@ extension ToggleEngine {
         if let info = windowInfo {
             let floatStart = Date()
             sc.setWindowFloat(windowID, operationID: trace, knownWindowInfo: info)
-            usleep(300_000)
+            usleep(WindowSettle.floatRelayoutSettleMicros)
             moveMs = elapsedMilliseconds(since: floatStart)
         }
         // 4b. yabai --move abs + --resize abs 直写 origFrame（窗口归属跟随物理位置）。

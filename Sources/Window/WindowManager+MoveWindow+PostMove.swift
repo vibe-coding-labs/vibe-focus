@@ -68,7 +68,7 @@ extension WindowManager {
                     if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
                         _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
                     }
-                    usleep(15_000)
+                    usleep(WindowSettle.postRewriteSettleMicros)
                     guard let postRewriteFrame = cgWindowBounds(for: windowID) else { break }
                     let postDrift = abs(postRewriteFrame.height - targetFrame.height) + abs(postRewriteFrame.width - targetFrame.width)
                     log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
