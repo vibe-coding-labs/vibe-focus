@@ -200,22 +200,4 @@ struct EdgeCaseAndMutationTests {
             #expect(!position.rawValue.isEmpty)
         }
     }
-
-    // MARK: - SpaceRestoreStrategy
-
-    @Test("SpaceRestoreStrategy: has exactly 2 cases")
-    func restoreStrategyCount() {
-        #expect(SpaceRestoreStrategy.allCases.count == 2)
-    }
-
-    @Test("SpaceRestoreStrategy: raw values are correct")
-    func restoreStrategyRawValues() {
-        #expect(SpaceRestoreStrategy.switchToOriginal.rawValue == "switchToOriginal")
-        #expect(SpaceRestoreStrategy.pullToCurrent.rawValue == "pullToCurrent")
-    }
-
-    @Test("SpaceRestoreStrategy: init from invalid rawValue returns nil")
-    func restoreStrategyInvalidRawValue() {
-        #expect(SpaceRestoreStrategy(rawValue: "unknown") == nil)
-    }
 }

@@ -41,49 +41,15 @@ struct SpacePreferencesTests {
         }
     }
 
-    // MARK: - restoreStrategy
-
-    @Test("restoreStrategy default is switchToOriginal when key absent")
-    func restoreStrategyDefault() {
-        saveAndRestore(key: SpacePreferences.restoreStrategyKey) {
-            UserDefaults.standard.removeObject(forKey: SpacePreferences.restoreStrategyKey)
-            #expect(SpacePreferences.restoreStrategy == .switchToOriginal)
-        }
-    }
-
-    @Test("restoreStrategy roundtrip switchToOriginal")
-    func restoreStrategySwitchToOriginal() {
-        saveAndRestore(key: SpacePreferences.restoreStrategyKey) {
-            SpacePreferences.restoreStrategy = .switchToOriginal
-            #expect(SpacePreferences.restoreStrategy == .switchToOriginal)
-        }
-    }
-
-    @Test("restoreStrategy roundtrip pullToCurrent")
-    func restoreStrategyPullToCurrent() {
-        saveAndRestore(key: SpacePreferences.restoreStrategyKey) {
-            SpacePreferences.restoreStrategy = .pullToCurrent
-            #expect(SpacePreferences.restoreStrategy == .pullToCurrent)
-        }
-    }
-
-    @Test("restoreStrategy falls back to switchToOriginal for invalid raw value")
-    func restoreStrategyInvalidFallback() {
-        saveAndRestore(key: SpacePreferences.restoreStrategyKey) {
-            UserDefaults.standard.set("invalidValue", forKey: SpacePreferences.restoreStrategyKey)
-            #expect(SpacePreferences.restoreStrategy == .switchToOriginal)
-        }
-    }
+    // MARK: - restoreStrategy（已下线）
+    // 历史注（playbook 2.16 第六刀）：restoreStrategy/pullToCurrent 是零消费的死设置——
+    // "拉到当前工作区"依赖 yabai v7 float 布局下静默失效的 `window --space` 原语，
+    // 无法诚实实现，UI 与偏好已整体移除，恢复固定为"切回原工作区"语义。
 
     // MARK: - key stability
 
     @Test("integrationEnabledKey is stable")
     func integrationEnabledKeyStable() {
         #expect(SpacePreferences.integrationEnabledKey == "spaceIntegrationEnabled")
-    }
-
-    @Test("restoreStrategyKey is stable")
-    func restoreStrategyKeyStable() {
-        #expect(SpacePreferences.restoreStrategyKey == "spaceRestoreStrategy")
     }
 }

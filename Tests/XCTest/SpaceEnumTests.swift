@@ -15,18 +15,7 @@ struct SpaceEnumTests {
         #expect(SpaceAvailability.available.rawValue == "available")
     }
 
-    // MARK: - SpaceRestoreStrategy
-
-    @Test("SpaceRestoreStrategy has two cases")
-    func spaceRestoreStrategyCases() {
-        #expect(SpaceRestoreStrategy.allCases.count == 2)
-    }
-
-    @Test("SpaceRestoreStrategy raw values")
-    func spaceRestoreStrategyRawValues() {
-        #expect(SpaceRestoreStrategy.switchToOriginal.rawValue == "switchToOriginal")
-        #expect(SpaceRestoreStrategy.pullToCurrent.rawValue == "pullToCurrent")
-    }
+    // MARK: - SpaceRestoreStrategy（已下线，见 SpacePreferencesTests 历史注）
 
     // MARK: - IndexPosition
 
@@ -73,7 +62,6 @@ struct SpaceEnumTests {
     @Test("SpacePreferences default values")
     func spacePreferencesDefaults() {
         #expect(SpacePreferences.defaultIntegrationEnabled == true)
-        #expect(SpacePreferences.defaultRestoreStrategy == .switchToOriginal)
     }
 
     // MARK: - LogLevel

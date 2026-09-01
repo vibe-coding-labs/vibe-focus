@@ -14,19 +14,11 @@ enum SpaceAvailability: String {
     case available
 }
 
-/// Strategy for restoring a window to its original Space after toggle.
-enum SpaceRestoreStrategy: String, CaseIterable {
-    case switchToOriginal
-    case pullToCurrent
-}
-
 /// Persistent Space management preferences.
 struct SpacePreferences {
     static let integrationEnabledKey = "spaceIntegrationEnabled"
-    static let restoreStrategyKey = "spaceRestoreStrategy"
 
     static let defaultIntegrationEnabled = true
-    static let defaultRestoreStrategy = SpaceRestoreStrategy.switchToOriginal
 
     static var integrationEnabled: Bool {
         get {
@@ -45,28 +37,6 @@ struct SpacePreferences {
             UserDefaults.standard.set(newValue, forKey: integrationEnabledKey)
             log("[SpacePreferences] integrationEnabled set finished", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: iesStart))
-            ])
-        }
-    }
-
-    static var restoreStrategy: SpaceRestoreStrategy {
-        get {
-            // P-INST-154: restore strategy UserDefaults 读耗时（CFPreferences 同步读 string；restore 路径读取决定 switchToOriginal/pullToCurrent，每次 restore 调用）。
-            let rsgStart = Date()
-            let raw = UserDefaults.standard.string(forKey: restoreStrategyKey) ?? SpaceRestoreStrategy.switchToOriginal.rawValue
-            let value = SpaceRestoreStrategy(rawValue: raw) ?? .switchToOriginal
-            log("[SpacePreferences] restoreStrategy get finished", level: .debug, fields: [
-                "durationMs": String(elapsedMilliseconds(since: rsgStart)),
-                "strategy": value.rawValue
-            ])
-            return value
-        }
-        set {
-            // P-INST-154: restore strategy UserDefaults 写耗时（CFPreferences 同步写 rawValue；设置 UI 切换）。
-            let rssStart = Date()
-            UserDefaults.standard.set(newValue.rawValue, forKey: restoreStrategyKey)
-            log("[SpacePreferences] restoreStrategy set finished", level: .debug, fields: [
-                "durationMs": String(elapsedMilliseconds(since: rssStart))
             ])
         }
     }

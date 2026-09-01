@@ -133,16 +133,10 @@ struct SoundAndHookPreferenceConstantsTests {
     @Test("SpacePreferences: keys are stable strings")
     func spacePreferenceKeys() {
         #expect(SpacePreferences.integrationEnabledKey == "spaceIntegrationEnabled")
-        #expect(SpacePreferences.restoreStrategyKey == "spaceRestoreStrategy")
     }
 
     @Test("SpacePreferences: defaultIntegrationEnabled is true")
     func spaceDefaultEnabled() {
         #expect(SpacePreferences.defaultIntegrationEnabled == true)
-    }
-
-    @Test("SpacePreferences: defaultRestoreStrategy is switchToOriginal")
-    func spaceDefaultStrategy() {
-        #expect(SpacePreferences.defaultRestoreStrategy == .switchToOriginal)
     }
 }

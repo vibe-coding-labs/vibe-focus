@@ -13,7 +13,6 @@ public struct SettingsView: View {
     @StateObject var loginItemManager = LoginItemManager.shared
     @StateObject var overlayManager = ScreenOverlayManager.shared
     @AppStorage(SpacePreferences.integrationEnabledKey) var spaceIntegrationEnabled = SpacePreferences.defaultIntegrationEnabled
-    @AppStorage(SpacePreferences.restoreStrategyKey) var restoreStrategyRaw = SpacePreferences.defaultRestoreStrategy.rawValue
     @State var duplicateAppPaths: [String] = []
     @State var isCheckingInstallations = false
 
@@ -179,14 +178,6 @@ public struct SettingsView: View {
                 fields: [
                     "enabled": String(newValue),
                     "availability": spaceController.availability.rawValue
-                ]
-            )
-        }
-        .onChange(of: restoreStrategyRaw) { newValue in
-            log(
-                "[Settings] restore strategy changed",
-                fields: [
-                    "strategy": newValue
                 ]
             )
         }

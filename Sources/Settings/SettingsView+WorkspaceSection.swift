@@ -116,20 +116,6 @@ extension SettingsView {
                 Toggle("", isOn: $spaceIntegrationEnabled)
                     .labelsHidden()
             }
-
-            Divider()
-
-            SettingsRow(
-                title: "恢复策略",
-                detail: "决定恢复窗口时是切回原工作区，还是把窗口拉到当前工作区。"
-            ) {
-                Picker("", selection: $restoreStrategyRaw) {
-                    Text("切回原工作区").tag(SpaceRestoreStrategy.switchToOriginal.rawValue)
-                    Text("拉到当前工作区").tag(SpaceRestoreStrategy.pullToCurrent.rawValue)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-            }
         }
     }
 }

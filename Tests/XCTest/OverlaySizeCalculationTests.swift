@@ -67,26 +67,6 @@ struct OverlaySizeCalculationTests {
         #expect(size.width == minW)
     }
 
-    // MARK: - SpaceRestoreStrategy
-
-    @Test("SpaceRestoreStrategy: has exactly 2 cases")
-    func strategyCount() {
-        #expect(SpaceRestoreStrategy.allCases.count == 2)
-    }
-
-    @Test("SpaceRestoreStrategy: raw values match case names")
-    func strategyRawValues() {
-        #expect(SpaceRestoreStrategy.switchToOriginal.rawValue == "switchToOriginal")
-        #expect(SpaceRestoreStrategy.pullToCurrent.rawValue == "pullToCurrent")
-    }
-
-    @Test("SpaceRestoreStrategy: init from rawValue")
-    func strategyFromRaw() {
-        #expect(SpaceRestoreStrategy(rawValue: "switchToOriginal") == .switchToOriginal)
-        #expect(SpaceRestoreStrategy(rawValue: "pullToCurrent") == .pullToCurrent)
-        #expect(SpaceRestoreStrategy(rawValue: "invalid") == nil)
-    }
-
     // MARK: - SpaceAvailability
 
     @Test("SpaceAvailability: raw values")
