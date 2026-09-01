@@ -117,6 +117,8 @@ public struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     claudeHookSection
+                    soundSection
+                    voiceAnnouncementSection
                     LANSettingsView()
                 }
             }
@@ -126,8 +128,6 @@ public struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     titleEditorSection
-                    soundSection
-                    voiceAnnouncementSection
                 }
             }
             .scrollIndicators(.visible)

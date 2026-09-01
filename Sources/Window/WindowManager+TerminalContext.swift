@@ -91,11 +91,8 @@ extension WindowManager {
         }
 
         // 多个窗口 → 用 TTY 做精确区分
-        // 先解析 TTY：直接取或沿进程树解析
-        let resolvedTTY: String? = {
-            if let tty = ctx.tty, !tty.isEmpty, tty != "not a tty" {
-                return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
-            }
+        // 先解析 TTY：直接取（normalizeTTY 归一化）或沿进程树解析
+        let resolvedTTY: String? = Self.normalizeTTY(ctx.tty) ?? {
             // 沿进程树向上找有效 TTY
             var currentPID = startPID
             for _ in 0..<10 {

@@ -94,7 +94,7 @@ extension WindowManager {
             ])
         }
         #endif
-        let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+        let fullTTY = Self.fullDevicePath(tty)
 
         // Allowlist validation: TTY 必须匹配 /dev/ttys### 或 /dev/pty### 格式
         guard Self.isValidTTYPath(fullTTY) else {
@@ -166,7 +166,7 @@ extension WindowManager {
             ])
         }
         #endif
-        let fullTTY = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+        let fullTTY = Self.fullDevicePath(tty)
         let ttyName = String(fullTTY.dropFirst(5))
 
         // 获取该 TTY 上的进程
@@ -222,7 +222,7 @@ extension WindowManager {
             )
             return nil
         }
-        let resolved = tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+        let resolved = Self.fullDevicePath(tty)
         log(
             "[WindowManager] resolveTTY resolved",
             level: .debug,

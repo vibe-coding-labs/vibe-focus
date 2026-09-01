@@ -61,7 +61,7 @@ extension TitleEditorService {
         let output = WindowManager.shared.runShellCommand("/bin/ps", args: ["-o", "tty=", "-p", String(pid)])
         let tty = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if tty.isEmpty || tty == "??" || tty == "?" { return nil }
-        return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+        return WindowManager.fullDevicePath(tty)
     }
 
     private func searchChildTTY(parentPID: pid_t, depth: Int) -> String? {

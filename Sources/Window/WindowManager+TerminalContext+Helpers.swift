@@ -8,6 +8,22 @@ import Foundation
 @MainActor
 extension WindowManager {
 
+    // MARK: - TTY Normalization (唯一事实源，2.16a 第十八刀)
+
+    /// 前缀半边：无 /dev/ 前缀则补全。输入契约：非可选、已验证的 TTY 串
+    /// （iTerm2 匹配×3 与 TitleEditor TTY 写入的共用实现；格式校验归 isValidTTYPath）。
+    static func fullDevicePath(_ tty: String) -> String {
+        tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
+    }
+
+    /// 完整归一化：nil/空串/"not a tty"（精确匹配）→ nil；其余走 fullDevicePath 补全。
+    /// 第十六刀曾因"生产零调用"误删——真实消费者 findWindowByTerminalContext 以内联
+    /// 副本存在（连同其余 4 处共 5 份内联），本刀恢复为唯一事实源并全量接线。
+    static func normalizeTTY(_ tty: String?) -> String? {
+        guard let tty, !tty.isEmpty, tty != "not a tty" else { return nil }
+        return fullDevicePath(tty)
+    }
+
     // MARK: - Static Helpers (extracted for testability)
 
     /// Filter CGWindowEntry list to visible windows for a given PID — extracted for testability.
