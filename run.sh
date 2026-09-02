@@ -42,7 +42,7 @@ if [ "$MODE" == "direct" ]; then
   STDERR_LOG="/tmp/vibefocus-run.stderr"
 
   echo "构建 release 二进制..."
-  swift build -c release
+  swift build -c release --product VibeFocusHotkeys
 
   echo "停止旧进程..."
   pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
@@ -64,7 +64,7 @@ echo -e "${BLUE}=== VibeFocus 安装运行 ===${NC}"
 echo ""
 
 echo "构建 release 二进制..."
-swift build -c release
+swift build -c release --product VibeFocusHotkeys
 
 echo "停止旧进程..."
 pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
