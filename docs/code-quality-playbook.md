@@ -474,6 +474,25 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | 第二十三刀 refactor(overlay) | **每屏可见 space 解析双实现收敛**：同一「focused 位次 > 第一个可见 > 默认」决策内联重复两份且默认值语义漂移——快速路径（Refresh.swift Task 闭包内，无解→nil）与 fallback 路径（SpaceQuery.swift，无解→1）。收敛为 `SpaceSnapshot.swift` 纯函数 `SpaceIndexResolvable.resolveScreenSpaceIndex`（协议统一 `SpaceSnapshot`/`AllSpaceSnapshot` 两数据面），两路调用方各自保留原对外契约（fallback `?? 1`、快速路径 nil 透传至 applyRefreshResults `?? 1`，最终行为逐分支等价） | ScreenSpaceIndexResolutionTests（Standalone 11 项 + Testing 镜像 10 项：focused 命中/优先级/外 display/缺失、可见位次、乱序排序、空列表、全不可见） |
 | 第二十四刀 refactor(overlay) | **applyRefreshResults 重复更新块收敛**：cached 变化分支与新屏分支各自内联一份「记日志+写 cache+overlay.update/updatePosition/show」近乎逐行重复的更新块（漂移温床：两份 "No overlay" 警告文案已分叉）。收敛为纯函数 `screenCacheChange`（缓存缺失/任一值变化→需应用并携带旧值，完全未变→零触碰）+ 单一应用路径；日志与 changedScreens 文案逐字保留 | 同上测试文件追加 5 项（Standalone 16 项总计）：新屏/未变/仅 space 变/仅 screen 变/双变 |
 
+### 2.16c 第十三轮完成（2026-09-02，提示音产品三轮迭代，worktree 分支 feat/sound-iteration）
+
+> 用户要求对提示音做产品设计 + 代码的迭代（≥3 轮）。全程在独立 worktree
+> （`vibe-focus-sound-iteration`，全局规矩"所有变更走 worktree"的首个执行样本）。
+> 合并前基线已 rebase 到 main（含并行会话二十一~二十四刀），门禁：swift build 零警告 +
+> run_all_tests.sh 全绿（新增 3 个 Standalone 测试文件 49 项检查）。
+> ⚠️ 合并被并行会话在主工作区的未提交 WIP（SoundManager.swift playFailureSound /
+> Package.swift）阻断——按"不碰他人在途改动"规矩挂起，待主工作区安静后
+> `git merge feat/sound-iteration` 即可（rebase 后无冲突）。
+
+**产品设计主线**：不吵 → 听得出 → 靠得住。
+
+| 轮次 | 提交（标题寻址） | 产品增量 | 实现要点 | 配套 |
+|------|------|------|------|------|
+| 1 防打扰 | 「提示音防打扰——播放节流 + 免打扰时段」 | 多会话连环 ding 是最大噪音源：①节流（两次完成音最小间隔，默认 2s，0~30s 可调，0=关闭；试听不受限）；②免打扰时段（默认 22→8 跨午夜窗，静音不影响窗口移动；起==止视作无效不启用） | SoundPlayGate 纯决策（免打扰优先于节流，起闭右开窗口）；SoundPreferences 增 4 字段 + 自定义 init(from:) decodeIfPresent——旧 JSON 缺字段不再整体解码失败（否则 loadPreferences 回退 default 会静默重置用户配置，向后兼容关键点） | SoundPlayGateTests 23 项（节流边界/跨午夜/同日窗口/优先级/兼容解码） |
+| 2 听得出 | 「按项目区分提示音——项目音效规则表」 | 「项目名→音效」规则表（从上到下首匹配，未命中回落全局；规则可覆盖全局 .none 开关）——听到声音即知哪个项目完成，与语音播报 {project_name} 互补 | ProjectSoundResolver 纯函数层；项目名归一复用 WindowManager.projectName(fromCwd:)（标 nonisolated 供非隔离层复用，不造第二份路径解析——十六刀影子教训）；playCompletionSound(projectName:) 新签名，hook 执行点透传 payload 项目名；v1 限制：规则选「自定义文件」共用全局音频（UI 有提示） | ProjectSoundResolverTests 17 项 |
+| 3 靠得住 | 「反馈可信度——自定义文件失效降级 + 状态指示 + 规则迷你试听」 | 自定义音最大信任问题是静默失效（文件被删后完成音悄悄消失）：①缺失时降级系统默认 Hero + warn（未配置仍静默——配置未完成不是故障）；②设置页 detail 三态指示（未选择/已选择/⚠️ 缺失+修复指引）；③规则行迷你试听按钮验证听感配置 | CustomSoundStatus 三态评估；resolveSound .custom 分支加 fileExists 守卫降级 | CustomSoundStatusTests 9 项 |
+
+
 ### 2.17 待办（第十一轮后的遗留清单，按优先级）
 
 | 优先级 | 项目 | 说明 |
