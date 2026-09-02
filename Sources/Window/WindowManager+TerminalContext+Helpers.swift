@@ -45,6 +45,9 @@ extension WindowManager {
     }
 
     /// Match a command name against window title patterns — extracted for testability.
+    /// 模式语义（TerminalContextMatchingTests 锁定）：标题侧小写化后 contains
+    /// "— \(cmd)"（em dash U+2014；"— cmd ◂" 因子串包含天然命中，无需单独分支——
+    /// 2.16a 第二十一刀清理的死分支）；命令侧大小写敏感、倒序遍历（历史行为）。
     static func matchCommandToWindowTitle(
         commands: [String],
         windows: [WindowIdentity]
@@ -52,7 +55,7 @@ extension WindowManager {
         for cmd in commands.reversed() {
             for win in windows {
                 let titleLower = win.title?.lowercased() ?? ""
-                if titleLower.contains("— \(cmd)") || titleLower.contains("— \(cmd) ◂") {
+                if titleLower.contains("— \(cmd)") {
                     return win
                 }
             }
