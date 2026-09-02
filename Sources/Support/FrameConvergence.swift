@@ -18,6 +18,24 @@ enum FrameWriteOutcome: Equatable {
     case writeFailed(attempt: Int)
 }
 
+/// move/resize 两段写入的顺序决策（纯函数，FrameWriteOrderTests 分支穷尽锁定）。
+///
+/// ## 场景（2026-09-03 跨屏乱蹦修复）
+/// yabai `--move abs` 与 `--resize abs` 是两条命令，先后生效之间存在中间态窗口
+/// （一条已生效、另一条未生效）。若中间态窗口的中心落在**第三方 display**，macOS
+/// 会把窗口归属划给那块屏几百 ms（实测主→副 restore：1649×1079 全屏窗先 --move 到
+/// 副屏坐标，中心越过两块副屏的边界落屏 C，~320ms 后 --resize 才落回屏 B——用户
+/// 感知为「先蹦到错误的屏再蹦回来」+ 读回重试的连续卡顿）。顺序按尺寸关系自适应，
+/// 使中间态中心只会在源屏或目标屏：
+/// - 收窄（当前尺寸大于目标任一维度）：先 resize 再 move——收窄后的中间态小于目标，
+///   仍被源屏当前位置包含；
+/// - 放大/持平：先 move 再 resize——move 后的中间态小于目标，被目标 frame 包含
+///   （目标 frame 本身完整落在目标屏内）。
+enum FrameWriteOrder: Equatable {
+    case resizeThenMove
+    case moveThenResize
+}
+
 /// 帧写入收敛循环唯一骨架。
 ///
 /// ## 语义契约（FrameConvergenceLoopTests 锁定）
@@ -28,6 +46,15 @@ enum FrameWriteOutcome: Equatable {
 /// - 判据与 settle 时长由调用点注入：判据用 CoordinateKit 漂移和系列，
 ///   settle 用 WindowSettle 常量；写机制（yabai/AX）与读机制（CGWindowList/AX）同为调用点策略。
 enum FrameConvergence {
+
+    /// 写入顺序决策：按当前尺寸与目标尺寸的关系选两段写入的先后（见 FrameWriteOrder 场景注释）。
+    /// currentSize 读不到（CGWindowList 偶发 nil）时沿用历史顺序 move→resize（防御分支，
+    /// 中间态行为退回修复前，不比现状更差）。
+    static func writeOrder(currentSize: CGSize?, targetSize: CGSize) -> FrameWriteOrder {
+        guard let current = currentSize else { return .moveThenResize }
+        let shrinking = current.width > targetSize.width || current.height > targetSize.height
+        return shrinking ? .resizeThenMove : .moveThenResize
+    }
 
     static func convergeFrame(
         attempts: Int,

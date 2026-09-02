@@ -37,24 +37,45 @@ extension WindowManager {
     ///   （T3 断言 PASS：space 1→5、display 1→3，挪回亦 PASS）。
     /// - 前置条件：窗口已 float（managed 窗口的 --move 被拒或被 re-tile 对抗）。
     /// - 写后 400ms 读 CGWindow frame 验证（origin+size 双维度），不符重写一次。
+    /// - 写入顺序自适应（2026-09-03 乱蹦修复，见 FrameWriteOrder 场景注释）：move/resize
+    ///   两命令间的中间态窗口不得让中心落在第三方 display——收窄先 resize 后 move，
+    ///   放大先 move 后 resize。顺序按写前快照判定一次；重试轮窗口已近目标尺寸，
+    ///   中间态无第三方屏风险，无需重判。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String) -> Bool {
         var attemptNo = 0
+        // 写前尺寸快照：顺序判定依据（查询失败走历史顺序，见 FrameConvergence.writeOrder）。
+        let writeOrder = FrameConvergence.writeOrder(
+            currentSize: cgWindowBounds(for: windowID)?.size,
+            targetSize: frame.size
+        )
         let outcome = FrameConvergence.convergeFrame(
             attempts: 2,
             settleMicros: WindowSettle.yabaiFrameWriteSettleMicros,
             write: {
                 attemptNo += 1
-                _ = spaceController.runYabai(
-                    arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
-                    operation: "\(stage).move(windowID=\(windowID))",
-                    operationID: op
-                )
-                _ = spaceController.runYabai(
-                    arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
-                    operation: "\(stage).resize(windowID=\(windowID))",
-                    operationID: op
-                )
+                let applyMove = {
+                    _ = self.spaceController.runYabai(
+                        arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
+                        operation: "\(stage).move(windowID=\(windowID))",
+                        operationID: op
+                    )
+                }
+                let applyResize = {
+                    _ = self.spaceController.runYabai(
+                        arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
+                        operation: "\(stage).resize(windowID=\(windowID))",
+                        operationID: op
+                    )
+                }
+                switch writeOrder {
+                case .resizeThenMove:
+                    applyResize()
+                    applyMove()
+                case .moveThenResize:
+                    applyMove()
+                    applyResize()
+                }
                 // yabai 写不返回硬失败（exit code 吞掉，最终以读回判据为准）。
                 return true
             },
