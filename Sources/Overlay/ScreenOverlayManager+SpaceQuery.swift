@@ -49,17 +49,11 @@ extension ScreenOverlayManager {
             return (displayIndex, nil)
         }
 
-        let sortedSpaces = displaySpaces.sorted { $0.index < $1.index }
-
-        if let focusedSpaceIndex {
-            for (position, space) in sortedSpaces.enumerated() where space.index == focusedSpaceIndex {
-                return (displayIndex, position + 1)
-            }
-        }
-        for (position, space) in sortedSpaces.enumerated() where space.isVisible {
-            return (displayIndex, position + 1)
-        }
-        return (displayIndex, 1)
+        // 位次裁决统一走 resolveScreenSpaceIndex（focused 位次 > 第一个可见 > 默认 1）。
+        return (displayIndex, SpaceSnapshot.resolveScreenSpaceIndex(
+            from: displaySpaces,
+            focusedSpaceIndex: focusedSpaceIndex
+        ) ?? 1)
     }
 
     /// 后台：查询单 display 的 space 列表。

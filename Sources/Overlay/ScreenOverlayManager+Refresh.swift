@@ -60,8 +60,9 @@ extension ScreenOverlayManager {
             guard let self else { return }
 
             // 快速路径：所有屏 displayIndex 都已缓存（稳态切屏常态——display 映射不随 space 切换变化）
-            // 时，一次全量 query --spaces 拿所有 space，本地按 display 分组算每屏 spaceIndex。
-            // 把原本 focused(1) + 每屏 spaces(N) 共 N+1 次 yabai fork 压缩为 1 次。
+            // 时，一次全量 query --spaces 拿所有 space，本地按 display 分组，每屏 spaceIndex
+            // 由 resolveScreenSpaceIndex 统一裁决。把原本 focused(1) + 每屏 spaces(N) 共 N+1 次
+            // yabai fork 压缩为 1 次。
             let allCached = preResolved.allSatisfy { $0.displayIndex != nil }
             if allCached, let snapshot = await self.queryAllSpacesSnapshotAsync(), !snapshot.isEmpty {
                 let focusedSpaceIndex = snapshot.first(where: { $0.hasFocus })?.index
@@ -70,16 +71,10 @@ extension ScreenOverlayManager {
                     guard let displayIndex = item.displayIndex else {
                         return (item.index, item.uuid, nil, nil)
                     }
-                    let spaces = (byDisplay[displayIndex] ?? []).sorted { $0.index < $1.index }
-                    var spaceIndex: Int? = nil
-                    if let focusedSpaceIndex,
-                       let pos = spaces.firstIndex(where: { $0.index == focusedSpaceIndex }) {
-                        spaceIndex = pos + 1
-                    }
-                    if spaceIndex == nil,
-                       let pos = spaces.firstIndex(where: { $0.isVisible }) {
-                        spaceIndex = pos + 1
-                    }
+                    let spaceIndex = AllSpaceSnapshot.resolveScreenSpaceIndex(
+                        from: byDisplay[displayIndex] ?? [],
+                        focusedSpaceIndex: focusedSpaceIndex
+                    )
                     return (item.index, item.uuid, displayIndex, spaceIndex)
                 }
                 // 在回主线程应用结果前，校验 Task 启动时的屏幕集合是否仍与当前一致。

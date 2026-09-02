@@ -462,6 +462,15 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 `reset --soft` + pathspec 重提交无损拆出（对方文件原样保留在暂存区）——即 2.16a 警示的实例，
 自此本会话全部提交走 pathspec 定向。
 
+### 2.16c 第二十三刀完成（2026-09-02，overlay 每屏 space 解析双实现收敛）
+
+> 「梳理逻辑混乱 + 重写 + 分支穷尽单测」线。与 restore 专项（2026-09-02 规划）并行推进，
+> 领域不相交（Overlay vs Toggle/Space/Window），提交 pathspec 定向。
+
+| 刀 | 内容 | 配套 |
+|------|------|------|
+| 第二十三刀 refactor(overlay) | **每屏可见 space 解析双实现收敛**：同一「focused 位次 > 第一个可见 > 默认」决策内联重复两份且默认值语义漂移——快速路径（Refresh.swift Task 闭包内，无解→nil）与 fallback 路径（SpaceQuery.swift，无解→1）。收敛为 `SpaceSnapshot.swift` 纯函数 `SpaceIndexResolvable.resolveScreenSpaceIndex`（协议统一 `SpaceSnapshot`/`AllSpaceSnapshot` 两数据面），两路调用方各自保留原对外契约（fallback `?? 1`、快速路径 nil 透传至 applyRefreshResults `?? 1`，最终行为逐分支等价） | ScreenSpaceIndexResolutionTests（Standalone 11 项 + Testing 镜像 10 项：focused 命中/优先级/外 display/缺失、可见位次、乱序排序、空列表、全不可见） |
+
 ### 2.17 待办（第十一轮后的遗留清单，按优先级）
 
 | 优先级 | 项目 | 说明 |

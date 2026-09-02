@@ -45,6 +45,52 @@ struct AllSpaceSnapshot: Equatable {
     let hasFocus: Bool
 }
 
+// MARK: - 每屏可见 space 解析（纯函数，两条刷新路径共用的唯一决策点）
+
+/// 「每屏可见 space 解析」所需的 space 公共形状。
+///
+/// ## 场景
+/// fallback 路径（`SpaceSnapshot`，逐屏查询产物）与快速路径（`AllSpaceSnapshot`，
+/// 全量查询按 display 分组）历史上各自内联同一段解析，且默认值语义漂移
+/// （nil vs 1）；2026-09-02 抽出 `resolveScreenSpaceIndex` 后以此协议统一数据面。
+protocol SpaceIndexResolvable {
+    /// yabai 全局 space index（跨 display 连续编号）。
+    var index: Int { get }
+    /// 该 space 在其所属 display 上是否可见。
+    var isVisible: Bool { get }
+}
+
+extension SpaceSnapshot: SpaceIndexResolvable {}
+extension AllSpaceSnapshot: SpaceIndexResolvable {}
+
+extension SpaceIndexResolvable {
+
+    /// 解析一块 display 上应显示的 space 编号（overlay 屏幕编号，1 起）。
+    ///
+    /// 优先级（历史两路实现行为收敛，语义以本函数为唯一权威）：
+    ///   1) focused space（调用方从全量快照按 `hasFocus` 解出的 yabai 全局 index）
+    ///      落在本 display → 按 index 升序的位次；
+    ///   2) 否则第一个可见 space 的位次；
+    ///   3) 都没有（空列表 / focused 属于别的 display / 全不可见）→ nil，
+    ///      由调用方按各自契约收敛（fallback 路径 `?? 1`，快速路径保留 nil 至
+    ///      applyRefreshResults `?? 1`——最终默认均为 1，与历史行为一致）。
+    ///
+    /// ## 场景
+    /// - 输入不保证有序（yabai 输出顺序不承诺），函数内部按 index 升序排序后再取位次；
+    /// - 分支穷尽锁定：`Tests/Standalone/ScreenSpaceIndexResolutionTests.swift`。
+    static func resolveScreenSpaceIndex(from spaces: [Self], focusedSpaceIndex: Int?) -> Int? {
+        let sorted = spaces.sorted { $0.index < $1.index }
+        if let focused = focusedSpaceIndex,
+           let position = sorted.firstIndex(where: { $0.index == focused }) {
+            return position + 1
+        }
+        if let position = sorted.firstIndex(where: { $0.isVisible }) {
+            return position + 1
+        }
+        return nil
+    }
+}
+
 // MARK: - JSON 解析（纯函数，fixture 可测）
 
 extension SpaceSnapshot {
