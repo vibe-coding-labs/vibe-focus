@@ -129,6 +129,14 @@ enum CoordinateKit {
         return mainScreenQuartzFrame?.height ?? NSScreen.screens.first?.frame.height ?? 0
     }
 
+    /// AppKit 全局 y → Quartz 全局 y（纯函数，QuartzConversionTests 锁定）。
+    /// AppKit 主屏左下为原点 y 向上，Quartz 主屏左上为原点 y 向下：
+    /// quartzY = 主屏 AppKit maxY − 矩形 AppKit maxY。
+    /// 对主屏与非主屏统一成立（主屏即历史主屏分支公式 screenMaxY − visibleMaxY）。
+    static func quartzY(appKitRectMaxY: CGFloat, primaryMaxY: CGFloat) -> CGFloat {
+        primaryMaxY - appKitRectMaxY
+    }
+
     /// 获取屏幕的可用区域（去掉菜单栏和 Dock），返回 Quartz 坐标
     static func quartzVisibleFrame(of screen: NSScreen) -> CGRect {
         // P-INST-266: NSScreen 可见区域转 Quartz 坐标（screen.visibleFrame 动态计算去菜单栏/Dock + frame 读；窗口定位/axFrame 调用，visibleFrame 可能查 WindowServer；slow-op ≥30ms warn）。
@@ -140,16 +148,19 @@ enum CoordinateKit {
         }
         #endif
         let visibleFrame = screen.visibleFrame
-        if screen.frame.origin == .zero {
-            let screenMaxY = screen.frame.maxY
-            return CGRect(
-                x: visibleFrame.origin.x,
-                y: screenMaxY - visibleFrame.maxY,
-                width: visibleFrame.width,
-                height: visibleFrame.height
-            )
+        // 历史注（2026-09-03 乱蹦连带修复）：非主屏此前原样返回 AppKit 坐标——副屏在
+        // 主屏上方时 AppKit y 为正（+1117），Quartz 里应为负（-1055），yabai --move abs
+        // 按 Quartz 解释，stuck 解堵把窗口直写到主屏下方不存在的屏幕区域
+        //（trace toggle-00000129，窗口悬在屏外）。任意屏统一换算，主屏数值不变。
+        guard let primaryMaxY = NSScreen.screens.first?.frame.maxY else {
+            return visibleFrame
         }
-        return visibleFrame
+        return CGRect(
+            x: visibleFrame.origin.x,
+            y: quartzY(appKitRectMaxY: visibleFrame.maxY, primaryMaxY: primaryMaxY),
+            width: visibleFrame.width,
+            height: visibleFrame.height
+        )
     }
 
     static func isOnMainScreen(_ point: CGPoint) -> Bool {
