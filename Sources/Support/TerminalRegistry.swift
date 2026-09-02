@@ -70,27 +70,47 @@ enum TerminalRegistry {
         return terminalBundleIDs.contains(bundleID)
     }
 
+    /// 进程树向上查找终端 PID 的纯行走核心（2.16a 第二十刀从 findTerminalPID 抽出）。
+    /// 每轮先判 isTerminal（命中即返回），否则沿 parentPID 上溯；
+    /// 父链断裂（nil）、ppid ≤ 1、自环（ppid == 当前）三重守卫即止；至多 maxDepth 轮
+    /// （maxDepth < 1 归一为 1）。返回 (命中 pid 或 nil, 实际行走轮数)。
+    /// parent/isTerminal 谓词注入：fork 型 ps 查询留在 findTerminalPID，行走语义可穷尽测试。
+    static func walkToTerminalPID(
+        startPID: Int32,
+        parentPID: (Int32) -> Int32?,
+        isTerminal: (Int32) -> Bool,
+        maxDepth: Int = 10
+    ) -> (pid: Int32?, depth: Int) {
+        var currentPID = startPID
+        var depth = 0
+        for _ in 0..<max(1, maxDepth) {
+            depth += 1
+            if isTerminal(currentPID) { return (currentPID, depth) }
+            guard let ppid = parentPID(currentPID), ppid > 1, ppid != currentPID else { break }
+            currentPID = ppid
+        }
+        return (nil, depth)
+    }
+
     static func findTerminalPID(from startPID: Int32) -> Int32? {
         // P-INST-59: findTerminalPID 进程树遍历耗时（循环最多 10 次，每次 isTerminalPID + getParentPID 各一次 ps fork；findWindowByTerminalContext P-INST-39 的进程树解析核心，ps fork 累积是 SessionStart 耗时主因）。
         let ftpStart = Date()
-        var depth = 0
-        var found = false
+        // 行走语义走纯函数（2.16a 第二十刀）：isTerminalPID/getParentPID 作为谓词注入，
+        // ps fork 仍由本函数的私有查询承担，fork 次数契约见 TerminalTreeWalkTests。
+        let walk = walkToTerminalPID(
+            startPID: startPID,
+            parentPID: getParentPID,
+            isTerminal: isTerminalPID
+        )
         defer {
             log("[TerminalRegistry] findTerminalPID finished", level: .debug, fields: [
                 "startPID": String(startPID),
-                "depth": String(depth),
-                "found": String(found),
+                "depth": String(walk.depth),
+                "found": String(walk.pid != nil),
                 "durationMs": String(elapsedMilliseconds(since: ftpStart))
             ])
         }
-        var currentPID = startPID
-        for _ in 0..<10 {
-            depth += 1
-            if isTerminalPID(currentPID) { found = true; return currentPID }
-            guard let ppid = getParentPID(currentPID), ppid > 1, ppid != currentPID else { break }
-            currentPID = ppid
-        }
-        return nil
+        return walk.pid
     }
 
     // MARK: - Private
