@@ -7,7 +7,7 @@ extension SettingsView {
     var soundSection: some View {
         SettingsCard(
             title: "提示音",
-            subtitle: "对话完成时播放提示音，支持内置音效或自定义音频文件。"
+            subtitle: "对话完成时播放提示音，支持内置音效或自定义音频文件；可设节流间隔与免打扰时段防打扰。"
         ) {
             SettingsRow(
                 title: "提示音类型",
@@ -38,6 +38,107 @@ extension SettingsView {
                             set: { soundManager.updateVolume(Float($0)) }
                         )
                     )
+                }
+
+                Divider()
+
+                SettingsRow(
+                    title: "播放节流",
+                    detail: "多个会话接连完成时的最小提示音间隔（试听不受限）"
+                ) {
+                    Stepper(
+                        value: Binding(
+                            get: { soundManager.preferences.minPlayIntervalSeconds },
+                            set: { soundManager.updateMinPlayInterval($0) }
+                        ),
+                        in: 0...30,
+                        step: 1
+                    ) {
+                        Text(
+                            soundManager.preferences.minPlayIntervalSeconds == 0
+                                ? "关闭"
+                                : "\(soundManager.preferences.minPlayIntervalSeconds) 秒"
+                        )
+                        .font(.system(size: 13, design: .monospaced))
+                        .frame(width: 60, alignment: .trailing)
+                    }
+                }
+
+                Divider()
+
+                SettingsRow(
+                    title: "免打扰时段",
+                    detail: soundManager.preferences.quietHoursEnabled
+                        ? "该时段内对话完成保持静音（不影响窗口移动）"
+                        : "设定静音时间段（支持跨午夜，如 22 → 8）"
+                ) {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { soundManager.preferences.quietHoursEnabled },
+                                set: { enabled in
+                                    soundManager.updateQuietHours(
+                                        enabled: enabled,
+                                        startHour: soundManager.preferences.quietStartHour,
+                                        endHour: soundManager.preferences.quietEndHour
+                                    )
+                                }
+                            )
+                        )
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
+
+                        if soundManager.preferences.quietHoursEnabled {
+                            HStack(spacing: 6) {
+                                Picker(
+                                    "",
+                                    selection: Binding(
+                                        get: { soundManager.preferences.quietStartHour },
+                                        set: { hour in
+                                            soundManager.updateQuietHours(
+                                                enabled: true,
+                                                startHour: hour,
+                                                endHour: soundManager.preferences.quietEndHour
+                                            )
+                                        }
+                                    )
+                                ) {
+                                    ForEach(0..<24, id: \.self) { hour in
+                                        Text(String(format: "%02d:00", hour)).tag(hour)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .frame(width: 84)
+                                .labelsHidden()
+
+                                Text("→")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+
+                                Picker(
+                                    "",
+                                    selection: Binding(
+                                        get: { soundManager.preferences.quietEndHour },
+                                        set: { hour in
+                                            soundManager.updateQuietHours(
+                                                enabled: true,
+                                                startHour: soundManager.preferences.quietStartHour,
+                                                endHour: hour
+                                            )
+                                        }
+                                    )
+                                ) {
+                                    ForEach(0..<24, id: \.self) { hour in
+                                        Text(String(format: "%02d:00", hour)).tag(hour)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .frame(width: 84)
+                                .labelsHidden()
+                            }
+                        }
+                    }
                 }
 
                 Divider()

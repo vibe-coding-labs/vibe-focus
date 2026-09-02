@@ -36,16 +36,60 @@ enum CompletionSoundType: String, CaseIterable, Codable {
 }
 
 /// Persistent sound effect preferences stored via UserDefaults.
+///
+/// ## 向后兼容（轮次 1）
+/// 新增字段必须走 `init(from:)` 的 `decodeIfPresent` + 默认值——合成 Codable 会在
+/// 旧 JSON 缺字段时整体解码失败，loadPreferences 随即回退 `.default`，
+/// 把用户已保存的 soundType/customSoundPath 静默重置（持久化铁律的反面案例）。
 struct SoundPreferences: Codable {
     var soundType: CompletionSoundType
     var customSoundPath: String?
     var volume: Float
+    /// 两次完成音最小间隔秒数（0 = 关闭节流）。防多会话连环 ding（轮次 1）。
+    var minPlayIntervalSeconds: Int
+    /// 免打扰时段总开关与起止小时（0...23；起==止视作无效不启用）
+    var quietHoursEnabled: Bool
+    var quietStartHour: Int
+    var quietEndHour: Int
 
     static let `default` = SoundPreferences(
         soundType: .none,
         customSoundPath: nil,
-        volume: 0.7
+        volume: 0.7,
+        minPlayIntervalSeconds: 2,
+        quietHoursEnabled: false,
+        quietStartHour: 22,
+        quietEndHour: 8
     )
+
+    init(
+        soundType: CompletionSoundType,
+        customSoundPath: String?,
+        volume: Float,
+        minPlayIntervalSeconds: Int = 2,
+        quietHoursEnabled: Bool = false,
+        quietStartHour: Int = 22,
+        quietEndHour: Int = 8
+    ) {
+        self.soundType = soundType
+        self.customSoundPath = customSoundPath
+        self.volume = volume
+        self.minPlayIntervalSeconds = minPlayIntervalSeconds
+        self.quietHoursEnabled = quietHoursEnabled
+        self.quietStartHour = quietStartHour
+        self.quietEndHour = quietEndHour
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.soundType = try container.decode(CompletionSoundType.self, forKey: .soundType)
+        self.customSoundPath = try container.decodeIfPresent(String.self, forKey: .customSoundPath)
+        self.volume = try container.decode(Float.self, forKey: .volume)
+        self.minPlayIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .minPlayIntervalSeconds) ?? 2
+        self.quietHoursEnabled = try container.decodeIfPresent(Bool.self, forKey: .quietHoursEnabled) ?? false
+        self.quietStartHour = try container.decodeIfPresent(Int.self, forKey: .quietStartHour) ?? 22
+        self.quietEndHour = try container.decodeIfPresent(Int.self, forKey: .quietEndHour) ?? 8
+    }
 }
 
 // MARK: - Sound Manager
@@ -75,6 +119,9 @@ final class SoundManager: ObservableObject {
     /// 当前播放的自动停止任务（5s 兜底）。新播放/手动停止时取消，
     /// 防止旧定时器把新启的音频掐断（多会话并发完成时的真实竞态，见 startPlayback 场景注释）。
     private var playbackStopWorkItem: DispatchWorkItem?
+    /// 上一次完成音实际发声时间（节流判据，轮次 1）。仅由 playCompletionSound 写；
+    /// 试听（preview）是用户显式行为，不经过门控、不写此时间。
+    private var lastCompletionPlayedAt: Date?
 
     private init() {
         self.preferences = Self.loadPreferences()
@@ -94,6 +141,33 @@ final class SoundManager: ObservableObject {
         #endif
         guard preferences.soundType != .none else {
             log("[SoundManager] sound type is none, skipping")
+            return
+        }
+
+        // 防打扰门控（轮次 1）：免打扰时段硬静音优先，其次节流间隔。
+        // 试听（previewSound）不经过本门控——用户显式行为不受限。
+        let gate = SoundPlayGate.decide(
+            now: Date(),
+            lastPlayedAt: lastCompletionPlayedAt,
+            minIntervalSeconds: preferences.minPlayIntervalSeconds,
+            quietEnabled: preferences.quietHoursEnabled,
+            quietStartHour: preferences.quietStartHour,
+            quietEndHour: preferences.quietEndHour
+        )
+        switch gate {
+        case .allow:
+            lastCompletionPlayedAt = Date()
+        case .throttled(let remaining):
+            log("[SoundManager] completion sound throttled", level: .info, fields: [
+                "remainingSeconds": String(remaining),
+                "minInterval": String(preferences.minPlayIntervalSeconds)
+            ])
+            return
+        case .quietHours:
+            log("[SoundManager] completion sound muted by quiet hours", level: .info, fields: [
+                "quietStartHour": String(preferences.quietStartHour),
+                "quietEndHour": String(preferences.quietEndHour)
+            ])
             return
         }
 
@@ -215,6 +289,18 @@ final class SoundManager: ObservableObject {
 
     func updateVolume(_ volume: Float) {
         preferences.volume = volume
+    }
+
+    /// 更新播放节流间隔（秒，0 = 关闭；负值防御性归零）
+    func updateMinPlayInterval(_ seconds: Int) {
+        preferences.minPlayIntervalSeconds = max(0, seconds)
+    }
+
+    /// 更新免打扰时段（小时钳制到 0...23；起==止在门控中视作无效不启用）
+    func updateQuietHours(enabled: Bool, startHour: Int, endHour: Int) {
+        preferences.quietHoursEnabled = enabled
+        preferences.quietStartHour = max(0, min(23, startHour))
+        preferences.quietEndHour = max(0, min(23, endHour))
     }
 
     // MARK: - Sound Resolution
