@@ -277,6 +277,13 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
   XCTest 即可启用 `--enable-code-coverage` 产出真实覆盖率数字"的通道存在但未被采纳
   （见 2.13 验收口径裁决）：70 个从未过门禁的文件含过期 API 需逐个修，且与并行
   会话在同一目录写入，成本/碰撞风险评估后放弃迁移。
+- **2026-09-02 二次复诊（restore 专项补强刀）**：`swift test` 本身仍不可用（死因不变，
+  XCTest 文件的 `import Testing` 一行），但通道已绕开——`Tests/Runner/main.swift` 以
+  `@testable import` 直测真实实现（`swift run VibeFocusTestRunner`，自写断言 harness），
+  配 `scripts/coverage_test_runner.sh`（`-profile-generate` + llvm-profdata/llvm-cov）
+  产出逐文件真实覆盖率，不再依赖完整 Xcode。坑留档：`llvm-cov report` 传目录过滤参数
+  后 Filename 列变为相对该目录的路径（不再含 `Sources/` 前缀），按 `/Sources\//` awk
+  过滤会把逐文件行全部滤光、只剩 TOTAL——已修复并在脚本内注记。
 - **过渡期验证路径**：`bash Tests/run_all_tests.sh`（Standalone 镜像测试，直接 `swift`
   编译运行，不依赖 swift-testing）——当前 31/31 通过，新增解析逻辑同套件覆盖
   （`Tests/Standalone/SpaceSnapshotParsingStandaloneTests.swift`，18 项检查）。
@@ -319,8 +326,18 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 - [ ] 新增/被拆分文件的公共 API 100% 有含「场景」段的文档注释
 - [ ] 对外部系统的解析逻辑全部为纯函数 + fixture 测试覆盖
 - [x] `swift build` 零警告（2026-08-31 达成，clean build 16 类 → 0）
-- [x] `bash Tests/run_all_tests.sh` 全绿（32/32）
+- [x] `bash Tests/run_all_tests.sh` 全绿（2026-09-02 复核 55/55；脚本自动枚举
+      Tests/Standalone/*.swift，数字随文件增长）
       （`swift test` 待 2.4 工具链问题解决后恢复为准入门槛）
+- [x] **`swift run VibeFocusTestRunner` 全绿 + llvm-cov 真实覆盖率（2026-09-02 restore
+      专项补强刀起列为准入门禁）**：CLT-only 环境无 Swift Testing 运行时（2.10），
+      以 `Tests/Runner/main.swift`（`@testable import` 直测真实实现，自写断言
+      harness，当前 78/78）为执行通道，`bash scripts/coverage_test_runner.sh`
+      产出 llvm-cov 逐文件数字。restore 链实测（2026-09-02）：
+      `ToggleEngine+Restore.swift` 行/函数 100%（regions 97.96%）、
+      `RestoreSwitchOrchestration.swift` 与 `ConditionPolling.swift` 100%、
+      `VoiceAnnouncementManager+RestoreOutcome.swift` 纯决策部分 100%
+      （发声接线单例 I/O 按下项口径除外）。
 - [ ] 单文件 ≤ 300 行（存量逐步收敛，新增代码即时遵守）
 - [x] **单元测试验收口径（2026-09-02 用户裁决）**：重写/新增的纯决策逻辑配套
       Standalone 测试**分支穷尽覆盖**（每条返回路径、每个 guard 跳过、边界矩阵、
@@ -329,6 +346,9 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
       用户裁决放弃迁移、采纳本口径。与"覆盖率 100%"字面要求的差异已显式披露
       并经用户拍板——本口径为正式验收标准而非代理指标；装 Xcode 后如需真实
       覆盖率数字另行走刀。
+      **2026-09-02 更新（restore 专项补强刀）**：真实覆盖率通道已不等完整 Xcode——
+      `Tests/Runner` + `scripts/coverage_test_runner.sh` 以 @testable 直测产出
+      llvm-cov 数字（见上门禁项），「分支穷尽」口径自此有量化参考，两条并行生效。
 
 ### 2.14 追加修复记录（2026-08-31，title-editor Ctrl+T 改名不生效）
 
