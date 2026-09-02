@@ -1,6 +1,7 @@
 // Tests/Standalone/ScreenSpaceIndexResolutionTests.swift
-// Verification: overlay 每屏可见 space 解析的纯决策（快速路径与 fallback 路径共用）
+// Verification: overlay 每屏 space 决策纯函数（可见 space 解析 + 缓存变更判定）
 // Mirrors: Sources/Overlay/SpaceSnapshot.swift SpaceIndexResolvable.resolveScreenSpaceIndex
+//          Sources/Overlay/ScreenOverlayManager+Refresh.swift screenCacheChange
 // Run: swift Tests/Standalone/ScreenSpaceIndexResolutionTests.swift
 
 import Foundation
@@ -25,6 +26,25 @@ enum SpaceIndexResolutionMirror {
         }
         return nil
     }
+}
+
+struct ScreenCacheChangeMirror: Equatable {
+    let needsApply: Bool
+    let oldSpaceIndex: Int?
+}
+
+func screenCacheChange(
+    cached: (screenIndex: Int, spaceIndex: Int)?,
+    currentScreenIndex: Int,
+    currentSpaceIndex: Int
+) -> ScreenCacheChangeMirror {
+    guard let cached else {
+        return .init(needsApply: true, oldSpaceIndex: nil)
+    }
+    if cached.screenIndex == currentScreenIndex, cached.spaceIndex == currentSpaceIndex {
+        return .init(needsApply: false, oldSpaceIndex: nil)
+    }
+    return .init(needsApply: true, oldSpaceIndex: cached.spaceIndex)
 }
 
 // MARK: - Test harness
@@ -101,6 +121,28 @@ check("空列表且 focused 非nil → nil",
       SpaceIndexResolutionMirror.resolveScreenSpaceIndex(
         from: [],
         focusedSpaceIndex: 3) == nil)
+
+// MARK: - screenCacheChange（applyRefreshResults 缓存变更判定）
+
+check("缓存缺失（新屏/首轮）：需应用，无旧值",
+      screenCacheChange(cached: nil, currentScreenIndex: 1, currentSpaceIndex: 3)
+        == ScreenCacheChangeMirror(needsApply: true, oldSpaceIndex: nil))
+
+check("与缓存完全一致：不应用（WindowServer 零干扰）",
+      screenCacheChange(cached: (screenIndex: 1, spaceIndex: 3), currentScreenIndex: 1, currentSpaceIndex: 3)
+        == ScreenCacheChangeMirror(needsApply: false, oldSpaceIndex: nil))
+
+check("仅 spaceIndex 变化：需应用并携带旧值",
+      screenCacheChange(cached: (screenIndex: 1, spaceIndex: 2), currentScreenIndex: 1, currentSpaceIndex: 5)
+        == ScreenCacheChangeMirror(needsApply: true, oldSpaceIndex: 2))
+
+check("仅 screenIndex 变化（重排显示器）：需应用",
+      screenCacheChange(cached: (screenIndex: 0, spaceIndex: 3), currentScreenIndex: 1, currentSpaceIndex: 3)
+        .needsApply)
+
+check("screenIndex 与 spaceIndex 同时变化：需应用",
+      screenCacheChange(cached: (screenIndex: 0, spaceIndex: 2), currentScreenIndex: 2, currentSpaceIndex: 4)
+        == ScreenCacheChangeMirror(needsApply: true, oldSpaceIndex: 2))
 
 // MARK: - Summary
 

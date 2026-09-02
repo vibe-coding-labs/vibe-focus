@@ -462,7 +462,7 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 `reset --soft` + pathspec 重提交无损拆出（对方文件原样保留在暂存区）——即 2.16a 警示的实例，
 自此本会话全部提交走 pathspec 定向。
 
-### 2.16c 第二十三刀完成（2026-09-02，overlay 每屏 space 解析双实现收敛）
+### 2.16c 第二十三/二十四刀完成（2026-09-02，overlay 每屏 space 决策收敛）
 
 > 「梳理逻辑混乱 + 重写 + 分支穷尽单测」线。与 restore 专项（2026-09-02 规划）并行推进，
 > 领域不相交（Overlay vs Toggle/Space/Window），提交 pathspec 定向。
@@ -470,6 +470,7 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | 刀 | 内容 | 配套 |
 |------|------|------|
 | 第二十三刀 refactor(overlay) | **每屏可见 space 解析双实现收敛**：同一「focused 位次 > 第一个可见 > 默认」决策内联重复两份且默认值语义漂移——快速路径（Refresh.swift Task 闭包内，无解→nil）与 fallback 路径（SpaceQuery.swift，无解→1）。收敛为 `SpaceSnapshot.swift` 纯函数 `SpaceIndexResolvable.resolveScreenSpaceIndex`（协议统一 `SpaceSnapshot`/`AllSpaceSnapshot` 两数据面），两路调用方各自保留原对外契约（fallback `?? 1`、快速路径 nil 透传至 applyRefreshResults `?? 1`，最终行为逐分支等价） | ScreenSpaceIndexResolutionTests（Standalone 11 项 + Testing 镜像 10 项：focused 命中/优先级/外 display/缺失、可见位次、乱序排序、空列表、全不可见） |
+| 第二十四刀 refactor(overlay) | **applyRefreshResults 重复更新块收敛**：cached 变化分支与新屏分支各自内联一份「记日志+写 cache+overlay.update/updatePosition/show」近乎逐行重复的更新块（漂移温床：两份 "No overlay" 警告文案已分叉）。收敛为纯函数 `screenCacheChange`（缓存缺失/任一值变化→需应用并携带旧值，完全未变→零触碰）+ 单一应用路径；日志与 changedScreens 文案逐字保留 | 同上测试文件追加 5 项（Standalone 16 项总计）：新屏/未变/仅 space 变/仅 screen 变/双变 |
 
 ### 2.17 待办（第十一轮后的遗留清单，按优先级）
 

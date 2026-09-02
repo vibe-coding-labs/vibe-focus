@@ -179,33 +179,28 @@ extension ScreenOverlayManager {
                 continue
             }
 
-            if let cached = screenSpaceCache[uuid] {
-                if cached.screenIndex != currentIndex || cached.spaceIndex != currentSpaceIndex {
-                    log("[REFRESH] Space index changed: Screen\(currentIndex) \(cached.spaceIndex)->\(currentSpaceIndex)")
-                    needsRefresh = true
-                    changedScreens.append("Screen\(currentIndex): \(cached.spaceIndex)->\(currentSpaceIndex)")
-                    screenSpaceCache[uuid] = (screenIndex: currentIndex, spaceIndex: currentSpaceIndex)
-
-                    if let overlay = overlayWindows[uuid] {
-                        overlay.update(screenIndex: currentIndex, spaceIndex: currentSpaceIndex, preferences: preferences)
-                        overlay.updatePosition(for: screens[currentIndex], position: preferences.position, margin: preferences.panelMargin)
-                        overlay.show()
-                    } else {
-                        log("[REFRESH] No overlay found for uuid \(uuid)", level: .warn)
-                    }
-                }
+            // 变更判定统一走 screenCacheChange（原此处内联两份近乎逐行重复的更新块）。
+            let change = Self.screenCacheChange(
+                cached: screenSpaceCache[uuid],
+                currentScreenIndex: currentIndex,
+                currentSpaceIndex: currentSpaceIndex
+            )
+            guard change.needsApply else { continue }
+            if let oldSpaceIndex = change.oldSpaceIndex {
+                log("[REFRESH] Space index changed: Screen\(currentIndex) \(oldSpaceIndex)->\(currentSpaceIndex)")
+                changedScreens.append("Screen\(currentIndex): \(oldSpaceIndex)->\(currentSpaceIndex)")
             } else {
-                needsRefresh = true
                 changedScreens.append("Screen\(currentIndex): new->\(currentSpaceIndex)")
-                screenSpaceCache[uuid] = (screenIndex: currentIndex, spaceIndex: currentSpaceIndex)
+            }
+            needsRefresh = true
+            screenSpaceCache[uuid] = (screenIndex: currentIndex, spaceIndex: currentSpaceIndex)
 
-                if let overlay = overlayWindows[uuid] {
-                    overlay.update(screenIndex: currentIndex, spaceIndex: currentSpaceIndex, preferences: preferences)
-                    overlay.updatePosition(for: screens[currentIndex], position: preferences.position, margin: preferences.panelMargin)
-                    overlay.show()
-                } else {
-                    log("[REFRESH] No overlay found for new screen uuid \(uuid)", level: .warn)
-                }
+            if let overlay = overlayWindows[uuid] {
+                overlay.update(screenIndex: currentIndex, spaceIndex: currentSpaceIndex, preferences: preferences)
+                overlay.updatePosition(for: screens[currentIndex], position: preferences.position, margin: preferences.panelMargin)
+                overlay.show()
+            } else {
+                log("[REFRESH] No overlay found for uuid \(uuid)", level: .warn)
             }
         }
 
@@ -216,5 +211,32 @@ extension ScreenOverlayManager {
         } else if needsRefresh {
             log("[REFRESH] Updated screens: \(changedScreens.joined(separator: ", "))")
         }
+    }
+
+    /// 单屏 overlay 变更判定（纯函数，分支穷尽锁定于 ScreenSpaceIndexResolutionTests）。
+    ///
+    /// ## 场景
+    /// - `applyRefreshResults` 逐屏调用：缓存缺失（新屏/首轮）或 screenIndex/spaceIndex
+    ///   任一变化 → 需就地重绘并回写 cache；完全未变 → 不触碰 overlay
+    ///   （WindowServer 零干扰，2026-08-10 SIGSEGV 教训的延伸：无变化不产生窗口操作）。
+    struct ScreenCacheChange: Equatable {
+        /// true = 需就地重绘该屏 overlay 并回写 cache。
+        let needsApply: Bool
+        /// 变化前的 spaceIndex（日志 "old->new" 用）；新屏（缓存缺失）或未变时为 nil。
+        let oldSpaceIndex: Int?
+    }
+
+    static func screenCacheChange(
+        cached: (screenIndex: Int, spaceIndex: Int)?,
+        currentScreenIndex: Int,
+        currentSpaceIndex: Int
+    ) -> ScreenCacheChange {
+        guard let cached else {
+            return .init(needsApply: true, oldSpaceIndex: nil)
+        }
+        if cached.screenIndex == currentScreenIndex, cached.spaceIndex == currentSpaceIndex {
+            return .init(needsApply: false, oldSpaceIndex: nil)
+        }
+        return .init(needsApply: true, oldSpaceIndex: cached.spaceIndex)
     }
 }

@@ -2,10 +2,12 @@ import Testing
 import Foundation
 @testable import VibeFocusKit
 
-/// overlay 每屏可见 space 解析纯决策锁定（与 Standalone 镜像同矩阵）：
-/// 快速路径（AllSpaceSnapshot 按 display 分组）与 fallback 路径（SpaceSnapshot 逐屏）
-/// 共用 `SpaceIndexResolvable.resolveScreenSpaceIndex`，两类型各过一遍全矩阵。
+/// overlay 每屏 space 决策纯函数锁定（与 Standalone 镜像同矩阵）：
+/// 1. 快速路径（AllSpaceSnapshot 按 display 分组）与 fallback 路径（SpaceSnapshot 逐屏）
+///    共用 `SpaceIndexResolvable.resolveScreenSpaceIndex`，两类型各过一遍全矩阵；
+/// 2. `applyRefreshResults` 的缓存变更判定 `ScreenOverlayManager.screenCacheChange`。
 @Suite("Screen Space Index Resolution")
+@MainActor
 struct ScreenSpaceIndexResolutionTests {
 
     private func perDisplay(_ index: Int, _ visible: Bool) -> SpaceSnapshot {
@@ -96,5 +98,41 @@ struct ScreenSpaceIndexResolutionTests {
             from: [all(1, display: 1, false), all(2, display: 1, false)],
             focusedSpaceIndex: nil)
         #expect(result == nil)
+    }
+
+    // MARK: - screenCacheChange（applyRefreshResults 缓存变更判定）
+
+    @Test("缓存缺失（新屏/首轮）：需应用，无旧值")
+    func cacheMissApplies() {
+        let change = ScreenOverlayManager.screenCacheChange(cached: nil, currentScreenIndex: 1, currentSpaceIndex: 3)
+        #expect(change == ScreenOverlayManager.ScreenCacheChange(needsApply: true, oldSpaceIndex: nil))
+    }
+
+    @Test("与缓存完全一致：不应用（WindowServer 零干扰）")
+    func unchangedSkips() {
+        let change = ScreenOverlayManager.screenCacheChange(
+            cached: (screenIndex: 1, spaceIndex: 3), currentScreenIndex: 1, currentSpaceIndex: 3)
+        #expect(change == ScreenOverlayManager.ScreenCacheChange(needsApply: false, oldSpaceIndex: nil))
+    }
+
+    @Test("仅 spaceIndex 变化：需应用并携带旧值")
+    func spaceChangeAppliesWithOldValue() {
+        let change = ScreenOverlayManager.screenCacheChange(
+            cached: (screenIndex: 1, spaceIndex: 2), currentScreenIndex: 1, currentSpaceIndex: 5)
+        #expect(change == ScreenOverlayManager.ScreenCacheChange(needsApply: true, oldSpaceIndex: 2))
+    }
+
+    @Test("仅 screenIndex 变化（重排显示器）：需应用")
+    func screenChangeApplies() {
+        let change = ScreenOverlayManager.screenCacheChange(
+            cached: (screenIndex: 0, spaceIndex: 3), currentScreenIndex: 1, currentSpaceIndex: 3)
+        #expect(change.needsApply)
+    }
+
+    @Test("screenIndex 与 spaceIndex 同时变化：需应用")
+    func bothChangeApplies() {
+        let change = ScreenOverlayManager.screenCacheChange(
+            cached: (screenIndex: 0, spaceIndex: 2), currentScreenIndex: 2, currentSpaceIndex: 4)
+        #expect(change == ScreenOverlayManager.ScreenCacheChange(needsApply: true, oldSpaceIndex: 2))
     }
 }
