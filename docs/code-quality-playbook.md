@@ -403,7 +403,7 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 死代码结论为零调用再删；行为等价性靠 RoutingTests 契约 + 既有 33 个 Standalone
 测试守护；日志 schema 变更（mode/spaceMoveResult/floatMs/applyMs）在提交信息中明示。
 
-### 2.16a 第十一轮完成（2026-09-01/02，遗留清单清剿「五~二十一刀」，重构与单测同批交付）
+### 2.16a 第十一轮完成（2026-09-01/02，遗留清单清剿「五~二十二刀」，重构与单测同批交付）
 
 > ⚠️ 并行会话警示：另一会话同期在 settings/sound 线独立编号「十八/十九/二十刀」
 > （settings 线，commit message 刀号与本表不可互比；其会话仍在改写历史，勿以哈希互引）。共享仓多会话并行时
@@ -411,8 +411,8 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 > add -A 相撞，最终代码经对方提交入库、台账行以本行存证）。
 
 > 背景与上轮同源：把 2.17 遗留清单里的 P2 全部 + P3 大半清掉，
-> 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 15 个 Standalone 测试文件、
-> 301 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
+> 每刀"重构一点就配套新增/完善一点单元测试"（本轮共新增 16 个 Standalone 测试文件、
+> 314 项检查），门禁同前：swift build 零警告 + run_all_tests.sh 全绿。
 > 单元测试验收口径 = 重写/新增纯决策逻辑分支穷尽覆盖（2.13 用户裁决）。
 
 | 刀 | 提交 | 内容 | 配套测试 |
@@ -434,6 +434,7 @@ clean build（rm -rf .build）警告 **16 类 → 0**，达成 2.11「零警告�
 | 第十九刀 refactor(window) | 随并行会话「fix(sound): SoundManager 播放互斥（第二十刀）」提交入库（哈希被该会话 amend 改写，按提交标题寻址），本会话原作者 | **Claude Code 窗口定位决策纯函数化**：findClaudeCodeWindow 内联的 cwd→项目名提取与三级策略匹配抽为 projectName(fromCwd:)（nil/空/全斜杠→nil，isEmpty 守卫折叠进契约）+ matchClaudeCodeCandidate（返回 candidate+strategy 供分策略日志，hostApp 谓词注入）；顺带修正策略 2 注释的"非主屏幕"doc 漂移（约束从未实现）。行为零变化 | ClaudeCodeWindowMatchTests（24 项：cwd 边界矩阵 11 项/策略顺序与条件穷尽/两条端到端组合） |
 | 第二十刀 refactor(hook) | cd2f3aa | **进程树查找纯函数化**：findTerminalPID 的行走语义（判终端 → 沿父链上溯 → 深度上限/自环/PID>1 三重守卫）内联在 ps fork 型 I/O 函数中，抽出 walkToTerminalPID 纯函数（parent/isTerminal 谓词注入，返回 pid+depth 保日志字段，maxDepth<1 归一为 1）；fork 查询留在调用方。行为零变化 | TerminalTreeWalkTests（15 项：命中路径含起点零 fork、三重守卫逐一、深度边界含恰在上限与 maxDepth=0 归一、fork 次数契约——parentPID 每未命中轮恰一次，计数即 SessionStart 性能契约） |
 | 第二十一刀 test(window) | 6a4b11d | **终端上下文匹配纯函数族补齐覆盖 + 死分支清理**：匹配族六函数（matchCommandToWindowTitle/parseCommandBasename/filterWindowsByPID/parseItermSessionUUID/isValidUUIDPart/isValidTTYPath）标注 "extracted for testability" 却只有从未编译的 swift-testing 测试，按 2.13 裁决口径属无覆盖 → 补齐 Standalone 穷尽测试；顺带删 matchCommandToWindowTitle 的 "— cmd ◂" 死分支（被 "— cmd" 子串包含永真重复，行为零变化） | TerminalContextMatchingTests（35 项：模式与遍历序 9/ps 解析 5/iTerm2 UUID 解析 5/UUID 注入防御 5/TTY 白名单 8/CGWindowList 过滤 3；怪癖锁定——命令侧大小写敏感、em dash 分隔、/dev/ttys 放行、空 UUID 恒真） |
+| 第二十二刀 test(overlay) | 9fb11c3 | **ScreenIndexPreferences 纯决策函数补齐覆盖**（只补测不改四级回退加载行为——偏好迁移涉及真实环境数据，仍被 2.15 教训门禁挡住）：loadLegacyPreferences(from:) 与 enforcePerScreenSpaceIndexingIfNeeded(_:) 按 2.13 口径属无覆盖 → 补齐；enforce 的 save 副作用以闭包注入建模（测决策不测 I/O） | ScreenIndexPreferencesMigrationTests（13 项：legacy 解码 7（缺省补默认/恒置 true/未知键忽略/垃圾字节/缺必填/类型错/非法枚举）、enforce 4（恒等不落盘/迁移落盘一次/九字段逐一不变/落盘即迁移值）、组合契约 1——legacy 恒 true → enforce 恒等，load() 链上无二次迁移落盘） |
 
 ### 2.16b 第十二轮完成（2026-09-02，提示音/语音播报/Claude 集成整体审查与重构「settings 线五刀」）
 
