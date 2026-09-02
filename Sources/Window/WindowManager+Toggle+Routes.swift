@@ -69,12 +69,24 @@ extension WindowManager {
             return
         }
 
-        // float 脱管 + settle（等 yabai 默认重摆落定）→ frame 直写（闭环验证内置）
+        // float 脱管 + settle（等 yabai 默认重摆落定）→ frame 直写（闭环验证内置）。
+        // 已 float 零等待（skippedNoOp 无重摆）；真 toggle 时等稳定代等固定
+        // （waitForRelayout，同 move_to_main P2 注释）。
         let moveStart = Date()
+        var stuckFloatToggled = false
         if let info = windowInfo, !info.isFloating {
-            spaceController.setWindowFloat(windowID, operationID: operationID, knownWindowInfo: info)
+            let floatOutcome = spaceController.setWindowFloat(windowID, operationID: operationID, knownWindowInfo: info)
+            stuckFloatToggled = floatOutcome.didToggle
         }
-        usleep(WindowSettle.floatRelayoutSettleMicros)
+        if stuckFloatToggled {
+            FrameConvergence.waitForRelayout(
+                minSettleMicros: WindowSettle.floatRelayoutMinSettleMicros,
+                intervalMs: WindowSettle.frameVerifyPollIntervalMs,
+                budgetMs: WindowSettle.floatRelayoutSettleMicros,
+                read: { cgWindowBounds(for: windowID) },
+                isSame: { CoordinateKit.isFrameConverged(actual: $1, target: $0, tolerance: frameTolerance) }
+            )
+        }
         spaceController.clearWindowQueryCache()
         let targetFrame = CoordinateKit.quartzVisibleFrame(of: targetScreen)
         let moved = moveWindowToFrameViaYabai(

@@ -47,6 +47,43 @@ enum FrameWriteOrder: Equatable {
 ///   settle 用 WindowSettle 常量；写机制（yabai/AX）与读机制（CGWindowList/AX）同为调用点策略。
 enum FrameConvergence {
 
+    /// float 重摆落定等待（等稳定代等固定，2026-09-03 流畅度第二刀）。
+    ///
+    /// ## 场景
+    /// `--toggle float` 后 yabai 会默认重摆 float 窗口，过早写目标 frame 会被重摆覆盖
+    /// （2026-09-01 尺寸错乱根因）。固定睡 300ms 是重摆耗时的上界保护，实际多数
+    /// 100~150ms 即稳定——改为「先睡下限（防重摆未启动的静默误判），再轮询 frame
+    /// 稳定（连续两读漂移在容差内）早返回」，总预算兜底不变。
+    ///
+    /// ## 语义契约（Tests/Runner 分支穷尽锁定）
+    /// - 先无条件睡 minSettleMicros（重摆启动前的静默窗口，下限内两次读相等 ≠ 已稳定）；
+    /// - 之后每 intervalMs 读一次：本次与上次读回漂移达标（isSame）即返回；
+    /// - 读失败（nil）不终止、清空 prev（下一对相等才稳定）；下限后从未稳定则走满总预算；
+    /// - 总等待（下限+轮询）不超过 minSettle+budget；无稳定性信号时退化为固定等待。
+    static func waitForRelayout(
+        minSettleMicros: useconds_t,
+        intervalMs: UInt32,
+        budgetMs: UInt32,
+        read: () -> CGRect?,
+        isSame: (CGRect, CGRect) -> Bool,
+        sleep: (useconds_t) -> Void = { usleep($0) },
+        pollSleep: (UInt32) -> Void = { usleep(useconds_t($0) * 1_000) }
+    ) {
+        sleep(minSettleMicros)
+        var waitedMs: UInt32 = 0
+        var prev = read()
+        while waitedMs < budgetMs {
+            let nap = min(intervalMs, budgetMs - waitedMs)
+            pollSleep(nap)
+            waitedMs += nap
+            let current = read()
+            if let p = prev, let c = current, isSame(p, c) {
+                return
+            }
+            prev = current
+        }
+    }
+
     /// 写入顺序决策：按当前尺寸与目标尺寸的关系选两段写入的先后（见 FrameWriteOrder 场景注释）。
     /// currentSize 读不到（CGWindowList 偶发 nil）时沿用历史顺序 move→resize（防御分支，
     /// 中间态行为退回修复前，不比现状更差）。

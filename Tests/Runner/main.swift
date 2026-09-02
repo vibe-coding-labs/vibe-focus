@@ -525,6 +525,62 @@ final class FakeAuditor: RestoreAuditing {
               order == .resizeThenMove)
     }
 
+    // MARK: FrameConvergence.waitForRelayout（float 重摆等稳定，真实实现——流畅度第二刀）
+
+    do {
+        var reads = 0
+        var naps = 0
+        FrameConvergence.waitForRelayout(
+            minSettleMicros: 120, intervalMs: 25, budgetMs: 300,
+            read: { reads += 1; return CGRect(x: 0, y: 0, width: 10, height: 10) },
+            isSame: { _, _ in true },
+            sleep: { _ in }, pollSleep: { _ in naps += 1 })
+        check("重摆等待: 下限后首对读即相等 → 只睡 1 次立即返回", naps == 1 && reads == 2)
+    }
+    do {
+        // 下限后第 3 次读才与前次相等（x 序列 0,1,1）：轮询睡 2 次后返回（未走满预算）
+        var reads = 0
+        var naps = 0
+        FrameConvergence.waitForRelayout(
+            minSettleMicros: 0, intervalMs: 25, budgetMs: 300,
+            read: { reads += 1; return CGRect(x: reads == 1 ? 0 : 1, y: 0, width: 10, height: 10) },
+            isSame: { a, b in a.origin.x == b.origin.x },
+            sleep: { _ in }, pollSleep: { _ in naps += 1 })
+        check("重摆等待: 第 3 读稳定 → 提前返回（睡 2 次而非走满预算）", naps == 2)
+    }
+    do {
+        // 永不稳定（每读都变）→ 走满总预算
+        var reads = 0
+        var totalNapped: UInt32 = 0
+        FrameConvergence.waitForRelayout(
+            minSettleMicros: 0, intervalMs: 25, budgetMs: 100,
+            read: { reads += 1; return CGRect(x: reads, y: 0, width: 10, height: 10) },
+            isSame: { _, _ in false },
+            sleep: { _ in }, pollSleep: { totalNapped += $0 })
+        check("重摆等待: 永不稳定 → 走满预算 100ms", totalNapped == 100)
+    }
+    do {
+        // 全程读 nil → 不稳定但也不崩溃，走满预算
+        var totalNapped: UInt32 = 0
+        FrameConvergence.waitForRelayout(
+            minSettleMicros: 0, intervalMs: 25, budgetMs: 100,
+            read: { nil },
+            isSame: { _, _ in true },
+            sleep: { _ in }, pollSleep: { totalNapped += $0 })
+        check("重摆等待: 全程读失败 → 走满预算兜底（nil 不终止不崩溃）", totalNapped == 100)
+    }
+    do {
+        // 读 nil 后恢复读：prev 重置语义（nil 清空 prev，下一对相等才稳定）
+        var reads = 0
+        var naps = 0
+        FrameConvergence.waitForRelayout(
+            minSettleMicros: 0, intervalMs: 25, budgetMs: 400,
+            read: { reads += 1; return reads == 1 ? nil : CGRect(x: 5, y: 0, width: 1, height: 1) },
+            isSame: { _, _ in true },
+            sleep: { _ in }, pollSleep: { _ in naps += 1 })
+        check("重摆等待: 首读 nil 重置 prev → 第二对相等即稳定（睡 2 次）", naps == 2)
+    }
+
     // MARK: RestoreAnnouncementPlan（P1-1 结局播报纯决策，真实实现——结局→计划总映射）
 
     check("播报映射: restored(spaceExact=true) → restoredExact",

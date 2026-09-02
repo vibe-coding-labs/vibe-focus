@@ -13,10 +13,19 @@ enum WindowSettle {
     // MARK: - yabai 级
 
     /// float 脱管（--toggle float）后等 yabai 默认重摆落定，再写目标 frame。
-    /// 300ms；实测低于此值 AX/yabai 写会被随后的重摆覆盖（2026-09-01 尺寸错乱根因）。
-    /// 使用点：ToggleEngine+Restore 4a、move_to_main P2 pre-float、
-    /// move_to_main AX apply 前、moveStuckWindowToSecondaryScreen。
+    /// 300ms 为重摆耗时上界（实测低于此值 AX/yabai 写会被随后的重摆覆盖，
+    /// 2026-09-01 尺寸错乱根因）。
+    /// 使用点语义分两档（2026-09-03 流畅度第二刀）：
+    /// - ToggleEngine+Restore 4a：仅真 toggle 时等待（didToggle 条件，历史行为）；
+    /// - move_to_main P2/AX、moveStuckWindowToSecondaryScreen：同改 didToggle 条件
+    ///   （已 float 零等待），真 toggle 时走 waitForRelayout 等稳定代等固定——
+    ///   下限 floatRelayoutMinSettleMicros，本值作总预算兜底。
     static let floatRelayoutSettleMicros: useconds_t = 300_000
+
+    /// float 重摆等稳定的下限：120ms。`--toggle float` 后重摆有启动延迟，过早的
+    /// 「连续两读相等」是静默窗口的假稳定；先睡满下限再开始稳定性轮询。
+    /// 使用点：FrameConvergence.waitForRelayout。
+    static let floatRelayoutMinSettleMicros: useconds_t = 120_000
 
     /// yabai frame 直写后的验证轮询（原固定 settle 400ms 的等到位版，2026-09-03
     /// restore「水中移动」优化：写多数几十 ms 落定，固定睡是纯等待——改每 25ms 读一次，
