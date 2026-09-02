@@ -35,6 +35,32 @@ enum CompletionSoundType: String, CaseIterable, Codable {
     }
 }
 
+/// 自定义音频文件有效性（轮次 3：反馈可信度）。
+/// 区分「未配置」与「配置过但文件被删」——后者播放时降级系统默认并告警，
+/// 不再静默无声（用户删了文件后完成音悄悄消失是历史盲区）。
+enum CustomSoundStatus: Equatable {
+    /// 未配置路径
+    case notSet
+    /// 文件存在
+    case valid
+    /// 已配置但文件不存在
+    case missing
+
+    static func evaluate(path: String?) -> CustomSoundStatus {
+        guard let path, !path.isEmpty else { return .notSet }
+        return FileManager.default.fileExists(atPath: path) ? .valid : .missing
+    }
+
+    /// 设置页 detail 文案
+    var uiDescription: String {
+        switch self {
+        case .notSet: return "未选择文件"
+        case .valid: return "已选择"
+        case .missing: return "⚠️ 文件不存在，完成音将降级为系统默认"
+        }
+    }
+}
+
 /// Persistent sound effect preferences stored via UserDefaults.
 ///
 /// ## 向后兼容（轮次 1）
@@ -378,6 +404,13 @@ final class SoundManager: ObservableObject {
             guard let path, !path.isEmpty else {
                 log("[SoundManager] custom sound path is empty", level: .warn)
                 return nil
+            }
+            // 轮次 3：配置过的文件被删 → 降级系统默认并告警（历史行为是静默无声）
+            guard FileManager.default.fileExists(atPath: path) else {
+                log("[SoundManager] custom sound file missing, falling back to system default", level: .warn, fields: [
+                    "path": path
+                ])
+                return NSSound(named: "Hero")
             }
             return NSSound(contentsOfFile: path, byReference: false)
         }

@@ -4,6 +4,11 @@ import UniformTypeIdentifiers
 // MARK: - 提示音（设置位于「Claude 集成」标签页，Stop hook 对话完成时触发）
 extension SettingsView {
 
+    /// 自定义音频文件有效性状态（轮次 3：detail 文案 + 缺失警示共用）
+    var customSoundStatus: CustomSoundStatus {
+        CustomSoundStatus.evaluate(path: soundManager.preferences.customSoundPath)
+    }
+
     var soundSection: some View {
         SettingsCard(
             title: "提示音",
@@ -166,7 +171,7 @@ extension SettingsView {
 
                 AudioFilePickerRow(
                     title: "自定义音频文件",
-                    detail: soundManager.preferences.customSoundPath ?? "未选择文件",
+                    detail: customSoundStatus.uiDescription,
                     path: soundManager.preferences.customSoundPath,
                     onPick: { path in
                         log("[Settings] selected custom sound file", fields: ["path": path])
@@ -174,6 +179,13 @@ extension SettingsView {
                     },
                     onClear: { soundManager.updateCustomSoundPath(nil) }
                 )
+
+                if customSoundStatus == .missing {
+                    Text("⚠️ 所选文件不存在，完成音将自动降级为系统默认。请重新选择或清除该配置。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Text("支持 WAV、MP3、M4A、AIFF 格式。选择后可点击「试听」验证效果。")
                     .font(.system(size: 12))
@@ -224,6 +236,21 @@ extension SettingsView {
                         .pickerStyle(.menu)
                         .frame(width: 130)
                         .labelsHidden()
+
+                        // 迷你试听（轮次 3）：即点即听该规则音效，验证听感辨识效果
+                        Button {
+                            let ruleType = soundManager.preferences.projectRules[index].soundType ?? .builtinComplete
+                            soundManager.previewSound(
+                                ruleType,
+                                customPath: soundManager.preferences.customSoundPath,
+                                volume: soundManager.preferences.volume
+                            )
+                        } label: {
+                            Image(systemName: "speaker.wave.2")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("试听该规则的音效")
 
                         Button {
                             soundManager.removeProjectRule(at: index)
