@@ -20,8 +20,8 @@ enum WindowSettle {
 
     /// yabai --move abs + --resize abs 直写后等落定，再做 frame 读回验证。
     /// 400ms（含 move+resize 两次命令的生效余量，故大于 float 重摆节拍）。
-    /// 使用点：moveWindowToFrameViaYabai 闭环验证；
-    /// ToggleEngine+Restore 4-pre（源屏视角切回后、写 frame 前等同级 yabai 状态落定）。
+    /// 使用点：moveWindowToFrameViaYabai 闭环验证、move_to_main P2 pre-float 后落定。
+    /// （restore 4-pre 的 space 切回等待已改 ConditionPolling 等到位轮询，不再消费本值。）
     static let yabaiFrameWriteSettleMicros: useconds_t = 400_000
 
     // MARK: - WindowServer 级（AX 写 → 读回节拍）
@@ -35,4 +35,18 @@ enum WindowSettle {
     /// Mission Control dismiss 后等动画结束再操作 space。150ms。
     /// 使用点：NativeSpaceBridge.dismissMissionControl。
     static let missionControlDismissSettleMicros: useconds_t = 150_000
+
+    // MARK: - 等到位轮询（P1-2 等落定改等到位；骨架 ConditionPolling.waitUntil）
+    //
+    // 适用边界：仅用于**有可观测目标态**的等待（如源屏可见 space == sourceSpace）。
+    // float 重摆完成无可观测信号（is-floating 翻转远早于重摆结束），float 等待
+    // 保留 floatRelayoutSettleMicros 固定档，勿改轮询（2.15 尺寸错乱教训）。
+
+    /// 等到位轮询节拍：50ms（space 可见性 yabai 查询 fork ~30ms，50ms 不空转）。
+    static let conditionPollIntervalMs: UInt32 = 50
+
+    /// 源屏 space 切回后的到位预算：800ms（原固定 400ms usleep 的等到位版；
+    /// SA 直切/聚焦带动后 yabai 状态异步落定，大多数 <300ms，早满足早返回）。
+    /// 使用点：ToggleEngine+Restore 4-pre（切回成功后的可见性确认）。
+    static let spaceSwitchWaitBudgetMs: UInt32 = 800
 }

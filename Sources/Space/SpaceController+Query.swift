@@ -67,11 +67,12 @@ extension SpaceController {
         return info
     }
 
-    func querySpaces(caller: String = #function) -> [YabaiSpaceInfo]? {
+    func querySpaces(caller: String = #function, ignoreCache: Bool = false) -> [YabaiSpaceInfo]? {
         // P-INST-15: querySpaces cacheHit + durationMs（高频调用，cache hit 用 debug 减少噪音）。
         let qsStart = Date()
-        // 1. 检查缓存
-        if let cached = spacesQueryCache, !isCacheExpired(cached.cachedAt) {
+        // 1. 检查缓存（ignoreCache：等到位轮询场景消费——space 切回命令刚发出时缓存
+        //    还是切前状态，读缓存会让轮询恒假白转到超时）
+        if !ignoreCache, let cached = spacesQueryCache, !isCacheExpired(cached.cachedAt) {
             log("[SpaceController] querySpaces cache hit", level: .debug, fields: [
                 "caller": caller,
                 "durationMs": String(elapsedMilliseconds(since: qsStart)),
@@ -120,11 +121,13 @@ extension SpaceController {
         return spaces
     }
 
-    func queryWindow(windowID: UInt32) -> YabaiWindowInfo? {
+    /// - Parameter ignoreCache: true 时跳过缓存读（仍回写缓存）——等到位轮询场景消费：
+    ///   float 脱管后缓存里是脱管前的旧 is-floating，读缓存恒假会让轮询白转到超时。
+    func queryWindow(windowID: UInt32, ignoreCache: Bool = false) -> YabaiWindowInfo? {
         // P-INST-6: queryWindow fork 耗时 + cacheHit（toggle 入口 queryFocusedWindow 预填缓存，命中应 ~0ms）。
         let qwStart = Date()
         // 1. 检查缓存
-        if let cached = windowQueryCache[windowID], !isCacheExpired(cached.cachedAt) {
+        if !ignoreCache, let cached = windowQueryCache[windowID], !isCacheExpired(cached.cachedAt) {
             log("[SpaceController] queryWindow cache hit", fields: [
                 "windowID": String(windowID),
                 "durationMs": String(elapsedMilliseconds(since: qwStart)),
@@ -193,8 +196,8 @@ extension SpaceController {
         return spaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index.map { .yabai($0) }
     }
 
-    func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil) -> SpaceIdentifier? {
-        let resolvedSpaces = spaces ?? querySpaces()
+    func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil, ignoreCache: Bool = false) -> SpaceIdentifier? {
+        let resolvedSpaces = spaces ?? querySpaces(ignoreCache: ignoreCache)
         return Self.resolveVisibleSpaceIndex(displayIndex: displayIndex, spaces: resolvedSpaces)
     }
 

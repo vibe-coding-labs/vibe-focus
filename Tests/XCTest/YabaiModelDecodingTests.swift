@@ -90,6 +90,28 @@ struct YabaiModelDecodingTests {
         #expect(window.isFloating == false)
     }
 
+    @Test("YabaiWindowInfo: minimized bool/Int 双形态解码（v7 is-minimized + 旧版 minimized 双键防御）")
+    func windowInfoMinimizedFlexibleBool() throws {
+        // yabai v7.1.18 实测字段名 is-minimized
+        let v7Bool = try JSONDecoder().decode(YabaiWindowInfo.self, from: Data(#"{"is-minimized": true}"#.utf8))
+        #expect(v7Bool.isMinimized == true)
+        let v7Int = try JSONDecoder().decode(YabaiWindowInfo.self, from: Data(#"{"is-minimized": 1}"#.utf8))
+        #expect(v7Int.isMinimized == true)
+        // 旧版字段名 minimized 兜底
+        let legacyBool = try JSONDecoder().decode(YabaiWindowInfo.self, from: Data(#"{"minimized": true}"#.utf8))
+        #expect(legacyBool.isMinimized == true)
+        let legacyInt = try JSONDecoder().decode(YabaiWindowInfo.self, from: Data(#"{"minimized": 1}"#.utf8))
+        #expect(legacyInt.isMinimized == true)
+        let zeroForm = try JSONDecoder().decode(YabaiWindowInfo.self, from: Data(#"{"is-minimized": 0}"#.utf8))
+        #expect(zeroForm.isMinimized == false)
+    }
+
+    @Test("YabaiWindowInfo: minimized 字段缺失按未最小化处理（旧版 yabai 容错）")
+    func windowInfoMinimizedMissing() throws {
+        let window = try JSONDecoder().decode(YabaiWindowInfo.self, from: Data("{}".utf8))
+        #expect(window.isMinimized == false)
+    }
+
     @Test("YabaiWindowInfo: frame.cgRect converts correctly")
     func windowInfoFrameConversion() throws {
         let json = """

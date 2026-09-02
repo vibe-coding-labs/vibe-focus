@@ -43,6 +43,20 @@ let package = Package(
             dependencies: ["VibeFocusKit"],
             path: "Sources/AppEntry"
         ),
+        // 真实代码测试运行器（2026-09-02，CLT-only 环境的 swift test 过渡通道）：
+        // CLT 无 XCTest/Swift Testing 运行时，Tests/XCTest 套件无法在本机执行。
+        // 本执行器 @testable import VibeFocusKit（debug 自带 -enable-testing）直测
+        // internal 逻辑（无 Standalone 镜像漂移）；覆盖率用
+        // swift build -Xswiftc -profile-generate -Xswiftc -profile-coverage-mapping
+        // + llvm-profdata/llvm-cov 产出真实数字（scripts/coverage_test_runner.sh）。
+        .executableTarget(
+            name: "VibeFocusTestRunner",
+            dependencies: ["VibeFocusKit"],
+            path: "Tests/Runner",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
+        ),
         .testTarget(
             name: "VibeFocusTests",
             dependencies: [

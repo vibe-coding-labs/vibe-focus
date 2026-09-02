@@ -240,6 +240,31 @@ final class SoundManager: ObservableObject {
         )
     }
 
+    /// 失败提示音（固定系统 Basso；restore 结局 NSSound 区分成败，2026-09-02 P1-1）。
+    ///
+    /// ## 场景
+    /// - restore 失败（可重试/永久）时与完成音效区分，用户不看日志也能感知结局；
+    /// - 与成功共用用户音效开关（soundType == .none 时静默——尊重用户显式选「无」）。
+    func playFailureSound() {
+        guard preferences.soundType != .none else {
+            log("[SoundManager] sound type is none, skipping failure sound")
+            return
+        }
+        guard let sound = NSSound(named: "Basso") else {
+            log("[SoundManager] failed to resolve system Basso", level: .warn)
+            return
+        }
+        startPlayback(
+            sound,
+            volume: preferences.volume,
+            logMessage: "[SoundManager] playing failure sound",
+            logFields: [
+                "sound": "Basso",
+                "volume": String(preferences.volume)
+            ]
+        )
+    }
+
     func previewSound(_ soundType: CompletionSoundType, customPath: String? = nil, volume: Float) {
         // P-INST-160: 音效预览播放耗时（resolveSound 加载 NSSound P-INST-99 子路径 + sound.play 音频设备开声；设置 UI 试听按钮调用，文件加载/解码在调用线程可阻塞）。
         #if PERF_INSTRUMENT

@@ -1,110 +1,93 @@
-# 工作区切换（Space Switch）回归防护
+# 工作区恢复（Restore）回归防护（2026-09-02 重写，与代码同步）
 
-## 核心功能
+> 旧版防护规则描述的是已删除机制（applySpaceStrategyForRestore /
+> NativeSpaceBridge.moveWindow / CGEvent 方向键切 space），按它修代码会修错地方。
+> 当前机制见 `docs/window-restore-architecture.md`，本文只列守护规则与历史教训。
 
-VibeFocus 的核心能力：当用户从主屏幕恢复窗口到副屏幕时，不仅窗口位置要回到副屏坐标，
-**用户的活跃工作区（Space）也必须自动切换到副屏的 Space**，让窗口立刻可见。
+## 核心语义（不可漂移）
 
-## 工作区切换的完整流程
+恢复 = **切回原工作区**：窗口 frame 回到源屏 origFrame，且源屏可见 space 尽量精确
+切回 sourceSpace；**用户视角不跟随窗口**（视角守卫把 focused space 切回移动前值）。
 
-```
-restore() 调用
-  → applySpaceStrategyForRestore()
-    → switchToOriginal 策略
-      → Phase 1: focusSpace(sourceSpace)  — 切换用户活跃 Space 到目标
-      → Phase 2: moveWindow(windowID, sourceSpace)  — 正式移动窗口到目标 Space
-        → NativeSpaceBridge.moveWindow (CGS API, 不需要 SA)
-        → yabai -m window --space (需要 SA，但 move 命令偶尔不需要)
-      → focusWindow(windowID)  — 聚焦窗口
-  → AX frame 设置  — 设置窗口坐标/大小
-```
+> 「拉到当前工作区」从未实现过（restoreStrategy 死设置，2658da5 下线）。
+> 若未来要重新引入，必须先有可靠的原语，做不到就不要给用户选项。
 
-**三个步骤缺一不可**：
-1. **focusSpace**：切换用户当前看到的 Space（否则窗口在后台 Space）
-2. **moveWindow**：正式将窗口注册到目标 Space（否则窗口在原 Space 的坐标偏移）
-3. **AX frame**：设置窗口坐标和大小
+## 当前机制下可用原语清单（2026-09-02 实测校准，yabai v7.1.18 / macOS 15.7）
 
-## 历史回归 Bug 清单
+| 原语 | 依赖 | 可用性 |
+|------|------|--------|
+| `yabai --move abs` / `--resize abs`（frame 直写） | 无（窗口须已 float） | ✅ 跨 display 可靠（T3 断言） |
+| 聚焦窗口带动视角切换（`window --focus`） | AX 通道，不依赖 SA | ✅ 跨 display 可靠 |
+| `yabai space --focus`（直接切 space，空 space 也可切） | **scripting-addition** | ⚠️ **运行时探测**：2026-09-02 E2E 实测本机 `space --focus` 报 scripting-addition = **SA 未加载**（此前据「query 含 display 字段」判 SA 已加载系误判——v7 的 query 走 CGS 内部通道不依赖 SA，该旧判据**恒真**，已重写为无副作用探针 `saProbeVerdict`，见 `SpaceController+Recovery`）。**SA 状态随环境漂移，禁止硬编码假设，一律以 `canControlSpaces` 运行时判据分流** |
+| `yabai window --space` | v7 float 布局 | ❌ exit 0 但窗口不动（T3 实测） |
+| SLSMoveWindowsToManagedSpace | universal owner connection | ❌ 权限不足，从未可用 |
+| CGEvent ctrl+方向键切 space | separate-Spaces | ❌ 无法跨 display |
 
-### Bug #1: focusSpaceKnownBroken 导致整个 Space 策略被跳过（2026-05-04）
+**改 restore 机制前必跑 `Tests/AXMoveValidation.swift` 断言脚本**——
+历史上两次大回归（方向键法、`window --space` 法）都是选了上表里 ❌ 的原语。
 
-**现象**：窗口恢复到副屏坐标，但用户活跃 Space 没切换，窗口在后台不可见
+## 历史回归教训（按根因归类，修 restore 前先对号）
 
-**根因**：为了优化性能，添加了 `focusSpaceKnownBroken` 标记。当 yabai SA 不可用时
-focusSpace 会失败，然后标记 `focusSpaceKnownBroken = true`。但后续代码用这个标记
-跳过了**整个** `applySpaceStrategyForRestore`，包括 moveWindow 和 focusWindow。
+### 教训 A：用性能优化跳过关键步骤（Bug #1，2026-05）
 
-**错误代码**（已删除）：
-```swift
-// ❌ 错误：跳过整个 Space 策略
-if focusSpaceKnownBroken {
-    return true  // 这导致 moveWindow 和 focusWindow 都不执行
-}
-```
+`focusSpaceKnownBroken` 标记曾把整个 space 策略连同 move/focus 一起跳过。
+**规则**：降级只降级失败的那一层，不许跳过整个编排。当前的对应结构：
+`focusSpace` 失败 → 仅降级到 `refocusWindowOnSpace`，frame 直写与结局裁决不受影响。
 
-**正确做法**：只跳过 yabai focusSpace（已知失败），保留 NativeSpaceBridge.moveWindow
-和 focusWindow。NativeSpaceBridge 使用 CGS 私有 API，不需要 SA。
+### 教训 B：失败被伪装成成功 + 销毁现场（2026-09-02 诚实化重构的根因）
 
-### Bug #2: SQLite 迁移后 savedWindowStates 数组不再更新（2026-05-04）
+旧代码 frame 写失败仍清 record、审计 `restore_success`、`return true`——
+断显/最小化场景用户按热键毫无反馈且无法重试，日志还显示成功。
+**规则**：结局由 `RestoreOutcome` 唯一定义；审计事件与 record 处置必须是结局的
+派生，不许在编排中途提前写 success / 提前清 record。
+Retryable（origFrame 仍在屏上）保留 record；Permanent（屏外）清 record 交 stuck 解堵。
 
-**现象**：toggle 热键恢复窗口时找不到已保存的状态
+### 教训 C：依赖静默失效的原语（yabai v7 `window --space`）
 
-**根因**：SQLite 迁移后 `saveWindowState()` 只写 SQLite，不再更新内存数组
-`savedWindowStates`。但 `shouldRestoreCurrentWindow()` 仍 fallback 到这个空数组。
+exit 0 但窗口不动。**规则**：所有 yabai 写操作必须以**读回验证**为准
+（FrameConvergence 收敛循环），exit code 不可信；更换原语前跑 AXMoveValidation。
 
-**修复**：所有状态查询都走 SQLite，移除对 `savedWindowStates` 数组的依赖。
+### 教训 D：space 归属判断不看坐标变换（副屏纵向排布）
 
-### Bug #3: toggle 热键优先使用 lastWindowToken 而非焦点窗口（2026-05-04）
+Quartz 与 Cocoa 坐标系 y 轴相反，直接比较只有主屏碰巧正确（第十三刀修正）。
+**规则**：屏归属判断一律走 `displayContext`/`CoordinateKit`（含 Quartz→Cocoa 变换），
+禁止散落手写比较。
 
-**现象**：toggle 热键操作错误的窗口
+### 教训 E：浮窗写 frame 不等重摆（2026-09-01 尺寸错乱根因）
 
-**根因**：`shouldRestoreCurrentWindow()` 优先匹配 `lastWindowToken`（上一次操作的窗口），
-而非当前实际焦点窗口。如果用户在两次 toggle 之间切换了焦点窗口，会操作错误窗口。
+`--toggle float` 触发 yabai 默认重摆，写早了会被覆盖。
+**规则**：settle 时长从 `WindowSettle` 常量表取；仅在真发生 float 时等待
+（`FloatToggleOutcome.didToggle`），既不裸等也不跳等。
 
-**修复**：重写 `shouldRestoreCurrentWindow()` 以当前焦点窗口的屏幕位置为判断依据。
+### 教训 F：能力判据靠推测不靠实测（2026-09-02 SA 判据恒真）
 
-## 防护规则
+`checkScriptingAdditionLoaded` 旧判据「query 含 display 字段」在 yabai v7 恒真
+（query 走 CGS 不依赖 SA）→ SA 未加载时 `canControlSpaces` 误报可用，
+focusSpace/直切层每次白撞 SA 错误，设置面板还显示一切正常。
+**规则**：能力可用性必须用**无副作用探针实测**（对当前 space 发 `space --focus`，
+stderr 分类裁决），不许用间接字段推测；探针裁决走纯函数 `saProbeVerdict`（测试锁定）。
 
-### 规则 1: 任何性能优化都不能跳过 Space 切换
+### 教训 G：等固定时长 ≠ 等状态到位（P1-2）
 
-```
-性能优化可以：
-- 跳过已知失败的 yabai focusSpace
-- 减少 usleep 等待时间
-- 缓存 yabai 查询结果
+固定 usleep 是拍脑袋：等短了被异步重摆覆盖（教训 E 同源），等长了白耗时。
+**规则**：有可观测目标态的等待一律用 `ConditionPolling.waitUntil` 有界轮询
+（早满足早返回，超时如实降级）；轮询必须绕过查询缓存（`ignoreCache`——
+缓存里是操作前的旧状态，读缓存恒假会让轮询白转满预算并误判失败）。
+无观测信号的等待（float 重摆完成）保留固定档并写明理由。
 
-性能优化绝不能：
-- 跳过 NativeSpaceBridge.moveWindow
-- 跳过 focusWindow
-- 在 focusSpaceKnownBroken 时跳过整个 applySpaceStrategyForRestore
-- 只做 AX frame 设置而不做 Space 移动
-```
+## 防护规则（当前版）
 
-### 规则 2: AX frame 设置不是 Space 移动的替代方案
-
-AX frame 设置把窗口移到副屏坐标时，macOS 会自动将窗口移到对应 Space，
-但**不会切换用户活跃 Space**。用户仍停留在原 Space，窗口在后台。
-
-### 规则 3: 修改 Space 相关代码后必须验证
-
-任何修改 `applySpaceStrategyForRestore`、`moveWindow`、`focusSpace` 的代码后，
-必须手动测试：
-1. 从副屏 toggle 到主屏（窗口移到主屏 Space 1）
-2. 从主屏 toggle 回副屏（窗口移到副屏 Space N，**用户活跃 Space 切换到 N**）
-3. Hook 自动恢复（同样验证 Space 切换）
-
-### 规则 4: yabai SA 不可用时的降级路径
-
-```
-yabai SA 可用时：
-  focusSpace → yabai -m space --focus N（需要 SA）
-  moveWindow → yabai -m window --space N（move 不一定需要 SA）
-
-yabai SA 不可用时：
-  focusSpace → 跳过（yabai 失败，CGEvent fallback 效果差）
-  moveWindow → NativeSpaceBridge.moveWindow（CGS API，不需要 SA）✓
-  focusWindow → yabai -m window --focus ID（不需要 SA）✓
-```
-
-**关键**：NativeSpaceBridge.moveWindow 和 yabai focusWindow 都不需要 SA，
-即使 SA 不可用也必须执行。
+1. **任何优化不得跳过**：源屏预切回、frame 读回验证、结局裁决、视角守卫。
+2. **exit code 不是成功判据**，读回收敛才是（教训 C）。
+3. **最小化窗口快检必须在源屏预切回之前**（否则白拖用户视角，2026-09-02 补）。
+4. **refocus 候选偏好非最小化**（`selectRefocusCandidate`，测试锁定）。
+5. **改任何 space 相关代码后**，手动闭环验证：
+   1) 副屏 toggle 到主屏；2) 源屏切到别的 space 后 restore → 窗口应回 sourceSpace；
+   3) 源屏 space 清空后 restore → SA 可用时应精确切回（spaceExact=true，P0-1 直切通道）；
+      SA 失效时结局应如实（spaceExact=false + WARN，不得 crash/假成功）；
+   4) 最小化后 restore → 快速失败且 record 保留；5) hook 自动聚焦不受影响。
+6. **门禁**：`swift build` 零警告 + `bash Tests/run_all_tests.sh` 全绿 +
+   `swift run VibeFocusTestRunner` 全绿（真代码直测 + `bash scripts/coverage_test_runner.sh`
+   覆盖率数字；新写/重写的纯决策逻辑按 2.13 口径分支穷尽覆盖至 100%）+
+   restore 机制改动必跑 `Tests/RestoreScenarioValidation.swift` 与
+   `Tests/AXMoveValidation.swift`。

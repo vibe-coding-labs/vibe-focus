@@ -4,50 +4,6 @@ import Foundation
 @MainActor
 extension SpaceController {
 
-    func switchDisplayToSpace(targetSpace: SpaceIdentifier, operationID: String?) -> Bool {
-        let op = operationID ?? "none"
-        guard let targetSpaceIndex = targetSpace.yabaiIndex else {
-            log("[SpaceController] switchDisplayToSpace: unsupported space identifier", level: .warn, fields: ["op": op])
-            return false
-        }
-        refreshAvailabilityIfNeeded()
-        guard isEnabled else {
-            log("[SpaceController] switchDisplayToSpace: not enabled", level: .warn, fields: ["op": op])
-            return false
-        }
-
-        // Strategy 1: yabai -m space --focus (需要 SA)
-        let yabaiResult = runYabai(
-            arguments: ["-m", "space", "--focus", String(targetSpaceIndex)],
-            operation: "switchDisplayToSpace_yabai",
-            operationID: op
-        )
-        if let result = yabaiResult, result.exitCode == 0 {
-            return true
-        }
-
-        // 检测 Mission Control 阻塞 — 如果 MC 活跃则先关闭再重试
-        let isMCBlocking = YabaiErrorClassifier.classify(stderr: yabaiResult?.stderr ?? "") == .missionControlBlocking
-        if isMCBlocking {
-            log("[SpaceController] switchDisplayToSpace: Mission Control blocking, dismissing", level: .info, fields: ["op": op])
-            NativeSpaceBridge.dismissMissionControl(operationID: op)
-            // 重试 yabai
-            let retryResult = runYabai(
-                arguments: ["-m", "space", "--focus", String(targetSpaceIndex)],
-                operation: "switchDisplayToSpace_yabai_after_mc_dismiss",
-                operationID: op
-            )
-            if let result = retryResult, result.exitCode == 0 {
-                return true
-            }
-        }
-
-        log("[SpaceController] switchDisplayToSpace: yabai failed", level: .warn, fields: [
-            "op": op, "targetSpace": String(targetSpaceIndex)
-        ])
-        return false
-    }
-
     func focusSpace(_ space: SpaceIdentifier, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
         guard let spaceIndex = space.yabaiIndex else {
@@ -96,12 +52,8 @@ extension SpaceController {
             return false
         }
 
-        guard let candidate = windows.first(where: { w in
-            guard w.space == spaceIndex,
-                  w.isManageableByYabai,
-                  w.id.map({ UInt32($0) }) != excluded else { return false }
-            return true
-        }), let candidateID = candidate.id.map({ UInt32($0) }) else {
+        guard let candidate = Self.selectRefocusCandidate(windows: windows, spaceIndex: spaceIndex, excludingWindowID: excluded),
+              let candidateID = candidate.id.map({ UInt32($0) }) else {
             log("[SpaceController] refocusWindowOnSpace: no focusable window on target space", level: .debug, fields: [
                 "op": op, "spaceIndex": String(spaceIndex)
             ])
@@ -117,10 +69,29 @@ extension SpaceController {
         log("[SpaceController] refocusWindowOnSpace result", level: ok ? .debug : .warn, fields: [
             "op": op, "spaceIndex": String(spaceIndex),
             "focusedWindowID": String(candidateID),
+            "candidateMinimized": String(candidate.isMinimized),
             "success": String(ok)
         ])
         return ok
     }
 
+    /// refocus 候选选择（纯函数，SpaceControllerRefocusTests 锁定）。
+    ///
+    /// 在目标 space 的可管理窗口中偏好**非最小化**窗口：聚焦最小化窗口会把它从 Dock
+    /// 拉出（凭空扰动用户布局）或在部分 app 上直接失败；仅当目标 space 全部最小化时
+    /// 才退回最小化候选（视角切换仍优先于布局扰动）。
+    static func selectRefocusCandidate(
+        windows: [YabaiWindowInfo],
+        spaceIndex: Int,
+        excludingWindowID excluded: UInt32?
+    ) -> YabaiWindowInfo? {
+        let onSpace = windows.filter { w in
+            guard w.space == spaceIndex,
+                  w.isManageableByYabai,
+                  w.id.map({ UInt32($0) }) != excluded else { return false }
+            return true
+        }
+        return onSpace.first { !$0.isMinimized } ?? onSpace.first
+    }
 }
 

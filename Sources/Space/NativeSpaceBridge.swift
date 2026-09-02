@@ -5,7 +5,9 @@ import Foundation
 /// 原生事件通道：Mission Control 关闭 + SLS/SkyLight 符号可用性诊断。
 ///
 /// ## 场景
-/// - dismissMissionControl：yabai 报 "mission-control" 错误时由 SpaceController 切换路径调用；
+/// - dismissMissionControl：Mission Control 展开期间所有 space 切换命令必失败的
+///   现成解除通道。旧消费方 switchDisplayToSpace 已随旧机制下线（2026-09-02 P2-1），
+///   当前无自动调用方，保留作显式接线基础设施（见回归防护文档「明确不修」清单）；
 /// - logAvailability：AppDelegate 启动诊断。
 ///
 /// ## 历史注（2026-09-01 清理）

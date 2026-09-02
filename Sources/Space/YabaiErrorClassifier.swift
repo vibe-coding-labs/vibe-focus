@@ -2,7 +2,8 @@
 // VibeFocus — yabai stderr 错误分类（纯函数）
 // 收敛此前散落 4 处的 stderr 字符串匹配协议（playbook 2.16 第八刀）：
 //   - SpaceController+Recovery   "scripting-addition"（SA 未加载探测）
-//   - SpaceController+Switch     "mission-control"（Mission Control 挡切换）
+//   - "mission-control"（Mission Control 挡切换；原消费方 switchDisplayToSpace 已
+//     下线（2026-09-02 P2-1），类别保留——MC 阻塞仍是 space --focus 的真实失败态）
 //   - SpaceController+Query      "could not retrieve window details"（无焦点窗口）
 //   - SpaceController+Query      "could not locate window"（窗口已关闭）
 // 匹配语义统一为大小写不敏感（历史上有的点 lowercased 再 contains，有的不转小写，

@@ -59,30 +59,48 @@ extension WindowManager {
         )
 
         // 2. 委托 ToggleEngine 执行 restore（唯一执行入口）
-        // ToggleEngine 内部处理：load record → validate → 源屏预切回 → float → frame 直写 → 视角守卫
+        // ToggleEngine 内部处理：load record → 最小化快检 → 源屏预切回 → float → frame 直写 →
+        // 结局裁决（失败保留/清除 record）→ 视角守卫
         log("[WindowManager+Restore] delegating to ToggleEngine.restore", level: .debug, fields: [
             "op": op,
             "windowID": String(currentWindowID),
             "triggerSource": triggerSource
         ])
         let engine = ToggleEngine.shared
-        let restoreSucceeded = engine.restore(
+        let outcome = engine.restore(
             windowID: currentWindowID,
             triggerSource: triggerSource,
             traceID: op
         )
 
-        guard restoreSucceeded else {
-            log("[WindowManager] restore failed: ToggleEngine.restore returned false", level: .error, fields: [
+        // P1-1 结局可感知：四类结局播报（语音走队列/音效区分成败；aborted 内部静默；
+        // 两通道分别由语音模式与音效类型开关控制，关闭即静默）。
+        VoiceAnnouncementManager.shared.announceRestoreOutcome(outcome, windowID: currentWindowID)
+
+        guard case .restored(let spaceExact) = outcome else {
+            // 2026-09-02 诚实化：失败/放弃不再伪装成功。aborted = 移动前放弃；
+            // Retryable = record 保留，再次触发即重试；Permanent = record 已清除，
+            // 下次 toggle 走 stuck 解堵。标签派生见 RestoreOutcome.outcomeLabel
+            // （RestoreRefocusCandidateTests 分支穷尽锁定）。
+            let outcomeLabel = outcome.outcomeLabel
+            log("[WindowManager] restore failed: \(outcomeLabel)", level: .error, fields: [
                 "op": op,
                 "windowID": String(currentWindowID)
             ])
-            CrashContextRecorder.shared.record("restore_failed_engine op=\(op)")
+            CrashContextRecorder.shared.record("restore_failed_engine op=\(op) outcome=\(outcomeLabel)")
             return
         }
 
         // 3. ToggleEngine.restore() 已自动清除 toggle record 并写 restore_success 审计事件
         //    （审计唯一来源；此前这里再写一条 details 不同的同名事件，消费者无法区分）
+        if spaceExact == false {
+            // 源屏 space 切回失败（源 space 无可聚焦窗口），窗口落在源屏可见 space——
+            // 位置已恢复但 space 不精确；不静默，留 WARN 供用户感知退化。
+            log("[WindowManager] restore: window restored to source display but space switch degraded", level: .warn, fields: [
+                "op": op,
+                "windowID": String(currentWindowID)
+            ])
+        }
 
         let finalDurationMs = elapsedMilliseconds(since: startedAt)
         log(

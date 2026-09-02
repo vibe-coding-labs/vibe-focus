@@ -1,7 +1,8 @@
 // Tests/Standalone/YabaiModelTests.swift
 // Verification: YabaiSpaceInfo, YabaiWindowInfo, YabaiDisplayInfo, decodeSingleOrFirst,
 //               decodeArray, formatErrorMessage
-// Mirrors: Sources/Space/SpaceController.swift:308-406
+// Mirrors: Sources/Space/SpaceController+Types.swift（Yabai 数据类型 + decodeFlexibleBool）
+//          及 Sources/Space/SpaceController.swift 的查询辅助函数
 // Run: swift Tests/Standalone/YabaiModelTests.swift
 
 import Foundation
@@ -20,6 +21,16 @@ struct YabaiSpaceInfo: Decodable, Equatable {
     }
 }
 
+/// yabai 各版本布尔字段类型漂移防御（与 Sources/Space/SpaceController+Types.swift 同步维护）：
+/// 同一字段既有 Bool 也有 Int(0/1) 两种形态；严格 Decodable 遇 `is-visible: 1` 会整体
+/// 解码失败 → querySpaces 返回 nil → toggle/restore 核心路径全瘫。
+func decodeFlexibleBool<K: CodingKey>(_ key: K, from c: KeyedDecodingContainer<K>) -> Bool? {
+    guard c.contains(key) else { return nil }
+    if let b = try? c.decode(Bool.self, forKey: key) { return b }
+    if let i = try? c.decode(Int.self, forKey: key) { return i != 0 }
+    return nil
+}
+
 struct YabaiWindowInfo: Decodable {
     let id: Int?
     let pid: Int?
@@ -29,11 +40,36 @@ struct YabaiWindowInfo: Decodable {
     let display: Int?
     let frame: Frame?
     let isFloatingRaw: Bool?
+    let hasAXReferenceRaw: Bool?
+    let isMinimizedRaw: Bool?
+
     enum CodingKeys: String, CodingKey {
         case id, pid, app, title, space, display, frame
         case isFloatingRaw = "is-floating"
+        case hasAXReferenceRaw = "has-ax-reference"
+        // yabai v7.1.18 实测字段名为 is-minimized；旧版为 minimized，双键收做版本漂移防御。
+        case isMinimizedRaw = "is-minimized"
+        case isMinimizedLegacyRaw = "minimized"
     }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? c.decodeIfPresent(Int.self, forKey: .id)
+        pid = try? c.decodeIfPresent(Int.self, forKey: .pid)
+        app = try? c.decodeIfPresent(String.self, forKey: .app)
+        title = try? c.decodeIfPresent(String.self, forKey: .title)
+        space = try? c.decodeIfPresent(Int.self, forKey: .space)
+        display = try? c.decodeIfPresent(Int.self, forKey: .display)
+        frame = try? c.decodeIfPresent(Frame.self, forKey: .frame)
+        isFloatingRaw = decodeFlexibleBool(.isFloatingRaw, from: c)
+        hasAXReferenceRaw = decodeFlexibleBool(.hasAXReferenceRaw, from: c)
+        isMinimizedRaw = decodeFlexibleBool(.isMinimizedRaw, from: c) ?? decodeFlexibleBool(.isMinimizedLegacyRaw, from: c)
+    }
+
     var isFloating: Bool { isFloatingRaw == true }
+    var isMinimized: Bool { isMinimizedRaw == true }
+    var isManageableByYabai: Bool { hasAXReferenceRaw == true }
+
     struct Frame: Decodable, Equatable {
         let x: Double
         let y: Double
@@ -168,6 +204,39 @@ do {
     """
     let winNil = try! JSONDecoder().decode(YabaiWindowInfo.self, from: jsonNil.data(using: .utf8)!)
     check("missing is-floating → isFloating=false", !winNil.isFloating)
+}
+
+print("\n5b. YabaiWindowInfo — is-minimized 双键解码（v7 is-minimized + 旧版 minimized，P0-2）")
+do {
+    func decodeMin(_ json: String) -> Bool {
+        (try? JSONDecoder().decode(YabaiWindowInfo.self, from: json.data(using: .utf8)!))?.isMinimized ?? false
+    }
+    check("v7 is-minimized bool true → 最小化", decodeMin(#"{"is-minimized": true}"#))
+    check("v7 is-minimized int 1 → 最小化（int 形态）", decodeMin(#"{"is-minimized": 1}"#))
+    check("v7 is-minimized int 0 → 未最小化", !decodeMin(#"{"is-minimized": 0}"#))
+    check("旧版 minimized bool true → 最小化（版本漂移兜底）", decodeMin(#"{"minimized": true}"#))
+    check("旧版 minimized int 1 → 最小化", decodeMin(#"{"minimized": 1}"#))
+    check("双键并存 v7 优先（is-minimized=false 压过 minimized=true）",
+          !decodeMin(#"{"is-minimized": false, "minimized": true}"#))
+    check("字段缺失按未最小化（旧版 yabai 容错）", !decodeMin("{}"))
+    check("非法值（字符串）按未最小化且不炸整体解码", !decodeMin(#"{"is-minimized": "yes"}"#))
+}
+
+print("\n5c. YabaiWindowInfo — has-ax-reference 与 isManageableByYabai")
+do {
+    func decodeAX(_ json: String) -> Bool {
+        (try? JSONDecoder().decode(YabaiWindowInfo.self, from: json.data(using: .utf8)!))?.isManageableByYabai ?? false
+    }
+    check("has-ax-reference true → 可管理", decodeAX(#"{"has-ax-reference": true}"#))
+    check("has-ax-reference int 1 → 可管理（int 形态）", decodeAX(#"{"has-ax-reference": 1}"#))
+    check("has-ax-reference int 0 → 不可管理", !decodeAX(#"{"has-ax-reference": 0}"#))
+    check("has-ax-reference 缺失 → 不可管理", !decodeAX("{}"))
+}
+
+print("\n5d. YabaiWindowInfo — is-floating int 形态（flexible bool 回归：合成 Decodable 遇 int 整体解码失败）")
+do {
+    let win = try! JSONDecoder().decode(YabaiWindowInfo.self, from: #"{"is-floating": 1}"#.data(using: .utf8)!)
+    check("is-floating int 1 → isFloating=true", win.isFloating)
 }
 
 print("\n6. YabaiWindowInfo.Frame — cgRect conversion")
