@@ -77,4 +77,48 @@ enum FrameConvergence {
         }
         return .mismatched(attempts: totalAttempts, lastFrame: lastFrame)
     }
+
+    /// 帧写入收敛循环轮询版：write → 轮询读（intervalMs 节拍、budgetMs 预算，早满足早返回）
+    /// → 预算内未收敛重写下一段。
+    ///
+    /// ## 场景（2026-09-03 restore「水中移动」优化）
+    /// convergeFrame 固定 settle（400ms）在写早已落定时是纯等待——fork 返回 ≠ 已生效
+    /// 的延迟上界才是 400ms，实际多数几十 ms 即落定。轮询版每 intervalMs 读一次，
+    /// 一收敛立即返回，预算兜底不变；yabai 路径实测 move 阶段 550ms → ~250ms。
+    ///
+    /// ## 语义契约（Tests/Runner 分支穷尽锁定）
+    /// - 首查在首睡之前（写后立即读，零等待收敛路径不付任何睡眠）；
+    /// - 读失败（nil）视为未收敛继续轮询，不终止本轮；
+    /// - 预算内收敛 → .converged(attempt:)；预算耗尽 → 重写（下一 attempt）；
+    /// - 写硬失败短路 .writeFailed(attempt:)；attempts 归一 max(1, attempts)；
+    /// - 轮询耗尽全程未读到 → .mismatched 携带 nil frame。
+    static func convergeFramePolling(
+        attempts: Int,
+        intervalMs: UInt32,
+        budgetMs: UInt32,
+        write: () -> Bool,
+        read: () -> CGRect?,
+        isConverged: (CGRect) -> Bool,
+        sleep: (UInt32) -> Void = { usleep(useconds_t($0) * 1_000) }
+    ) -> FrameWriteOutcome {
+        let totalAttempts = max(1, attempts)
+        var lastFrame: CGRect? = nil
+        for attempt in 1...totalAttempts {
+            guard write() else { return .writeFailed(attempt: attempt) }
+            var waitedMs: UInt32 = 0
+            while true {
+                if let actual = read() {
+                    lastFrame = actual
+                    if isConverged(actual) {
+                        return .converged(attempt: attempt, frame: actual)
+                    }
+                }
+                if waitedMs >= budgetMs { break }
+                let nap = min(intervalMs, budgetMs - waitedMs)
+                sleep(nap)
+                waitedMs += nap
+            }
+        }
+        return .mismatched(attempts: totalAttempts, lastFrame: lastFrame)
+    }
 }

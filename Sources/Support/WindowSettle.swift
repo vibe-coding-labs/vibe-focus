@@ -18,11 +18,13 @@ enum WindowSettle {
     /// move_to_main AX apply 前、moveStuckWindowToSecondaryScreen。
     static let floatRelayoutSettleMicros: useconds_t = 300_000
 
-    /// yabai --move abs + --resize abs 直写后等落定，再做 frame 读回验证。
-    /// 400ms（含 move+resize 两次命令的生效余量，故大于 float 重摆节拍）。
-    /// 使用点：moveWindowToFrameViaYabai 闭环验证、move_to_main P2 pre-float 后落定。
+    /// yabai frame 直写后的验证轮询（原固定 settle 400ms 的等到位版，2026-09-03
+    /// restore「水中移动」优化：写多数几十 ms 落定，固定睡是纯等待——改每 25ms 读一次，
+    /// 一收敛立即返回；预算 400ms 兜底「fork 返回 ≠ 已生效」的上界）。
+    /// 使用点：moveWindowToFrameViaYabai 段二收敛轮询（convergeFramePolling）。
     /// （restore 4-pre 的 space 切回等待已改 ConditionPolling 等到位轮询，不再消费本值。）
-    static let yabaiFrameWriteSettleMicros: useconds_t = 400_000
+    static let frameVerifyPollIntervalMs: UInt32 = 25
+    static let frameVerifyBudgetMs: UInt32 = 400
 
     // MARK: - WindowServer 级（AX 写 → 读回节拍）
 

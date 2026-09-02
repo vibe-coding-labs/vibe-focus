@@ -388,6 +388,117 @@ final class FakeAuditor: RestoreAuditing {
         check("轮询: 默认 usleep 通道可用", outcome == .satisfied(checks: 2))
     }
 
+    // MARK: FrameConvergence.convergeFramePolling（帧写入轮询收敛，真实实现——水感优化）
+
+    do {
+        var writes = 0
+        let outcome = FrameConvergence.convergeFramePolling(
+            attempts: 2, intervalMs: 25, budgetMs: 400,
+            write: { writes += 1; return true },
+            read: { CGRect(x: 0, y: 0, width: 10, height: 10) },
+            isConverged: { _ in true },
+            sleep: { _ in fatalError("首查即收敛不应睡眠") })
+        check("轮询收敛: 首查即收敛 → converged(attempt:1) 零睡眠零重写",
+              outcome == .converged(attempt: 1, frame: CGRect(x: 0, y: 0, width: 10, height: 10)) && writes == 1)
+    }
+    do {
+        var writes = 0
+        var reads = 0
+        var sleeps = 0
+        let outcome = FrameConvergence.convergeFramePolling(
+            attempts: 2, intervalMs: 25, budgetMs: 400,
+            write: { writes += 1; return true },
+            read: { reads += 1; return CGRect(x: reads, y: 0, width: 10, height: 10) },
+            isConverged: { $0.origin.x >= 3 },
+            sleep: { _ in sleeps += 1 })
+        check("轮询收敛: 第 3 次读达标 → converged(attempt:1)，睡 2 次",
+              outcome == .converged(attempt: 1, frame: CGRect(x: 3, y: 0, width: 10, height: 10))
+              && writes == 1 && reads == 3 && sleeps == 2)
+    }
+    do {
+        var writes = 0
+        let outcome = FrameConvergence.convergeFramePolling(
+            attempts: 2, intervalMs: 25, budgetMs: 50,
+            write: { writes += 1; return true },
+            read: { CGRect(x: writes - 1, y: 0, width: 10, height: 10) },
+            isConverged: { $0.origin.x >= 1 },
+            sleep: { _ in })
+        check("轮询收敛: 首轮预算耗尽 → 重写一次，次轮收敛 converged(attempt:2)",
+              outcome == .converged(attempt: 2, frame: CGRect(x: 1, y: 0, width: 10, height: 10)) && writes == 2)
+    }
+    do {
+        var last: CGRect? = nil
+        var mismatchAttempts = 0
+        if case .mismatched(let attempts, let frame) = FrameConvergence.convergeFramePolling(
+            attempts: 2, intervalMs: 25, budgetMs: 50,
+            write: { true },
+            read: { CGRect(x: 7, y: 7, width: 1, height: 1) },
+            isConverged: { _ in false },
+            sleep: { _ in }) {
+            mismatchAttempts = attempts
+            last = frame
+        }
+        check("轮询收敛: 全程不收敛 → mismatched(attempts:2) 携带最后一次读回",
+              mismatchAttempts == 2 && last == CGRect(x: 7, y: 7, width: 1, height: 1))
+    }
+    do {
+        var reads = 0
+        var matched = false
+        var frameWasNil = false
+        if case .mismatched(_, let frame) = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 25, budgetMs: 50,
+            write: { true },
+            read: { reads += 1; return nil },
+            isConverged: { _ in true },
+            sleep: { _ in }) {
+            matched = true
+            frameWasNil = (frame == nil)
+        }
+        check("轮询收敛: 全程读失败 → mismatched 携带 nil frame（读失败不终止轮询）",
+              matched && frameWasNil && reads > 1)
+    }
+    do {
+        var reads = 0
+        let outcome = FrameConvergence.convergeFramePolling(
+            attempts: 2, intervalMs: 25, budgetMs: 400,
+            write: { false },
+            read: { reads += 1; return nil },
+            isConverged: { _ in true },
+            sleep: { _ in fatalError("写硬失败不应睡眠") })
+        check("轮询收敛: 写硬失败 → writeFailed(attempt:1) 短路，不再读",
+              outcome == .writeFailed(attempt: 1) && reads == 0)
+    }
+    do {
+        var writes = 0
+        var outcome: FrameWriteOutcome? = nil
+        outcome = FrameConvergence.convergeFramePolling(
+            attempts: 0, intervalMs: 25, budgetMs: 50,
+            write: { writes += 1; return true },
+            read: { nil },
+            isConverged: { _ in false },
+            sleep: { _ in })
+        if case .mismatched(let attempts, _) = outcome ?? .writeFailed(attempt: 0) {
+            check("轮询收敛: attempts=0 归一为 1（防越界）", attempts == 1 && writes == 1)
+        } else {
+            check("轮询收敛: attempts=0 归一为 1（防越界）", false)
+        }
+    }
+    do {
+        var naps: [UInt32] = []
+        var outcome: FrameWriteOutcome? = nil
+        outcome = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 200, budgetMs: 100,
+            write: { true },
+            read: { nil },
+            isConverged: { _ in false },
+            sleep: { naps.append($0) })
+        if case .mismatched = outcome ?? .writeFailed(attempt: 0) {
+            check("轮询收敛: interval > 剩余预算末轮钳制（末睡 = 预算余量）", naps == [100])
+        } else {
+            check("轮询收敛: interval > 剩余预算末轮钳制（末睡 = 预算余量）", false)
+        }
+    }
+
     // MARK: RestoreAnnouncementPlan（P1-1 结局播报纯决策，真实实现——结局→计划总映射）
 
     check("播报映射: restored(spaceExact=true) → restoredExact",

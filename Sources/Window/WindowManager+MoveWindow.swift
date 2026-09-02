@@ -42,7 +42,8 @@ extension WindowManager {
     /// - 段间等生效（2026-09-03 乱蹦二次修复）：fork 返回 ≠ 窗口服务已应用——仅按
     ///   发令排序不够（实测 move 落地时 resize 尚未生效，yabai 把仍全屏尺寸的窗口
     ///   clamp 到目标屏可视区顶边），第一段必须轮询到效果可观测再发第二段。
-    /// - 段二后 400ms 读 CGWindow frame 验证（origin+size 双维度），不符重写一次。
+    /// - 段二后轮询验证（origin+size 双维度，25ms 节拍、400ms 预算，早收敛早返回；
+    ///   未收敛重写一次）——2026-09-03 由固定 400ms settle 改轮询（水感优化）。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String) -> Bool {
         var attemptNo = 0
@@ -74,7 +75,7 @@ extension WindowManager {
         // 最终由段二的收敛循环如实裁决，不在此静默失败。
         func waitForPhase(_ label: String, observed: () -> Bool) {
             let outcome = ConditionPolling.waitUntil(
-                intervalMs: WindowSettle.conditionPollIntervalMs,
+                intervalMs: WindowSettle.frameVerifyPollIntervalMs,
                 budgetMs: WindowSettle.framePhaseVerifyBudgetMs,
                 condition: observed
             )
@@ -101,11 +102,13 @@ extension WindowManager {
             })
             applyResize()
         }
-        // 段二 + 全帧收敛验证（写→settle→读→判据→不符重写一次；第一段已可观测生效，
-        // 重写只重发第二段即可）。
-        let outcome = FrameConvergence.convergeFrame(
+        // 段二 + 全帧收敛验证（轮询版：写→每 25ms 读，一收敛即返回，400ms 预算兜底，
+        // 未收敛重写第二段一次；第一段已可观测生效，重写只重发第二段即可）。
+        // 注：轮询读不逐次记 mismatch 日志（25ms 节拍会刷屏），只在整轮耗尽时记一次。
+        let outcome = FrameConvergence.convergeFramePolling(
             attempts: 2,
-            settleMicros: WindowSettle.yabaiFrameWriteSettleMicros,
+            intervalMs: WindowSettle.frameVerifyPollIntervalMs,
+            budgetMs: WindowSettle.frameVerifyBudgetMs,
             write: {
                 attemptNo += 1
                 switch writeOrder {
@@ -117,19 +120,7 @@ extension WindowManager {
                 // yabai 写不返回硬失败（exit code 吞掉，最终以读回判据为准）。
                 return true
             },
-            read: {
-                guard let current = cgWindowBounds(for: windowID) else { return nil }
-                if !CoordinateKit.isFrameConverged(actual: current, target: frame, tolerance: frameTolerance) {
-                    log("[WindowManager] moveWindowToFrameViaYabai: frame mismatch, retrying", level: .warn, fields: [
-                        "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attemptNo),
-                        "current": QuartzRect(current).description,
-                        "target": QuartzRect(frame).description,
-                        "originDrift": String(Int(CoordinateKit.originDrift(current.origin, frame.origin))),
-                        "sizeDrift": String(Int(CoordinateKit.sizeDrift(current.size, frame.size)))
-                    ])
-                }
-                return current
-            },
+            read: { cgWindowBounds(for: windowID) },
             isConverged: { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: frameTolerance) }
         )
         switch outcome {
@@ -138,8 +129,17 @@ extension WindowManager {
                 "op": op, "stage": stage, "windowID": String(windowID), "attempt": String(attempt)
             ])
             return true
-        case .mismatched, .writeFailed:
-            // mismatch 已在读回闭包按轮 warn；writeFailed 对 yabai 写不可达（防御分支）。
+        case .mismatched(let attempts, let lastFrame):
+            log("[WindowManager] moveWindowToFrameViaYabai: frame not converged after \(attempts) attempts", level: .warn, fields: [
+                "op": op, "stage": stage, "windowID": String(windowID),
+                "lastFrame": lastFrame.map { QuartzRect($0).description } ?? "nil",
+                "target": QuartzRect(frame).description,
+                "originDrift": lastFrame.map { String(Int(CoordinateKit.originDrift($0.origin, frame.origin))) } ?? "nil",
+                "sizeDrift": lastFrame.map { String(Int(CoordinateKit.sizeDrift($0.size, frame.size))) } ?? "nil"
+            ])
+            return false
+        case .writeFailed:
+            // writeFailed 对 yabai 写不可达（防御分支）。
             return false
         }
     }
