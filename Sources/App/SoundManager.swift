@@ -51,6 +51,8 @@ struct SoundPreferences: Codable {
     var quietHoursEnabled: Bool
     var quietStartHour: Int
     var quietEndHour: Int
+    /// 项目音效规则表（从上到下首个命中者生效，轮次 2）
+    var projectRules: [ProjectSoundRule]
 
     static let `default` = SoundPreferences(
         soundType: .none,
@@ -59,7 +61,8 @@ struct SoundPreferences: Codable {
         minPlayIntervalSeconds: 2,
         quietHoursEnabled: false,
         quietStartHour: 22,
-        quietEndHour: 8
+        quietEndHour: 8,
+        projectRules: []
     )
 
     init(
@@ -69,7 +72,8 @@ struct SoundPreferences: Codable {
         minPlayIntervalSeconds: Int = 2,
         quietHoursEnabled: Bool = false,
         quietStartHour: Int = 22,
-        quietEndHour: Int = 8
+        quietEndHour: Int = 8,
+        projectRules: [ProjectSoundRule] = []
     ) {
         self.soundType = soundType
         self.customSoundPath = customSoundPath
@@ -78,6 +82,7 @@ struct SoundPreferences: Codable {
         self.quietHoursEnabled = quietHoursEnabled
         self.quietStartHour = quietStartHour
         self.quietEndHour = quietEndHour
+        self.projectRules = projectRules
     }
 
     init(from decoder: Decoder) throws {
@@ -89,6 +94,7 @@ struct SoundPreferences: Codable {
         self.quietHoursEnabled = try container.decodeIfPresent(Bool.self, forKey: .quietHoursEnabled) ?? false
         self.quietStartHour = try container.decodeIfPresent(Int.self, forKey: .quietStartHour) ?? 22
         self.quietEndHour = try container.decodeIfPresent(Int.self, forKey: .quietEndHour) ?? 8
+        self.projectRules = try container.decodeIfPresent([ProjectSoundRule].self, forKey: .projectRules) ?? []
     }
 }
 
@@ -129,7 +135,15 @@ final class SoundManager: ObservableObject {
 
     // MARK: - Public API
 
-    func playCompletionSound() {
+    /// 完成音入口（hook 移窗成功路径）。
+    ///
+    /// ## 场景
+    /// - 调用方 HookEventHandler+WindowMove+Execute 携带 payload 提取的项目名（轮次 2）；
+    /// - 流程：项目规则解析音效类型 → 防打扰门控 → 播放；
+    ///   全局 .none 但项目命中规则时该项目仍发声（规则优先于全局开关）。
+    ///
+    /// - Parameter projectName: 完成会话的项目名（ProjectSoundResolver.projectName 提取；nil 走全局）
+    func playCompletionSound(projectName: String? = nil) {
         // P-INST-99: 完成音效播放耗时（resolveSound 加载 NSSound 音频文件 + sound.play；hook window-move 路径 HookEventHandler+WindowMove+Execute:217 调用，属热路径；play 本身异步但音频文件加载/解码在调用线程可阻塞）。
         #if PERF_INSTRUMENT
         let pcsStart = Date()
@@ -139,7 +153,14 @@ final class SoundManager: ObservableObject {
             ])
         }
         #endif
-        guard preferences.soundType != .none else {
+
+        // 轮次 2：项目规则优先解析音效类型（在 .none 守卫之前——规则可覆盖全局关闭）
+        let resolvedType = ProjectSoundResolver.resolvedType(
+            projectName: projectName,
+            rules: preferences.projectRules,
+            globalType: preferences.soundType
+        )
+        guard resolvedType != .none else {
             log("[SoundManager] sound type is none, skipping")
             return
         }
@@ -160,21 +181,23 @@ final class SoundManager: ObservableObject {
         case .throttled(let remaining):
             log("[SoundManager] completion sound throttled", level: .info, fields: [
                 "remainingSeconds": String(remaining),
-                "minInterval": String(preferences.minPlayIntervalSeconds)
+                "minInterval": String(preferences.minPlayIntervalSeconds),
+                "project": projectName ?? "nil"
             ])
             return
         case .quietHours:
             log("[SoundManager] completion sound muted by quiet hours", level: .info, fields: [
                 "quietStartHour": String(preferences.quietStartHour),
-                "quietEndHour": String(preferences.quietEndHour)
+                "quietEndHour": String(preferences.quietEndHour),
+                "project": projectName ?? "nil"
             ])
             return
         }
 
-        let sound = resolveSound()
+        let sound = resolveSound(soundType: resolvedType, customPath: preferences.customSoundPath)
         guard let sound else {
             log("[SoundManager] failed to resolve sound", level: .warn, fields: [
-                "soundType": preferences.soundType.rawValue
+                "soundType": resolvedType.rawValue
             ])
             return
         }
@@ -184,8 +207,9 @@ final class SoundManager: ObservableObject {
             volume: preferences.volume,
             logMessage: "[SoundManager] playing completion sound",
             logFields: [
-                "soundType": preferences.soundType.rawValue,
-                "volume": String(preferences.volume)
+                "soundType": resolvedType.rawValue,
+                "volume": String(preferences.volume),
+                "project": projectName ?? "nil"
             ]
         )
     }
@@ -301,6 +325,28 @@ final class SoundManager: ObservableObject {
         preferences.quietHoursEnabled = enabled
         preferences.quietStartHour = max(0, min(23, startHour))
         preferences.quietEndHour = max(0, min(23, endHour))
+    }
+
+    // MARK: - Project Sound Rules（轮次 2）
+
+    /// 新增一条空项目规则（默认 Complete 音效，UI 中填项目名）
+    func addProjectRule() {
+        preferences.projectRules.append(ProjectSoundRule(projectName: "", soundType: .builtinComplete))
+    }
+
+    func setProjectRuleName(at index: Int, _ name: String) {
+        guard preferences.projectRules.indices.contains(index) else { return }
+        preferences.projectRules[index].projectName = name
+    }
+
+    func setProjectRuleSound(at index: Int, _ type: CompletionSoundType) {
+        guard preferences.projectRules.indices.contains(index) else { return }
+        preferences.projectRules[index].soundRawValue = type.rawValue
+    }
+
+    func removeProjectRule(at index: Int) {
+        guard preferences.projectRules.indices.contains(index) else { return }
+        preferences.projectRules.remove(at: index)
     }
 
     // MARK: - Sound Resolution

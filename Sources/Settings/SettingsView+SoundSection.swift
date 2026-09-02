@@ -183,6 +183,67 @@ extension SettingsView {
 
             Divider()
 
+            // 项目音效规则（轮次 2）：多会话并开时听到声音即知哪个项目完成。
+            // 置于「类型 != 无」守卫之外——全局关闭时单项目规则仍可独立生效。
+            SettingsRow(
+                title: "项目音效规则",
+                detail: "为指定项目设置专属提示音，从上到下首个命中生效，未命中回落上方全局设置"
+            ) {
+                Button("添加规则") {
+                    soundManager.addProjectRule()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if !soundManager.preferences.projectRules.isEmpty {
+                ForEach(soundManager.preferences.projectRules.indices, id: \.self) { index in
+                    HStack(spacing: 8) {
+                        TextField(
+                            "项目名或路径",
+                            text: Binding(
+                                get: { soundManager.preferences.projectRules[index].projectName },
+                                set: { soundManager.setProjectRuleName(at: index, $0) }
+                            )
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+
+                        Picker(
+                            "",
+                            selection: Binding(
+                                get: {
+                                    soundManager.preferences.projectRules[index].soundType ?? .builtinComplete
+                                },
+                                set: { soundManager.setProjectRuleSound(at: index, $0) }
+                            )
+                        ) {
+                            ForEach(CompletionSoundType.allCases, id: \.self) { type in
+                                Text(type.displayName).tag(type)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 130)
+                        .labelsHidden()
+
+                        Button {
+                            soundManager.removeProjectRule(at: index)
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.red)
+                    }
+                }
+
+                Text("匹配与项目名大小写无关，规则里也可直接粘贴项目绝对路径；规则选「自定义文件」时共用全局自定义音频。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("内置音效说明：")
                     .font(.system(size: 13, weight: .medium))

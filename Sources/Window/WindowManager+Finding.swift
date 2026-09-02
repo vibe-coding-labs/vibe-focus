@@ -24,7 +24,9 @@ extension WindowManager {
 
     /// cwd → 项目名（末段路径，小写归一）。nil/空串/全斜杠路径 → nil。
     /// 纯函数（2.16a 第十九刀从 findClaudeCodeWindow 内联抽出）。
-    static func projectName(fromCwd cwd: String?) -> String? {
+    /// nonisolated：纯字符串变换无状态，供非隔离纯函数层（ProjectSoundResolver）复用，
+    /// 避免第二份路径解析实现（十六刀影子函数教训）。
+    nonisolated static func projectName(fromCwd cwd: String?) -> String? {
         guard let cwd else { return nil }
         let trimmed = cwd.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let last = trimmed.components(separatedBy: "/").last, !last.isEmpty else { return nil }

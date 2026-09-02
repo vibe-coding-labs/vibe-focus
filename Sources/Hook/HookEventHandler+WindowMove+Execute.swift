@@ -63,7 +63,12 @@ extension HookEventHandler {
                 ]
             )
             Task { @MainActor in
-                SoundManager.shared.playCompletionSound()
+                SoundManager.shared.playCompletionSound(
+                    projectName: ProjectSoundResolver.projectName(
+                        claudeProjectDir: payload.terminalCtx?.claudeProjectDir,
+                        cwd: payload.cwd
+                    )
+                )
                 DockBadgeManager.shared.showBadge(
                     targetBundleID: identity.bundleIdentifier,
                     targetAppName: identity.appName
