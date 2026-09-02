@@ -113,7 +113,7 @@ final class FakeWindows: RestoreWindowOperating {
 
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? { findResult }
 
-    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String) -> Bool {
+    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleSize: CGSize?) -> Bool {
         moveCalls.append((windowID, stage))
         return moveResult
     }
@@ -497,6 +497,32 @@ final class FakeAuditor: RestoreAuditing {
         } else {
             check("轮询收敛: interval > 剩余预算末轮钳制（末睡 = 预算余量）", false)
         }
+    }
+
+    // MARK: FrameConvergence.writeOrder clamp 规避（真实实现——源屏可视区约束）
+
+    do {
+        let order = FrameConvergence.writeOrder(
+            currentSize: CGSize(width: 1922, height: 1055),
+            targetSize: CGSize(width: 1646, height: 1079),
+            sourceVisibleSize: CGSize(width: 1920, height: 1055))
+        check("writeOrder: 副→主混合+目标高超源屏可见 → moveThenResize（clamp 规避）",
+              order == .moveThenResize)
+    }
+    do {
+        let order = FrameConvergence.writeOrder(
+            currentSize: CGSize(width: 1922, height: 1055),
+            targetSize: CGSize(width: 1646, height: 1079))
+        check("writeOrder: 无 sourceVisibleSize → 退回收窄判定（行为兼容）",
+              order == .resizeThenMove)
+    }
+    do {
+        let order = FrameConvergence.writeOrder(
+            currentSize: CGSize(width: 1649, height: 1079),
+            targetSize: CGSize(width: 640, height: 527),
+            sourceVisibleSize: CGSize(width: 1646, height: 1079))
+        check("writeOrder: restore 收窄且目标不超源屏可见区 → 维持 resizeThenMove",
+              order == .resizeThenMove)
     }
 
     // MARK: RestoreAnnouncementPlan（P1-1 结局播报纯决策，真实实现——结局→计划总映射）

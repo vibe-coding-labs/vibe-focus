@@ -52,9 +52,11 @@ enum WindowSettle {
     /// 使用点：ToggleEngine+Restore 4-pre（切回成功后的可见性确认）。
     static let spaceSwitchWaitBudgetMs: UInt32 = 800
 
-    /// move/resize 分段写入的段间到位预算：600ms。fork 返回 ≠ 窗口服务已应用
+    /// move/resize 分段写入的段间到位预算：300ms。fork 返回 ≠ 窗口服务已应用
     /// （2026-09-03 乱蹦二次修复实测：move 命令 179ms 返回时窗口服务尚未应用 resize，
     /// 第一段必须轮询到效果可观测才能发第二段）；yabai 单命令 fork 实测 82~322ms。
+    /// 被源屏可视区 clamp 的 resize 永不生效（等也白等，由段二按偏差补发自愈），
+    /// 2026-09-03 四次修复起预算 600→300ms 收窄白等。
     /// 使用点：moveWindowToFrameViaYabai 段间轮询。
-    static let framePhaseVerifyBudgetMs: UInt32 = 600
+    static let framePhaseVerifyBudgetMs: UInt32 = 300
 }

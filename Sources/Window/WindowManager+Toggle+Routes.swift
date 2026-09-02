@@ -81,7 +81,10 @@ extension WindowManager {
             windowID: windowID,
             frame: targetFrame,
             op: operationID,
-            stage: "move_to_secondary_stuck"
+            stage: "move_to_secondary_stuck",
+            // 源屏=主屏（stuck 窗口必在主屏）；目标为副屏可视区，宽度可超主屏可见——
+            // 放大场景走 moveThenResize 不触发收窄序，此参数仅供判定兜底。
+            sourceVisibleSize: CoordinateKit.quartzVisibleFrame(of: getMainScreen() ?? targetScreen).size
         )
         let moveMs = elapsedMilliseconds(since: moveStart)
         log(

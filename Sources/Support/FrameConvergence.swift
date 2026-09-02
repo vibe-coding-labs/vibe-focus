@@ -50,10 +50,25 @@ enum FrameConvergence {
     /// 写入顺序决策：按当前尺寸与目标尺寸的关系选两段写入的先后（见 FrameWriteOrder 场景注释）。
     /// currentSize 读不到（CGWindowList 偶发 nil）时沿用历史顺序 move→resize（防御分支，
     /// 中间态行为退回修复前，不比现状更差）。
-    static func writeOrder(currentSize: CGSize?, targetSize: CGSize) -> FrameWriteOrder {
+    ///
+    /// sourceVisibleSize = 窗口**当前所在 display** 的可视区尺寸（2026-09-03 clamp 修复）：
+    /// yabai 对窗口所在屏之外的 `--resize abs` 会把尺寸钳到该屏可视区——收窄序（resize
+    /// 先行）在「目标任一维超源屏可见区」时必被钳住（实测副→主 move_to_main：1079 高
+    /// 被钳到副屏可见 1055，且后续重写只补发 move，永不收敛，MOVE FAILED 走满 2s）。
+    /// 此类场景改走 moveThenResize，resize 在窗口落目标屏后补发，clamp 不触发。
+    static func writeOrder(
+        currentSize: CGSize?,
+        targetSize: CGSize,
+        sourceVisibleSize: CGSize? = nil
+    ) -> FrameWriteOrder {
         guard let current = currentSize else { return .moveThenResize }
         let shrinking = current.width > targetSize.width || current.height > targetSize.height
-        return shrinking ? .resizeThenMove : .moveThenResize
+        guard shrinking else { return .moveThenResize }
+        if let vis = sourceVisibleSize,
+           targetSize.width > vis.width || targetSize.height > vis.height {
+            return .moveThenResize
+        }
+        return .resizeThenMove
     }
 
     static func convergeFrame(

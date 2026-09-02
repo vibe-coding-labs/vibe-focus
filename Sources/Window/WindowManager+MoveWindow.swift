@@ -44,13 +44,25 @@ extension WindowManager {
     ///   clamp 到目标屏可视区顶边），第一段必须轮询到效果可观测再发第二段。
     /// - 段二后轮询验证（origin+size 双维度，25ms 节拍、400ms 预算，早收敛早返回；
     ///   未收敛重写一次）——2026-09-03 由固定 400ms settle 改轮询（水感优化）。
+    /// - 按偏差补发（2026-09-03 clamp 修复）：收敛循环的每次重写读当前 bounds，origin
+    ///   已达标只补 resize、size 已达标只补 move、全不达标按写序两段——重写发「缺的那段」
+    ///   而非固定第二段，使 clamp（如先 resize 被钳到源屏可视高）在窗口落目标屏后自愈。
+    /// - sourceVisibleSize：窗口当前所在 display 的可视区（供顺序判定避开 clamp，见
+    ///   FrameConvergence.writeOrder）；nil 时退回纯收窄/放大判定。
     /// - Returns: 最终验证是否收敛到目标 frame。
-    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String) -> Bool {
+    func moveWindowToFrameViaYabai(
+        windowID: UInt32,
+        frame: CGRect,
+        op: String,
+        stage: String,
+        sourceVisibleSize: CGSize?
+    ) -> Bool {
         var attemptNo = 0
         // 写前尺寸快照：顺序判定依据（查询失败走历史顺序，见 FrameConvergence.writeOrder）。
         let writeOrder = FrameConvergence.writeOrder(
             currentSize: cgWindowBounds(for: windowID)?.size,
-            targetSize: frame.size
+            targetSize: frame.size,
+            sourceVisibleSize: sourceVisibleSize
         )
         log("[WindowManager] moveWindowToFrameViaYabai: write order", level: .debug, fields: [
             "op": op, "stage": stage, "windowID": String(windowID),
@@ -102,20 +114,34 @@ extension WindowManager {
             })
             applyResize()
         }
-        // 段二 + 全帧收敛验证（轮询版：写→每 25ms 读，一收敛即返回，400ms 预算兜底，
-        // 未收敛重写第二段一次；第一段已可观测生效，重写只重发第二段即可）。
-        // 注：轮询读不逐次记 mismatch 日志（25ms 节拍会刷屏），只在整轮耗尽时记一次。
+        // 段二 + 全帧收敛验证（轮询版：写→每 25ms 读，一收敛即返回，400ms 预算兜底）。
+        // 重写按偏差补发缺的那段（origin✓size✗→resize / origin✗size✓→move / 全✗按写序），
+        // 使 clamp 在窗口落目标屏后自愈。注：轮询读不逐次记 mismatch 日志（25ms 节拍
+        // 会刷屏），只在整轮耗尽时记一次。
         let outcome = FrameConvergence.convergeFramePolling(
             attempts: 2,
             intervalMs: WindowSettle.frameVerifyPollIntervalMs,
             budgetMs: WindowSettle.frameVerifyBudgetMs,
             write: {
                 attemptNo += 1
-                switch writeOrder {
-                case .resizeThenMove:
-                    applyMove()
-                case .moveThenResize:
+                let current = cgWindowBounds(for: windowID)
+                let originOK = current.map { CoordinateKit.originDrift($0.origin, frame.origin) <= frameTolerance } ?? false
+                let sizeOK = current.map { CoordinateKit.isSizeConverged(actual: $0.size, target: frame.size, tolerance: frameTolerance) } ?? false
+                switch (originOK, sizeOK) {
+                case (true, false):
                     applyResize()
+                case (false, true):
+                    applyMove()
+                case (false, false):
+                    if writeOrder == .resizeThenMove {
+                        applyResize()
+                        applyMove()
+                    } else {
+                        applyMove()
+                        applyResize()
+                    }
+                case (true, true):
+                    break // 已收敛，无需写（防御分支，轮询会立即判收敛返回）
                 }
                 // yabai 写不返回硬失败（exit code 吞掉，最终以读回判据为准）。
                 return true
@@ -354,7 +380,12 @@ extension WindowManager {
             // P2 路径：float 已在 resolve 前完成（见上方"float + settle"注释）。
             // 跨屏移动用 yabai --move abs/--resize abs 直写主屏目标 frame（T3 断言验证：
             // 裸 AX position 写会被 WindowServer clamp 在源屏，只有 yabai 的 frame 写能跨 display）。
-            guard moveWindowToFrameViaYabai(windowID: identity.windowID, frame: targetFrame, op: op, stage: "move_to_main") else {
+            // sourceVisibleSize：窗口当前所在副屏的可视区——副→主放大混合场景（宽缩高放）
+            // 走收窄序会被 clamp 到副屏可见高（实测卡 1055 不收敛），需让顺序判定规避。
+            let sourceVisibleSize = windowInfo?.display
+                .flatMap { CoordinateKit.nsScreen(forYabaiDisplayIndex: $0) }
+                .map { CoordinateKit.quartzVisibleFrame(of: $0).size }
+            guard moveWindowToFrameViaYabai(windowID: identity.windowID, frame: targetFrame, op: op, stage: "move_to_main", sourceVisibleSize: sourceVisibleSize) else {
                 log("moveWindowToMainScreen failed: yabai frame move did not converge", level: .error, fields: [
                     "op": op, "targetFrame": String(describing: targetFrame)
                 ])

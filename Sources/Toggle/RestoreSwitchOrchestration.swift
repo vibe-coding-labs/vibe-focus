@@ -51,7 +51,7 @@ extension ToggleEngine: RestoreRecordStoring {}
 @MainActor
 protocol RestoreWindowOperating: AnyObject {
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement?
-    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String) -> Bool
+    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleSize: CGSize?) -> Bool
     func displayContext(for frame: CGRect) -> (yabaiIndex: Int?, displayID: UInt32?)
 }
 
