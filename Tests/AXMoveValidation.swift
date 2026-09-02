@@ -87,7 +87,6 @@ guard trusted else {
 }
 
 // MARK: - 测试夹具窗口（TextEdit 空白文档，测完即关；不碰用户任何窗口）
-let fixtureTitle = "Untitled"  // TextEdit 新文档默认标题
 // 干净启动：先确保 TextEdit 不在跑（残留进程会残留旧窗口状态）
 let kill = Process()
 kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
@@ -127,11 +126,18 @@ let teAX = AXUIElementCreateApplication(tePid)
 var children: CFTypeRef?
 AXUIElementCopyAttributeValue(teAX, kAXWindowsAttribute as CFString, &children)
 let axWindows = (children as? [AXUIElement]) ?? []
+// 夹具标题随系统语言变化（英文 "Untitled" / 中文「未命名」）；启动前已 killall，
+// TextEdit 的唯一 AX 窗口即夹具，取其实际标题作为 yabai 匹配前缀。
 var targetAX: AXUIElement?
+var fixtureTitle = "Untitled"
 for w in axWindows {
     var t: CFTypeRef?
     AXUIElementCopyAttributeValue(w, kAXTitleAttribute as CFString, &t)
-    if let title = t as? String, title.hasPrefix(fixtureTitle) { targetAX = w; break }
+    if let title = t as? String, !title.isEmpty {
+        fixtureTitle = title
+        targetAX = w
+        break
+    }
 }
 let yabaiInfo = yabaiWindowInfo(pid: tePid, titlePrefix: fixtureTitle)
 if targetAX == nil || yabaiInfo == nil {

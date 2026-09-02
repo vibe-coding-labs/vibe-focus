@@ -110,14 +110,19 @@ struct YabaiWindowInfo: Decodable {
     let frame: Frame?
     let isFloatingRaw: Bool?
     let hasAXReferenceRaw: Bool?
+    let isMinimizedRaw: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, pid, app, title, space, display, frame
         case isFloatingRaw = "is-floating"
         case hasAXReferenceRaw = "has-ax-reference"
+        // yabai v7.1.18 实测字段名为 `is-minimized`（与 is-floating/is-visible 同族）；
+        // 旧版 yabai 为 `minimized`，两者都收做版本漂移防御。
+        case isMinimizedRaw = "is-minimized"
+        case isMinimizedLegacyRaw = "minimized"
     }
 
-    init(id: Int?, pid: Int?, app: String?, title: String?, space: Int?, display: Int?, frame: Frame?, isFloatingRaw: Bool?, hasAXReferenceRaw: Bool?) {
+    init(id: Int?, pid: Int?, app: String?, title: String?, space: Int?, display: Int?, frame: Frame?, isFloatingRaw: Bool?, hasAXReferenceRaw: Bool?, isMinimizedRaw: Bool? = nil) {
         self.id = id
         self.pid = pid
         self.app = app
@@ -127,6 +132,7 @@ struct YabaiWindowInfo: Decodable {
         self.frame = frame
         self.isFloatingRaw = isFloatingRaw
         self.hasAXReferenceRaw = hasAXReferenceRaw
+        self.isMinimizedRaw = isMinimizedRaw
     }
 
     init(from decoder: Decoder) throws {
@@ -140,9 +146,14 @@ struct YabaiWindowInfo: Decodable {
         frame = try? c.decodeIfPresent(Frame.self, forKey: .frame)
         isFloatingRaw = decodeFlexibleBool(.isFloatingRaw, from: c)
         hasAXReferenceRaw = decodeFlexibleBool(.hasAXReferenceRaw, from: c)
+        isMinimizedRaw = decodeFlexibleBool(.isMinimizedRaw, from: c) ?? decodeFlexibleBool(.isMinimizedLegacyRaw, from: c)
     }
 
     var isFloating: Bool { isFloatingRaw == true }
+
+    /// 窗口是否处于最小化。restore/refocus 路径消费：聚焦最小化窗口会把它从 Dock
+    /// 拉出（扰动用户布局）或直接失败；字段缺失（旧版 yabai）按未最小化处理。
+    var isMinimized: Bool { isMinimizedRaw == true }
 
     /// yabai 是否能通过 AXUIElement 管理此窗口。
     /// has-ax-reference=false 时所有 yabai 命令（move/float/focus）都会失败，

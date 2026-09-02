@@ -29,8 +29,19 @@ extension SpaceController {
         }
     }
 
+    /// SA 是否可用——以「无副作用探针」实测，不靠 query 字段推测。
+    ///
+    /// ## 为什么重写（2026-09-02，restore 专项 E2E 实测发现）
+    /// 旧判据「query --windows --window 含 display 字段」在 yabai v7 上**恒真**：
+    /// v7 的 query 走 CGS 内部通道，display/space 字段不依赖 SA。后果链：
+    /// SA 未加载时 canControlSpaces 误报可用 → focusSpace/4-pre 直切层每次真实执行、
+    /// 每次撞 "error with the scripting-addition" → 视角守卫永远走降级层 + 空转 fork。
+    /// 新探针：对**当前已聚焦的 space** 发 `space --focus`——SA 已加载时是逻辑空操作
+    /// （"cannot focus an already focused space"，无状态变化），未加载时 stderr 报
+    /// scripting-addition，Mission Control 活跃时报 mission-control（此时 space 切换
+    /// 本就不可用，按不可用如实上报）。裁决纯函数 saProbeVerdict 分支穷尽锁定。
     func checkScriptingAdditionLoaded(yabaiPath: String) -> Bool {
-        // P-INST-35: SA 检查耗时（yabai query --windows --window fork；availability 路径，启动 + 节流刷新时调用）。
+        // P-INST-35: SA 检查耗时（两次 fork：query --spaces --space + 探针；availability 路径，启动 + 节流刷新时调用）。
         let csaStart = Date()
         var csaResult = "failed_to_run"
         defer {
@@ -39,28 +50,32 @@ extension SpaceController {
                 "durationMs": String(elapsedMilliseconds(since: csaStart))
             ])
         }
-        // 方法：获取当前焦点窗口并尝试 query --window（含 display 字段需要 SA）
-        // 更简单的方法：直接尝试 yabai -m window --focus <id>，如果失败且错误包含
-        // scripting-addition，则 SA 未加载
-        // 最可靠的方法：检查 yabai query --windows 返回的窗口是否包含 display 字段
-        // 但更简单：尝试一个轻量 SA 操作
-        guard let result = runProcess(executable: yabaiPath, arguments: ["-m", "query", "--windows", "--window"]) else {
-            log("checkScriptingAdditionLoaded: failed to run yabai query")
+        guard let current = queryFocusedSpace(), let probeIndex = current.index else {
+            csaResult = "no_focused_space"
+            log("checkScriptingAdditionLoaded: cannot resolve focused space for probe", level: .debug)
             return false
         }
-        if result.exitCode == 0, !result.stdout.isEmpty {
-            // query --window 成功且返回数据，检查是否包含 display 字段
-            // 没有 SA 时，display 字段不存在或值为 0
-            let hasDisplay = result.stdout.contains("\"display\"")
-            csaResult = hasDisplay ? "loaded" : "not_loaded"
-            log("checkScriptingAdditionLoaded: query succeeded, hasDisplay=\(hasDisplay)")
-            return hasDisplay
+        guard let result = runProcess(executable: yabaiPath, arguments: ["-m", "space", "--focus", "\(probeIndex)"]) else {
+            csaResult = "failed_to_run"
+            log("checkScriptingAdditionLoaded: probe failed to launch", level: .warn)
+            return false
         }
-        // query --window 失败（可能没有焦点窗口），回退到检查错误信息
-        let hasSAError = YabaiErrorClassifier.classify(stderr: result.stderr) == .scriptingAdditionMissing
-        csaResult = hasSAError ? "sa_error" : "no_focus_window"
-        log("checkScriptingAdditionLoaded: query failed, hasSAError=\(hasSAError), stderr=\(result.stderr.prefix(100))")
-        return !hasSAError
+        let loaded = Self.saProbeVerdict(exitCode: result.exitCode, stderr: result.stderr)
+        csaResult = loaded ? "loaded" : "unavailable"
+        log("checkScriptingAdditionLoaded: probe exit=\(result.exitCode) loaded=\(loaded) stderr=\(result.stderr.prefix(100))", level: .debug)
+        return loaded
+    }
+
+    /// SA 探针裁决（纯函数，SAProbeVerdictTests 分支穷尽锁定）。
+    ///
+    /// - exit 0：命令成功执行，SA 必在；
+    /// - stderr 分类为 scriptingAdditionMissing：SA 未加载（探针的本职信号）；
+    /// - stderr 分类为 missionControlBlocking：MC 期间 space 切换本就不可用，按不可用如实上报；
+    /// - 其余（"cannot focus an already focused space" 等逻辑错误/空输出）：SA 可用。
+    static func saProbeVerdict(exitCode: Int32, stderr: String) -> Bool {
+        if exitCode == 0 { return true }
+        let kind = YabaiErrorClassifier.classify(stderr: stderr)
+        return kind != .scriptingAdditionMissing && kind != .missionControlBlocking
     }
 
     func attemptSilentSARecovery(yabaiPath: String) {

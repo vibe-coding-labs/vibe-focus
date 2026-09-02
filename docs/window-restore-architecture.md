@@ -1,408 +1,141 @@
-# 窗口恢复架构文档
+# 窗口恢复架构文档（2026-09-02 重写，与代码同步）
+
+> 本文档描述**当前**实现。旧版机制（switchDisplayToSpace / CGEvent 方向键 /
+> `window --space` / NativeSpaceBridge.moveWindow / WindowManager 内存变量恢复路径）
+> 已于 2026-08-31~09-01 全部删除，任何按旧文档描述修代码的会话都会修错地方——
+> 这正是历史上恢复功能反复回归的结构性原因之一。
 
 ## 功能是什么
 
-用户在多显示器环境下工作。VibeFocus 的 toggle 功能把终端窗口从副屏搬到主屏（方便看），恢复功能把它搬回副屏原位。
+用户在多显示器环境下工作。VibeFocus 的 toggle 功能把终端窗口从副屏搬到主屏（方便看），恢复功能把它搬回副屏原位——**恒为「切回原工作区」语义**：窗口回源屏 sourceSpace，用户视角不跟随（留在原 display）。
 
-一次完整的 toggle + restore 循环是这样的：
+> 历史注：设置页曾有「恢复策略」（切回原工作区 / 拉到当前工作区）Picker，
+> 其中「拉到当前工作区」从未被消费（纯死设置），已于 2658da5 下线。
+> 恢复行为自始至终只有一种：切回原工作区。
 
 ```
 1. 窗口在副屏 Display 2, Space 3, 位置 (3200, 200)
-2. 用户按 Ctrl+Q → 窗口被搬到主屏 Display 1, 位置 (0, 0)，同时把原始位置记下来
-3. 用户用完了，需要把窗口搬回去
-4. 恢复触发 → 读取之前记下的位置，把窗口搬回 Display 2, Space 3, (3200, 200)
+2. 用户按 Ctrl+Q → 窗口被搬到主屏最大化，原始位置存入 SQLite ToggleRecord
+3. 用户按 Ctrl+Q（或 hook 触发）→ 恢复：窗口搬回 Display 2, Space 3, (3200, 200)
 ```
 
-第 3 步"恢复触发"有两种时机：
-- 用户手动再按一次 Ctrl+Q
-- Claude Code 发 prompt 时自动触发
+## 恢复的唯一执行入口
 
-## 前置：toggle 时保存了什么
-
-恢复依赖 toggle 时保存的状态。这一步在 `moveWindowToMainScreen()`（`Sources/WindowManager+MoveWindow.swift:81`）里完成。
-
-当窗口被搬到主屏后，代码会保存以下信息：
-
-| 信息 | 含义 | 示例值 |
-|------|------|--------|
-| `windowID` | macOS 窗口编号（CGWindowNumber） | `64` |
-| `pid` | 终端进程 ID | `42871` |
-| `origFrame` | 窗口在副屏的原始位置和大小 | `(3200, 200, 1200, 800)` |
-| `targetFrame` | 窗口被搬到主屏后的位置和大小 | `(0, 38, 1920, 1042)` |
-| `sourceSpace` | 窗口原来在哪个 Space（yabai 全局索引） | `3` |
-| `sourceYabaiDisp` | 窗口原来在哪个 Display（yabai 编号） | `2` |
-| `sourceDispSpace` | 窗口原来在该 Display 的第几个 Space | `2` |
-
-这些数据同时写入三个地方（都是 SQLite 的同一个 `windows` 表，但是不同字段）：
-1. `SavedWindowState`（WindowManager 用）
-2. `SessionWindowRegistry.toggleState`（session 绑定用）
-3. `ToggleRecord`（ToggleEngine 用，前缀 `toggle_` 的字段）
-
-然后通过 `hydrateMemory()` 把关键值加载到 WindowManager 的实例变量里：
-
-```swift
-lastWindowToken              // 窗口身份：pid, windowID, bundleIdentifier 等
-lastWindowFrame              // origFrame — 窗口原始位置（恢复目标）
-lastTargetFrame              // targetFrame — 窗口当前在主屏的位置（用于验证）
-lastSourceSpaceIndex         // 3 — 原始 Space
-lastSourceYabaiDisplayIndex  // 2 — 原始 Display
+```
+WindowManager.toggle()（入口：热键/菜单栏）
+  → evaluateRestoreDecision()     决策：焦点窗口在主屏 + 有效 ToggleRecord → .restore
+  → WindowManager.restore()       仅做窗口识别（windowID 由 toggle 入口传入），不做执行
+  → ToggleEngine.restore()        唯一执行体（Sources/Toggle/ToggleEngine+Restore.swift）
 ```
 
-这些内存变量是 Ctrl+Q 手动恢复时的数据来源。
-
----
-
-## 恢复触发方式 1：用户按 Ctrl+Q
-
-**入口：** `WindowManager.toggle()`（`Sources/WindowManager.swift:140`）
-
-### Step 1：判断该 restore 还是 move
-
-用户每次按 Ctrl+Q，系统需要判断"这次是要搬过去还是搬回来"。判断逻辑在 `shouldRestoreCurrentWindow()`（`:783`）：
-
-1. 拿到当前**焦点窗口**（哪个窗口在最前面）
-2. 问 macOS：这个窗口在主屏还是副屏？
-3. 如果在**副屏** → 用户想把它搬去主屏 → 返回 `false`（不要 restore）
-4. 如果在**主屏** → 用户可能想把它搬回副屏 → 继续检查：
-   - 查 `SessionWindowRegistry` 里有没有这个窗口的 toggle 状态
-   - 检查 toggle 状态是否有效（origFrame 不在主屏、targetFrame 在主屏）
-   - 检查窗口当前位置是否在 targetFrame 附近（确认这个窗口确实是被 toggle 过来的）
-5. 全部通过 → 返回 `true`，进入 restore 流程
-
-如果返回 `true`，`toggle()` 会调用 `shouldRestoreCurrentWindow()` 内部的 `hydrateMemory()`，把 SQLite 里的状态加载到内存变量 `lastWindowFrame`、`lastSourceSpaceIndex` 等。
-
-### Step 2：restore() 开始执行
-
-**方法：** `WindowManager.restore()`（`:350`）
-
-这一步会依次做以下事情：
-
-#### 2a. 检查有没有可用的状态
-
-```swift
-if lastWindowToken == nil || lastWindowFrame == nil || lastTargetFrame == nil {
-    // 内存里没有状态 → 尝试从 SQLite 重新加载
-    if shouldRestoreCurrentWindow() == false { return }
-}
-```
-
-如果内存变量是空的（比如 app 刚重启过），会再走一次 `shouldRestoreCurrentWindow()` 从 SQLite 加载。
-
-#### 2b. 找到窗口
-
-```swift
-let window = restoreWindow(using: token)
-```
-
-通过 `token` 里的 pid 和 windowID，用 macOS Accessibility API 遍历该进程的所有窗口，找到 windowID 匹配的那个 `AXUIElement`。
-
-如果找不到（窗口已关闭、进程已退出），直接终止。
-
-#### 2c. 检查窗口是否已经在原位
-
-```swift
-if framesMatch(currentFrame, targetFrame) {
-    resetActiveWindowContext(removeState: true)
-    return  // 已经在原位了，不用搬
-}
-```
-
-读窗口当前 frame，和 `lastWindowFrame`（原始位置）对比。如果已经差不多在原位了（容差 150px），说明可能是上次已经恢复过了，跳过并清除状态。
-
-#### 2d. 检查 AX 属性是否可写
-
-```swift
-isAttributeSettable(window, attribute: kAXPositionAttribute)  // 位置可写？
-isAttributeSettable(window, attribute: kAXSizeAttribute)       // 大小可写？
-```
-
-有些窗口（比如系统窗口）不允许通过 AX 改位置。如果不可写，直接终止。
-
-#### 2e. Space 预切换
-
-**这是恢复的关键步骤。** 窗口的坐标是相对于它所在 Display 的。如果副屏当前显示的不是目标 Space，设坐标会出错。
-
-```swift
-if triggerSource == "carbon_hotkey", let targetSpace = lastSourceSpaceIndex {
-    let targetDisplay = lastSourceYabaiDisplayIndex
-    // 查询副屏当前显示的 Space
-    let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
-
-    if let current = displayCurrentSpace, current != targetSpace {
-        // 副屏不在目标 Space → 切换
-        spaceController.switchDisplayToSpace(targetSpace: targetSpace)
-        usleep(400_000)  // 等 400ms 让 macOS 完成切换
-    }
-    // 如果副屏已经在目标 Space → 不用切，直接往下走
-}
-```
-
-具体发生了什么：
-- `displayVisibleSpace(displayIndex: 2)` → 问 yabai "Display 2 当前显示的是哪个 Space？" → 得到 `2`
-- `targetSpace` 是 `3`（toggle 时记下来的）
-- `2 != 3` → 需要切换
-- `switchDisplayToSpace(targetSpace: 3)` → 先试 yabai `space --focus 3`，如果失败就用 CGEvent 发 Ctrl+Right 切换
-- 等 400ms
-
-#### 2f. 设置窗口坐标
-
-```swift
-apply(frame: lastWindowFrame, to: window)
-```
-
-用 AX API 把窗口的 position 和 size 设成 `lastWindowFrame`（toggle 时记下的原始位置）。
-
-这时窗口已经从主屏搬到了副屏的目标 Space 上，坐标系统匹配。
-
-#### 2g. 验证
-
-```swift
-let restoredFrame = self.frame(of: window)
-framesMatch(restoredFrame, frame)  // 读回来比对
-```
-
-读回窗口实际 frame，和目标对比。如果不匹配（可能被 macOS 拒绝了），记录错误并终止。
-
-#### 2h. 焦点跟随
-
-```swift
-if triggerSource == "carbon_hotkey" {
-    // 窗口现在在副屏 Space 3，但用户焦点还在主屏
-    // 把用户焦点也切过去
-    spaceController.focusWindow(windowID)
-}
-```
-
-#### 2i. 清理
-
-```swift
-resetActiveWindowContext(removeState: true)
-```
-
-清空内存变量（`lastWindowFrame` 等）和 SQLite 中的 `SavedWindowState` 记录。下次按 Ctrl+Q 不会再触发 restore。
-
----
-
-## 恢复触发方式 2：Claude Code 发 prompt 自动恢复
-
-**入口：** `HookEventHandler.handleUserPromptSubmit()`（`Sources/HookEventHandler.swift:97`）
-
-这个流程更长一些，因为它需要先找到"哪个窗口需要恢复"。
-
-### Step 1：检查开关
-
-```swift
-guard ClaudeHookPreferences.autoRestoreOnPromptSubmit else { return }
-```
-
-用户可以在设置里关掉自动恢复。如果关了，直接返回。
-
-### Step 2：找到需要恢复的窗口
-
-这一步要解决的问题：Claude Code 发了一个 hook 说"我收到了用户的 prompt"，但 VibeFocus 不知道这个 prompt 来自哪个终端窗口。
-
-查找过程分两步走：
-
-**2a. 通过 session 绑定查找**
-
-```swift
-let state = SessionWindowRegistry.shared.binding(for: payload.sessionID)
-```
-
-每个 Claude Code session 启动时，VibeFocus 会把这个 session 和它所在的终端窗口绑定（记录 pid、windowID、tty 等）。通过 hook 传来的 `sessionID` 查这个绑定。
-
-找到后还要验证绑定是否还有效：
-
-```swift
-SessionWindowRegistry.shared.verifyBinding(state)
-// 检查 pid 是否还活着、窗口是否还存在
-```
-
-**2b. 降级：通过终端上下文查找**
-
-如果 step 2a 没有找到绑定（session 刚启动、绑定丢失等），用 hook 传来的终端上下文信息：
-
-```swift
-if let terminalCtx = payload.terminalContext, terminalCtx.hasUsefulContext {
-    identity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
-}
-```
-
-`terminalCtx` 包含 tty 路径（如 `/dev/ttys003`）、进程 PID 等。`findWindowByTerminalContext` 用这些信息去匹配窗口。
-
-如果两种方式都找不到，跳过恢复。
-
-### Step 3：确认窗口在主屏
-
-```swift
-let isOnMain = wm.isWindowOnMainScreen(windowID: identity.windowID)
-guard isOnMain else { return }  // 不在主屏，不需要恢复
-```
-
-如果窗口已经在副屏了，说明可能之前已经被恢复过或者用户手动移回去了，不需要再恢复。
-
-### Step 4：从 ToggleEngine 读取状态
-
-```swift
-if let record = engine.load(windowID: identity.windowID) {
-```
-
-用 `windowID` 直接查 SQLite 的 `windows` 表，读取 `toggle_` 前缀的字段（toggle 时写入的 ToggleRecord）。
-
-注意这里和 Ctrl+Q 路径不同——Ctrl+Q 读的是内存变量（`lastWindowFrame` 等），这里是直接查数据库。
-
-### Step 5：验证记录有效性
-
-```swift
-if record.isValid(mainScreenFrame: mainScreen.frame) {
-```
-
-`isValid()` 检查两件事：
-- `origFrame`（原始位置）的中心点**不在**主屏上 → 说明原始位置确实在副屏
-- `targetFrame`（主屏位置）的中心点**在**主屏上 → 说明 toggle 目标确实在主屏
-
-如果两个 frame 都在主屏上，说明数据损坏了（可能两次 toggle 没有正确 restore），清除记录并终止。
-
-### Step 6：ToggleEngine.restore() 执行
-
-**方法：** `ToggleEngine.restore()`（`Sources/ToggleEngine.swift:84`）
-
-#### 6a. 加载 ToggleRecord
-
-```swift
-guard let record = load(windowID: windowID) else { return false }
-```
-
-和 step 4 一样，从 SQLite 读取。
-
-#### 6b. 找到窗口
-
-```swift
-guard let windowAX = wm.findWindowByPID(record.pid, windowID: record.windowID) else { return false }
-```
-
-遍历 pid 对应进程的所有 AX 窗口，找到 windowID 匹配的。和 Ctrl+Q 路径的 `restoreWindow()` 类似。
-
-#### 6c. 验证窗口位置
-
-```swift
-guard let currentFrame = wm.frame(of: windowAX) else { return false }
-if !record.isNearTarget(currentFrame: currentFrame) { return false }
-```
-
-读窗口当前 frame，检查是否在 `targetFrame` 附近（150px 容差）。
-
-为什么需要这一步？防止把一个已经被用户手动移动过的窗口误恢复。只有窗口还在 toggle 目标位置附近，才认为它是"需要恢复的"。
-
-#### 6d. Space 切换 — switchToOriginalSpace()
-
-**方法：** `ToggleEngine.switchToOriginalSpace()`（`:154`）
-
-这是恢复的核心，负责把副屏切到正确的 Space 并把窗口移过去。
-
-```swift
-// 要恢复到哪个 Space 和 Display？
-let targetSpace = record.sourceSpace         // 例：3
-let targetDisplay = record.sourceYabaiDisp   // 例：2
-
-// 问 yabai：Display 2 当前显示的是哪个 Space？
-let displayCurrentSpace = spaceController.displayVisibleSpace(displayIndex: targetDisplay)
-```
-
-然后分两种情况：
-
-**情况 1：副屏已经在正确的 Space**
-
-```swift
-if let current = displayCurrentSpace, current == targetSpace {
-    // Display 2 已经显示 Space 3，只需把窗口移过去
-    spaceController.moveWindow(record.windowID, toSpaceIndex: targetSpace)
-    return
-}
-```
-
-**情况 2：副屏不在正确的 Space**
-
-```swift
-// 先把 Display 2 切到 Space 3
-spaceController.switchDisplayToSpace(targetSpace: targetSpace)
-usleep(400_000)  // 等 400ms
-
-// 再把窗口移到 Space 3
-spaceController.moveWindow(record.windowID, toSpaceIndex: targetSpace)
-usleep(200_000)  // 等 200ms
-```
-
-`switchDisplayToSpace` 的内部实现：
-1. 先试 `yabai -m space --focus <targetSpace>` — 如果 yabai 有权限就能直接切
-2. 如果 yabai 失败 → 降级到 CGEvent：把鼠标移到目标 Display 中心 → 发 Ctrl+Left/Right 按键事件 → 鼠标移回原位
-
-`moveWindow` 的内部实现：
-- `yabai -m window <windowID> --space <targetSpace>` 把窗口分配到目标 Space
-
-#### 6e. 重新获取 AX 元素
-
-```swift
-let restoreAX = wm.findWindowByPID(record.pid, windowID: record.windowID) ?? windowAX
-```
-
-Space 切换可能使之前的 AXUIElement 引用失效。重新查找一次，如果找不到就用旧的碰运气。
-
-#### 6f. 设置窗口坐标
-
-```swift
-wm.apply(frame: record.origFrame, to: restoreAX)
-```
-
-和 Ctrl+Q 路径一样，用 AX API 设置窗口位置为 `origFrame`（原始位置）。
-
-#### 6g. 清理
-
-```swift
-engine.clear(windowID: windowID)
-```
-
-清除 SQLite 中的 ToggleRecord（把 `toggle_` 前缀的字段置 NULL），防止下次误恢复。
-
----
-
-## 两种触发方式的差异总结
-
-| | Ctrl+Q 手动 | UserPromptSubmit 自动 |
-|---|---|---|
-| **怎么找到窗口** | 直接用当前焦点窗口 | 通过 sessionID 查绑定，或通过终端上下文匹配 |
-| **状态从哪读** | WindowManager 内存变量 (`lastWindowFrame` 等) | SQLite 的 `toggle_` 字段 (`ToggleRecord`) |
-| **谁来执行恢复** | `WindowManager.restore()` | `ToggleEngine.restore()` |
-| **Space 切换** | 直接调 `SpaceController` | 封装在 `switchToOriginalSpace()` 里，逻辑相同 |
-| **恢复后是否跟随焦点** | 是（`focusWindow` 把用户视角切到窗口所在 Space） | 否（不打断用户正在看的东西） |
-| **状态清理** | `resetActiveWindowContext()` 清内存 + SQLite | `ToggleEngine.clear()` 只清 SQLite toggle 字段 |
-
----
-
-## 防误恢复机制
-
-恢复是一个危险操作——把用户的窗口突然移走。所以有层层防护：
-
-1. **窗口必须在主屏** — 如果窗口已经不在主屏了，不恢复
-2. **必须有 toggle 状态** — 没记录说明没被 toggle 过，不恢复
-3. **状态必须有效** — origFrame 在副屏、targetFrame 在主屏，否则是损坏数据
-4. **窗口必须在 targetFrame 附近** — 确认窗口没被用户手动移走过
-5. **窗口属性必须可写** — AX position 和 size 都 settable 才能操作
-6. **frame 回读验证** — apply 之后读回来确认真的设成功了
-7. **Space 切换前先查** — 副屏已经在正确 Space 就不切，避免无谓操作
-
----
-
-## 涉及的文件清单
+hook（UserPromptSubmit 等）**不触发 restore**——hook 自动聚焦走的是
+`moveWindowToMainScreen`（把窗口拉到主屏），方向与 restore 相反（0f0a3bc）。
+
+## ToggleRecord 里恢复依赖的字段
+
+toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngine.save` 写入 SQLite：
+
+| 字段 | 含义 | 恢复时的用途 |
+|------|------|--------------|
+| `windowID` / `pid` | 窗口身份 | 按 windowID 直接定位（无 PID fallback 链） |
+| `origFrame` | 源屏上的原始位置（Quartz 全局坐标） | frame 直写的目标 |
+| `sourceSpace` | 窗口原来在哪个 Space（yabai 全局索引，0=无信息） | 源屏预切回的目标 space |
+| `sourceYabaiDisp` | 窗口原来在哪块屏（yabai 1-based） | 查该屏当前可见 space |
+| `targetFrame` | 主屏上的位置 | `isValid` 数据校验 |
+
+## ToggleEngine.restore() 的步骤（与代码一一对应）
+
+1. **load record**（按 windowID，无则 `.aborted`）
+2. **AX 窗口存在性**（窗口已关则 `.aborted`）
+3. **yabai 窗口查询**（一次 fork，后续 float 复用）→ **最小化快检**：最小化窗口上
+   float/--move 全部静默无效，快速失败 `.moveFailedRetryable`（record 保留），
+   避免白白切换源屏视角
+4. **preMoveSpace 基准**：记录当前 focused space（供第 6 步视角守卫）
+5. **源屏预切回（spaceExact 的关键）**：源屏当前可见 space ≠ sourceSpace 时，
+   双层切回 sourceSpace（是否切/初始 spaceExact 由 `sourceSpacePreSwitch` 纯函数裁决）：
+   ① `canControlSpaces` 为真先 `focusSpace`（SA 直切，**不依赖源 space 上有窗口**，
+   源 space 已空也能精确切回）；② 直切失败/不可用降级 `refocusWindowOnSpace`
+   （聚焦带动，偏好非最小化候选，不依赖 SA）。切回命令成功后用
+   `ConditionPolling.waitUntil` **等到位**：轮询源屏可见 space 真切回（800ms 预算，
+   `ignoreCache` 绕过查询缓存），早满足早返回，超时如实 `spaceExact=false`。
+   两层全失败（SA 失效 + 源 space 空，物理极限）→ `spaceExact=false`，窗口将落在
+   源屏可见 space（位置恢复但 space 不精确），结局如实上报，不静默。
+   > SA 可用性由无副作用探针实测（`saProbeVerdict`）：对当前 space 发
+   > `space --focus`，按 stderr 分类裁决——旧「query 含 display 字段」判据在 v7
+   > 恒真（query 不依赖 SA），2026-09-02 E2E 实测揭穿后重写。
+6. **float 脱管**：仅在真发生 `--toggle float` 时等 300ms 重摆落定
+   （已 float 的窗口无重摆，不等待——restore 常见路径恰是已 float）
+7. **frame 直写**：`yabai --move abs` + `--resize abs` 写 origFrame，写后读回验证
+   （2 轮，每轮 400ms 落定）。macOS 窗口归属跟随物理位置自动回源 display。
+   > 为什么不用 `window --space`：yabai v7 float 布局下静默失效
+   > （exit 0 但窗口不动，Tests/AXMoveValidation.swift T3 实测）。
+8. **结局裁决（诚实结局，2026-09-02）**：
+   - frame 收敛 → 清 record + 审计 `restore_success`（含 `spaceExact` 字段）→ `.restored`
+   - frame 未收敛且 origFrame 仍在某块现有屏 → **保留 record** +
+     审计 `restore_move_failed`(reason=frame_not_converged, recordKept=true)
+     → `.moveFailedRetryable`（用户再触发一次即重试）
+   - frame 未收敛且 origFrame 已不在任何屏（断显/分辨率变更）→ **清 record** +
+     审计 `restore_move_failed`(reason=orig_frame_offscreen, recordKept=false)
+     → `.moveFailedPermanent`（下次 toggle 走 stuck 解堵兜底，避免热键空转）
+9. **视角守卫**（成功与失败路径共用 `runPerspectiveGuard`）：focused space 被拖走时
+   切回 preMoveSpace——先试 `yabai space --focus`（依赖 SA），失败则
+   `refocusWindowOnSpace(preMoveSpace)`（排除被恢复窗口自身）
+10. **结局播报（P1-1，WindowManager.restore 委托返回后）**：`RestoreAnnouncementPlan`
+    把四类结局映射为固定文案 + 成败音效通道——语音走 VoiceAnnouncementManager 有界队列
+    （不吃会话完成模板），失败音效固定 Basso；语音/音效两开关任一关闭即该通道静默；
+    `.aborted` 无审计事件，不播报。历史上失败一片静默是「感觉有 bug 但日志全 success」
+    的体感根源之一。
+
+## 结局枚举（RestoreOutcome，唯一事实源）
+
+| 结局 | record | 审计事件 | 用户可见行为 |
+|------|--------|----------|--------------|
+| `.restored(spaceExact)` | 清除 | `restore_success` | 窗口回源位；spaceExact=false 时日志 WARN |
+| `.aborted(reason)` | 不动 | 无 | 无事发生（无记录/窗口已关） |
+| `.moveFailedRetryable` | **保留** | `restore_move_failed`(recordKept=true) | 窗口留在主屏，再按一次即重试 |
+| `.moveFailedPermanent` | 清除 | `restore_move_failed`(recordKept=false) | 窗口留在主屏，下次 toggle 走 stuck 解堵 |
+
+**重试策略留档（P2-2）**：维持「单次不自动重试」——record 保留 + 用户再按即重试 +
+结局播报告知。不引入自动重试循环：旧 RestoreWatchdog 自动重试风暴是历史事故根因
+（110350a/59bfdb4 线索）。
+
+## 已知能力边界（不是 bug，是 SA 失效环境下的物理极限）
+
+1. **源 space 已空且 SA 失效**：聚焦带动通道（`refocusWindowOnSpace`）无窗口可聚焦、
+   SA 直切又不可用，源屏无法切回 sourceSpace，窗口落在源屏当前可见 space。
+   结局 `spaceExact=false` 如实上报。SA 可用时该场景已由 4-pre 第一层直切根治（P0-1）。
+2. **SA 失效时 `space --focus` 不可用**：视角守卫与源屏预切回的第一层自动失效，
+   降级「聚焦窗口带动」通道。检查 SA：`yabai --load-sa`（需 admin）。
+3. **显示器热拔/分辨率变更**后 origFrame 可能落在屏外 → `.moveFailedPermanent`，
+   record 清除属预期行为（stuck 解堵接管）。
+
+## 回归防护
+
+见 `docs/space-switch-regression-guard.md`（已同步重写为当前机制）。
+纯决策逻辑由测试锁定（分支穷尽）：
+- `Tests/XCTest/RestoreRefocusCandidateTests.swift`（Swift Testing）：selectRefocusCandidate /
+  isMoveFailureRetryable / sourceSpacePreSwitch / RestoreOutcome 结局标签
+- `Tests/Standalone/RestoreRefocusCandidateTests.swift`（过渡期门禁，`run_all_tests.sh` 消费，镜像同套逻辑）
+- `Tests/Runner/main.swift`（`swift run VibeFocusTestRunner`，@testable 直测真实实现：
+  双层切回编排 `RestoreSwitchOrchestration` 假通道注入分支穷尽 + 各纯决策；CLT-only
+  环境无 Swift Testing 运行时的执行通道，覆盖率经 `scripts/coverage_test_runner.sh`
+  产出 llvm-cov 真实数字——编排层/ConditionPolling 实测 100%）
+- `Tests/AXMoveValidation.swift`（机制断言脚本，改移动机制前必跑）
+
+## 涉及的文件清单（当前）
 
 | 文件 | 职责 |
 |------|------|
-| `Sources/WindowManager.swift` | `toggle()` 决策、`restore()` 执行、`shouldRestoreCurrentWindow()` 判断 |
-| `Sources/WindowManager+MoveWindow.swift` | `moveWindowToMainScreen()` toggle 时保存状态 |
-| `Sources/WindowManager+State.swift` | `hydrateMemory()` 加载状态到内存、`resetActiveWindowContext()` 清理 |
-| `Sources/ToggleEngine.swift` | `restore()` + `switchToOriginalSpace()` 自动恢复路径 |
-| `Sources/HookEventHandler.swift` | `handleUserPromptSubmit()` 接收 hook、找窗口、调用 ToggleEngine |
-| `Sources/SessionWindowRegistry.swift` | session 和窗口的绑定关系、toggle 状态读写 |
-| `Sources/SpaceController.swift` | `switchDisplayToSpace()`、`moveWindow()`、`displayVisibleSpace()` 等 Space 操作 |
-| `Sources/WindowStateStore.swift` | SQLite 读写 ToggleRecord 和 SavedWindowState |
-| `Sources/ClaudeHookModels.swift` | `ToggleRecord` 数据结构定义 |
+| `Sources/Window/WindowManager+Toggle.swift` | toggle 入口编排、三路分发 |
+| `Sources/Window/WindowManager+Toggle+Decision.swift` | restore 决策（decideRestore 纯函数） |
+| `Sources/Window/WindowManager+Restore.swift` | restore 前置识别 + 委托 + 结局映射 |
+| `Sources/Toggle/ToggleEngine+Restore.swift` | **唯一执行体** + RestoreOutcome |
+| `Sources/Toggle/ToggleEngine.swift` | record save/load/clear |
+| `Sources/Toggle/RestoreSwitchOrchestration.swift` | 双层切回编排（通道 protocol 化可注入，llvm-cov 100%） |
+| `Sources/App/VoiceAnnouncementManager+RestoreOutcome.swift` | 结局播报（RestoreAnnouncementPlan 纯决策 + 发声接线） |
+| `Sources/Window/WindowManager+MoveWindow.swift` | toggle 搬运 + moveWindowToFrameViaYabai |
+| `Sources/Window/WindowManager+MoveWindow+PostMove.swift` | post-move 校验 + record 保存 |
+| `Sources/Space/SpaceController+Switch.swift` | refocusWindowOnSpace + 候选选择纯函数 |
+| `Sources/Space/SpaceController+Move.swift` | setWindowFloat（FloatToggleOutcome） |
+| `Sources/Support/WindowSettle.swift` | 落定等待时长唯一事实源 |
+| `Sources/Support/FrameConvergence.swift` | 帧写入收敛循环唯一骨架 |
