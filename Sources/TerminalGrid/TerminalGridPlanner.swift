@@ -20,6 +20,15 @@ enum TerminalGridPlanner {
     /// 行列上限（超过 4×4 的终端格子已不可用）
     static let maxGridSize = 4
 
+    /// 单份快照的格子数上限。桌面被批量窗口污染时，captureLayout 会捕获出
+    /// 数百格的异常快照（真机事故：604 格快照 → autoRestore 新建 539 扇窗），
+    /// 上限护栏在捕获与恢复两端同时拦截。
+    static let maxSnapshotCells = 64
+
+    static func isValidSnapshotCellCount(_ count: Int) -> Bool {
+        count >= 1 && count <= maxSnapshotCells
+    }
+
     static func validate(rows: Int, cols: Int) -> Bool {
         (1...maxGridSize).contains(rows) && (1...maxGridSize).contains(cols)
     }

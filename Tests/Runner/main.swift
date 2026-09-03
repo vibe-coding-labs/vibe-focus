@@ -1204,7 +1204,14 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               == [.inject(windowID: 201), .create])
     }
 
-    // MARK: 编排终端选择器（feat/terminal-auto-select，真实源码）
+    // 快照格子数安全护栏（真机事故：604 格污染快照 → autoRestore 新建 539 扇窗）
+    check("护栏: 格子数上限 64 的边界判定",
+          TerminalGridPlanner.isValidSnapshotCellCount(1)
+          && TerminalGridPlanner.isValidSnapshotCellCount(64)
+          && !TerminalGridPlanner.isValidSnapshotCellCount(0)
+          && !TerminalGridPlanner.isValidSnapshotCellCount(65))
+
+        // MARK: 编排终端选择器（feat/terminal-auto-select，真实源码）
 
     do {
         let all = [

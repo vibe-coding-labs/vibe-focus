@@ -97,6 +97,12 @@ final class TerminalUsageTracker {
         log("[TerminalUsage] tracker started", level: .debug)
     }
 
+    /// 导入/种子化使用数据（测试隔离与未来迁移用）。直接设置计数与时间。
+    func seedUsage(bundleID: String, count: Int, lastAt: Date) {
+        table.entries[bundleID] = TerminalUsageEntry(count: count, lastAt: lastAt)
+        Self.saveTable(table)
+    }
+
     static func loadTable() -> TerminalUsageTable {
         guard let data = UserDefaults.standard.data(forKey: TerminalUsageTable.userDefaultsKey),
               let table = TerminalUsageTable.decode(data) else {

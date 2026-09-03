@@ -147,6 +147,15 @@ final class TerminalGridController {
         guard !terminalEntries.isEmpty else {
             return OperationResult(ok: false, message: "目标屏上没有发现终端窗口")
         }
+        // 桌面污染护栏：异常数量的终端窗（批量恢复风暴）拒绝捕获，
+        // 防止生成数百格快照后被反复恢复成窗口风暴（真机事故实证）
+        guard TerminalGridPlanner.isValidSnapshotCellCount(terminalEntries.count) else {
+            let message = "检测到 \(terminalEntries.count) 个终端窗口，超过单次捕获上限 \(TerminalGridPlanner.maxSnapshotCells)——桌面疑似被批量窗口污染，已拒绝捕获"
+            log("[TerminalGrid] capture refused: cell overflow", level: .error, fields: [
+                "op": op, "windows": String(terminalEntries.count)
+            ])
+            return OperationResult(ok: false, message: message)
+        }
 
         let frames = terminalEntries.compactMap { $0.bounds }
         let grid = TerminalGridPlanner.inferGrid(from: frames) ?? (rows: 1, cols: terminalEntries.count)
@@ -246,6 +255,13 @@ final class TerminalGridController {
             return OperationResult(ok: false, message: "没有可恢复的布局快照（先创建网格或捕获布局）")
         }
 
+        guard TerminalGridPlanner.isValidSnapshotCellCount(snapshot.cells.count) else {
+            let message = "快照包含 \(snapshot.cells.count) 个格子（上限 \(TerminalGridPlanner.maxSnapshotCells)），疑似异常快照，已拒绝恢复以防窗口风暴"
+            log("[TerminalGrid] restore refused: cell overflow", level: .error, fields: [
+                "op": op, "snapshot": snapshot.id, "cells": String(snapshot.cells.count)
+            ])
+            return OperationResult(ok: false, message: message)
+        }
         guard let screen = resolveRestoreScreen(for: snapshot) else {
             return OperationResult(ok: false, message: "目标显示器不可用")
         }
@@ -339,6 +355,12 @@ final class TerminalGridController {
     /// - 格位空了（关过窗/重启后）→ 新建窗口执行命令。
     func autoRestore(snapshot: TerminalGridSnapshot) async -> OperationResult {
         let op = makeOperationID(prefix: "grid-autorestore")
+        guard TerminalGridPlanner.isValidSnapshotCellCount(snapshot.cells.count) else {
+            log("[TerminalGrid] autoRestore refused: cell overflow", level: .error, fields: [
+                "op": op, "snapshot": snapshot.id, "cells": String(snapshot.cells.count)
+            ])
+            return OperationResult(ok: false, message: "快照格子数超过上限，已拒绝自动恢复")
+        }
         guard let screen = resolveRestoreScreen(for: snapshot) else {
             return OperationResult(ok: false, message: "自动恢复失败：目标显示器不可用")
         }
