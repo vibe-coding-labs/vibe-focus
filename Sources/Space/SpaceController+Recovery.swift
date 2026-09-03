@@ -80,6 +80,16 @@ extension SpaceController {
     }
 
     func attemptSilentSARecovery(yabaiPath: String) {
+        // 状态机闸门前置：blockedBySIP / 退避期内不再空跑 direct --load-sa
+        // （availability 刷新高频调用，每次 30ms fork 且注定失败）。
+        let (prior, hoursSince) = loadRecoveryState()
+        if let verdict = prior, !Self.autoRecoveryAllowed(verdict: verdict, hoursSince: hoursSince) {
+            log("[SpaceController] attemptSilentSARecovery skipped by state machine", level: .debug, fields: [
+                "verdict": verdict.rawValue,
+                "hoursSince": String(format: "%.1f", hoursSince)
+            ])
+            return
+        }
         // P-INST-36: 静默 SA 恢复耗时（yabai --load-sa fork，无 admin 对话框）。
         let ssrStart = Date()
         var ssrResult = "failed"
@@ -90,18 +100,33 @@ extension SpaceController {
             ])
         }
         log("attemptSilentSARecovery: trying yabai --load-sa without admin prompt")
-        if let direct = runProcess(executable: yabaiPath, arguments: ["--load-sa"]), direct.exitCode == 0 {
+        let directResult = runProcess(executable: yabaiPath, arguments: ["--load-sa"])
+        if let direct = directResult, direct.exitCode == 0 {
             ssrResult = "loaded"
             scriptingAdditionRecoverySucceeded = true
             canControlSpaces = true
             lastErrorMessage = nil
+            recordRecoveryState(.succeeded, op: "silent", output: "direct --load-sa")
             log("attemptSilentSARecovery: scripting-addition loaded successfully via direct --load-sa")
             updateEnabledState()
         } else {
+            let failureDetail = directResult?.stderr ?? "failed to run"
+            ssrResult = "failed: \(truncateForLog(failureDetail, limit: 120))"
+            // SIP 阻止是确定性永久失败（用户授权也无法加载）：立即持久化 blockedBySIP，
+            // 状态机此后永久拦截 direct 与 admin 两条自动路径，不再重复打扰。
+            // 历史注（2026-09-04"重复授权"根因）：此处旧行为是清除失败缓存 + 重置进程内
+            // didAttempt 标志——availability 高频刷新每次失败都把弹框链重新解锁，用户
+            // 授权一次（被 SIP 拒）后又被反复要求授权。现改为：仅 blockedBySIP 持久化；
+            // 其他失败（如未配 sudoers）不动持久化、也不重置 didAttempt（授权出口收敛
+            // 到设置面板手动按钮），状态机闸门从此只被真实结局更新。
+            let verdict = Self.recoveryVerdict(success: false, outputOrError: failureDetail)
+            if verdict == .blockedBySIP {
+                recordRecoveryState(.blockedBySIP, op: "silent", output: failureDetail)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.legacyFailedAtKey)
+                didAttemptScriptingAdditionRecovery = false
+            }
             log("attemptSilentSARecovery: direct --load-sa failed, user needs to load manually")
-            // 清除 24 小时失败缓存，允许用户手动点击"加载"按钮时不会被阻断
-            UserDefaults.standard.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
-            didAttemptScriptingAdditionRecovery = false
         }
     }
 
