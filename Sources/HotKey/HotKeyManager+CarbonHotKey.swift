@@ -98,6 +98,45 @@ extension HotKeyManager {
         } else {
             log("[HotKey] Failed to register title editor Carbon hotkey: \(titleEditorStatus)", level: .warn)
         }
+
+        registerLayoutHotKeys()
+    }
+
+    /// 注册全部摆位热键（action→hotkey 表）。总开关关闭时只注销不注册。
+    func registerLayoutHotKeys() {
+        for (_, ref) in layoutHotKeyRefs {
+            UnregisterEventHotKey(ref)
+        }
+        layoutHotKeyRefs.removeAll()
+
+        guard LayoutPreferences.isEnabled else {
+            log("[HotKey] Layout hotkeys disabled, skip registration")
+            return
+        }
+
+        for action in LayoutAction.allCases {
+            guard let hotKey = layoutTable.hotKey(for: action) else { continue }
+            var ref: EventHotKeyRef?
+            let hotKeyID = EventHotKeyID(signature: hotkeySignature, id: action.carbonHotKeyID)
+            let status = RegisterEventHotKey(
+                hotKey.keyCode,
+                hotKey.modifiers,
+                hotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &ref
+            )
+            if status == noErr, let ref {
+                layoutHotKeyRefs[action.carbonHotKeyID] = ref
+            } else {
+                log("[HotKey] Register layout hotkey failed", level: .warn, fields: [
+                    "action": action.rawValue,
+                    "key": hotKey.displayString,
+                    "status": String(status)
+                ])
+            }
+        }
+        log("[HotKey] Layout hotkeys registered", fields: ["count": String(layoutHotKeyRefs.count)])
     }
 
     func handleHotKeyEvent(_ eventRef: EventRef) -> OSStatus {
@@ -138,6 +177,11 @@ extension HotKeyManager {
 
         if hotKeyID.id == 2 {
             HotKeyManager.triggerTitleEditor()
+            return noErr
+        }
+
+        if let action = LayoutAction.action(forCarbonHotKeyID: hotKeyID.id) {
+            triggerLayoutActionIfNeeded(action, source: "carbon_hotkey")
             return noErr
         }
 

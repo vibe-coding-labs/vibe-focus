@@ -11,6 +11,8 @@ public final class HotKeyManager: ObservableObject {
     public static let shared = HotKeyManager()
 
     @Published private(set) var currentHotKey: HotKeyConfiguration
+    /// 摆位动作热键表（Rectangle 式半屏/四分等；与主 toggle 键独立注册/匹配）
+    @Published private(set) var layoutTable: LayoutHotKeyTable
     @Published var shortcutStatusMessage = "当前快捷键已生效"
     @Published var shortcutStatusIsError = false
     @Published private(set) var accessibilityStatus = false
@@ -23,6 +25,8 @@ public final class HotKeyManager: ObservableObject {
     let hotkeyIdentifier: UInt32 = 1
     var hotKeyRef: EventHotKeyRef?
     var titleEditorHotKeyRef: EventHotKeyRef?
+    /// 摆位热键 Carbon 注册表：carbonHotKeyID → ref（registerLayoutHotKeys 维护）
+    var layoutHotKeyRefs: [UInt32: EventHotKeyRef] = [:]
     var handlerRef: EventHandlerRef?
     var globalMonitor: Any?
     var localMonitor: Any?
@@ -34,9 +38,13 @@ public final class HotKeyManager: ObservableObject {
     var lastToggleCompletedAt: Date = .distantPast
     let toggleDedupInterval: TimeInterval = 0.15
     let toggleCooldownInterval: TimeInterval = 0.05
+    /// 摆位触发去抖（独立状态，不与 toggle 互锁）
+    var isLayoutInFlight = false
+    var lastLayoutTriggeredAt: Date = .distantPast
 
     public init() {
         currentHotKey = Self.loadStoredHotKey()
+        layoutTable = Self.loadStoredLayoutTable()
         accessibilityStatus = Self.checkAccessibility()
     }
 
@@ -241,5 +249,66 @@ public final class HotKeyManager: ObservableObject {
             return
         }
         UserDefaults.standard.set(data, forKey: HotKeyConfiguration.userDefaultsKey)
+    }
+
+    // MARK: 摆位热键表
+
+    private static func loadStoredLayoutTable() -> LayoutHotKeyTable {
+        guard let data = UserDefaults.standard.data(forKey: LayoutHotKeyTable.userDefaultsKey),
+              let table = LayoutHotKeyTable.decode(data) else {
+            return .withDefaults
+        }
+        return table
+    }
+
+    private func saveStoredLayoutTable() {
+        if let data = layoutTable.encoded() {
+            UserDefaults.standard.set(data, forKey: LayoutHotKeyTable.userDefaultsKey)
+        }
+    }
+
+    /// 录制摆位动作热键。返回错误信息（nil = 成功）。
+    /// 校验链：修饰键/系统冲突（validate）→ 表内组合键重复 → 与主 toggle 键撞车。
+    @discardableResult
+    func applyLayoutShortcut(_ hotKey: HotKeyConfiguration, for action: LayoutAction) -> String? {
+        log("[HotKey] applyLayoutShortcut requested: \(action.rawValue) \(hotKey.displayString)")
+        if let validationError = validate(hotKey) {
+            return validationError
+        }
+
+        var updated = layoutTable
+        updated.bindings[action.rawValue] = hotKey
+        if let duplicate = LayoutHotKeyTable.duplicateBinding(in: updated) {
+            let names = duplicate.actions.map { $0.displayName }.joined(separator: " / ")
+            return "组合键 \(duplicate.hotKey.displayString) 已绑定为「\(names)」"
+        }
+        if LayoutHotKeyTable.collidesWithToggleHotKey(updated, toggleHotKey: currentHotKey) != nil {
+            return "组合键与主开关快捷键 \(currentHotKey.displayString) 冲突"
+        }
+
+        layoutTable = updated
+        saveStoredLayoutTable()
+        registerHotKey()
+        NotificationCenter.default.post(name: .layoutHotKeyTableDidChange, object: nil)
+        CrashContextRecorder.shared.record("layout_hotkey_apply action=\(action.rawValue) key=\(hotKey.displayString)")
+        return nil
+    }
+
+    /// 恢复某个摆位动作的默认热键
+    func resetLayoutShortcut(for action: LayoutAction) {
+        var updated = layoutTable
+        updated.bindings.removeValue(forKey: action.rawValue)
+        layoutTable = updated
+        saveStoredLayoutTable()
+        registerHotKey()
+        NotificationCenter.default.post(name: .layoutHotKeyTableDidChange, object: nil)
+    }
+
+    /// 摆位热键总开关（共存策略 / 设置页切换）。只影响热键注册与匹配，菜单入口不受限。
+    func setLayoutActionsEnabled(_ enabled: Bool) {
+        LayoutPreferences.isEnabled = enabled
+        registerHotKey()
+        NotificationCenter.default.post(name: .layoutHotKeyTableDidChange, object: nil)
+        CrashContextRecorder.shared.record("layout_hotkey_enabled value=\(enabled)")
     }
 }

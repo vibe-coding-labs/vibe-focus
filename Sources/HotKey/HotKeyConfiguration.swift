@@ -14,7 +14,7 @@ struct HotKeyConflict: Equatable {
 }
 
 /// Global hotkey configuration stored in UserDefaults.
-struct HotKeyConfiguration: Codable, Equatable {
+struct HotKeyConfiguration: Codable, Equatable, Hashable {
     let keyCode: UInt32
     let modifiers: UInt32
 

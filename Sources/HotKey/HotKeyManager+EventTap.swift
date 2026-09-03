@@ -133,6 +133,24 @@ extension HotKeyManager {
             return nil
         }
 
+        // 摆位热键表匹配（总开关关闭时不拦截）
+        if LayoutPreferences.isEnabled {
+            for action in LayoutAction.allCases {
+                guard let hotKey = layoutTable.hotKey(for: action) else { continue }
+                if keyCode == hotKey.keyCode && modifiers == hotKey.modifiers {
+                    hotkeyMatched = true
+                    log("[HotKey] CGEventTap layout hotkey match", fields: [
+                        "action": action.rawValue,
+                        "displayString": hotKey.displayString
+                    ])
+                    DispatchQueue.main.async { [weak self] in
+                        self?.triggerLayoutActionIfNeeded(action, source: "cg_event_tap")
+                    }
+                    return nil
+                }
+            }
+        }
+
         return Unmanaged.passUnretained(event)
     }
 

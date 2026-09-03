@@ -1,0 +1,106 @@
+import CoreGraphics
+import Foundation
+
+// MARK: - 终端网格规划器（纯函数）
+/// rows×cols 格子 frame 计算 + 从任意摆法反推行列数。
+enum TerminalGridPlanner {
+
+    struct GridSpec: Equatable {
+        var rows: Int
+        var cols: Int
+        var gap: CGFloat
+
+        init(rows: Int, cols: Int, gap: CGFloat = 8) {
+            self.rows = rows
+            self.cols = cols
+            self.gap = gap
+        }
+    }
+
+    /// 行列上限（超过 4×4 的终端格子已不可用）
+    static let maxGridSize = 4
+
+    static func validate(rows: Int, cols: Int) -> Bool {
+        (1...maxGridSize).contains(rows) && (1...maxGridSize).contains(cols)
+    }
+
+    /// row-major（先行后列，Quartz y 自上而下）格子 frames。
+    /// gap 为格子间距；可见区入参用 CoordinateKit.quartzVisibleFrame(of:)。
+    static func cells(visibleFrame: CGRect, spec: GridSpec) -> [CGRect] {
+        guard validate(rows: spec.rows, cols: spec.cols), visibleFrame.width > 0, visibleFrame.height > 0 else {
+            return []
+        }
+        let gap = max(0, spec.gap)
+        let cellWidth = (visibleFrame.width - gap * CGFloat(spec.cols - 1)) / CGFloat(spec.cols)
+        let cellHeight = (visibleFrame.height - gap * CGFloat(spec.rows - 1)) / CGFloat(spec.rows)
+        guard cellWidth > 0, cellHeight > 0 else { return [] }
+
+        var result: [CGRect] = []
+        result.reserveCapacity(spec.rows * spec.cols)
+        for row in 0..<spec.rows {
+            for col in 0..<spec.cols {
+                result.append(CGRect(
+                    x: visibleFrame.minX + CGFloat(col) * (cellWidth + gap),
+                    y: visibleFrame.minY + CGFloat(row) * (cellHeight + gap),
+                    width: cellWidth,
+                    height: cellHeight
+                ))
+            }
+        }
+        return result
+    }
+
+    /// 从一组 frames 反推网格行列数：按中心点做 y/x 聚类（容差 tolerance）。
+    /// 用于"捕获当前摆法"：用户手动拖好的终端布局，数出它是几乘几。
+    static func inferGrid(from frames: [CGRect], tolerance: CGFloat = 40) -> (rows: Int, cols: Int)? {
+        guard !frames.isEmpty else { return nil }
+
+        var rowBands: [CGFloat] = []   // 每行 y 中心代表值
+        var colBands: [CGFloat] = []
+        for frame in frames.sorted(by: { $0.midY < $1.midY }) {
+            if rowBands.contains(where: { abs($0 - frame.midY) <= tolerance }) {
+                continue
+            }
+            rowBands.append(frame.midY)
+        }
+        for frame in frames.sorted(by: { $0.midX < $1.midX }) {
+            if colBands.contains(where: { abs($0 - frame.midX) <= tolerance }) {
+                continue
+            }
+            colBands.append(frame.midX)
+        }
+
+        let rows = rowBands.count
+        let cols = colBands.count
+        guard validate(rows: rows, cols: cols) else { return nil }
+        return (rows, cols)
+    }
+
+    /// 把任意 frames 按 row-major 排序（先按 y 分带，带内按 x）。
+    /// 捕获乱序窗口列表后统一编号用。
+    static func rowMajorOrder(_ frames: [CGRect], tolerance: CGFloat = 40) -> [CGRect] {
+        guard !frames.isEmpty else { return [] }
+        let sorted = frames.sorted { lhs, rhs in
+            if abs(lhs.midY - rhs.midY) > tolerance {
+                return lhs.midY < rhs.midY
+            }
+            return lhs.midX < rhs.midX
+        }
+        return sorted
+    }
+
+    /// 恢复时把记录 frame 拉回可视区（分辨率/菜单栏变化后 frame 可能越界）。
+    /// 尺寸 clamp 到可视区，位置平移进边界。
+    static func clampToVisible(frame: CGRect, visibleFrame: CGRect) -> CGRect {
+        guard visibleFrame.width > 0, visibleFrame.height > 0 else { return frame }
+        var width = min(frame.width, visibleFrame.width)
+        var height = min(frame.height, visibleFrame.height)
+        width = max(width, 1)
+        height = max(height, 1)
+        var x = frame.origin.x
+        var y = frame.origin.y
+        x = min(max(x, visibleFrame.minX), visibleFrame.maxX - width)
+        y = min(max(y, visibleFrame.minY), visibleFrame.maxY - height)
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+}

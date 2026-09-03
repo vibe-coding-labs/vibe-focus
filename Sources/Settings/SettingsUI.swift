@@ -36,6 +36,22 @@ public struct SettingsView: View {
     @State var hookInstallMessage: String?
     @State var hookInstallSucceeded = true
 
+    // 摆位快捷键（卡片见 SettingsView+LayoutSection.swift）
+    @State var layoutHotKeysEnabled = LayoutPreferences.isEnabled
+    @State var layoutConflictSummary: String? = WindowLayoutManagerProbe.probe().conflictSummary
+    @State var layoutSnapGap = Int(LayoutPreferences.snapGap)
+
+    // 终端网格（卡片见 SettingsView+TerminalGridSection.swift）
+    let terminalGridController = TerminalGridController.shared
+    @State var gridRows = TerminalGridPreferences.rows
+    @State var gridCols = TerminalGridPreferences.cols
+    @State var gridDisplayMode = TerminalGridPreferences.displayMode
+    @State var gridAppPreference = TerminalGridPreferences.appPreference
+    @State var gridLaunchCommand = TerminalGridPreferences.launchCommand
+    @State var gridResultMessage = ""
+    @State var gridResultIsError = false
+    @State var gridSnapshots: [TerminalGridSnapshot] = []
+
     // Codex CLI Hook 安装状态
     @State var codexInstallMessage: String?
     @State var codexInstallSucceeded = true
@@ -96,6 +112,7 @@ public struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     hotKeySection
+                    layoutHotKeySection
                     permissionsSection
                     loginItemSection
                 }
@@ -106,6 +123,7 @@ public struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     workspaceSection
+                    terminalGridSection
                     overlaySection
                 }
             }

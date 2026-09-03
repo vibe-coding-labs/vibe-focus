@@ -1,0 +1,121 @@
+import CoreGraphics
+import Foundation
+
+// MARK: - 终端自动化 AppleScript 生成器（纯字符串，无 I/O）
+/// 坐标注记：AppleScript `bounds` 是 Cocoa 全局坐标 {left, top, right, bottom}；
+/// 本仓内部 frame 是 Quartz（Y 向下）。换算走 CoordinateKit.cocoaY(fromQuartzY:)，
+/// 本文件只负责把换算好的 cocoaTop 拼进脚本。
+/// 命令注入防御：所有插值字符串先过 appleScriptEscaped。
+@MainActor
+enum TerminalAutomationScript {
+
+    static func appleScriptEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    /// Quartz frame → Cocoa {l, t, r, b} 四元组字符串
+    static func cocoaBoundsTuple(quartzFrame: CGRect) -> String {
+        let cocoaTop = CoordinateKit.cocoaY(fromQuartzY: quartzFrame.maxY)
+        let left = Int(quartzFrame.minX.rounded())
+        let top = Int(cocoaTop.rounded())
+        let right = Int(quartzFrame.maxX.rounded())
+        let bottom = Int((cocoaTop + quartzFrame.height).rounded())
+        return "{\(left), \(top), \(right), \(bottom)}"
+    }
+
+    // MARK: Terminal.app
+
+    /// 新建窗口并摆到指定 bounds，返回新窗口 id（即 CGWindowNumber）。
+    /// command 为 nil/空时只开 shell。
+    static func terminalCreateWindow(command: String?, quartzFrame: CGRect) -> String {
+        let script = (command?.isEmpty ?? true) ? "" : "do script \"\(appleScriptEscaped(command!))\"\n"
+        return """
+        tell application id "com.apple.Terminal"
+            \(script)set bounds of front window to \(cocoaBoundsTuple(quartzFrame: quartzFrame))
+            return id of front window
+        end tell
+        """
+    }
+
+    /// 全量枚举窗口→tab→tty 映射："windowID|tty" 行。Terminal.app 的 AppleScript
+    /// window id == CGWindowNumber（仓库 TerminalContext 链路既有实证）。
+    static func terminalEnumerateWindowTTYs() -> String {
+        """
+        tell application id "com.apple.Terminal"
+            set output to ""
+            repeat with w in windows
+                repeat with t in tabs of w
+                    set output to output & (id of w as string) & "|" & (tty of t) & linefeed
+                end repeat
+            end repeat
+            return output
+        end tell
+        """
+    }
+
+    /// 读回窗口 bounds（{l,t,r,b} 逗号串）——读回值与 Quartz 同为左上原点 Y 向下
+    static func terminalGetBounds(windowID: UInt32) -> String {
+        """
+        tell application id "com.apple.Terminal"
+            return bounds of window id \(windowID)
+        end tell
+        """
+    }
+
+    static func itermGetBounds(windowID: String) -> String {
+        """
+        tell application id "com.googlecode.iterm2"
+            return bounds of window id \(windowID)
+        end tell
+        """
+    }
+
+    /// "872, 578, 1726, 1118" → CGRect(l, t, w, h)（Quartz/左上原点语义）
+    static func parseBounds(_ stdout: String) -> CGRect? {
+        let parts = stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ",")
+            .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4 else { return nil }
+        return CGRect(
+            x: parts[0],
+            y: parts[1],
+            width: parts[2] - parts[0],
+            height: parts[3] - parts[1]
+        )
+    }
+
+    // MARK: iTerm2
+
+    static func itermCreateWindow(command: String?, quartzFrame: CGRect) -> String {
+        let writeText = (command?.isEmpty ?? true)
+            ? ""
+            : "tell current session of current window to write text \"\(appleScriptEscaped(command!))\"\n"
+        return """
+        tell application id "com.googlecode.iterm2"
+            create window with default profile
+            \(writeText)set bounds of current window to \(cocoaBoundsTuple(quartzFrame: quartzFrame))
+            return id of current window
+        end tell
+        """
+    }
+
+    // MARK: 通用
+
+    /// 恢复某个格子的完整命令行：有 sessionID 则 `claude --resume`，否则启动命令。
+    static func cellCommand(sessionID: String?, launchCommand: String?) -> String? {
+        if let sessionID, !sessionID.isEmpty {
+            return "claude --resume \(appleScriptEscaped(sessionID))"
+        }
+        if let launchCommand, !launchCommand.isEmpty {
+            return launchCommand
+        }
+        return nil
+    }
+
+    static func isSupported(appBundleID: String) -> Bool {
+        appBundleID == "com.apple.Terminal" || appBundleID == "com.googlecode.iterm2"
+    }
+}

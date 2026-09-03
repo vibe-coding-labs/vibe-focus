@@ -29,6 +29,40 @@ extension AppDelegate {
         toggleMenuItem = toggleItem
         menu.addItem(toggleItem)
 
+        // 摆位子菜单（Rectangle 式；热键标注见热键表）
+        let layoutSubmenu = NSMenu()
+        for action in LayoutAction.allCases {
+            let item = NSMenuItem(
+                title: action.displayName,
+                action: #selector(layoutMenuItem(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = action.rawValue
+            layoutSubmenu.addItem(item)
+        }
+        let layoutItem = NSMenuItem(title: "摆位", action: nil, keyEquivalent: "")
+        layoutItem.submenu = layoutSubmenu
+        layoutSubmenuItem = layoutItem
+        menu.addItem(layoutItem)
+
+        // 终端网格子菜单
+        let gridSubmenu = NSMenu()
+        let gridCreateItem = NSMenuItem(title: "创建网格（按设置行列）", action: #selector(gridCreateMenuItem), keyEquivalent: "")
+        gridCreateItem.target = self
+        gridSubmenu.addItem(gridCreateItem)
+        let gridCaptureItem = NSMenuItem(title: "捕获当前布局（记住位置 + Claude session）", action: #selector(gridCaptureMenuItem), keyEquivalent: "")
+        gridCaptureItem.target = self
+        gridSubmenu.addItem(gridCaptureItem)
+        let gridRestoreItem = NSMenuItem(title: "恢复上次布局（自动 claude --resume）", action: #selector(gridRestoreMenuItem), keyEquivalent: "")
+        gridRestoreItem.target = self
+        gridSubmenu.addItem(gridRestoreItem)
+        let gridItem = NSMenuItem(title: "终端网格", action: nil, keyEquivalent: "")
+        gridItem.submenu = gridSubmenu
+        menu.addItem(gridItem)
+
+        menu.addItem(.separator())
+
         let settingsItem = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -100,6 +134,56 @@ extension AppDelegate {
 
     @objc func refreshMenuLabels() {
         toggleMenuItem?.title = "Toggle (\(HotKeyManager.shared.currentHotKey.displayString))"
+        let conflictSuffix: String
+        if LayoutPreferences.isEnabled {
+            conflictSuffix = ""
+        } else if let conflict = layoutConflictDetected {
+            conflictSuffix = "（热键已停用：检测到 \(conflict)）"
+        } else {
+            conflictSuffix = "（热键已停用）"
+        }
+        layoutSubmenuItem?.title = "摆位\(conflictSuffix)"
+    }
+
+    @objc func layoutMenuItem(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let action = LayoutAction(rawValue: raw) else {
+            return
+        }
+        let op = makeOperationID(prefix: "menu-layout")
+        log("[Menu] layout action clicked", fields: ["op": op, "action": action.rawValue])
+        WindowManager.shared.applyLayoutAction(action, triggerSource: "menu", operationID: op)
+    }
+
+    @objc func gridCreateMenuItem() {
+        Task {
+            let result = await TerminalGridController.shared.createGrid()
+            presentGridResultIfNeeded(result)
+        }
+    }
+
+    @objc func gridCaptureMenuItem() {
+        Task {
+            let result = await TerminalGridController.shared.captureLayout()
+            presentGridResultIfNeeded(result)
+        }
+    }
+
+    @objc func gridRestoreMenuItem() {
+        Task {
+            let result = await TerminalGridController.shared.restoreLayout()
+            presentGridResultIfNeeded(result)
+        }
+    }
+
+    /// 失败才弹窗（成功时窗口已经出现在屏幕上，无需打扰）
+    private func presentGridResultIfNeeded(_ result: TerminalGridController.OperationResult) {
+        guard !result.ok else { return }
+        let alert = NSAlert()
+        alert.messageText = "终端网格"
+        alert.informativeText = result.message
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     @objc func toggle() {

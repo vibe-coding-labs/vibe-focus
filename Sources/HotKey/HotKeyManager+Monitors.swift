@@ -157,11 +157,69 @@ extension HotKeyManager {
                 }
                 return true
             }
+
+            // 摆位热键表匹配（总开关关闭时跳过）
+            if LayoutPreferences.isEnabled {
+                for action in LayoutAction.allCases {
+                    guard let hotKey = layoutTable.hotKey(for: action) else { continue }
+                    if eventKeyCode == hotKey.keyCode && eventModifiers == hotKey.modifiers {
+                        log("[HotKey] Fallback layout hotkey matched", fields: [
+                            "action": action.rawValue,
+                            "key": hotKey.displayString,
+                            "source": source
+                        ])
+                        triggerLayoutActionIfNeeded(action, source: "fallback_\(source)")
+                        return true
+                    }
+                }
+            }
             return false
         }
 
         log("Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
         triggerToggleIfNeeded(source: "fallback_\(source)")
         return true
+    }
+
+    /// 摆位动作触发（去抖独立于 toggle；总开关关闭时 beep 拒绝——按下的组合键
+    /// 可能已被其它 app 占用，静默吞键会让用户以为 VibeFocus 失灵）。
+    func triggerLayoutActionIfNeeded(_ action: LayoutAction, source: String) {
+        guard LayoutPreferences.isEnabled else {
+            log("[HotKey] Layout action suppressed: hotkeys disabled", fields: [
+                "action": action.rawValue,
+                "source": source
+            ])
+            NSSound.beep()
+            return
+        }
+
+        let now = Date()
+        if isLayoutInFlight {
+            log("[HotKey] Ignored layout trigger: already in flight", level: .warn, fields: [
+                "action": action.rawValue,
+                "source": source
+            ])
+            return
+        }
+        if now.timeIntervalSince(lastLayoutTriggeredAt) < toggleDedupInterval {
+            log("[HotKey] Ignored duplicate layout trigger", level: .warn, fields: [
+                "action": action.rawValue,
+                "source": source
+            ])
+            return
+        }
+
+        let op = makeOperationID(prefix: "layout-hk")
+        isLayoutInFlight = true
+        lastLayoutTriggeredAt = now
+        defer { isLayoutInFlight = false }
+
+        log("[HotKey] Layout trigger accepted", fields: [
+            "op": op,
+            "action": action.rawValue,
+            "source": source
+        ])
+        CrashContextRecorder.shared.record("layout_trigger op=\(op) action=\(action.rawValue) source=\(source)")
+        WindowManager.shared.applyLayoutAction(action, triggerSource: source, operationID: op)
     }
 }

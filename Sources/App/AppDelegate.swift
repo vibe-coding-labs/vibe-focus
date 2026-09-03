@@ -7,6 +7,9 @@ import Foundation
 public class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var toggleMenuItem: NSMenuItem?
+    var layoutSubmenuItem: NSMenuItem?
+    /// 共存探测发现的对决品摘要（设置页/菜单展示用；nil = 无冲突）
+    var layoutConflictDetected: String?
     let openSettingsDistributedNotification = Notification.Name("com.vibefocus.app.open-settings")
 
     struct ExistingInstanceInfo {
@@ -87,6 +90,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         // 就地创建：无 close 风暴，仅对新屏幕逐个创建窗口。
         ScreenOverlayManager.shared.updateOverlaysInPlace()
         promptAccessibilityIfNeeded()
+        // 共存检测：同类摆位窗口管理器（Rectangle 等）运行中且用户未显式选择时，
+        // 自动停用摆位热键（不弹窗；提示在设置页与菜单，见 design-rectangle-integration §3）。
+        // 必须经 setLayoutActionsEnabled 重注册——setup() 已把默认 11 个摆位热键注册进
+        // Carbon/EventTap，只改偏好会留下"死注册"吞掉对方窗口管理器的按键。
+        let layoutConflictProfile = WindowLayoutManagerProbe.probe()
+        if WindowLayoutManagerProbe.applyCoexistencePolicy(profile: layoutConflictProfile) {
+            layoutConflictDetected = layoutConflictProfile.conflictSummary
+            HotKeyManager.shared.setLayoutActionsEnabled(false)
+        }
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             Task { @MainActor in
                 SessionWindowRegistry.shared.purgeClosedWindows()
@@ -96,6 +108,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(refreshMenuLabels),
             name: .hotKeyConfigurationDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(refreshMenuLabels),
+            name: .layoutHotKeyTableDidChange,
             object: nil
         )
         NotificationCenter.default.addObserver(
