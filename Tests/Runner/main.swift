@@ -1112,13 +1112,17 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
 
         let frame = CGRect(x: 0, y: 25, width: 860, height: 542)
         let script = TerminalAutomationScript.terminalCreateWindow(command: "claude --resume abc", quartzFrame: frame)
-        check("脚本: Terminal 建窗脚本含 do script/set bounds/return id",
+        check("脚本: Terminal 建窗脚本含 do script/等窗轮询/set bounds/return id",
               script.contains("do script \"claude --resume abc\"")
+              && script.contains("repeat until (count of windows) > priorWindowCount")
               && script.contains("set bounds of front window to {0, ")
               && script.contains("return id of front window"))
 
         let noCmd = TerminalAutomationScript.terminalCreateWindow(command: nil, quartzFrame: frame)
-        check("脚本: 无命令时不包含 do script", !noCmd.contains("do script"))
+        check("脚本: 无命令时 do script 空串（开纯 shell，防命令退出关窗）",
+              noCmd.contains("do script \"\"")
+              && noCmd.contains("repeat until (count of windows) > priorWindowCount")
+              && !noCmd.contains("do script \"do script"))
 
         let iterm = TerminalAutomationScript.itermCreateWindow(command: "claude", quartzFrame: frame)
         check("脚本: iTerm2 建窗脚本含 write text 与 set bounds",
@@ -1144,6 +1148,68 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               ClaudeSessionLocator.isClaudeProcess(commandLine: "/Users/x/.local/bin/claude --resume abc")
               && ClaudeSessionLocator.isClaudeProcess(commandLine: "claude")
               && !ClaudeSessionLocator.isClaudeProcess(commandLine: "vim notes-about-claude.md"))
+    }
+
+    // MARK: Terminal 网格真机 E2E（仅 VIBEFOCUS_GRID_E2E=1 时运行）
+    // 会真实创建 Terminal 窗口、调用 osascript/yabai/claude，普通门禁不跑。
+    // 前置：主屏上有若干终端窗口；其中某窗口的 tty 上有存活 claude 会话。
+    if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1" {
+        print("\n=== Terminal 网格真机 E2E ===")
+        TerminalGridPreferences.appPreference = .terminal
+        TerminalGridPreferences.displayMode = .main
+        TerminalGridPreferences.rows = 2
+        TerminalGridPreferences.cols = 2
+        TerminalGridPreferences.launchCommand = ""
+
+        let e2eController = TerminalGridController.shared
+        var createResult: TerminalGridController.OperationResult?
+        var captureResult: TerminalGridController.OperationResult?
+        var capturedSnapshot: TerminalGridSnapshot?
+        var restoreResult: TerminalGridController.OperationResult?
+        var windowCountAfterRestore = 0
+        let e2eSem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            createResult = await e2eController.createGrid()
+            guard createResult?.ok == true else { e2eSem.signal(); return }
+            captureResult = await e2eController.captureLayout(name: "E2E 捕获")
+            capturedSnapshot = e2eController.snapshotsForRefresh().first { $0.name == "E2E 捕获" }
+            guard let snap = capturedSnapshot else { e2eSem.signal(); return }
+            restoreResult = await e2eController.restoreLayout(snapshotID: snap.id)
+            if let out = ShellRunner.run(executable: "/bin/bash", arguments: ["-c",
+                "osascript -e 'tell application id \"com.apple.Terminal\" to count windows'"]) {
+                windowCountAfterRestore = Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            }
+            e2eSem.signal()
+        }
+        // 泵主 runloop 等 MainActor 任务完成（assumeIsolated 域内不能直接阻塞等待）
+        while e2eSem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        check("E2E: 创建 2×2 网格成功", createResult?.ok == true)
+        check("E2E: 捕获布局成功", captureResult?.ok == true)
+        let e2eCells = capturedSnapshot?.cells ?? []
+        check("E2E: 快照含 ≥6 个终端窗口", e2eCells.count >= 6)
+        let ttyBackfilled = e2eCells.filter { $0.ttyPath != nil }.count
+        check("E2E: Terminal.app tty 回填 ≥4 格", ttyBackfilled >= 4)
+        let sessionCell = e2eCells.first { $0.sessionID?.hasPrefix("38cd1ab3") == true }
+        check("E2E: TTY 兜底定位到存活 claude 会话 38cd1ab3…", sessionCell != nil)
+        check("E2E: 恢复布局成功（含 claude --resume 注入）", restoreResult?.ok == true)
+        check("E2E: 恢复后窗口数 ≥ 快照格子数", windowCountAfterRestore >= e2eCells.count)
+        // 验证 --resume 进程真的起来了（新窗口里 claude --resume <session>）
+        var resumeProcessSeen = false
+        if let resumeCell = sessionCell, let sessionID = resumeCell.sessionID {
+            let deadline = Date().addingTimeInterval(45)
+            while Date() < deadline {
+                if let out = ShellRunner.run(executable: "/bin/pgrep", arguments: ["-fl", "claude --resume \(sessionID)"]),
+                   out.exitCode == 0, !out.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    resumeProcessSeen = true
+                    break
+                }
+                Thread.sleep(forTimeInterval: 1)
+            }
+        }
+        check("E2E: 检测到 claude --resume <session> 进程", resumeProcessSeen)
     }
 
     // MARK: 汇总

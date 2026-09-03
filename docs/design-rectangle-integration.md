@@ -123,12 +123,27 @@ layer 0 + isOnScreen）→ 按 y/x 聚类反推 rows×cols → 每窗：
    实机读回 {872,578,1726,1118} vs 目标 {872,578,1728,1117}（2px 阴影噪声内）。
 5. `tty of tab` 全量枚举脚本真机可用（windowID|tty 映射，windowID == CGWindowNumber）。
 
-**遗留待用户/协调项 ⏸**
-- **AX 摆位写 E2E**：重装会打破 TCC 辅助功能授权（本机反复实证），重新授权需要用户
-  在系统设置输一次密码；授权后 ⌃⌥ 摆位热键即可全链路走通（写入复用 ⌃Q 日常在用的
-  同一 AX 引擎，几何已单测锁定）。
-- **应用内网格 E2E**：验证期间主工作区并行会话于 00:12/00:20 提交并重新部署了
-  main 构建（部署互踩），按 worktree 规范停止争抢部署；功能分支合入并重装后按 §7
-  流程回归即可（建窗/校验/纠偏脚本已逐一真机验证）。
+**网格全链路 E2E（2026-09-04 凌晨，TestRunner 真机集成测试，VIBEFOCUS_GRID_E2E=1）✅**
+- 创建 2×2 网格：4 窗全建、全漂移、yabai 全纠偏（±3px 内）、tty 回填、快照入库
+- 捕获布局：11 窗全收、row-major 排序、TT Y 兜底定位到存活 claude 会话
+  （38cd1ab3…，ps 找进程 → lsof cwd → projects 目录最新 jsonl 全链路命中）
+- 恢复布局：逐格重建 + `claude --resume <sessionID>` 注入，恢复出的
+  `claude --resume 38cd1ab3…` 进程真实存活（ps 直接证据 pid 79926）
+- E2E 期间修掉两个真 bug：
+  1. `do script` 建窗异步竞态——零窗口时紧跟的 `front window` 报 Invalid index(-1719)，
+     建窗脚本加"轮询窗口数增加"再摆位；
+  2. 捕获用 bounds 精确相等反查窗口——两个窗口叠同一格位时串窗（tty 重复、claude
+     窗被挤丢），改为按窗口条目 row-major 排序遍历。
+- 经验：向指定后台终端窗口的 REPL 注入文本，`do script "…" in window id N` 直接写
+  pty，比合成键盘事件可靠（不吃焦点）。
+
+**遗留待用户项 ⏸**
+- **⌃⌥ 摆位热键 AX 写 E2E**：唯一剩余验收项。重装打破 TCC 辅助功能授权（每次重装
+  都复现），重新授权需用户在系统设置输一次密码。链路其余环节已真机验证：热键触发
+  （⌃⌥→ → Layout trigger accepted 日志）、AX 权限门（未授权时优雅失败+beep）、写入
+  引擎（apply 与日常 ⌃Q 同函数、跨屏 float+yabai 与网格纠偏同一 floatAndWriteFrame，
+  已通过网格 E2E 像素级验证）。授权后按 ⌃⌥U 任取一窗验证即可，日志应出现
+  `applyLayoutAction result … ok=true`。
 - 踩坑记录：`do script "<会退出的命令>"` 窗口跑完即关（与调试手册 toggle 坑同源），
-  网格纯 shell 格必须用空命令。
+  网格纯 shell 格必须用空命令；部署互踩期间用 TestRunner 集成测试绕开应用部署完成
+  验收（`--target` 不重链可执行产品，构建产物部署必须用 `--product VibeFocusHotkeys`）。

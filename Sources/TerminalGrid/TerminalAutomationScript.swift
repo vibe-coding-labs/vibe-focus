@@ -29,11 +29,20 @@ enum TerminalAutomationScript {
 
     /// 新建窗口并摆到指定 bounds，返回新窗口 id（即 CGWindowNumber）。
     /// command 为 nil/空时只开 shell。
+    /// 真机实证（2026-09-04）：`do script` 建窗是异步的——Terminal 零窗口时
+    /// 紧跟的 `front window` 会报 Invalid index(-1719)，必须轮询等窗口数增加。
     static func terminalCreateWindow(command: String?, quartzFrame: CGRect) -> String {
-        let script = (command?.isEmpty ?? true) ? "" : "do script \"\(appleScriptEscaped(command!))\"\n"
+        let escaped = appleScriptEscaped(command ?? "")
         return """
         tell application id "com.apple.Terminal"
-            \(script)set bounds of front window to \(cocoaBoundsTuple(quartzFrame: quartzFrame))
+            set priorWindowCount to count of windows
+            do script "\(escaped)"
+            set waited to 0
+            repeat until (count of windows) > priorWindowCount or waited > 100
+                delay 0.05
+                set waited to waited + 1
+            end repeat
+            set bounds of front window to \(cocoaBoundsTuple(quartzFrame: quartzFrame))
             return id of front window
         end tell
         """

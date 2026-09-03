@@ -149,8 +149,15 @@ final class TerminalGridController {
         }
 
         let frames = terminalEntries.compactMap { $0.bounds }
-        let orderedFrames = TerminalGridPlanner.rowMajorOrder(frames)
-        let grid = TerminalGridPlanner.inferGrid(from: frames) ?? (rows: 1, cols: orderedFrames.count)
+        let grid = TerminalGridPlanner.inferGrid(from: frames) ?? (rows: 1, cols: terminalEntries.count)
+        // row-major 遍历「窗口条目」而非 frames——两个窗口叠在同一格位时 bounds
+        // 几乎相等，按 bounds 精确相等反查会串窗（真机 E2E 实证：tty 重复、
+        // claude 窗口被挤丢），排序比较器与 rowMajorOrder 同语义。
+        let orderedEntries = terminalEntries.sorted { lhs, rhs in
+            guard let lb = lhs.bounds, let rb = rhs.bounds else { return lhs.windowID < rhs.windowID }
+            if abs(lb.midY - rb.midY) > 40 { return lb.midY < rb.midY }
+            return lb.midX < rb.midX
+        }
 
         // Terminal.app 窗口 → tty 映射
         let terminalPIDs = Set(terminalEntries.map { $0.ownerPID })
@@ -159,9 +166,9 @@ final class TerminalGridController {
 
         var cells: [TerminalGridCellSnapshot] = []
         var sessionCount = 0
-        for (index, frame) in orderedFrames.enumerated() {
-            let entry = terminalEntries.first { $0.bounds == frame }
-            let windowID = entry?.windowID ?? 0
+        for (index, entry) in orderedEntries.enumerated() {
+            guard let frame = entry.bounds else { continue }
+            let windowID = entry.windowID
             let ttyPath = ttyMap[windowID]
 
             // session 主路径：Hook 链路早已持久化的绑定（session_id/cwd/tty）
@@ -191,7 +198,7 @@ final class TerminalGridController {
                 ttyPath: ttyPath,
                 sessionID: sessionID,
                 cwd: cwd,
-                title: entry?.name
+                title: entry.name
             ))
         }
 
