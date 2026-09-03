@@ -21,7 +21,7 @@ protocol RestoreSpaceChanneling: AnyObject {
     /// 直切：yabai space --focus（依赖 SA；不依赖目标 space 上有窗口）
     func focusSpace(_ space: SpaceIdentifier, operationID: String?) -> Bool
     /// 聚焦带动：聚焦目标 space 上可管理窗口带动视角（不依赖 SA）
-    func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID: UInt32?, operationID: String?) -> Bool
+    func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID: UInt32?, operationID: String?, prefetchedWindows: [YabaiWindowInfo]?) -> Bool
     /// 当前 focused space（yabai 全局索引）
     func currentSpaceIndex() -> Int?
     /// space 切换后清查询缓存（窗口位置可能已变）
@@ -87,8 +87,9 @@ enum RestoreSwitchOrchestration {
             switched = channels.focusSpace(.yabaiIndex(sourceSpace), operationID: operationID)
         }
         if !switched {
-            // 被恢复窗口尚未移动、必不在源 space 上，无需 exclude
-            switched = channels.refocusWindowOnSpace(sourceSpace, excludingWindowID: nil, operationID: operationID)
+            // 被恢复窗口尚未移动、必不在源 space 上，无需 exclude；4-pre 无预取
+            // （preMoveSpace 快照查询发生在 move 后才有意义）
+            switched = channels.refocusWindowOnSpace(sourceSpace, excludingWindowID: nil, operationID: operationID, prefetchedWindows: nil)
         }
         return switched
     }
@@ -123,7 +124,8 @@ enum RestoreSwitchOrchestration {
         channels: any RestoreSpaceChanneling,
         preMoveSpace: Int,
         excludingWindowID excluded: UInt32,
-        operationID: String
+        operationID: String,
+        prefetchedWindows: [YabaiWindowInfo]? = nil
     ) -> PerspectiveRefocusOutcome {
         guard let postMoveSpace = channels.currentSpaceIndex(), postMoveSpace != preMoveSpace else {
             return .noDrift
@@ -133,7 +135,7 @@ enum RestoreSwitchOrchestration {
             refocused = channels.focusSpace(.yabaiIndex(preMoveSpace), operationID: operationID)
         }
         if !refocused {
-            refocused = channels.refocusWindowOnSpace(preMoveSpace, excludingWindowID: excluded, operationID: operationID)
+            refocused = channels.refocusWindowOnSpace(preMoveSpace, excludingWindowID: excluded, operationID: operationID, prefetchedWindows: prefetchedWindows)
         }
         if refocused {
             channels.clearQueryCache()

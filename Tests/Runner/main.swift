@@ -38,6 +38,7 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
     private(set) var focusReceived: SpaceIdentifier?
     private(set) var refocusReceivedSpace: Int?
     private(set) var refocusReceivedExcluded: UInt32?
+    private(set) var refocusReceivedPrefetched: [YabaiWindowInfo]?
     private(set) var cacheCleared = false
     private(set) var floatCalled = false
 
@@ -53,10 +54,11 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
         return focusResult
     }
 
-    func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID: UInt32?, operationID: String?) -> Bool {
+    func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID: UInt32?, operationID: String?, prefetchedWindows: [YabaiWindowInfo]?) -> Bool {
         calls.append("refocus")
         refocusReceivedSpace = spaceIndex
         refocusReceivedExcluded = excludingWindowID
+        refocusReceivedPrefetched = prefetchedWindows
         return refocusResult
     }
 
@@ -262,6 +264,16 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
         check("守卫轻查询: focused space 查询失败 → noDrift（不盲切语义）",
               outcome == .noDrift && ch.calls == ["current"])
+    }
+    do {
+        // 预取传递：守卫降级时把调用方预取的候选列表透传给通道（省一次查询 fork）
+        let prefetched = [YabaiWindowInfo(id: 77, pid: 100, app: "App", title: "pre", space: 1, display: 1, frame: nil, isFloatingRaw: false, hasAXReferenceRaw: true, isMinimizedRaw: false)]
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 5)
+        ch.refocusResult = true
+        let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t", prefetchedWindows: prefetched)
+        check("守卫预取: 预取列表透传 refocusWindowOnSpace（不触发内部查询）",
+              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "refocus", "clearCache"]
+              && ch.refocusReceivedPrefetched?.first?.id == 77)
     }
     do {
         let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 5)

@@ -89,7 +89,8 @@ extension ToggleEngine {
         channels: any RestoreSpaceChanneling,
         preMoveSpace: Int?,
         excludingWindowID excluded: UInt32,
-        traceID trace: String
+        traceID trace: String,
+        prefetchedWindows: [YabaiWindowInfo]? = nil
     ) -> Int {
         guard let preMoveSpace else { return 0 }
         let guardStart = Date()
@@ -97,7 +98,8 @@ extension ToggleEngine {
             channels: channels,
             preMoveSpace: preMoveSpace,
             excludingWindowID: excluded,
-            operationID: trace
+            operationID: trace,
+            prefetchedWindows: prefetchedWindows
         ) {
         case .noDrift:
             return 0
@@ -271,6 +273,18 @@ extension ToggleEngine {
             ])
         }
 
+        // 3.8 守卫候选预取（2026-09-04）：preMoveSpace 的窗口列表在 move 前后不变
+        // （被恢复窗口在守卫中被 exclude），提前到 move 前发起查询，move 完成时候选
+        // 已就绪——守卫聚焦免一次串行 fork（~30-60ms）。restore 场景守卫必触发
+        // （frame 直写必拖焦点），预取浪费路径罕见；preMoveSpace 未知（无 space 上下文）
+        // 时跳过。查询失败由守卫内部如实降级（nil = refocusWindowOnSpace 现查）。
+        let guardPrefetchedWindows: [YabaiWindowInfo]?
+        if preMoveSpace != nil, let pms = preMoveSpace {
+            guardPrefetchedWindows = channels.queryWindowsOnSpace(pms, operationID: trace)
+        } else {
+            guardPrefetchedWindows = nil
+        }
+
         // 4. Move back to original frame（2026-09-01 重构：float 脱管 → yabai --move/--resize 直写 origFrame）
         // 原 `yabai --space` 在 yabai v7 float 布局下静默失效（exit 0 但窗口不动，
         // Tests/AXMoveValidation.swift T3 实测）；frame 直写经断言验证跨 display 可靠，
@@ -311,7 +325,7 @@ extension ToggleEngine {
         guard frameOK else {
             // frame 写失败但源屏预切回可能已把视角拖走——失败路径同样执行视角守卫，
             // 把用户带回原处（窗口仍在主屏）。
-            _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace)
+            _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
             let origFrameOnAnyDisplay = windows.displayContext(for: record.origFrame).yabaiIndex != nil
             if Self.isMoveFailureRetryable(origFrameOnAnyDisplay: origFrameOnAnyDisplay) {
                 log("[ToggleEngine] restore: frame move failed, keeping record for retry", level: .error, fields: [
@@ -351,7 +365,7 @@ extension ToggleEngine {
         }
 
         // 6. 视角守卫（与失败路径共用 runPerspectiveGuard，见其文档）。
-        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace)
+        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
 
         // 7. Clear record
         records.clear(windowID: record.windowID)

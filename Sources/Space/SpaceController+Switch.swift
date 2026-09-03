@@ -53,9 +53,12 @@ extension SpaceController {
         return decodeArray(YabaiWindowInfo.self, from: result.stdout)
     }
 
-    func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID excluded: UInt32? = nil, operationID: String? = nil) -> Bool {
+    /// - Parameter prefetchedWindows: 调用方提前查好的目标 space 窗口列表（守卫候选
+    ///   预取：restore 在 move 前发起查询，move 完成时候选已就绪，省一次串行 fork）；
+    ///   nil 时现查（其他调用路径）。
+    func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID excluded: UInt32? = nil, operationID: String? = nil, prefetchedWindows: [YabaiWindowInfo]? = nil) -> Bool {
         let op = operationID ?? "none"
-        guard let windows = queryWindowsOnSpace(spaceIndex, operationID: op) else {
+        guard let windows = prefetchedWindows ?? queryWindowsOnSpace(spaceIndex, operationID: op) else {
             log("[SpaceController] refocusWindowOnSpace: window query failed", level: .warn, fields: [
                 "op": op, "spaceIndex": String(spaceIndex)
             ])
