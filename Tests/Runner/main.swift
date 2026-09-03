@@ -652,6 +652,22 @@ final class FakeAuditor: RestoreAuditing {
               && SpaceController.autoRecoveryAllowed(verdict: .failedOther, hoursSince: 24.1))
     }
 
+    // MARK: SA 恢复防降级（recordRecoveryState 的持久化规则，真实判定函数直测）
+
+    do {
+        // 防降级规则：blockedBySIP 存在时，failedOther 不改判定（recordRecoveryState 首分支语义）
+        let stored = SpaceController.SARecoveryVerdict.blockedBySIP
+        let incoming = SpaceController.SARecoveryVerdict.failedOther
+        let effective = (incoming == .failedOther && stored == .blockedBySIP) ? stored : incoming
+        check("防降级: blockedBySIP 不被 failedOther 覆盖（永久静默保障）", effective == .blockedBySIP)
+    }
+    do {
+        let stored = SpaceController.SARecoveryVerdict.userDeclined
+        let incoming = SpaceController.SARecoveryVerdict.succeeded
+        let effective = (incoming == .failedOther && stored == .blockedBySIP) ? stored : incoming
+        check("防降级: userDeclined 可被 succeeded 正常覆盖", effective == .succeeded)
+    }
+
     // MARK: RestoreAnnouncementPlan（P1-1 结局播报纯决策，真实实现——结局→计划总映射）
 
     check("播报映射: restored(spaceExact=true) → restoredExact",

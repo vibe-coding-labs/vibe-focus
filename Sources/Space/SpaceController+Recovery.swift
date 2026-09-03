@@ -123,8 +123,10 @@ extension SpaceController {
             if verdict == .blockedBySIP {
                 recordRecoveryState(.blockedBySIP, op: "silent", output: failureDetail)
             } else {
-                UserDefaults.standard.removeObject(forKey: Self.legacyFailedAtKey)
-                didAttemptScriptingAdditionRecovery = false
+                // 非 SIP 失败（多见为未配置 sudoers 免密）：不写持久化 verdict——
+                // 弱失败信号不覆盖既有判定（防降级见 recordRecoveryState），授权
+                // 出口收敛到设置面板手动按钮；进程内 didAttempt 保持已尝试状态，
+                // 避免高频 availability 刷新反复解锁弹框链。
             }
             log("attemptSilentSARecovery: direct --load-sa failed, user needs to load manually")
         }
@@ -192,8 +194,16 @@ extension SpaceController {
     }
 
     /// 持久化恢复结局并按场景更新用户可见状态（主队列调用）。
+    /// 防降级：blockedBySIP 是系统属性判定（SIP 不随时间变化），不被更弱的
+    /// failedOther 覆盖——否则 silent 弱失败会把永久静默洗回 24h 弹框窗口
+    /// （2026-09-04"永久授权"诉求的关键保障）。
     private func recordRecoveryState(_ verdict: SARecoveryVerdict, op: String, output: String) {
         let defaults = UserDefaults.standard
+        if verdict == .failedOther,
+           defaults.string(forKey: Self.saVerdictKey) == SARecoveryVerdict.blockedBySIP.rawValue {
+            defaults.set(Date().timeIntervalSince1970, forKey: Self.saVerdictAtKey)
+            return
+        }
         defaults.set(verdict.rawValue, forKey: Self.saVerdictKey)
         defaults.set(Date().timeIntervalSince1970, forKey: Self.saVerdictAtKey)
         defaults.removeObject(forKey: Self.legacyFailedAtKey)
