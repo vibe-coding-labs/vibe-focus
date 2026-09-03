@@ -16,9 +16,10 @@ APP_ICON_PATH="$ASSETS_DIR/AppIcon.icns"
 STATUS_ICON_PATH="$ASSETS_DIR/StatusBarIcon.png"
 
 echo "== Building release binary =="
-# 只构建可执行 target：swift build -c release 全量构建会把 Tests/Runner 的
-# @testable 拖进来，而 release 不开 testability 直接编译失败。
-swift build -c release --target VibeFocusHotkeys
+# 只构建可执行产品：swift build -c release 全量构建会把 Tests/Runner 的
+# @testable 拖进来直接编译失败；而 --target 只编译模块不重链产品二进制
+# （会装上旧二进制），必须用 --product。
+swift build -c release --product VibeFocusHotkeys
 
 echo "== Preparing app bundle =="
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
