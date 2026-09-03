@@ -1230,7 +1230,11 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
     if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1" {
         print("\n=== Terminal 网格真机 E2E ===")
         func isTmpPath(_ path: String?) -> Bool { path == "/tmp" || path == "/private/tmp" }
-        TerminalGridPreferences.appPreference = .terminal
+        // 编排目标可用 VIBEFOCUS_GRID_E2E_APP=iterm2 覆盖（默认 Terminal.app，
+        // 其断言——tty 回填/session 兜底——依赖 Terminal.app 特性）
+        let e2eApp = ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E_APP"] ?? "terminal"
+        let isTerminalApp = e2eApp != "iterm2"
+        TerminalGridPreferences.appPreference = e2eApp == "iterm2" ? .iterm2 : .terminal
         TerminalGridPreferences.displayMode = .main
         TerminalGridPreferences.rows = 2
         TerminalGridPreferences.cols = 2
@@ -1282,6 +1286,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                 guard let tty else { return nil }
                 return ttyMapNow.first { $0.value == tty }?.key
             }
+
             // cell0: 启动 claude 并发一条消息，产生活的 session。
             // 信任对话框自动应答：首次在目录启动会弹 "Do you trust this folder"，
             // ESC[B(↓) + Return 选中 "Yes, I trust this folder"（pty 直接写，免焦点）。
@@ -1289,7 +1294,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             let markerFormatter = DateFormatter()
             markerFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
             let markerStr = markerFormatter.string(from: sessionMarkerDate)
-            if let c0 = gridSnap.cells.first, let wid = windowID(forTTY: c0.ttyPath) {
+            if isTerminalApp, let c0 = gridSnap.cells.first, let wid = windowID(forTTY: c0.ttyPath) {
                 _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
                     TerminalAutomationScript.terminalInjectCommand(windowID: wid, command: "claude")], timeout: 30)
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
@@ -1387,12 +1392,12 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         let e2eCells = capturedSnapshot?.cells ?? []
         check("E2E: 快照含 ≥6 个终端窗口", e2eCells.count >= 6)
         let ttyBackfilled = e2eCells.filter { $0.ttyPath != nil }.count
-        check("E2E: Terminal.app tty 回填 ≥4 格", ttyBackfilled >= 4)
-        check("E2E: TTY 兜底定位到存活 claude 会话", sessionCellE2ERef != nil)
+        check("E2E: Terminal.app tty 回填 ≥4 格", !isTerminalApp || ttyBackfilled >= 4)
+        check("E2E: TTY 兜底定位到存活 claude 会话", !isTerminalApp || sessionCellE2ERef != nil)
         check("E2E: 纯 shell 格子的 cwd 被捕获为 /tmp（login shell 名匹配）", isTmpPath(tmpCellCWD))
         check("E2E: 自动恢复执行成功", autoRestoreResult?.ok == true)
         check("E2E: 跳过运行中的 claude（skipRunning，pid 不变）",
-              claudePIDBefore != nil && claudePIDBefore == claudePIDAfter)
+              !isTerminalApp || (claudePIDBefore != nil && claudePIDBefore == claudePIDAfter))
         check("E2E: 关闭的格子被重建（新窗口出现）", recreatedShellCWD != nil)
         check("E2E: 重建格子的 shell cwd == 快照记录的 /tmp（cwd 恢复链路）", isTmpPath(recreatedShellCWD))
         check("E2E: 恢复布局成功（含 claude --resume 注入）", restoreResult?.ok == true)
