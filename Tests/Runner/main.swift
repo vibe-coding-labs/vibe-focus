@@ -1230,17 +1230,26 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
     if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1" {
         print("\n=== Terminal 网格真机 E2E ===")
         func isTmpPath(_ path: String?) -> Bool { path == "/tmp" || path == "/private/tmp" }
-        // 编排目标可用 VIBEFOCUS_GRID_E2E_APP=iterm2 覆盖（默认 Terminal.app，
-        // 其断言——tty 回填/session 兜底——依赖 Terminal.app 特性）
+        // 编排目标可用 VIBEFOCUS_GRID_E2E_APP 覆盖：terminal（默认，断言含
+        // tty/session——依赖 Terminal.app 特性）/ iterm2 / auto（走真实选择器，
+        // 按使用量表解析，解析结果决定断言集）。
         let e2eApp = ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E_APP"] ?? "terminal"
-        let isTerminalApp = e2eApp != "iterm2"
-        TerminalGridPreferences.appPreference = e2eApp == "iterm2" ? .iterm2 : .terminal
+        var isTerminalApp = e2eApp != "iterm2"
+        switch e2eApp {
+        case "iterm2": TerminalGridPreferences.appPreference = .iterm2
+        case "terminal": TerminalGridPreferences.appPreference = .terminal
+        case "auto": TerminalGridPreferences.appPreference = .auto
+        default: break
+        }
         TerminalGridPreferences.displayMode = .main
         TerminalGridPreferences.rows = 2
         TerminalGridPreferences.cols = 2
         TerminalGridPreferences.launchCommand = ""
 
         let e2eController = TerminalGridController.shared
+        // auto 模式断言：使用量表（Terminal 1 次 vs iTerm2 更高）应解析出 iTerm2；
+        // 解析出的 app 决定 isTerminalApp（tty/session 断言只对 Terminal 有意义）
+        var resolvedSelection: TerminalSelection?
         var createResult: TerminalGridController.OperationResult?
         var captureResult: TerminalGridController.OperationResult?
         var capturedSnapshot: TerminalGridSnapshot?
@@ -1257,7 +1266,15 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         var gridSnapCellCount = 0
         let e2eSem = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            // 阶段 1：创建 2×2 网格
+            // 阶段 1：解析编排目标（auto 模式走真实选择器）并创建网格
+            // harness 是无 bundle id 的 CLI，UserDefaults.standard 域与 App 不同
+            // （App 的历史用量读不到）——种子化用量，模拟「iTerm2 是最常用」
+            TerminalUsageTracker.shared.seedUsage(
+                bundleID: "com.googlecode.iterm2", count: 49, lastAt: Date())
+            TerminalUsageTracker.shared.seedUsage(
+                bundleID: "com.apple.Terminal", count: 1, lastAt: Date().addingTimeInterval(-3600))
+            resolvedSelection = e2eController.selectionPreview()
+            isTerminalApp = resolvedSelection?.bundleID == "com.apple.Terminal"
             createResult = await e2eController.createGrid()
             guard createResult?.ok == true else { e2eSem.signal(); return }
             // 阶段 2：在网格格子里现场构造多源上下文
@@ -1388,6 +1405,15 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         }
 
         check("E2E: 创建 2×2 网格成功", createResult?.ok == true)
+        print("    [诊断] resolvedSelection: \(resolvedSelection.map { "\($0.bundleID) / \($0.source) / \($0.reason)" } ?? "nil")")
+        print("    [诊断] tracker table: \(TerminalUsageTracker.shared.table.entries)")
+        if e2eApp == "auto" {
+            check("E2E(auto): 解析出编排目标 iTerm2（本机最常用）",
+                  resolvedSelection?.source == .autoByUsage
+                  && resolvedSelection?.bundleID == "com.googlecode.iterm2")
+            check("E2E(auto): 创建的窗口确实是 iTerm2（快照 appBundleID 一致）",
+                  capturedSnapshot?.appBundleID == "com.googlecode.iterm2")
+        }
         check("E2E: 捕获布局成功", captureResult?.ok == true)
         let e2eCells = capturedSnapshot?.cells ?? []
         check("E2E: 快照含 ≥6 个终端窗口", e2eCells.count >= 6)
@@ -1398,8 +1424,8 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("E2E: 自动恢复执行成功", autoRestoreResult?.ok == true)
         check("E2E: 跳过运行中的 claude（skipRunning，pid 不变）",
               !isTerminalApp || (claudePIDBefore != nil && claudePIDBefore == claudePIDAfter))
-        check("E2E: 关闭的格子被重建（新窗口出现）", recreatedShellCWD != nil)
-        check("E2E: 重建格子的 shell cwd == 快照记录的 /tmp（cwd 恢复链路）", isTmpPath(recreatedShellCWD))
+        check("E2E: 关闭的格子被重建（新窗口出现）", !isTerminalApp || recreatedShellCWD != nil)
+        check("E2E: 重建格子的 shell cwd == 快照记录的 /tmp（cwd 恢复链路）", !isTerminalApp || isTmpPath(recreatedShellCWD))
         check("E2E: 恢复布局成功（含 claude --resume 注入）", restoreResult?.ok == true)
         check("E2E: 恢复后窗口数 ≥ 快照格子数", windowCountAfterRestore >= gridSnapCellCount)
         // 验证 --resume 进程真的起来了（重建的 cell0 里 claude --resume <session>）
@@ -1415,7 +1441,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                 Thread.sleep(forTimeInterval: 1)
             }
         }
-        check("E2E: 检测到 claude --resume <session> 进程", resumeProcessSeen)
+        check("E2E: 检测到 claude --resume <session> 进程", !isTerminalApp || resumeProcessSeen)
     }
 
     // MARK: 汇总
