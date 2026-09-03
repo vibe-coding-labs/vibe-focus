@@ -17,6 +17,33 @@ extension WindowManager {
     /// - 跨屏移动不走本函数：裸 AX position 写会被 WindowServer clamp 在源屏，跨屏一律
     ///   moveWindowToFrameViaYabai 直写。size 先 position 后的顺序保留：size readback
     ///   在 position 写之前不被跨屏阻塞（task #7 回退教训）。
+    /// AX 尺寸直写（同屏 resize，2026-09-04 混合写入优化）。
+    ///
+    /// ## 场景
+    /// moveWindowToFrameViaYabai 的 resize 段：窗口未跨屏（源屏收窄 / 已达目标屏放大）
+    /// 时 AX 同屏写有效且无进程 fork（~25ms vs yabai fork 40-90ms）。窗口已 float
+    /// （restore/move_to_main 前置）不受 yabai re-tile 影响，AX 写不会被覆盖。
+    /// 跨屏 resize（窗口在 A 屏写 B 屏尺寸）仍须 yabai（裸 AX 被 WindowServer clamp，
+    /// T3 断言），调用方负责按 writeOrder 保证同屏前提，AX 不可写时由调用方 fallback yabai。
+    func resizeViaAX(
+        targetFrame: CGRect,
+        window: AXUIElement,
+        windowID: UInt32,
+        op: String,
+        stage: String
+    ) -> Bool {
+        let outcome = writeSizeWithReadback(
+            targetFrame: targetFrame,
+            window: window,
+            attempts: 2,
+            settleDelayMicros: WindowSettle.axWriteSettleMicros,
+            op: op,
+            stage: stage,
+            windowID: windowID
+        )
+        return outcome.axOK && outcome.matched
+    }
+
     func apply(
         frame targetFrame: CGRect,
         to window: AXUIElement,

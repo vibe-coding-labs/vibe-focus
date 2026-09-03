@@ -42,6 +42,10 @@ extension WindowManager {
     /// - 段间等生效（2026-09-03 乱蹦二次修复）：fork 返回 ≠ 窗口服务已应用——仅按
     ///   发令排序不够（实测 move 落地时 resize 尚未生效，yabai 把仍全屏尺寸的窗口
     ///   clamp 到目标屏可视区顶边），第一段必须轮询到效果可观测再发第二段。
+    /// - resize 走 AX（2026-09-04 混合写入）：resize 段窗口未跨屏（源屏收窄/已达
+    ///   目标屏放大），AX 同屏写有效且无进程 fork（~25ms vs yabai fork 40-90ms）；
+    ///   AX 不可写（属性只读/解析失败）时 fallback yabai resize。move 恒走 yabai
+    ///   （跨屏唯一可靠通道）。
     /// - 段二后轮询验证（origin+size 双维度，25ms 节拍、400ms 预算，早收敛早返回；
     ///   未收敛重写一次）——2026-09-03 由固定 400ms settle 改轮询（水感优化）。
     /// - 按偏差补发（2026-09-03 clamp 修复）：收敛循环的每次重写读当前 bounds，origin
@@ -98,9 +102,31 @@ extension WindowManager {
                 ])
             }
         }
+        // AX resize 通道（同屏 resize 无 fork）：窗口 AX 解析失败/属性不可写时 fallback yabai。
+        // 解析顺序：yabai queryWindow(pid) → findWindowByPID（queryWindow 走流程内缓存常命中）。
+        func resolveAXForResize() -> AXUIElement? {
+            guard let info = spaceController.queryWindow(windowID: windowID, ignoreCache: false),
+                  let pid = info.pid.map({ pid_t($0) }) else { return nil }
+            return findWindowByPID(pid, windowID: windowID)
+        }
+        let axWindow = resolveAXForResize().flatMap { ax -> AXUIElement? in
+            isAttributeSettable(ax, attribute: kAXSizeAttribute) ? ax : nil
+        }
+        log("[WindowManager] moveWindowToFrameViaYabai: resize channel", level: .debug, fields: [
+            "op": op, "stage": stage, "windowID": String(windowID),
+            "channel": axWindow != nil ? "ax" : "yabai"
+        ])
+        // AX size 写（同屏有效）+ CGWindowList 读回；AX 不可写时 yabai resize。
+        func applyResizeBestChannel() {
+            if let ax = axWindow {
+                _ = resizeViaAX(targetFrame: frame, window: ax, windowID: windowID, op: op, stage: stage)
+            } else {
+                applyResize()
+            }
+        }
         switch writeOrder {
         case .resizeThenMove:
-            applyResize()
+            applyResizeBestChannel()
             waitForPhase("resize", observed: {
                 guard let current = cgWindowBounds(for: windowID) else { return false }
                 return CoordinateKit.isSizeConverged(actual: current.size, target: frame.size, tolerance: frameTolerance)
@@ -112,7 +138,7 @@ extension WindowManager {
                 guard let current = cgWindowBounds(for: windowID) else { return false }
                 return CoordinateKit.originDrift(current.origin, frame.origin) <= frameTolerance
             })
-            applyResize()
+            applyResizeBestChannel()
         }
         // 段二 + 全帧收敛验证（轮询版：写→每 25ms 读，一收敛即返回，400ms 预算兜底）。
         // 重写按偏差补发缺的那段（origin✓size✗→resize / origin✗size✓→move / 全✗按写序），
@@ -129,7 +155,7 @@ extension WindowManager {
                 let sizeOK = current.map { CoordinateKit.isSizeConverged(actual: $0.size, target: frame.size, tolerance: frameTolerance) } ?? false
                 switch (originOK, sizeOK) {
                 case (true, false):
-                    applyResize()
+                    applyResizeBestChannel()
                 case (false, true):
                     applyMove()
                 case (false, false):
