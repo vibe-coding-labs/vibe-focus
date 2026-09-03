@@ -8,7 +8,7 @@ enum ShellRunner {
     static let commandTimeout: TimeInterval = 2.0
 
     @discardableResult
-    static func run(executable: String, arguments: [String]) -> YabaiClient.YabaiResult? {
+    static func run(executable: String, arguments: [String], timeout: TimeInterval = commandTimeout) -> YabaiClient.YabaiResult? {
         // P-INST-49: ShellRunner fork 耗时（ps/pgrep/外部命令底层 fork；被 runShellCommand 包装，findWindowByTerminalContext 进程树/applyViaTTY 等多路径调用；slow-op ≥50ms warn 抓阻塞或超时=2000ms）。
         #if PERF_INSTRUMENT
         let shellStart = Date()
@@ -43,7 +43,7 @@ enum ShellRunner {
         // 与 YabaiClient.commandTimeout(2.0s) 对齐：超时后 terminate 并返回 nil，调用方走 fallback。
         let sem = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in sem.signal() }
-        if sem.wait(timeout: .now() + commandTimeout) == .timedOut {
+        if sem.wait(timeout: .now() + timeout) == .timedOut {
             process.terminate()
             return nil
         }

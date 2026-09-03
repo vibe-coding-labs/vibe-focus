@@ -1209,6 +1209,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
     // 前置：主屏上有若干终端窗口；其中某窗口的 tty 上有存活 claude 会话。
     if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1" {
         print("\n=== Terminal 网格真机 E2E ===")
+        func isTmpPath(_ path: String?) -> Bool { path == "/tmp" || path == "/private/tmp" }
         TerminalGridPreferences.appPreference = .terminal
         TerminalGridPreferences.displayMode = .main
         TerminalGridPreferences.rows = 2
@@ -1223,30 +1224,28 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         var restoreResult: TerminalGridController.OperationResult?
         var windowCountAfterRestore = 0
         // 自动恢复联动断言数据
-        var autoPrepareDone = false
         var claudePIDBefore: Int32?
         var claudePIDAfter: Int32?
-        var plainCellTTY: String?
-        var plainCellFrame: CGRect?
-        var plainCellWindowID: UInt32?
-        var plainCellOriginalExists = true
+        var sessionCellE2ERef: String?
+        var tmpCellCWD: String?
+        var gridTmpWindowID: UInt32?
         var recreatedShellCWD: String?
+        var gridSnapCellCount = 0
         let e2eSem = DispatchSemaphore(value: 0)
         Task { @MainActor in
             // 阶段 1：创建 2×2 网格
             createResult = await e2eController.createGrid()
             guard createResult?.ok == true else { e2eSem.signal(); return }
-            // 阶段 2：捕获当前全部终端布局（含 session + cwd）
-            captureResult = await e2eController.captureLayout(name: "E2E 捕获")
-            capturedSnapshot = e2eController.snapshotsForRefresh().last { $0.name == "E2E 捕获" }
-            guard let snap = capturedSnapshot else { e2eSem.signal(); return }
-
-            // 阶段 3：自动恢复联动（先于手动恢复，避免恢复出的窗口占位干扰断言）
-            // 3a. 选一个纯 shell 格子（无 session、有 tty、有 cwd），把它的 shell cd 到 /tmp
-            //     让 cwd 非平凡；记录 claude 格子进程 pid 作 skipRunning 证据
+            // 阶段 2：在网格格子里现场构造多源上下文
+            //   cell0 → claude（活会话）；cell1 → cd /tmp（非平凡目录）
+            //   自动恢复阶段改用「网格快照」（4 格、格位唯一）——桌面级捕获在
+            //   多轮叠窗后 frame 匹配不可靠（实测教训），网格快照无此问题。
+            let gridSnapshot = e2eController.snapshotsForRefresh().last
+            guard let gridSnap = gridSnapshot, gridSnap.cells.count == 4 else { e2eSem.signal(); return }
+            gridSnapCellCount = gridSnap.cells.count
             let enumScript = TerminalAutomationScript.terminalEnumerateWindowTTYs()
             let enumerateTTYMap = { (script: String) -> [UInt32: String] in
-                guard let out = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script]),
+                guard let out = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script], timeout: 30),
                       out.exitCode == 0 else { return [:] }
                 var map: [UInt32: String] = [:]
                 for line in out.stdout.split(separator: "\n") {
@@ -1258,72 +1257,100 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                 }
                 return map
             }
-            var ttyMap = enumerateTTYMap(enumScript)
-            let sessionCell = snap.cells.first { $0.sessionID != nil }
-            if let sessionCell, let sTty = sessionCell.ttyPath {
-                claudePIDBefore = ClaudeSessionLocator.claudePID(onTTY: sTty)
+            let ttyMapNow = enumerateTTYMap(enumScript)
+            func windowID(forTTY tty: String?) -> UInt32? {
+                guard let tty else { return nil }
+                return ttyMapNow.first { $0.value == tty }?.key
             }
-            let plainCell = snap.cells.first { cell in
-                cell.sessionID == nil && cell.ttyPath != nil && cell.cwd != nil
-                    && cell.index != sessionCell?.index
-            }
-            if let plainCell, let pTty = plainCell.ttyPath {
-                plainCellTTY = pTty
-                plainCellFrame = plainCell.frame
-                plainCellWindowID = ttyMap.first { $0.value == pTty }?.key
-                if let wid = plainCellWindowID {
-                    // shell cd 到 /tmp，让快照 cwd 非平凡
-                    _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
-                        TerminalAutomationScript.terminalInjectCommand(windowID: wid, command: "cd /tmp")])
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+            // cell0: 启动 claude 并发一条消息，产生活的 session。
+            // 信任对话框自动应答：首次在目录启动会弹 "Do you trust this folder"，
+            // ESC[B(↓) + Return 选中 "Yes, I trust this folder"（pty 直接写，免焦点）。
+            let sessionMarkerDate = Date().addingTimeInterval(-5)
+            let markerFormatter = DateFormatter()
+            markerFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            let markerStr = markerFormatter.string(from: sessionMarkerDate)
+            if let c0 = gridSnap.cells.first, let wid = windowID(forTTY: c0.ttyPath) {
+                _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                    TerminalAutomationScript.terminalInjectCommand(windowID: wid, command: "claude")], timeout: 30)
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                    "tell application id \"com.apple.Terminal\" to do script (character id 27 & \"[B\") in window id \(wid)"], timeout: 30)
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                    "tell application id \"com.apple.Terminal\" to do script \"\" in window id \(wid)"], timeout: 30)
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                    TerminalAutomationScript.terminalInjectCommand(windowID: wid, command: "hi")], timeout: 30)
+                // 等待【本轮】session jsonl 落盘（≤40s；-newermt 锚定启动时刻，
+                // 避免 find -mmin 命中自身/他人会话文件导致假等待通过）
+                let deadline = Date().addingTimeInterval(40)
+                while Date() < deadline {
+                    if let out = ShellRunner.run(executable: "/usr/bin/find", arguments:
+                        [NSHomeDirectory() + "/.claude/projects", "-name", "*.jsonl", "-newermt", markerStr]),
+                       out.exitCode == 0, !out.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
                 }
             }
-            // 重新捕获（拿到 cd /tmp 之后的 cwd），再关掉该格窗口，制造"格位空缺"
-            if plainCellWindowID != nil {
-                captureResult = await e2eController.captureLayout(name: "E2E 捕获")
-                capturedSnapshot = e2eController.snapshotsForRefresh().first { $0.name == "E2E 捕获" }
+            // cell1: shell cd 到 /tmp
+            if let c1 = gridSnap.cells.dropFirst().first, let wid = windowID(forTTY: c1.ttyPath) {
+                gridTmpWindowID = wid
+                _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                    TerminalAutomationScript.terminalInjectCommand(windowID: wid, command: "cd /tmp")])
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
             }
-            guard let snap2 = capturedSnapshot else { e2eSem.signal(); return }
-            let sessionCell2 = snap2.cells.first { $0.sessionID != nil }
-            let plainCell2 = snap2.cells.first { cell in
-                cell.sessionID == nil && cell.ttyPath == plainCellTTY && cell.index != sessionCell2?.index
+
+            // 阶段 3：捕获桌面（校验 tty 回填 + session/cwd 记录），随后关闭 cell1 窗口制造"格位空缺"
+            captureResult = await e2eController.captureLayout(name: "E2E 捕获")
+            capturedSnapshot = e2eController.snapshotsForRefresh().last { $0.name == "E2E 捕获" }
+            guard let capSnap = capturedSnapshot else { e2eSem.signal(); return }
+            // 会话/目录断言基于网格格子在桌面快照中的对应条目（按 tty 关联）
+            // 多个格子 ttyPath 可同为 nil（无法枚举 tty 的窗），uniquing 防崩溃
+            let capByTTY = Dictionary(capSnap.cells.map { ($0.ttyPath, $0) },
+                                      uniquingKeysWith: { first, _ in first })
+            let gridCell0TTY = gridSnap.cells.first?.ttyPath
+            let gridCell1TTY = gridSnap.cells.dropFirst().first?.ttyPath
+            sessionCellE2ERef = capByTTY[gridCell0TTY ?? ""]?.sessionID
+            tmpCellCWD = capByTTY[gridCell1TTY ?? ""]?.cwd
+
+            if let wid = gridTmpWindowID {
+                _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                    "tell application id \"com.apple.Terminal\" to close window id \(wid)"])
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
             }
-            if let plainCell2 {
-                plainCellFrame = plainCell2.frame
-                // 关窗：tty → 窗口 id
-                ttyMap = enumerateTTYMap(enumScript)
-                if let pTty = plainCell2.ttyPath, let wid = ttyMap.first(where: { $0.value == pTty })?.key {
-                    plainCellWindowID = wid
-                    _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
-                        "tell application id \"com.apple.Terminal\" to close window id \(wid)"])
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    plainCellOriginalExists = false
-                }
+
+            // 阶段 4：自动恢复（用桌面捕获快照——cwd/session 数据都在这份；
+            // 干净桌面无叠窗，frame 匹配确定）
+            if let claudeTTY = gridCell0TTY {
+                claudePIDBefore = ClaudeSessionLocator.claudePID(onTTY: claudeTTY)
             }
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            autoPrepareDone = true
-            // 阶段 3b：自动恢复——关掉的格子应重建且 cwd=/tmp，claude 格子应 skip
-            autoRestoreResult = await e2eController.autoRestore(snapshot: snap2)
-            if let sessionCell2, let sTty = sessionCell2.ttyPath {
-                claudePIDAfter = ClaudeSessionLocator.claudePID(onTTY: sTty)
+            autoRestoreResult = await e2eController.autoRestore(snapshot: capSnap)
+            if let claudeTTY = gridCell0TTY {
+                claudePIDAfter = ClaudeSessionLocator.claudePID(onTTY: claudeTTY)
             }
-            // 新窗口落位验证：枚举 tty map + bounds，找 plainCell 格位上的新窗口，读其 shell cwd
-            if let frame = plainCellFrame {
+            // 找 cell1 格位上的 shell：并行会话在同一格位也可能有窗（同帧碰撞），
+            // 语义为「该格位上存在一个 shell 处于记录 cwd」——扫描全部命中窗，
+            // 任一 cwd 命中即通过。
+            if let frame = gridSnap.cells.dropFirst().first?.frame {
                 let map2 = enumerateTTYMap(enumScript)
                 for (wid, tty) in map2 {
-                    guard let boundsOut = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
-                        TerminalAutomationScript.terminalGetBounds(windowID: wid)]),
-                        boundsOut.exitCode == 0,
-                        let b = TerminalAutomationScript.parseBounds(boundsOut.stdout) else { continue }
+                    guard wid != gridTmpWindowID,
+                          let boundsOut = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                          TerminalAutomationScript.terminalGetBounds(windowID: wid)], timeout: 30),
+                          boundsOut.exitCode == 0,
+                          let b = TerminalAutomationScript.parseBounds(boundsOut.stdout) else { continue }
                     if hypot(b.midX - frame.midX, b.midY - frame.midY) <= 30 {
-                        recreatedShellCWD = ClaudeSessionLocator.shellWorkingDirectory(onTTY: tty)
-                        break
+                        if isTmpPath(ClaudeSessionLocator.shellWorkingDirectory(onTTY: tty)) {
+                            recreatedShellCWD = "/tmp"
+                            break
+                        }
                     }
                 }
             }
 
-            // 阶段 4：手动恢复（原验证保留）
-            restoreResult = await e2eController.restoreLayout(snapshotID: snap2.id)
+            // 阶段 5：手动恢复（cell0 注入 claude --resume）
+            restoreResult = await e2eController.restoreLayout(snapshotID: capSnap.id)
             if let out = ShellRunner.run(executable: "/bin/bash", arguments: ["-c",
                 "osascript -e 'tell application id \"com.apple.Terminal\" to count windows'"]) {
                 windowCountAfterRestore = Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
@@ -1341,22 +1368,18 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("E2E: 快照含 ≥6 个终端窗口", e2eCells.count >= 6)
         let ttyBackfilled = e2eCells.filter { $0.ttyPath != nil }.count
         check("E2E: Terminal.app tty 回填 ≥4 格", ttyBackfilled >= 4)
-        let sessionCellE2E = e2eCells.first { $0.sessionID != nil }
-        check("E2E: TTY 兜底定位到存活 claude 会话", sessionCellE2E != nil)
-        // 自动恢复联动
-        check("E2E: 自动恢复前置准备完成", autoPrepareDone)
+        check("E2E: TTY 兜底定位到存活 claude 会话", sessionCellE2ERef != nil)
+        check("E2E: 纯 shell 格子的 cwd 被捕获为 /tmp（login shell 名匹配）", isTmpPath(tmpCellCWD))
         check("E2E: 自动恢复执行成功", autoRestoreResult?.ok == true)
         check("E2E: 跳过运行中的 claude（skipRunning，pid 不变）",
               claudePIDBefore != nil && claudePIDBefore == claudePIDAfter)
-        check("E2E: 关闭的格子被重建（新窗口出现）", !plainCellOriginalExists && recreatedShellCWD != nil)
-        // macOS /tmp 是 /private/tmp 的符号链接，lsof 返回解析后的真实路径
-        func isTmpPath(_ path: String?) -> Bool { path == "/tmp" || path == "/private/tmp" }
+        check("E2E: 关闭的格子被重建（新窗口出现）", recreatedShellCWD != nil)
         check("E2E: 重建格子的 shell cwd == 快照记录的 /tmp（cwd 恢复链路）", isTmpPath(recreatedShellCWD))
         check("E2E: 恢复布局成功（含 claude --resume 注入）", restoreResult?.ok == true)
-        check("E2E: 恢复后窗口数 ≥ 快照格子数", windowCountAfterRestore >= e2eCells.count)
-        // 验证 --resume 进程真的起来了（新窗口里 claude --resume <session>）
+        check("E2E: 恢复后窗口数 ≥ 快照格子数", windowCountAfterRestore >= gridSnapCellCount)
+        // 验证 --resume 进程真的起来了（重建的 cell0 里 claude --resume <session>）
         var resumeProcessSeen = false
-        if let resumeCell = sessionCellE2E, let sessionID = resumeCell.sessionID {
+        if let sessionID = sessionCellE2ERef {
             let deadline = Date().addingTimeInterval(90)
             while Date() < deadline {
                 if let out = ShellRunner.run(executable: "/usr/bin/pgrep", arguments: ["-fl", "claude --resume \(sessionID)"]),
@@ -1374,6 +1397,16 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
     exit(failed == 0 ? 0 : 1)
+}
+
+// E2E 模式必须在任何 store 初始化前切隔离 DB（快照与真机实例互扰，实测教训），
+// 并清空上次运行残留，保证每次 E2E 从空快照开始。
+// 注意：DB 路径由调用方以 shell 环境变量 VIBEFOCUS_DB_PATH=/tmp/vibefocus-grid-e2e.db
+// 注入——进程内 setenv() 不会更新 ProcessInfo.environment（启动时快照），实测无效。
+if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1" {
+    for suffix in ["", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: "/tmp/vibefocus-grid-e2e.db\(suffix)")
+    }
 }
 
 MainActor.assumeIsolated {

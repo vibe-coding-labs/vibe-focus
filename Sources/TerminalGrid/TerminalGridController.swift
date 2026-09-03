@@ -65,7 +65,7 @@ final class TerminalGridController {
                 op: op
             )
             guard let windowID = placement.cgWindowID else {
-                let detail = lastScriptError ?? "osascript 执行失败"
+                let detail = lastScriptError ?? "osascript 执行失败或超时"
                 log("[TerminalGrid] createGrid cell failed", level: .error, fields: [
                     "op": op, "index": String(index), "detail": detail
                 ])
@@ -480,7 +480,9 @@ final class TerminalGridController {
 
     private func runScript(_ script: String) async -> YabaiClient.YabaiResult? {
         let result = await Task.detached(priority: .userInitiated) {
-            ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script])
+            // 30s：建窗脚本含等窗轮询 + 多窗环境下 AppleScript 枚举，远超 ShellRunner
+            // 默认 2s（为 yabai 短命令设计）；超时会掐死半执行脚本泄漏孤儿窗（真机实证）。
+            ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script], timeout: 30)
         }.value
         if let result, result.exitCode != 0, !result.stderr.isEmpty {
             lastScriptError = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)

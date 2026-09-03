@@ -13,6 +13,14 @@ final class WindowStateStore {
     init(dbPath: String? = nil) {
         if let dbPath {
             self.dbPath = dbPath
+        } else if let envPath = ProcessInfo.processInfo.environment["VIBEFOCUS_DB_PATH"], !envPath.isEmpty {
+            // 测试隔离：真机 E2E（VIBEFOCUS_GRID_E2E=1）等场景用独立 DB，
+            // 避免与真机实例共享快照互相触发（多会话并行实测互扰源）。
+            let dir = (envPath as NSString).deletingLastPathComponent
+            if !dir.isEmpty {
+                try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            }
+            self.dbPath = envPath
         } else {
             let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus")
             if !FileManager.default.fileExists(atPath: dir) {
