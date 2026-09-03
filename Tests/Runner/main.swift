@@ -245,11 +245,10 @@ final class FakeAuditor: RestoreAuditing {
     }
     do {
         let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 5)
-        ch.focusResult = false
         ch.refocusResult = true
         let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
-        check("守卫编排: 守卫不预判 SA（与生产行为逐分支等价）——直切自然失败后降级聚焦带动成功",
-              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "focus", "refocus", "clearCache"])
+        check("守卫编排: SA 不可用 → 预判跳过直切直接降级聚焦带动（省必败 focusSpace fork）",
+              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "refocus", "clearCache"])
     }
 
     // MARK: sourceSpacePreSwitch（4-pre 预切回决策，真实实现）

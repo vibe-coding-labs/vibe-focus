@@ -22,7 +22,8 @@ extension SpaceController {
         scriptingAdditionRecoverySucceeded = false
         // 清除持久化失败缓存，否则 24 小时内手动按钮也会被阻断
         UserDefaults.standard.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
-        _ = attemptScriptingAdditionRecovery(trigger: "manual", operationID: op)
+        // 手动触发：同步等待提权弹框（用户主动行为，等弹框是预期交互）
+        _ = attemptScriptingAdditionRecovery(trigger: "manual", operationID: op, adminWaitsForUser: true)
         // 加载成功后刷新可用性
         if scriptingAdditionRecoverySucceeded {
             refreshAvailability(force: true)
@@ -104,7 +105,7 @@ extension SpaceController {
         }
     }
 
-    func attemptScriptingAdditionRecovery(trigger: String, operationID: String? = nil) -> Bool {
+    func attemptScriptingAdditionRecovery(trigger: String, operationID: String? = nil, adminWaitsForUser: Bool = false) -> Bool {
         let op = operationID ?? "none"
         // P-INST-34: recovery 总耗时（yabai --load-sa fork + 可能的 admin 权限对话框，发生时可能秒级；偶发，result 见各路径 log 用 op 关联，归因 runYabaiVariants durationMs 中 recovery vs fork）。
         #if PERF_INSTRUMENT
@@ -177,9 +178,26 @@ extension SpaceController {
             return true
         }
 
-        // 使用 macOS 原生密码对话框请求管理员权限加载 scripting-addition
+        // 使用 macOS 原生密码对话框请求管理员权限加载 scripting-addition。
+        // 两种模式（2026-09-03 防卡死整改）：
+        // - adminWaitsForUser=true（设置面板手动按钮）：同步弹框等待——用户主动触发，
+        //   等弹框是预期交互，完成后立即刷新可用性；
+        // - false（hook/热键路径自动恢复）：提权挪后台队列执行，本调用立即 return
+        //   false 如实走降级通道——历史上同步弹框会无限期挂住 toggle 热键（用户不响应
+        //   授权框则窗口操作整段卡死，SecurityAgent 实测挂起）。后台完成后经主队列
+        //   收敛状态，下次操作即享 SA 直切。
+        let adminCommand = "\(yabaiPath) --load-sa"
+        if !adminWaitsForUser {
+            log(
+                "[SpaceController] scripting-addition recovery: admin prompt deferred to background",
+                fields: ["op": op]
+            )
+            scheduleBackgroundAdminRecovery(command: adminCommand, operationID: op)
+            return false
+        }
+
         let (privSuccess, privOutput) = executeWithAdminPrivileges(
-            "\(yabaiPath) --load-sa",
+            adminCommand,
             operationID: op
         )
 
@@ -267,6 +285,69 @@ extension SpaceController {
             ]
         )
         return (true, output)
+    }
+
+    /// 后台提权恢复（adminWaitsForUser=false 的执行半区）：utility 队列跑 osascript
+    /// （NSAppleScript 需主线程，进程方式天然线程安全；密码弹框阻塞的是后台线程），
+    /// 完成后经主队列收敛状态。判定与状态迁移与同步路径逐字对齐。
+    private func scheduleBackgroundAdminRecovery(command: String, operationID: String) {
+        // 转义同 executeWithAdminPrivileges（防 AppleScript 注入）
+        let escapedCommand = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "do shell script \"\(escapedCommand)\" with administrator privileges"
+        DispatchQueue.global(qos: .utility).async {
+            let output: String
+            let success: Bool
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", script]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            do {
+                try process.run()
+                process.waitUntilExit()
+                success = process.terminationStatus == 0
+                output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            } catch {
+                success = false
+                output = error.localizedDescription
+            }
+            DispatchQueue.main.async {
+                self.finishBackgroundAdminRecovery(success: success, output: output, operationID: operationID)
+            }
+        }
+    }
+
+    /// 后台提权完成的状态收敛（主队列）。成功/失败的状态迁移与同步路径
+    /// （attemptScriptingAdditionRecovery 的 admin 分支）逐字对齐。
+    private func finishBackgroundAdminRecovery(success: Bool, output: String, operationID: String) {
+        if success {
+            scriptingAdditionRecoverySucceeded = true
+            canControlSpaces = true
+            lastErrorMessage = nil
+            log(
+                "[SpaceController] scripting-addition recovered via admin privileges (background)",
+                fields: [
+                    "op": operationID,
+                    "output": truncateForLog(output, limit: 120)
+                ]
+            )
+            refreshAvailability(force: true)
+            return
+        }
+        log(
+            "[SpaceController] scripting-addition recovery failed: admin privilege dialog cancelled or error (background)",
+            level: .error,
+            fields: [
+                "op": operationID,
+                "detail": truncateForLog(output, limit: 220)
+            ]
+        )
+        // 持久化记录失败，避免每次重启都弹管理员权限窗口（24 小时后过期重试）
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "scriptingAdditionRecoveryFailedAt")
+        lastErrorMessage = "跨工作区恢复需要管理员权限来加载 yabai scripting-addition。可以在设置中点击\"加载\"按钮手动触发。"
     }
 
     func locateYabai() -> String? {

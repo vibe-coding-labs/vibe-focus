@@ -105,6 +105,10 @@ enum RestoreSwitchOrchestration {
     /// 拖走时切回 preMoveSpace。切回顺序与 switchSourceSpace 相同（SA 直切优先，
     /// 失败降级聚焦带动；此处 exclude 被恢复窗口自身——它已在 preMoveSpace 上，
     /// 聚焦它会抵消守卫）。切回成功清查询缓存。
+    /// SA 不可用（canControlSpaces=false，与 switchSourceSpace 对称的运行时预判）
+    /// 时跳过直切直接降级——直切必失败，白付 focusSpace fork + availability 刷新 +
+    /// SA 恢复判断链（实测 ~50ms）；SA 若已恢复，focusSpace 内部 availability 刷新
+    /// 会自动翻正，预判最多让单次守卫少试一条必败通道，无正确性损失。
     static func refocusPerspective(
         channels: any RestoreSpaceChanneling,
         preMoveSpace: Int,
@@ -114,7 +118,10 @@ enum RestoreSwitchOrchestration {
         guard let postMoveSpace = channels.currentSpaceIndex(), postMoveSpace != preMoveSpace else {
             return .noDrift
         }
-        var refocused = channels.focusSpace(.yabaiIndex(preMoveSpace), operationID: operationID)
+        var refocused = false
+        if channels.canControlSpaces {
+            refocused = channels.focusSpace(.yabaiIndex(preMoveSpace), operationID: operationID)
+        }
         if !refocused {
             refocused = channels.refocusWindowOnSpace(preMoveSpace, excludingWindowID: excluded, operationID: operationID)
         }
