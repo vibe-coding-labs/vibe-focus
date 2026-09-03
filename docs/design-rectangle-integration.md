@@ -158,6 +158,19 @@ layer 0 + isOnScreen）→ 按 y/x 聚类反推 rows×cols → 每窗：
   ~/.vibefocus/vibefocus.db 的快照 KV 成为交叉触发源（我留下的测试快照被对方实例
   恢复出 27 扇窗）。**多会话并行时，测试快照用完必须即删**。
 
+**编排终端自动选择（feat/terminal-auto-select，2026-09-04）✅**
+- 需求：编排目标必须对准用户实际常用的终端，而不是盲用 Terminal.app/iTerm2。
+- **使用量追踪**（TerminalUsageTracker）：监听 NSWorkspace 激活事件，对已知终端
+  （TerminalRegistry 9 款）累计激活次数 + 最近时间，UserDefaults JSON 持久化。
+- **选择器**（TerminalSelectionResolver 纯函数）：手动指定 > 自动（支持编排集合内，
+  当前在运行优先 → 激活计数 → 最近使用）> 兜底 Terminal.app。支持面三级：
+  Terminal=full、iTerm2=partial（无 tty/无 CG 注入，自动恢复降级）、其余=none。
+- **UI**：选择器「自动（最近常用）/ Terminal.app · 完整 / iTerm2 · 部分」+「自动检测
+  结果」行（含理由与重新检测）+ 常用非支持终端橙色提示（≥5 次激活触发）。
+- 真机验证：激活 iTerm2×2 / Terminal×1 → 量表如实记录 → 设置页显示
+  "自动：最近常用（累计 22 次激活，当前在运行）"。iTerm2 注入限制已在选择理由与
+  文案中明示。
+
 **遗留待用户项 ⏸**
 - **⌃⌥ 摆位热键 AX 写 E2E**：唯一剩余验收项。重装打破 TCC 辅助功能授权（每次重装
   都复现），重新授权需用户在系统设置输一次密码。链路其余环节已真机验证：热键触发

@@ -121,6 +121,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
             TerminalGridController.shared.runAutoRestoreIfEnabled()
         }
+        // 终端使用量追踪（「自动：最近常用」编排目标的数据源）
+        TerminalUsageTracker.shared.start()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppBecameActive),

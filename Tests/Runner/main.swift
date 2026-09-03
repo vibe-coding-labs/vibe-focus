@@ -1204,7 +1204,27 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               == [.inject(windowID: 201), .create])
     }
 
-    // MARK: Terminal 网格真机 E2E（仅 VIBEFOCUS_GRID_E2E=1 时运行）
+    // MARK: 编排终端选择器（feat/terminal-auto-select，真实源码）
+
+    do {
+        let all = [
+            TerminalSelectionCandidate(bundleID: "com.apple.Terminal", name: "Terminal.app", support: .full, usageCount: 0, lastUsedAt: nil, isRunning: true),
+            TerminalSelectionCandidate(bundleID: "com.googlecode.iterm2", name: "iTerm2", support: .partial, usageCount: 0, lastUsedAt: nil, isRunning: false),
+            TerminalSelectionCandidate(bundleID: "dev.warp.Warp-Stable", name: "Warp", support: .none, usageCount: 0, lastUsedAt: nil, isRunning: false)
+        ]
+        check("选择器: 手动指定优先", TerminalSelectionResolver.resolve(manualBundleID: "com.googlecode.iterm2", candidates: all).bundleID == "com.googlecode.iterm2")
+        check("选择器: 手动 partial 支持级别标注正确",
+              TerminalSelectionResolver.resolve(manualBundleID: "com.googlecode.iterm2", candidates: all).reason.contains("部分支持"))
+        check("选择器: 自动兜底 Terminal.app",
+              TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: all).bundleID == "com.apple.Terminal")
+        check("选择器: 未知手动目标不空引用",
+              TerminalSelectionResolver.resolve(manualBundleID: "com.unknown", candidates: all).bundleID == "com.apple.Terminal")
+        check("选择器: 支持面查询（未知终端 → none）",
+              TerminalSelectionResolver.supportLevel(forBundleID: "dev.warp.Warp-Stable") == .none
+              && TerminalSelectionResolver.supportLevel(forBundleID: "com.apple.Terminal") == .full)
+    }
+
+        // MARK: Terminal 网格真机 E2E（仅 VIBEFOCUS_GRID_E2E=1 时运行）
     // 会真实创建 Terminal 窗口、调用 osascript/yabai/claude，普通门禁不跑。
     // 前置：主屏上有若干终端窗口；其中某窗口的 tty 上有存活 claude 会话。
     if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1" {

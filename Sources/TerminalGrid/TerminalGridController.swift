@@ -527,18 +527,48 @@ final class TerminalGridController {
         return primaryScreen()
     }
 
+    /// 最近一次编排目标选择（设置页预览/日志用）
+    private(set) var lastTerminalSelection: TerminalSelection?
+
+    /// 采集候选观测并解析编排目标（设置页预览与 createGrid 共用同一逻辑）
+    func selectionPreview() -> TerminalSelection {
+        let runningIDs = Set(
+            NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier }
+        )
+        let usageRank = TerminalUsageTracker.shared.table.ranked()
+        let usageCounts = Dictionary(uniqueKeysWithValues: usageRank.map { ($0.bundleID, $0.count) })
+        let lastUsed = Dictionary(usageRank.map { ($0.bundleID, $0.lastAt) },
+                                  uniquingKeysWith: { first, _ in first })
+
+        let candidates = TerminalSelectionResolver.supportTable.keys.sorted().map { bundleID in
+            TerminalSelectionCandidate(
+                bundleID: bundleID,
+                name: TerminalSelectionResolver.knownNames[bundleID] ?? bundleID,
+                support: TerminalSelectionResolver.supportLevel(forBundleID: bundleID),
+                usageCount: usageCounts[bundleID] ?? 0,
+                lastUsedAt: lastUsed[bundleID],
+                isRunning: runningIDs.contains(bundleID)
+            )
+        }
+        let manualBundleID: String? = {
+            switch TerminalGridPreferences.appPreference {
+            case .auto: return nil
+            case .terminal: return "com.apple.Terminal"
+            case .iterm2: return "com.googlecode.iterm2"
+            }
+        }()
+        return TerminalSelectionResolver.resolve(manualBundleID: manualBundleID, candidates: candidates)
+    }
+
     private func resolveAppBundleID() -> String? {
-        let iTermRunning = NSWorkspace.shared.runningApplications.contains {
-            $0.bundleIdentifier == "com.googlecode.iterm2"
-        }
-        switch TerminalGridPreferences.appPreference {
-        case .terminal:
-            return "com.apple.Terminal"
-        case .iterm2:
-            return "com.googlecode.iterm2"
-        case .auto:
-            return iTermRunning ? "com.googlecode.iterm2" : "com.apple.Terminal"
-        }
+        let selection = selectionPreview()
+        lastTerminalSelection = selection
+        log("[TerminalGrid] terminal selected", fields: [
+            "bundleID": selection.bundleID,
+            "source": String(describing: selection.source),
+            "reason": selection.reason
+        ])
+        return selection.bundleID
     }
 
     /// CGWindowList bounds（Quartz）→ 所属 displayID（复用 WindowManager 判定语义）

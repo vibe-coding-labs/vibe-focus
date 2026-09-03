@@ -53,6 +53,8 @@ public struct SettingsView: View {
     @State var gridSnapshots: [TerminalGridSnapshot] = []
     @State var gridAutoRestoreEnabled = TerminalGridPreferences.autoRestoreEnabled
     @State var gridAutoRestoreSnapshotID: String? = TerminalGridPreferences.autoRestoreSnapshotID
+    @State var gridSelectionPreview: TerminalSelection?
+    @State var gridFavoriteWarning: String?
 
     // Codex CLI Hook 安装状态
     @State var codexInstallMessage: String?
@@ -126,6 +128,7 @@ public struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     workspaceSection
                     terminalGridSection
+                        .onAppear { refreshSelectionInfo() }
                     overlaySection
                 }
             }

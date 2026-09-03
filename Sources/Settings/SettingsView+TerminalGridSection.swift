@@ -47,16 +47,16 @@ extension SettingsView {
 
             Divider()
 
-            SettingsRow(title: "终端应用", detail: "auto = iTerm2 在运行则用 iTerm2，否则 Terminal.app") {
+            SettingsRow(title: "终端应用", detail: selectionDetailText) {
                 Picker("", selection: Binding(
                     get: { gridAppPreference },
-                    set: { gridAppPreference = $0; TerminalGridPreferences.appPreference = $0 }
+                    set: { gridAppPreference = $0; TerminalGridPreferences.appPreference = $0; refreshSelectionInfo() }
                 )) {
-                    Text("自动").tag(TerminalGridPreferences.AppPreference.auto)
-                    Text("Terminal.app").tag(TerminalGridPreferences.AppPreference.terminal)
-                    Text("iTerm2").tag(TerminalGridPreferences.AppPreference.iterm2)
+                    Text("自动（最近常用）").tag(TerminalGridPreferences.AppPreference.auto)
+                    Text("Terminal.app · 完整").tag(TerminalGridPreferences.AppPreference.terminal)
+                    Text("iTerm2 · 部分").tag(TerminalGridPreferences.AppPreference.iterm2)
                 }
-                .frame(width: 160)
+                .frame(width: 190)
                 .labelsHidden()
             }
 
@@ -95,11 +95,37 @@ extension SettingsView {
                 Button {
                     gridSnapshots = terminalGridController.snapshotsForRefresh()
                     gridAutoRestoreSnapshotID = TerminalGridPreferences.autoRestoreSnapshotID
+                    refreshSelectionInfo()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
                 .help("刷新快照列表")
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "自动检测结果",
+                detail: gridSelectionPreview?.reason ?? "尚未检测（打开本页时自动检测，或点刷新）"
+            ) {
+                Button("重新检测") {
+                    refreshSelectionInfo()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if let favoriteWarning = gridFavoriteWarning {
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.orange)
+                    Text(favoriteWarning)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.10)))
             }
 
             Divider()
@@ -182,6 +208,37 @@ extension SettingsView {
                 }
             }
         }
+    }
+
+    /// 「终端应用」行的说明文案（随偏好/检测变化）
+    private var selectionDetailText: String {
+        switch gridAppPreference {
+        case .auto:
+            return "自动识别你最常用的终端（优先当前在运行者）；也可手动指定。"
+        case .terminal:
+            return "手动指定 Terminal.app（完整支持：建窗/注入/tty/精确恢复）。"
+        case .iterm2:
+            return "手动指定 iTerm2（部分支持：无 tty 映射，自动恢复降级为只重建缺失格）。"
+        }
+    }
+
+    func refreshSelectionInfo() {
+        let preview = terminalGridController.selectionPreview()
+        gridSelectionPreview = preview
+        let usageRank = TerminalUsageTracker.shared.table.ranked(minCount: 5)
+        gridFavoriteWarning = TerminalSelectionResolver.unsupportedFavoriteWarning(
+            usageRank: usageRank.map { ($0.bundleID, $0.count, $0.lastAt) },
+            candidates: TerminalSelectionResolver.supportTable.keys.sorted().map { bundleID in
+                TerminalSelectionCandidate(
+                    bundleID: bundleID,
+                    name: TerminalSelectionResolver.knownNames[bundleID] ?? bundleID,
+                    support: TerminalSelectionResolver.supportLevel(forBundleID: bundleID),
+                    usageCount: usageRank.first { $0.bundleID == bundleID }?.count ?? 0,
+                    lastUsedAt: usageRank.first { $0.bundleID == bundleID }?.lastAt,
+                    isRunning: false
+                )
+            }
+        )
     }
 
     private func runGridTask(_ operation: @escaping () async -> TerminalGridController.OperationResult) {
