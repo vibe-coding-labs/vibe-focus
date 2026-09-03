@@ -73,6 +73,23 @@ enum TerminalAutomationScript {
         """
     }
 
+    /// 向既有窗口注入命令（自动恢复"活窗口复用"路径——不重建窗口，防重复）
+    static func terminalInjectCommand(windowID: UInt32, command: String) -> String {
+        """
+        tell application id "com.apple.Terminal"
+            do script "\(appleScriptEscaped(command))" in window id \(windowID)
+        end tell
+        """
+    }
+
+    static func itermInjectCommand(windowID: String, command: String) -> String {
+        """
+        tell application id "com.googlecode.iterm2"
+            tell current session of window id \(windowID) to write text "\(appleScriptEscaped(command))"
+        end tell
+        """
+    }
+
     static func itermGetBounds(windowID: String) -> String {
         """
         tell application id "com.googlecode.iterm2"
@@ -113,15 +130,25 @@ enum TerminalAutomationScript {
 
     // MARK: 通用
 
-    /// 恢复某个格子的完整命令行：有 sessionID 则 `claude --resume`，否则启动命令。
-    static func cellCommand(sessionID: String?, launchCommand: String?) -> String? {
+    /// POSIX 单引号包裹（内部单引号走 `'\''` 惯用法）
+    static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// 恢复某个格子的完整 shell 命令行：cwd → 工作目录、sessionID → `claude --resume`、
+    /// 否则启动命令。返回原始 shell 串；AppleScript 层逃逸由脚本构建处统一做
+    /// （appleScriptEscaped 只动反斜杠/双引号，不碰 shell 单引号，两层不冲突）。
+    static func cellCommand(sessionID: String?, cwd: String?, launchCommand: String?) -> String? {
+        var parts: [String] = []
+        if let cwd, !cwd.isEmpty {
+            parts.append("cd \(shellQuoted(cwd))")
+        }
         if let sessionID, !sessionID.isEmpty {
-            return "claude --resume \(appleScriptEscaped(sessionID))"
+            parts.append("claude --resume \(sessionID)")
+        } else if let launchCommand, !launchCommand.isEmpty {
+            parts.append(launchCommand)
         }
-        if let launchCommand, !launchCommand.isEmpty {
-            return launchCommand
-        }
-        return nil
+        return parts.isEmpty ? nil : parts.joined(separator: " && ")
     }
 
     static func isSupported(appBundleID: String) -> Bool {

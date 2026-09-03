@@ -116,6 +116,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             name: .layoutHotKeyTableDidChange,
             object: nil
         )
+        // Terminal 网格自动恢复（勾选后重启/登录自动还原布局+目录+claude 会话）。
+        // 延迟数秒：等桌面/终端环境稳定，避免与登录时的系统窗口恢复互相踩。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            TerminalGridController.shared.runAutoRestoreIfEnabled()
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppBecameActive),

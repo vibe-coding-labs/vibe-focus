@@ -94,11 +94,33 @@ extension SettingsView {
 
                 Button {
                     gridSnapshots = terminalGridController.snapshotsForRefresh()
+                    gridAutoRestoreSnapshotID = TerminalGridPreferences.autoRestoreSnapshotID
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
                 .help("刷新快照列表")
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "重启 / 登录后自动恢复",
+                detail: "勾选后每次启动 VibeFocus 自动还原勾选的布局：窗口位置、每个终端的工作目录、Claude 会话（claude --resume）。仍活着的会话不会重复拉起；快照未指定时使用最新一份。"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { gridAutoRestoreEnabled },
+                    set: { newValue in
+                        gridAutoRestoreEnabled = newValue
+                        TerminalGridPreferences.autoRestoreEnabled = newValue
+                        if newValue && gridAutoRestoreSnapshotID == nil {
+                            gridAutoRestoreSnapshotID = terminalGridController.snapshotsForRefresh().last?.id
+                            TerminalGridPreferences.autoRestoreSnapshotID = gridAutoRestoreSnapshotID
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
             }
 
             if !gridResultMessage.isEmpty {
@@ -124,6 +146,24 @@ extension SettingsView {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
+                            if gridAutoRestoreSnapshotID == snapshot.id {
+                                SettingsStatusPill(title: "开机恢复", tint: .green)
+                                Button("取消") {
+                                    gridAutoRestoreSnapshotID = nil
+                                    TerminalGridPreferences.autoRestoreSnapshotID = nil
+                                }
+                                .buttonStyle(.bordered)
+                            } else {
+                                Button("设为开机恢复") {
+                                    gridAutoRestoreSnapshotID = snapshot.id
+                                    TerminalGridPreferences.autoRestoreSnapshotID = snapshot.id
+                                    if !gridAutoRestoreEnabled {
+                                        gridAutoRestoreEnabled = true
+                                        TerminalGridPreferences.autoRestoreEnabled = true
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
                             Button("恢复") {
                                 runGridTask { await terminalGridController.restoreLayout(snapshotID: snapshot.id) }
                             }
@@ -152,6 +192,7 @@ extension SettingsView {
             gridResultMessage = result.message
             gridResultIsError = !result.ok
             gridSnapshots = terminalGridController.snapshotsForRefresh()
+            gridAutoRestoreSnapshotID = TerminalGridPreferences.autoRestoreSnapshotID
         }
     }
 }

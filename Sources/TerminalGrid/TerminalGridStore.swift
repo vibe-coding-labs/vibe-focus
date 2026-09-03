@@ -9,6 +9,8 @@ enum TerminalGridPreferences {
     static let appPreferenceKey = "terminalGridApp"
     static let launchCommandKey = "terminalGridLaunchCommand"
     static let gapKey = "terminalGridGap"
+    static let autoRestoreEnabledKey = "terminalGridAutoRestoreEnabled"
+    static let autoRestoreSnapshotIDKey = "terminalGridAutoRestoreSnapshotID"
 
     enum DisplayMode: String {
         case main          // 主屏
@@ -45,6 +47,21 @@ enum TerminalGridPreferences {
     static var launchCommand: String {
         get { UserDefaults.standard.string(forKey: launchCommandKey) ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: launchCommandKey) }
+    }
+
+    /// 重启 / 登录后自动恢复勾选布局
+    static var autoRestoreEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: autoRestoreEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: autoRestoreEnabledKey) }
+    }
+
+    /// 指定自动恢复的快照；nil = 启动时取最新一份
+    static var autoRestoreSnapshotID: String? {
+        get {
+            let raw = UserDefaults.standard.string(forKey: autoRestoreSnapshotIDKey)
+            return (raw?.isEmpty ?? true) ? nil : raw
+        }
+        set { UserDefaults.standard.set(newValue, forKey: autoRestoreSnapshotIDKey) }
     }
 
     static var gap: CGFloat {

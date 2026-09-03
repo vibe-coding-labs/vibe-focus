@@ -137,7 +137,7 @@ final class TerminalGridController {
                   bounds.width >= 100, bounds.height >= 100 else {
                 return false
             }
-            guard let bundleID = appBundleID(forPID: entry.ownerPID),
+            guard let bundleID = bundleIdentifier(ofPID: entry.ownerPID),
                   TerminalRegistry.isTerminalBundleID(bundleID) else {
                 return false
             }
@@ -161,7 +161,7 @@ final class TerminalGridController {
 
         // Terminal.app 窗口 → tty 映射
         let terminalPIDs = Set(terminalEntries.map { $0.ownerPID })
-        let isAppleTerminal = terminalPIDs.contains { appBundleID(forPID: $0) == "com.apple.Terminal" }
+        let isAppleTerminal = terminalPIDs.contains { bundleIdentifier(ofPID: $0) == "com.apple.Terminal" }
         let ttyMap = isAppleTerminal ? await terminalWindowTTYMap() : [:]
 
         var cells: [TerminalGridCellSnapshot] = []
@@ -185,6 +185,10 @@ final class TerminalGridController {
                     cwd = located.cwd ?? cwd
                 }
             }
+            // 纯 shell 格子没有 session 也要记住目录（恢复时 cd 回去）
+            if cwd == nil, let ttyPath {
+                cwd = ClaudeSessionLocator.shellWorkingDirectory(onTTY: ttyPath)
+            }
             if sessionID != nil {
                 sessionCount += 1
             }
@@ -202,7 +206,7 @@ final class TerminalGridController {
             ))
         }
 
-        let dominantBundleID = terminalEntries.compactMap { appBundleID(forPID: $0.ownerPID) }.first ?? "com.apple.Terminal"
+        let dominantBundleID = terminalEntries.compactMap { bundleIdentifier(ofPID: $0.ownerPID) }.first ?? "com.apple.Terminal"
         let snapshotName = name ?? "捕获布局 " + Self.dateFormatter.string(from: Date())
         let snapshot = TerminalGridSnapshot(
             name: snapshotName,
@@ -270,7 +274,11 @@ final class TerminalGridController {
         var failures: [String] = []
         for (index, cell) in snapshot.cells.enumerated() {
             guard index < targetFrames.count else { break }
-            let command = TerminalAutomationScript.cellCommand(sessionID: cell.sessionID, launchCommand: snapshot.launchCommand)
+            let command = TerminalAutomationScript.cellCommand(
+                sessionID: cell.sessionID,
+                cwd: cell.cwd,
+                launchCommand: snapshot.launchCommand
+            )
             let placement = await createTerminalCell(
                 appBundleID: snapshot.appBundleID,
                 command: command,
@@ -292,6 +300,169 @@ final class TerminalGridController {
         }
         log("[TerminalGrid] restoreLayout done", fields: ["op": op, "restored": String(restored)])
         return OperationResult(ok: restored > 0, message: summary)
+    }
+
+    // MARK: 自动恢复（重启 / 登录后）
+
+    private var hasRunAutoRestoreThisLaunch = false
+
+    /// 启动钩子入口（AppDelegate 延迟调用）。每次启动至多执行一次；
+    /// 未勾选 / 无快照时静默返回。
+    func runAutoRestoreIfEnabled() {
+        guard TerminalGridPreferences.autoRestoreEnabled else {
+            log("[TerminalGrid] auto-restore skipped: disabled", level: .debug)
+            return
+        }
+        guard !hasRunAutoRestoreThisLaunch else {
+            log("[TerminalGrid] auto-restore skipped: already ran this launch", level: .debug)
+            return
+        }
+        hasRunAutoRestoreThisLaunch = true
+
+        let preferredID = TerminalGridPreferences.autoRestoreSnapshotID
+        let snapshot = preferredID.flatMap { id in store.snapshots().first { $0.id == id } } ?? store.latest()
+        guard let snapshot else {
+            log("[TerminalGrid] auto-restore skipped: no snapshot", level: .debug)
+            return
+        }
+        log("[TerminalGrid] auto-restore starting", fields: ["snapshot": snapshot.id, "cells": String(snapshot.cells.count)])
+        Task { [weak self] in
+            guard let self else { return }
+            let result = await self.autoRestore(snapshot: snapshot)
+            log("[TerminalGrid] auto-restore done", fields: ["ok": String(result.ok), "message": result.message])
+        }
+    }
+
+    /// 自动恢复：与手动恢复的差异在"活窗口联动"——
+    /// - 格位上已有活窗口且 claude 会话还在跑 → 跳过（绝不能重复拉起/往 REPL 注入）；
+    /// - 有活窗口但只是空闲 shell → 向它注入 cd + resume（不重建，防窗口翻倍）；
+    /// - 格位空了（关过窗/重启后）→ 新建窗口执行命令。
+    func autoRestore(snapshot: TerminalGridSnapshot) async -> OperationResult {
+        let op = makeOperationID(prefix: "grid-autorestore")
+        guard let screen = resolveRestoreScreen(for: snapshot) else {
+            return OperationResult(ok: false, message: "自动恢复失败：目标显示器不可用")
+        }
+        let recordedStillFits = CoordinateKit.cgDisplayID(for: screen) == snapshot.displayID
+        let visibleFrame = CoordinateKit.quartzVisibleFrame(of: screen)
+        let targetFrames: [CGRect]
+        if recordedStillFits {
+            targetFrames = snapshot.cells.map { TerminalGridPlanner.clampToVisible(frame: $0.frame, visibleFrame: visibleFrame) }
+        } else {
+            targetFrames = TerminalGridPlanner.cells(
+                visibleFrame: visibleFrame,
+                spec: .init(rows: snapshot.rows, cols: snapshot.cols, gap: TerminalGridPreferences.gap)
+            )
+        }
+
+        let injectEnabled = snapshot.appBundleID == "com.apple.Terminal"
+        let liveWindows = await observeLiveWindows(appBundleID: snapshot.appBundleID)
+        let actions = TerminalAutoRestorePlanner.plan(
+            cells: snapshot.cells,
+            targetFrames: targetFrames,
+            liveWindows: liveWindows,
+            injectEnabled: injectEnabled
+        )
+
+        log("[TerminalGrid] auto-restore plan", fields: [
+            "op": op,
+            "live": String(liveWindows.count),
+            "create": String(actions.filter { $0 == .create }.count),
+            "inject": String(actions.filter { if case .inject = $0 { return true }; return false }.count),
+            "skip": String(actions.filter { $0 == .skipRunning }.count)
+        ])
+
+        var created = 0
+        var injected = 0
+        var skipped = 0
+        var failures = 0
+        for (index, action) in actions.enumerated() where index < snapshot.cells.count {
+            let cell = snapshot.cells[index]
+            let command = TerminalAutomationScript.cellCommand(
+                sessionID: cell.sessionID,
+                cwd: cell.cwd,
+                launchCommand: snapshot.launchCommand
+            )
+            switch action {
+            case .skipRunning:
+                skipped += 1
+            case .inject(let windowID):
+                // 无可注入内容（纯 shell 且无 cwd/启动命令）→ 无事可做，不算失败
+                guard let command else {
+                    skipped += 1
+                    continue
+                }
+                if let script = injectScript(appBundleID: snapshot.appBundleID, windowID: windowID, command: command),
+                   await runScript(script)?.exitCode == 0 {
+                    injected += 1
+                } else {
+                    failures += 1
+                }
+            case .create:
+                let placement = await createTerminalCell(
+                    appBundleID: snapshot.appBundleID,
+                    command: command,
+                    frame: targetFrames[index],
+                    op: op
+                )
+                if placement.cgWindowID != nil { created += 1 } else { failures += 1 }
+            }
+        }
+
+        let summary = "自动恢复：新建 \(created)、注入 \(injected)、跳过运行中 \(skipped)" + (failures > 0 ? "、失败 \(failures)" : "")
+        return OperationResult(ok: failures == 0 || created + injected + skipped > 0, message: summary)
+    }
+
+    /// 观测当前该终端 app 的全部可见窗口：CG 枚举 + tty 映射 + claude 存活标记
+    private func observeLiveWindows(appBundleID: String) async -> [TerminalLiveWindow] {
+        let isIterm = appBundleID == "com.googlecode.iterm2"
+        let entries = cgWindowListAll().filter { entry in
+            guard entry.layer == 0, entry.isOnScreen,
+                  let bounds = entry.bounds,
+                  bounds.width >= 100, bounds.height >= 100 else {
+                return false
+            }
+            return bundleIdentifier(ofPID: entry.ownerPID) == appBundleID
+        }
+        var ttyByWindow: [UInt32: String] = [:]
+        if !isIterm {
+            ttyByWindow = await terminalWindowTTYMap()
+        }
+        var claudeByTTY: [String: Bool] = [:]
+        var result: [TerminalLiveWindow] = []
+        result.reserveCapacity(entries.count)
+        for entry in entries {
+            guard let bounds = entry.bounds else { continue }
+            let tty = ttyByWindow[entry.windowID]
+            let hasClaude: Bool
+            if let tty {
+                if let cached = claudeByTTY[tty] {
+                    hasClaude = cached
+                } else {
+                    hasClaude = ClaudeSessionLocator.claudePID(onTTY: tty) != nil
+                    claudeByTTY[tty] = hasClaude
+                }
+            } else {
+                hasClaude = false
+            }
+            result.append(TerminalLiveWindow(
+                windowID: entry.windowID,
+                frame: bounds,
+                ttyPath: tty,
+                hasLiveClaude: hasClaude
+            ))
+        }
+        return result
+    }
+
+    private func injectScript(appBundleID: String, windowID: UInt32, command: String) -> String? {
+        switch appBundleID {
+        case "com.googlecode.iterm2":
+            return TerminalAutomationScript.itermInjectCommand(windowID: String(windowID), command: command)
+        case "com.apple.Terminal":
+            return TerminalAutomationScript.terminalInjectCommand(windowID: windowID, command: command)
+        default:
+            return nil
+        }
     }
 
     // MARK: 辅助
@@ -380,7 +551,7 @@ final class TerminalGridController {
             .flatMap { CoordinateKit.cgDisplayID(for: $0) }
     }
 
-    private func appBundleID(forPID pid: pid_t) -> String? {
+    private func bundleIdentifier(ofPID pid: pid_t) -> String? {
         NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
     }
 
@@ -439,7 +610,7 @@ final class TerminalGridController {
     private func cgWindowID(forBundleID bundleID: String, nearBounds bounds: CGRect?) -> UInt32? {
         let entries = cgWindowListAll().filter { entry in
             entry.layer == 0 && entry.isOnScreen && entry.bounds != nil
-                && appBundleID(forPID: entry.ownerPID) == bundleID
+                && bundleIdentifier(ofPID: entry.ownerPID) == bundleID
         }
         guard let bounds else {
             return entries.first?.windowID

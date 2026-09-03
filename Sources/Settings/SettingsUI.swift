@@ -51,6 +51,8 @@ public struct SettingsView: View {
     @State var gridResultMessage = ""
     @State var gridResultIsError = false
     @State var gridSnapshots: [TerminalGridSnapshot] = []
+    @State var gridAutoRestoreEnabled = TerminalGridPreferences.autoRestoreEnabled
+    @State var gridAutoRestoreSnapshotID: String? = TerminalGridPreferences.autoRestoreSnapshotID
 
     // Codex CLI Hook 安装状态
     @State var codexInstallMessage: String?

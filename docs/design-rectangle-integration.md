@@ -137,6 +137,27 @@ layer 0 + isOnScreen）→ 按 y/x 聚类反推 rows×cols → 每窗：
 - 经验：向指定后台终端窗口的 REPL 注入文本，`do script "…" in window id N` 直接写
   pty，比合成键盘事件可靠（不吃焦点）。
 
+**自动恢复 + 完整上下文还原（feat/terminal-autorestore，2026-09-04）✅**
+- **cwd 还原**：捕获阶段纯 shell 格子也记 cwd（tty → 登录 shell → lsof；实证坑：login
+  shell 进程名带前导 `-` 如 "-zsh"，必须剥掉再匹配）；恢复命令升级为
+  `cd '<cwd>' && claude --resume <id>`（POSIX 单引号转义，shell 层与 AppleScript 层
+  双层逃逸不冲突）。快照实证：/tmp 被捕获为解析路径 /private/tmp。
+- **自动恢复规划器**（纯函数 TerminalAutoRestorePlanner）：快照格子 × 活窗口观测
+  （CG 枚举 + tty 映射 + claude 存活标记）→ 每格三态：
+  `create`（格位空）/ `inject`（活窗口空闲 shell → 原地注入命令，防窗口翻倍）/
+  `skipRunning`（claude 还在跑，绝不重复拉起/往 REPL 注入）。
+  iTerm2 的 AppleScript window id ≠ CGWindowNumber，无法按 CG id 注入 → 传
+  injectEnabled=false 降级为只重建缺失格子。
+- **启动钩子**：AppDelegate 启动后延迟 6s 调 runAutoRestoreIfEnabled（每次启动至多
+  一次；未勾选/无快照静默返回）；设置页新增总开关 + 快照行「设为开机恢复/取消」。
+- **真机 E2E**（VIBEFOCUS_GRID_E2E=1）：捕获含 cwd、跳过运行中 claude（pid 不变）、
+  关闭格子重建、resume 进程检测全过；/tmp 往返断言在多轮叠窗环境下 flapy，根因是
+  测试环境数十扇同 frame 窗使 frame 匹配不唯一（快照层 /private/tmp 记录已实证），
+  干净桌面上即为确定性行为。
+- 部署互踩升级警示：功能合入 main 后并行会话随即在真机上测试同一功能，共享
+  ~/.vibefocus/vibefocus.db 的快照 KV 成为交叉触发源（我留下的测试快照被对方实例
+  恢复出 27 扇窗）。**多会话并行时，测试快照用完必须即删**。
+
 **遗留待用户项 ⏸**
 - **⌃⌥ 摆位热键 AX 写 E2E**：唯一剩余验收项。重装打破 TCC 辅助功能授权（每次重装
   都复现），重新授权需用户在系统设置输一次密码。链路其余环节已真机验证：热键触发

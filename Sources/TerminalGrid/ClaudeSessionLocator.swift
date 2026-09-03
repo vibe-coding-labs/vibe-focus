@@ -101,6 +101,47 @@ enum ClaudeSessionLocator {
             .flatMap { sessionID(fromSessionFileName: $0.name) }
     }
 
+    /// tty 上的登录 shell PID（basename ∈ 常见 shell 集合的最小 pid；login 包装进程
+    /// 会被排除——Terminal 的 tty 上进程链是 login → zsh → claude）。
+    static func shellPID(
+        onTTY ttyPath: String,
+        runner: (String, [String]) -> YabaiClient.YabaiResult? = { ShellRunner.run(executable: $0, arguments: $1) }
+    ) -> Int32? {
+        let shortTTY = ttyPath.hasPrefix("/dev/") ? String(ttyPath.dropFirst("/dev/".count)) : ttyPath
+        guard let result = runner("/bin/ps", ["-t", shortTTY, "-o", "pid=,command="]), result.exitCode == 0 else {
+            return nil
+        }
+        let shellNames: Set<String> = ["zsh", "bash", "sh", "fish", "dash", "ksh", "pwsh"]
+        var best: (pid: Int32, name: String)?
+        for line in result.stdout.split(separator: "\n") {
+            let trimmed = line.drop(while: { $0 == " " })
+            guard let spaceIndex = trimmed.firstIndex(of: " ") else { continue }
+            guard let pid = Int32(trimmed[trimmed.startIndex..<spaceIndex]) else { continue }
+            let commandLine = String(trimmed[trimmed.index(after: spaceIndex)...])
+            // login shell 的 argv[0] 带前导 '-'（如 "-zsh"），必须剥掉再匹配
+            let basename = commandLine.split(separator: " ").first.map { String($0) }.map { path in
+                path.split(separator: "/").last.map { String($0) } ?? path
+            }.map { name in
+                name.hasPrefix("-") ? String(name.dropFirst()) : name
+            } ?? commandLine
+            guard shellNames.contains(basename) else { continue }
+            if best == nil || pid < best!.pid {
+                best = (pid, basename)
+            }
+        }
+        return best?.pid
+    }
+
+    /// tty 上登录 shell 的 cwd——纯 shell 格子没有 session 也要记住目录。
+    static func shellWorkingDirectory(
+        onTTY ttyPath: String,
+        runner: (String, [String]) -> YabaiClient.YabaiResult? = { ShellRunner.run(executable: $0, arguments: $1) },
+        fileManager: FileManager = .default
+    ) -> String? {
+        guard let pid = shellPID(onTTY: ttyPath, runner: runner) else { return nil }
+        return workingDirectory(ofPID: pid, runner: runner)
+    }
+
     /// 组合入口：tty → sessionID（任一环节失败即 nil，调用方降级为"无会话"格子）。
     static func locateSessionID(
         ttyPath: String,
