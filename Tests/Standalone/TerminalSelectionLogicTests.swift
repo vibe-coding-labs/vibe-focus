@@ -19,19 +19,23 @@ struct TerminalUsageTable {
     mutating func record(bundleID: String, at date: Date = Date()) {
         if var entry = entries[bundleID] {
             entry.count += 1
-            entry.lastAt = date
+            entry.lastAt = max(entry.lastAt, date)
             entries[bundleID] = entry
         } else {
             entries[bundleID] = TerminalUsageEntry(count: 1, lastAt: date)
         }
     }
 
-    func ranked(minCount: Int = 1) -> [(bundleID: String, count: Int, lastAt: Date)] {
-        entries
+    func ranked(minCount: Int = 1, now: Date = Date(), halfLifeDays: Double = 14) -> [(bundleID: String, count: Int, lastAt: Date)] {
+        let half = halfLifeDays * 24 * 3600
+        return entries
             .filter { $0.value.count >= minCount }
             .map { (bundleID: $0.key, count: $0.value.count, lastAt: $0.value.lastAt) }
             .sorted {
-                $0.count != $1.count ? $0.count > $1.count : $0.lastAt > $1.lastAt
+                let lw = Double($0.count) * pow(0.5, max(0, now.timeIntervalSince($0.lastAt)) / half)
+                let rw = Double($1.count) * pow(0.5, max(0, now.timeIntervalSince($1.lastAt)) / half)
+                if lw != rw { return lw > rw }
+                return $0.lastAt > $1.lastAt
             }
     }
 }
@@ -164,6 +168,18 @@ table.record(bundleID: TERMINAL, at: Date(timeIntervalSince1970: 200))
 check("量表: 计数累加", table.entries[ITERM]?.count == 3 && table.entries[TERMINAL]?.count == 1)
 check("量表: 排序次数优先", table.ranked().first?.bundleID == ITERM)
 check("量表: minCount 过滤噪声", table.ranked(minCount: 5).isEmpty)
+
+// 半衰期衰减：老高频 vs 新低频（"最近常用"要求近期使用权重更高）
+var decayTable = TerminalUsageTable()
+let now = Date()
+let oldDay = now.addingTimeInterval(-60 * 24 * 3600)
+for _ in 0..<10 { decayTable.record(bundleID: "old-app", at: oldDay) }
+decayTable.record(bundleID: "new-app", at: now)
+check("衰减: 60 天前的 10 次 降权于 今天的 1 次（10×0.051 < 1）",
+      decayTable.ranked(now: now, halfLifeDays: 14).first?.bundleID == "new-app")
+decayTable.record(bundleID: "old-app", at: now)
+check("衰减: 老终端重新激活即回升",
+      decayTable.ranked(now: now, halfLifeDays: 14).first?.bundleID == "old-app")
 
 // MARK: - 常用非支持警告
 

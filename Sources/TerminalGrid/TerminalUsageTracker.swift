@@ -18,24 +18,38 @@ struct TerminalUsageTable: Codable, Equatable {
 
     static let userDefaultsKey = "terminalUsageTable"
 
-    /// 记录一次激活（幂等累加）
+    /// 记录一次激活（幂等累加）。lastAt 只前进不后退——乱序/旧日期的重复记录
+    /// 不能把最近激活时间拖回过去（否则衰减权重会错乱，实测踩坑）。
     mutating func record(bundleID: String, at date: Date = Date()) {
         if var entry = entries[bundleID] {
             entry.count += 1
-            entry.lastAt = date
+            entry.lastAt = max(entry.lastAt, date)
             entries[bundleID] = entry
         } else {
             entries[bundleID] = TerminalUsageEntry(count: 1, lastAt: date)
         }
     }
 
-    /// 按激活次数降序（同次数按最近优先）。minCount 过滤掉噪声。
-    func ranked(minCount: Int = 1) -> [(bundleID: String, count: Int, lastAt: Date)] {
-        entries
+    /// 按「最近常用」排序：有效权重 = 激活次数 × 半衰期衰减（默认 14 天半衰），
+    /// 老习惯随时间自然降权（"最近常用"语义要求近期使用权重更高）。
+    /// 返回的 count 仍为原始累计次数（展示用），排序仅依据有效权重。
+    /// minCount 过滤掉噪声。
+    func ranked(
+        minCount: Int = 1,
+        now: Date = Date(),
+        halfLifeDays: Double = 14
+    ) -> [(bundleID: String, count: Int, lastAt: Date)] {
+        let halfLifeSeconds = halfLifeDays * 24 * 3600
+        return entries
             .filter { $0.value.count >= minCount }
             .map { (bundleID: $0.key, count: $0.value.count, lastAt: $0.value.lastAt) }
-            .sorted {
-                $0.count != $1.count ? $0.count > $1.count : $0.lastAt > $1.lastAt
+            .sorted { lhs, rhs in
+                let lhsAge = max(0, now.timeIntervalSince(lhs.lastAt))
+                let rhsAge = max(0, now.timeIntervalSince(rhs.lastAt))
+                let lhsWeight = Double(lhs.count) * pow(0.5, lhsAge / halfLifeSeconds)
+                let rhsWeight = Double(rhs.count) * pow(0.5, rhsAge / halfLifeSeconds)
+                if lhsWeight != rhsWeight { return lhsWeight > rhsWeight }
+                return lhs.lastAt > rhs.lastAt
             }
     }
 
