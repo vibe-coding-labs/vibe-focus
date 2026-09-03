@@ -626,6 +626,32 @@ final class FakeAuditor: RestoreAuditing {
         check("重摆等待: 首读 nil 重置 prev → 第二对相等即稳定（睡 2 次）", naps == 2)
     }
 
+    // MARK: SARecoveryVerdict（SA 恢复状态机：结局裁决 + 重试策略，真实实现）
+
+    do {
+        check("裁决: 成功 → succeeded",
+              SpaceController.recoveryVerdict(success: true, outputOrError: "anything") == .succeeded)
+        let sip = "yabai: System Integrity Protection: Filesystem Protections and Debugging Restrictions must be disabled!"
+        check("裁决: yabai 真实 SIP 拒载错误文本 → blockedBySIP",
+              SpaceController.recoveryVerdict(success: false, outputOrError: sip) == .blockedBySIP)
+        check("裁决: osascript 用户取消 → userDeclined",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "User canceled. (-128)") == .userDeclined)
+        check("裁决: 其他错误 → failedOther",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "some spawn error") == .failedOther)
+    }
+    do {
+        check("重试策略: blockedBySIP 恒不自动（哪怕 720 小时）",
+              !SpaceController.autoRecoveryAllowed(verdict: .blockedBySIP, hoursSince: 720))
+        check("重试策略: succeeded 恒不需要",
+              !SpaceController.autoRecoveryAllowed(verdict: .succeeded, hoursSince: 720))
+        check("重试策略: userDeclined 7 天边界（167.9h 拒 / 168.1h 允）",
+              !SpaceController.autoRecoveryAllowed(verdict: .userDeclined, hoursSince: 167.9)
+              && SpaceController.autoRecoveryAllowed(verdict: .userDeclined, hoursSince: 168.1))
+        check("重试策略: failedOther 24 小时边界（23.9h 拒 / 24.1h 允）",
+              !SpaceController.autoRecoveryAllowed(verdict: .failedOther, hoursSince: 23.9)
+              && SpaceController.autoRecoveryAllowed(verdict: .failedOther, hoursSince: 24.1))
+    }
+
     // MARK: RestoreAnnouncementPlan（P1-1 结局播报纯决策，真实实现——结局→计划总映射）
 
     check("播报映射: restored(spaceExact=true) → restoredExact",

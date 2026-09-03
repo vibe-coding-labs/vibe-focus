@@ -105,9 +105,103 @@ extension SpaceController {
         }
     }
 
+    // MARK: - SA 恢复状态机（2026-09-03 全场景自适应重构）
+
+    /// SA 恢复结局分类（纯函数，Runner 分支穷尽锁定）。
+    enum SARecoveryVerdict: String, Equatable {
+        /// load-sa 成功（SA 已注入 WindowServer）
+        case succeeded
+        /// SIP 阻止（错误信息含 "System Integrity Protection"）——该机器上永久不可加载，
+        /// 自动恢复永不重试，设置面板常驻原因与启用指引
+        case blockedBySIP
+        /// 用户在授权框点取消/关闭——7 天退避后允许再次询问
+        case userDeclined
+        /// 其他瞬时失败（yabai 缺失/系统更新后布局变化等）——24 小时退避自愈
+        case failedOther
+    }
+
+    /// 恢复结局裁决（纯函数）。success=true 一律 succeeded；失败按错误文本分类：
+    /// yabai 的 SIP 拒载错误与 osascript 的用户取消（-128）有稳定可辨文本。
+    static func recoveryVerdict(success: Bool, outputOrError: String) -> SARecoveryVerdict {
+        if success { return .succeeded }
+        if outputOrError.contains("System Integrity Protection") { return .blockedBySIP }
+        if outputOrError.lowercased().contains("user canceled") { return .userDeclined }
+        return .failedOther
+    }
+
+    /// 自动恢复再尝试策略（纯函数，hoursSince = 距上次该结局的小时数）：
+    /// - blockedBySIP：永不自动重试（SIP 限制不随时间变化，重试=重复打扰）；
+    /// - userDeclined：7×24 小时（用户明确说不，给足冷静期）；
+    /// - failedOther：24 小时（瞬时失败自愈，覆盖系统更新后失效场景）；
+    /// - succeeded：无需恢复。
+    static func autoRecoveryAllowed(verdict: SARecoveryVerdict, hoursSince: TimeInterval) -> Bool {
+        switch verdict {
+        case .blockedBySIP: return false
+        case .succeeded: return false
+        case .userDeclined: return hoursSince >= 7 * 24
+        case .failedOther: return hoursSince >= 24
+        }
+    }
+
+    private static let saVerdictKey = "saRecoveryVerdict"
+    private static let saVerdictAtKey = "saRecoveryVerdictAt"
+    private static let legacyFailedAtKey = "scriptingAdditionRecoveryFailedAt"
+
+    /// 读持久化恢复状态（含旧版单一失败时间戳的迁移：视为 failedOther）。
+    private func loadRecoveryState() -> (verdict: SARecoveryVerdict?, hoursSince: TimeInterval) {
+        let defaults = UserDefaults.standard
+        let now = Date().timeIntervalSince1970
+        if let raw = defaults.string(forKey: Self.saVerdictKey),
+           let verdict = SARecoveryVerdict(rawValue: raw) {
+            let at = defaults.double(forKey: Self.saVerdictAtKey)
+            guard at > 0 else { return (verdict, TimeInterval.greatestFiniteMagnitude) }
+            return (verdict, max(0, now - at))
+        }
+        // 旧版迁移：legacy 失败时间戳 → failedOther（24h 语义与旧行为一致）
+        let legacy = defaults.double(forKey: Self.legacyFailedAtKey)
+        if legacy > 0 {
+            defaults.removeObject(forKey: Self.legacyFailedAtKey)
+            return (.failedOther, max(0, now - legacy))
+        }
+        return (nil, 0)
+    }
+
+    /// 持久化恢复结局并按场景更新用户可见状态（主队列调用）。
+    private func recordRecoveryState(_ verdict: SARecoveryVerdict, op: String, output: String) {
+        let defaults = UserDefaults.standard
+        defaults.set(verdict.rawValue, forKey: Self.saVerdictKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: Self.saVerdictAtKey)
+        defaults.removeObject(forKey: Self.legacyFailedAtKey)
+        switch verdict {
+        case .succeeded:
+            scriptingAdditionRecoverySucceeded = true
+            canControlSpaces = true
+            lastErrorMessage = nil
+            log("[SpaceController] scripting-addition recovered", fields: [
+                "op": op, "verdict": verdict.rawValue,
+                "output": truncateForLog(output, limit: 120)
+            ])
+        case .blockedBySIP:
+            scriptingAdditionRecoverySucceeded = false
+            lastErrorMessage = "scripting-addition 被系统 SIP 阻止（需要关闭 Filesystem Protections 与 Debugging Restrictions 两项后才能加载）。自动恢复已停止打扰；跨工作区恢复走降级通道，不影响基本功能。若需要 15ms 直切：进恢复模式执行 csrutil enable --without debug --without fs 后，回到本页点「加载」。"
+            log("[SpaceController] scripting-addition recovery blocked by SIP (auto retry disabled)", level: .error, fields: [
+                "op": op, "detail": truncateForLog(output, limit: 220)
+            ])
+        case .userDeclined:
+            scriptingAdditionRecoverySucceeded = false
+            lastErrorMessage = "已取消 scripting-addition 授权（7 天内不会再次询问）。跨工作区恢复走降级通道；需要时点击「加载」按钮重新授权。"
+            log("[SpaceController] scripting-addition recovery declined by user (7d backoff)", level: .warn, fields: ["op": op])
+        case .failedOther:
+            scriptingAdditionRecoverySucceeded = false
+            lastErrorMessage = "跨工作区恢复需要管理员权限来加载 yabai scripting-addition。可以在设置中点击\"加载\"按钮手动触发。"
+            log("[SpaceController] scripting-addition recovery failed (24h backoff)", level: .error, fields: [
+                "op": op, "detail": truncateForLog(output, limit: 220)
+            ])
+        }
+    }
+
     func attemptScriptingAdditionRecovery(trigger: String, operationID: String? = nil, adminWaitsForUser: Bool = false) -> Bool {
         let op = operationID ?? "none"
-        // P-INST-34: recovery 总耗时（yabai --load-sa fork + 可能的 admin 权限对话框，发生时可能秒级；偶发，result 见各路径 log 用 op 关联，归因 runYabaiVariants durationMs 中 recovery vs fork）。
         #if PERF_INSTRUMENT
         let recoveryStart = Date()
         defer {
@@ -117,121 +211,68 @@ extension SpaceController {
             ])
         }
         #endif
+        // 进程周期内只尝试一次（后台恢复完成会更新 scriptingAdditionRecoverySucceeded）
         if didAttemptScriptingAdditionRecovery {
             return scriptingAdditionRecoverySucceeded
         }
 
-        // 检查上次进程是否已持久化记录 recovery 失败（避免每次重启都弹管理员权限窗口）
-        let lastFailedAt = UserDefaults.standard.double(forKey: "scriptingAdditionRecoveryFailedAt")
-        if lastFailedAt > 0 {
-            let hoursSinceFailure = Date().timeIntervalSince1970 - lastFailedAt
-            if hoursSinceFailure < 24 * 3600 {
-                log(
-                    "[SpaceController] scripting-addition recovery skipped: previously failed (cached)",
-                    level: .warn,
-                    fields: [
-                        "op": op,
-                        "hoursAgo": String(format: "%.1f", hoursSinceFailure / 3600),
-                        "trigger": trigger
-                    ]
-                )
+        // 持久化状态机：blockedBySIP 永不自动打扰 / userDeclined 7 天 / failedOther 24 小时。
+        // 手动按钮（adminWaitsForUser=true）无视退避——用户主动触发总是尝试。
+        if !adminWaitsForUser {
+            let (prior, hoursSince) = loadRecoveryState()
+            if let verdict = prior, !Self.autoRecoveryAllowed(verdict: verdict, hoursSince: hoursSince) {
+                log("[SpaceController] scripting-addition recovery skipped by state machine", level: .warn, fields: [
+                    "op": op, "trigger": trigger,
+                    "verdict": verdict.rawValue,
+                    "hoursSince": String(format: "%.1f", hoursSince)
+                ])
                 didAttemptScriptingAdditionRecovery = true
-                scriptingAdditionRecoverySucceeded = false
-                return false
+                scriptingAdditionRecoverySucceeded = (verdict == .succeeded)
+                return scriptingAdditionRecoverySucceeded
             }
-            // 超过 24 小时，允许重试（用户可能已修复 yabai/SIP）
-            UserDefaults.standard.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
         }
-
         didAttemptScriptingAdditionRecovery = true
 
         guard let yabaiPath = locateYabai() else {
-            log(
-                "[SpaceController] scripting-addition recovery skipped: yabai path missing",
-                level: .error,
-                fields: [
-                    "op": op,
-                    "trigger": trigger
-                ]
-            )
+            recordRecoveryState(.failedOther, op: op, output: "yabai path missing")
+            log("[SpaceController] scripting-addition recovery skipped: yabai path missing", level: .error, fields: [
+                "op": op, "trigger": trigger
+            ])
             return false
         }
 
-        log(
-            "[SpaceController] attempting scripting-addition recovery",
-            fields: [
-                "op": op,
-                "trigger": trigger
-            ]
-        )
+        log("[SpaceController] attempting scripting-addition recovery", fields: [
+            "op": op, "trigger": trigger
+        ])
 
+        // 第一段：静默直载（sudoers 免密配置好后此路常成，无对话框）
         if let direct = runProcess(executable: yabaiPath, arguments: ["--load-sa"]), direct.exitCode == 0 {
-            scriptingAdditionRecoverySucceeded = true
-            canControlSpaces = true
-            lastErrorMessage = nil
-            log(
-                "[SpaceController] scripting-addition recovered via direct load-sa",
-                fields: [
-                    "op": op
-                ]
-            )
+            recordRecoveryState(.succeeded, op: op, output: "direct --load-sa")
             return true
         }
 
-        // 使用 macOS 原生密码对话框请求管理员权限加载 scripting-addition。
-        // 两种模式（2026-09-03 防卡死整改）：
-        // - adminWaitsForUser=true（设置面板手动按钮）：同步弹框等待——用户主动触发，
-        //   等弹框是预期交互，完成后立即刷新可用性；
-        // - false（hook/热键路径自动恢复）：提权挪后台队列执行，本调用立即 return
-        //   false 如实走降级通道——历史上同步弹框会无限期挂住 toggle 热键（用户不响应
-        //   授权框则窗口操作整段卡死，SecurityAgent 实测挂起）。后台完成后经主队列
-        //   收敛状态，下次操作即享 SA 直切。
+        // 第二段：管理员提权加载。
+        // - adminWaitsForUser=true（设置面板手动按钮）：同步弹框——用户主动触发，等待是预期交互；
+        // - false（hook/热键自动恢复）：提权挪后台队列，本调用立即 return false 如实走降级——
+        //   历史同步弹框曾无限期挂住热键（SecurityAgent 挂起实测）。完成经主队列按 verdict 收敛。
         let adminCommand = "\(yabaiPath) --load-sa"
         if !adminWaitsForUser {
-            log(
-                "[SpaceController] scripting-addition recovery: admin prompt deferred to background",
-                fields: ["op": op]
-            )
+            log("[SpaceController] scripting-addition recovery: admin prompt deferred to background", fields: ["op": op])
             scheduleBackgroundAdminRecovery(command: adminCommand, operationID: op)
             return false
         }
 
-        let (privSuccess, privOutput) = executeWithAdminPrivileges(
-            adminCommand,
-            operationID: op
-        )
-
-        if privSuccess {
-            scriptingAdditionRecoverySucceeded = true
-            canControlSpaces = true
-            lastErrorMessage = nil
-            log(
-                "[SpaceController] scripting-addition recovered via admin privileges",
-                fields: [
-                    "op": op,
-                    "output": truncateForLog(privOutput, limit: 120)
-                ]
-            )
+        let (privSuccess, privOutput) = executeWithAdminPrivileges(adminCommand, operationID: op)
+        let verdict = Self.recoveryVerdict(success: privSuccess, outputOrError: privOutput)
+        recordRecoveryState(verdict, op: op, output: privOutput)
+        if case .succeeded = verdict {
             return true
         }
-
-        log(
-            "[SpaceController] scripting-addition recovery failed: admin privilege dialog cancelled or error",
-            level: .error,
-            fields: [
-                "op": op,
-                "detail": truncateForLog(privOutput, limit: 220)
-            ]
-        )
-        // 持久化记录失败，避免每次重启都弹管理员权限窗口（24 小时后过期重试）
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "scriptingAdditionRecoveryFailedAt")
-        lastErrorMessage = "跨工作区恢复需要管理员权限来加载 yabai scripting-addition。可以在设置中点击\"加载\"按钮手动触发。"
         return false
     }
 
     func executeWithAdminPrivileges(_ command: String, operationID: String? = nil) -> (Bool, String) {
         let op = operationID ?? "none"
-        // P-INST-51: admin 权限执行耗时（NSAppleScript with administrator privileges，admin 对话框可秒级阻塞用户输入；attemptScriptingAdditionRecovery P-INST-34 总耗时含此，此埋点归因 admin 等待）。
         #if PERF_INSTRUMENT
         let adminStart = Date()
         defer {
@@ -287,11 +328,10 @@ extension SpaceController {
         return (true, output)
     }
 
-    /// 后台提权恢复（adminWaitsForUser=false 的执行半区）：utility 队列跑 osascript
+    /// 后台提权恢复（自动路径的执行半区）：utility 队列跑 osascript
     /// （NSAppleScript 需主线程，进程方式天然线程安全；密码弹框阻塞的是后台线程），
-    /// 完成后经主队列收敛状态。判定与状态迁移与同步路径逐字对齐。
+    /// 完成后按 verdict 经主队列收敛状态。
     private func scheduleBackgroundAdminRecovery(command: String, operationID: String) {
-        // 转义同 executeWithAdminPrivileges（防 AppleScript 注入）
         let escapedCommand = command
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -315,39 +355,10 @@ extension SpaceController {
                 output = error.localizedDescription
             }
             DispatchQueue.main.async {
-                self.finishBackgroundAdminRecovery(success: success, output: output, operationID: operationID)
+                let verdict = SpaceController.recoveryVerdict(success: success, outputOrError: output)
+                self.recordRecoveryState(verdict, op: operationID, output: output)
             }
         }
-    }
-
-    /// 后台提权完成的状态收敛（主队列）。成功/失败的状态迁移与同步路径
-    /// （attemptScriptingAdditionRecovery 的 admin 分支）逐字对齐。
-    private func finishBackgroundAdminRecovery(success: Bool, output: String, operationID: String) {
-        if success {
-            scriptingAdditionRecoverySucceeded = true
-            canControlSpaces = true
-            lastErrorMessage = nil
-            log(
-                "[SpaceController] scripting-addition recovered via admin privileges (background)",
-                fields: [
-                    "op": operationID,
-                    "output": truncateForLog(output, limit: 120)
-                ]
-            )
-            refreshAvailability(force: true)
-            return
-        }
-        log(
-            "[SpaceController] scripting-addition recovery failed: admin privilege dialog cancelled or error (background)",
-            level: .error,
-            fields: [
-                "op": operationID,
-                "detail": truncateForLog(output, limit: 220)
-            ]
-        )
-        // 持久化记录失败，避免每次重启都弹管理员权限窗口（24 小时后过期重试）
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "scriptingAdditionRecoveryFailedAt")
-        lastErrorMessage = "跨工作区恢复需要管理员权限来加载 yabai scripting-addition。可以在设置中点击\"加载\"按钮手动触发。"
     }
 
     func locateYabai() -> String? {
