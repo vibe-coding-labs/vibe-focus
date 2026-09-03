@@ -111,6 +111,10 @@ struct YabaiWindowInfo: Decodable {
     let isFloatingRaw: Bool?
     let hasAXReferenceRaw: Bool?
     let isMinimizedRaw: Bool?
+    /// 窗口是否持有键盘焦点（yabai `has-focus`）。守卫降级路径消费：一次
+    /// `query --windows` 同时读出 focused space（判漂移）与候选窗口（聚焦带动），
+    /// 省去独立的 spaces 查询 fork。字段缺失（旧版 yabai）按无焦点处理。
+    let hasFocusRaw: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, pid, app, title, space, display, frame
@@ -120,9 +124,10 @@ struct YabaiWindowInfo: Decodable {
         // 旧版 yabai 为 `minimized`，两者都收做版本漂移防御。
         case isMinimizedRaw = "is-minimized"
         case isMinimizedLegacyRaw = "minimized"
+        case hasFocusRaw = "has-focus"
     }
 
-    init(id: Int?, pid: Int?, app: String?, title: String?, space: Int?, display: Int?, frame: Frame?, isFloatingRaw: Bool?, hasAXReferenceRaw: Bool?, isMinimizedRaw: Bool? = nil) {
+    init(id: Int?, pid: Int?, app: String?, title: String?, space: Int?, display: Int?, frame: Frame?, isFloatingRaw: Bool?, hasAXReferenceRaw: Bool?, isMinimizedRaw: Bool? = nil, hasFocusRaw: Bool? = nil) {
         self.id = id
         self.pid = pid
         self.app = app
@@ -133,6 +138,7 @@ struct YabaiWindowInfo: Decodable {
         self.isFloatingRaw = isFloatingRaw
         self.hasAXReferenceRaw = hasAXReferenceRaw
         self.isMinimizedRaw = isMinimizedRaw
+        self.hasFocusRaw = hasFocusRaw
     }
 
     init(from decoder: Decoder) throws {
@@ -147,9 +153,13 @@ struct YabaiWindowInfo: Decodable {
         isFloatingRaw = decodeFlexibleBool(.isFloatingRaw, from: c)
         hasAXReferenceRaw = decodeFlexibleBool(.hasAXReferenceRaw, from: c)
         isMinimizedRaw = decodeFlexibleBool(.isMinimizedRaw, from: c) ?? decodeFlexibleBool(.isMinimizedLegacyRaw, from: c)
+        hasFocusRaw = decodeFlexibleBool(.hasFocusRaw, from: c)
     }
 
     var isFloating: Bool { isFloatingRaw == true }
+
+    /// 窗口是否持有键盘焦点（守卫降级路径：focused space 判据）。缺失按 false。
+    var hasFocus: Bool { hasFocusRaw == true }
 
     /// 窗口是否处于最小化。restore/refocus 路径消费：聚焦最小化窗口会把它从 Dock
     /// 拉出（扰动用户布局）或直接失败；字段缺失（旧版 yabai）按未最小化处理。

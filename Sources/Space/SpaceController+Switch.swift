@@ -41,11 +41,29 @@ extension SpaceController {
     /// - 可靠路径：窗口级 focus（AX/CG 通道，不依赖 SA），实测聚焦目标 space 任一窗口即把
     ///   焦点与视角一并带回。
     /// - Returns: 是否成功聚焦了目标 space 上的窗口。
+    /// 全量窗口查询（守卫合并查询版使用：一次 fork 同时提供 focused space 判据与
+    /// refocus 候选，见 RestoreSwitchOrchestration.refocusPerspective）。
+    func queryAllWindows(operationID: String?) -> [YabaiWindowInfo]? {
+        guard let result = runYabai(arguments: ["-m", "query", "--windows"], operation: "queryAllWindows", operationID: operationID ?? "none"),
+              result.exitCode == 0 else {
+            return nil
+        }
+        return decodeArray(YabaiWindowInfo.self, from: result.stdout)
+    }
+
+    /// 聚焦指定窗口（守卫降级第二段；refocusWindowOnSpace 复用）。
+    func focusWindow(_ windowID: UInt32, operationID: String?) -> Bool {
+        let focusResult = runYabai(
+            arguments: ["-m", "window", "\(windowID)", "--focus"],
+            operation: "focusWindow(windowID=\(windowID))",
+            operationID: operationID ?? "none"
+        )
+        return focusResult?.exitCode == 0
+    }
+
     func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID excluded: UInt32? = nil, operationID: String? = nil) -> Bool {
         let op = operationID ?? "none"
-        guard let result = runYabai(arguments: ["-m", "query", "--windows"], operation: "refocusWindowOnSpace.query", operationID: op),
-              result.exitCode == 0,
-              let windows = decodeArray(YabaiWindowInfo.self, from: result.stdout) else {
+        guard let windows = queryAllWindows(operationID: op) else {
             log("[SpaceController] refocusWindowOnSpace: window query failed", level: .warn, fields: [
                 "op": op, "spaceIndex": String(spaceIndex)
             ])
@@ -60,12 +78,7 @@ extension SpaceController {
             return false
         }
 
-        let focusResult = runYabai(
-            arguments: ["-m", "window", "\(candidateID)", "--focus"],
-            operation: "refocusWindowOnSpace.focus(windowID=\(candidateID))",
-            operationID: op
-        )
-        let ok = focusResult?.exitCode == 0
+        let ok = focusWindow(candidateID, operationID: op)
         log("[SpaceController] refocusWindowOnSpace result", level: ok ? .debug : .warn, fields: [
             "op": op, "spaceIndex": String(spaceIndex),
             "focusedWindowID": String(candidateID),

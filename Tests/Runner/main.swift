@@ -29,8 +29,12 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
     /// 切回后 ignoreCache 轮询查询（「等到位」目标态）
     var visibleSpaceAfterSwitch: SpaceIdentifier?
     var floatOutcome: SpaceController.FloatToggleOutcome = .skippedNoOp
+    /// 守卫合并查询版：全量窗口列表（含 has-focus 标记）
+    var allWindows: [YabaiWindowInfo]?
+    var focusWindowResult = false
 
     private(set) var calls: [String] = []
+    private(set) var focusWindowReceived: UInt32?
     private(set) var focusReceived: SpaceIdentifier?
     private(set) var refocusReceivedSpace: Int?
     private(set) var refocusReceivedExcluded: UInt32?
@@ -81,6 +85,17 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
         calls.append("float")
         floatCalled = true
         return floatOutcome
+    }
+
+    func queryAllWindows(operationID: String?) -> [YabaiWindowInfo]? {
+        calls.append("queryAll")
+        return allWindows
+    }
+
+    func focusWindow(_ windowID: UInt32, operationID: String?) -> Bool {
+        calls.append("focusWindow")
+        focusWindowReceived = windowID
+        return focusWindowResult
     }
 }
 
@@ -149,12 +164,12 @@ final class FakeAuditor: RestoreAuditing {
         else { failed += 1; print("  FAIL: \(name)") }
     }
 
-    func window(id: Int, space: Int, hasAX: Bool = true, minimized: Bool? = nil) -> YabaiWindowInfo {
+    func window(id: Int, space: Int, hasAX: Bool = true, minimized: Bool? = nil, hasFocus: Bool? = nil) -> YabaiWindowInfo {
         YabaiWindowInfo(
             id: id, pid: 100, app: "App", title: "w\(id)",
             space: space, display: 1, frame: nil,
             isFloatingRaw: false, hasAXReferenceRaw: hasAX,
-            isMinimizedRaw: minimized
+            isMinimizedRaw: minimized, hasFocusRaw: hasFocus
         )
     }
 
@@ -227,28 +242,59 @@ final class FakeAuditor: RestoreAuditing {
               && ch.focusReceived == .yabaiIndex(1) && ch.cacheCleared)
     }
     do {
-        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 5)
-        ch.focusResult = false
-        ch.refocusResult = true
+        // 降级合并查询版：一次 queryAll 同时提供漂移判定（has-focus 窗口的 space）与候选
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: nil)
+        ch.allWindows = [window(id: 20, space: 5, hasFocus: true), window(id: 30, space: 1)]
+        ch.focusWindowResult = true
         let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
-        check("守卫编排: 直切失败 → 降级聚焦带动成功（exclude 被恢复窗口自身）+清缓存",
-              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "focus", "refocus", "clearCache"]
-              && ch.refocusReceivedExcluded == 9 && ch.cacheCleared)
+        check("守卫合并查询: SA=false 漂移+聚焦成功 → refocused(5)，两次 fork（queryAll+focusWindow）清缓存",
+              outcome == .refocused(postSpace: 5) && ch.calls == ["queryAll", "focusWindow", "clearCache"]
+              && ch.focusWindowReceived == 30)
     }
     do {
-        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 5)
-        ch.focusResult = false
-        ch.refocusResult = false
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: nil)
+        ch.allWindows = [window(id: 20, space: 1, hasFocus: true), window(id: 30, space: 1)]
         let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
-        check("守卫编排: 两层全失败 → failed(postSpace=5)，不清缓存",
-              outcome == .failed(postSpace: 5) && !ch.cacheCleared)
+        check("守卫合并查询: focused space == preMoveSpace → noDrift 不聚焦",
+              outcome == .noDrift && ch.calls == ["queryAll"])
     }
     do {
-        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 5)
-        ch.refocusResult = true
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: nil)
+        ch.allWindows = nil
         let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
-        check("守卫编排: SA 不可用 → 预判跳过直切直接降级聚焦带动（省必败 focusSpace fork）",
-              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "refocus", "clearCache"])
+        check("守卫合并查询: 查询失败 → noDrift（不盲切语义）", outcome == .noDrift && ch.calls == ["queryAll"])
+    }
+    do {
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: nil)
+        ch.allWindows = [window(id: 30, space: 1)]  // 无聚焦窗口（罕见）
+        let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
+        check("守卫合并查询: 无聚焦窗口 → noDrift（无法确认漂移不盲切）", outcome == .noDrift && ch.calls == ["queryAll"])
+    }
+    do {
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: nil)
+        ch.allWindows = [window(id: 20, space: 5, hasFocus: true), window(id: 31, space: 1), window(id: 9, space: 1), window(id: 30, space: 1, hasAX: false)]
+        ch.focusWindowResult = false
+        let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
+        check("守卫合并查询: 漂移+聚焦失败 → failed(5)，候选排除被恢复窗口 9 与无 AX 窗口 30、选中 31",
+              outcome == .failed(postSpace: 5) && ch.focusWindowReceived == 31 && !ch.cacheCleared)
+    }
+    do {
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: nil)
+        ch.allWindows = [window(id: 20, space: 5, hasFocus: true)]
+        let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
+        check("守卫合并查询: preMoveSpace 无可聚焦窗口 → failed(5) 如实降级上报",
+              outcome == .failed(postSpace: 5) && ch.focusWindowReceived == nil)
+    }
+    do {
+        // SA=true 且直切失败 → 降级走合并查询（不再走 refocusWindowOnSpace）
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 5)
+        ch.focusResult = false
+        ch.allWindows = [window(id: 20, space: 5, hasFocus: true), window(id: 30, space: 1)]
+        ch.focusWindowResult = true
+        let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")
+        check("守卫编排: SA=true 直切失败 → 降级合并查询聚焦成功（三次 fork 变两次）",
+              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "focus", "queryAll", "focusWindow", "clearCache"]
+              && ch.focusWindowReceived == 30)
     }
 
     // MARK: sourceSpacePreSwitch（4-pre 预切回决策，真实实现）
