@@ -32,10 +32,8 @@ protocol RestoreSpaceChanneling: AnyObject {
     func visibleSpaceIndex(forDisplayIndex: Int?, spaces: [YabaiSpaceInfo]?, ignoreCache: Bool) -> SpaceIdentifier?
     /// float 脱管（--toggle float）；返回结局供调用方决定是否等重摆
     func setWindowFloat(_ windowID: UInt32, operationID: String?, knownWindowInfo: YabaiWindowInfo?) -> SpaceController.FloatToggleOutcome
-    /// 全量窗口查询（守卫合并查询版：一次 fork 同时提供 focused space 判据与候选）
-    func queryAllWindows(operationID: String?) -> [YabaiWindowInfo]?
-    /// 聚焦指定窗口（守卫降级第二段）
-    func focusWindow(_ windowID: UInt32, operationID: String?) -> Bool
+    /// 按 space 过滤的窗口查询（守卫降级候选来源，轻查询计划）
+    func queryWindowsOnSpace(_ spaceIndex: Int, operationID: String?) -> [YabaiWindowInfo]?
 }
 
 extension SpaceController: RestoreSpaceChanneling {}
@@ -114,51 +112,34 @@ enum RestoreSwitchOrchestration {
     /// SA 恢复判断链（实测 ~50ms）；SA 若已恢复，focusSpace 内部 availability 刷新
     /// 会自动翻正，预判最多让单次守卫少试一条必败通道，无正确性损失。
     ///
-    /// ## 降级路径合并查询（2026-09-03 极限优化）
-    /// 旧降级链三次串行 fork：currentSpaceIndex（spaces 查询）→ query --windows →
-    /// focus。`query --windows` 的窗口自带 `has-focus` + `space` 字段——一次查询即可
-    /// 同时完成「漂移判定」（focused space ≠ preMoveSpace）与「候选选择」，三次 fork
-    /// 变两次；且漂移判定与候选选择基于同一快照，比两次独立查询的一致性更好。
-    /// 查询失败/无聚焦窗口 → noDrift（沿用「查询失败不盲切」语义）。
+    /// ## 降级轻查询计划（2026-09-04，替代合并查询版）
+    /// 埋点实测：yabai fork 次数不是瓶颈，`query --windows` **全量 JSON 枚举**
+    /// （50+ 窗口 ~100-250ms 波动）才是守卫降级链最大单项。合并查询版（2 fork）
+    /// 与旧三 fork 版实测持平即为此证。现改轻查询计划，fork 数不变（3）但每次
+    /// 都是轻量：currentSpaceIndex（`--spaces --space` 单条）判漂移 →
+    /// `query --windows --space N`（个位数窗口，实测 31ms vs 全量 98ms）选候选
+    /// → focus。信息等价，数据量降一个量级，方差随 JSON 规模收窄。
     static func refocusPerspective(
         channels: any RestoreSpaceChanneling,
         preMoveSpace: Int,
         excludingWindowID excluded: UInt32,
         operationID: String
     ) -> PerspectiveRefocusOutcome {
-        // SA 直切优先：可用时独立判漂移（无需窗口列表）+ space --focus（不依赖目标 space 有窗口）
-        if channels.canControlSpaces {
-            guard let postMoveSpace = channels.currentSpaceIndex(), postMoveSpace != preMoveSpace else {
-                return .noDrift
-            }
-            if channels.focusSpace(.yabaiIndex(preMoveSpace), operationID: operationID) {
-                channels.clearQueryCache()
-                return .refocused(postSpace: postMoveSpace)
-            }
-        }
-        // 降级：合并查询版聚焦带动。一次 query --windows 同快照完成漂移判定 + 候选选择。
-        guard let windows = channels.queryAllWindows(operationID: operationID) else {
-            return .noDrift // 查询失败沿用「不盲切」语义
-        }
-        guard let focusedWindow = windows.first(where: { $0.hasFocus }),
-              let postMoveSpace = focusedWindow.space else {
-            return .noDrift // 无聚焦窗口（罕见）→ 无法确认漂移，不盲切
-        }
-        guard postMoveSpace != preMoveSpace else {
+        guard let postMoveSpace = channels.currentSpaceIndex(), postMoveSpace != preMoveSpace else {
             return .noDrift
         }
-        guard let candidate = SpaceController.selectRefocusCandidate(
-            windows: windows, spaceIndex: preMoveSpace, excludingWindowID: excluded),
-            let candidateID = candidate.id.map({ UInt32($0) }) else {
-            log("[RestoreSwitchOrchestration] refocusPerspective: no focusable window on preMoveSpace", level: .debug, fields: [
-                "op": operationID, "preMoveSpace": String(preMoveSpace)
-            ])
-            return .failed(postSpace: postMoveSpace)
+        var refocused = false
+        if channels.canControlSpaces {
+            refocused = channels.focusSpace(.yabaiIndex(preMoveSpace), operationID: operationID)
         }
-        if channels.focusWindow(candidateID, operationID: operationID) {
+        if !refocused {
+            refocused = channels.refocusWindowOnSpace(preMoveSpace, excludingWindowID: excluded, operationID: operationID)
+        }
+        if refocused {
             channels.clearQueryCache()
             return .refocused(postSpace: postMoveSpace)
         }
         return .failed(postSpace: postMoveSpace)
     }
 }
+
