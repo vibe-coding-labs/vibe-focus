@@ -1407,8 +1407,9 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             // 阶段 5：手动恢复（cell0 注入 claude --resume）
             restoreResult = await e2eController.restoreLayout(snapshotID: capSnap.id)
             let countApp = resolvedSelection?.bundleID ?? "com.apple.Terminal"
-            if let out = ShellRunner.run(executable: "/bin/bash", arguments: ["-c",
-                "osascript -e 'tell application id \\\"\(countApp)\\\" to count windows'"]) {
+            // 直接 osascript（不经 bash -c 转义层）， applescript 双引号在 Swift 串里转义
+            if let out = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                "tell application id \"\(countApp)\" to count windows"], timeout: 30) {
                 windowCountAfterRestore = Int(out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
             }
             e2eSem.signal()
