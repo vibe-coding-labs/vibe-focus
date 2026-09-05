@@ -2,9 +2,11 @@ import SwiftUI
 
 // MARK: - 屏幕布局缩略图（可视化编排目标选择）
 /// 把整机屏幕按真实物理布局画成一张 mini map：每块屏一个圆角矩形（名称/分辨率/
-/// displayID/主屏标），屏下一排 Space 胶囊；点击屏幕 = 编排到该屏当前工作区，
+/// displayID/主屏标），屏底缘内嵌 Space 胶囊；点击屏幕 = 编排到该屏当前工作区，
 /// 点击某个 Space 胶囊 = 编排到该屏该工作区；选中目标屏内实时叠加 rows×cols
 /// 网格预览——所见即所得。
+/// 视觉语言：中性灰阶为底，accent 只做选中/当前两处点缀；格线画内部细实线
+/// （逐格 strokeBorder 会在相邻边叠加变粗，dash 显糙）。
 
 struct ScreenMinimapView: View {
 
@@ -19,13 +21,18 @@ struct ScreenMinimapView: View {
     @State private var hoveredDisplayID: UInt32?
 
     private enum Metrics {
-        static let screenCornerRadius: CGFloat = 8
-        static let spaceCornerRadius: CGFloat = 4
+        static let screenCornerRadius: CGFloat = 10
+        static let spaceCornerRadius: CGFloat = 3.5
+        static let gridLineThickness: CGFloat = 0.75
     }
 
     var body: some View {
         GeometryReader { geo in
             let layout = ScreenLayoutMapper.map(screens: screens, viewSize: geo.size)
+            // 内容整体在容器内居中（真实布局 union 常偏一侧）
+            let centeringX = (geo.size.width - layout.contentRect.width) / 2 - layout.contentRect.minX
+            let centeringY = (geo.size.height - layout.contentRect.height) / 2 - layout.contentRect.minY
+
             ZStack(alignment: .topLeading) {
                 ForEach(layout.screens, id: \.displayID) { screen in
                     screenView(screen)
@@ -39,6 +46,7 @@ struct ScreenMinimapView: View {
                     }
                 }
             }
+            .offset(x: centeringX, y: centeringY)
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
         .frame(height: height)
@@ -56,23 +64,24 @@ struct ScreenMinimapView: View {
 
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Metrics.screenCornerRadius, style: .continuous)
-                .fill(selectedScreen ? Color.accentColor.opacity(0.10) : Color.primary.opacity(hovered ? 0.07 : 0.04))
+                .fill(
+                    selectedScreen ? Color.accentColor.opacity(0.05)
+                    : Color.primary.opacity(hovered ? 0.06 : 0.035)
+                )
 
             RoundedRectangle(cornerRadius: Metrics.screenCornerRadius, style: .continuous)
                 .strokeBorder(
-                    selectedScreen ? Color.accentColor : Color.primary.opacity(hovered ? 0.55 : 0.28),
-                    lineWidth: selectedScreen ? 2 : 1
+                    selectedScreen ? Color.accentColor.opacity(0.85)
+                    : Color.primary.opacity(hovered ? 0.42 : 0.20),
+                    lineWidth: selectedScreen ? 1.5 : 1
                 )
 
-            if smallScreen(screen) {
-                // 缩略得太小的屏不放文字，靠 tooltip
-                EmptyView()
-            } else {
-                screenLabels(screen)
+            if !smallScreen(screen) {
+                screenLabels(screen, selected: selectedScreen)
             }
 
             if selectedScreen, gridPreviewRows >= 1, gridPreviewCols >= 1 {
-                gridPreview(size: screen.frame.size)
+                gridPreviewLines(size: screen.frame.size)
             }
         }
         .frame(width: screen.frame.width, height: screen.frame.height)
@@ -95,27 +104,30 @@ struct ScreenMinimapView: View {
         screen.frame.width < 96 || screen.frame.height < 64
     }
 
-    private func screenLabels(_ screen: ScreenLayoutMapper.MappedScreen) -> some View {
-        HStack(alignment: .top, spacing: 5) {
-            Text(screen.name)
-                .font(.system(size: 11, weight: .semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if screen.isMain {
-                Text("主")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Capsule().strokeBorder(Color.accentColor.opacity(0.6)))
+    /// 两行标签：名称（+主标）一行、等宽元数据一行——同 HStack 挤一行必然截断
+    private func screenLabels(_ screen: ScreenLayoutMapper.MappedScreen, selected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Text(screen.name)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color.primary.opacity(selected ? 0.85 : 0.60))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if screen.isMain {
+                    Text("主")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.accentColor))
+                }
             }
-            Spacer(minLength: 0)
             Text(labelLine(screen))
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundStyle(Color.secondary.opacity(0.9))
                 .lineLimit(1)
         }
-        .padding(7)
+        .padding(8)
     }
 
     private func labelLine(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
@@ -127,24 +139,31 @@ struct ScreenMinimapView: View {
         if let visible = screen.visibleSpaceIndex {
             parts.append("S\(visible)")
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: "  ")
     }
 
-    // MARK: 网格预览（选中目标屏内叠加 rows×cols）
+    // MARK: 网格预览（选中目标屏内叠加 rows×cols 内部格线）
 
-    private func gridPreview(size: CGSize) -> some View {
-        let cells = ScreenLayoutMapper.gridPreviewCells(
-            screenFrame: CGRect(origin: .zero, size: size),
-            rows: gridPreviewRows,
-            cols: gridPreviewCols
-        )
-        return ZStack(alignment: .topLeading) {
-            ForEach(cells.indices, id: \.self) { index in
-                let cell = cells[index]
-                RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(Color.accentColor.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .frame(width: cell.width, height: cell.height)
-                    .offset(x: cell.minX, y: cell.minY)
+    /// 只画内部格线（rows-1 横 + cols-1 竖）：细实线、低透明度，不与选中描边重叠
+    private func gridPreviewLines(size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            if gridPreviewRows > 1 {
+                ForEach(1..<gridPreviewRows, id: \.self) { row in
+                    let y = size.height * CGFloat(row) / CGFloat(gridPreviewRows)
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.30))
+                        .frame(width: size.width, height: Metrics.gridLineThickness)
+                        .offset(x: 0, y: y - Metrics.gridLineThickness / 2)
+                }
+            }
+            if gridPreviewCols > 1 {
+                ForEach(1..<gridPreviewCols, id: \.self) { col in
+                    let x = size.width * CGFloat(col) / CGFloat(gridPreviewCols)
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.30))
+                        .frame(width: Metrics.gridLineThickness, height: size.height)
+                        .offset(x: x - Metrics.gridLineThickness / 2, y: 0)
+                }
             }
         }
         .allowsHitTesting(false)
@@ -156,22 +175,26 @@ struct ScreenMinimapView: View {
         let isTargetSpace = selected == .displaySpace(displayID: screen.displayID, spaceIndex: space.yabaiIndex)
         return RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius, style: .continuous)
             .fill(
-                isTargetSpace ? Color.accentColor.opacity(0.22)
-                : space.isVisible ? Color.accentColor.opacity(0.14)
-                : Color.primary.opacity(0.05)
+                isTargetSpace ? Color.accentColor.opacity(0.14)
+                : space.isVisible ? Color.accentColor.opacity(0.16)
+                : Color.primary.opacity(0.06)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius, style: .continuous)
                     .strokeBorder(
-                        isTargetSpace ? Color.accentColor : Color.primary.opacity(0.22),
-                        lineWidth: isTargetSpace ? 1.5 : 1
+                        isTargetSpace ? Color.accentColor : Color.clear,
+                        lineWidth: 1.2
                     )
             )
             .frame(width: space.frame.width, height: space.frame.height)
             .overlay(
                 Text("\(space.yabaiIndex)")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(space.isVisible || isTargetSpace ? Color.primary : Color.secondary)
+                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(
+                        isTargetSpace ? Color.accentColor
+                        : space.isVisible ? Color.primary.opacity(0.75)
+                        : Color.secondary.opacity(0.75)
+                    )
             )
             .contentShape(RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius))
             .onTapGesture { onSelect(.displaySpace(displayID: screen.displayID, spaceIndex: space.yabaiIndex)) }

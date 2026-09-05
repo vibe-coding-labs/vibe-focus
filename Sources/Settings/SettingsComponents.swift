@@ -37,7 +37,7 @@ struct SettingsCard<Content: View>: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.75), lineWidth: 1)
         )
     }
 }

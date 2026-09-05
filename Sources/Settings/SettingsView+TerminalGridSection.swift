@@ -87,21 +87,15 @@ extension SettingsView {
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        Stepper("\(gridRows)", value: Binding(
-                            get: { gridRows },
-                            set: { gridRows = $0; TerminalGridPreferences.rows = $0 }
-                        ), in: 1...TerminalGridPlanner.maxGridSize)
-                        .frame(width: 76)
-                        .labelsHidden()
-
-                        Text("×").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-
-                        Stepper("\(gridCols)", value: Binding(
-                            get: { gridCols },
-                            set: { gridCols = $0; TerminalGridPreferences.cols = $0 }
-                        ), in: 1...TerminalGridPlanner.maxGridSize)
-                        .frame(width: 76)
-                        .labelsHidden()
+                        CompactStepper(value: gridRows, range: 1...TerminalGridPlanner.maxGridSize) { newValue in
+                            gridRows = newValue
+                            TerminalGridPreferences.rows = newValue
+                        }
+                        Text("×").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.tertiary)
+                        CompactStepper(value: gridCols, range: 1...TerminalGridPlanner.maxGridSize) { newValue in
+                            gridCols = newValue
+                            TerminalGridPreferences.cols = newValue
+                        }
                     }
                 }
 
@@ -455,5 +449,47 @@ struct GridSnapshotThumbnail: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
         )
+    }
+}
+
+
+/// 紧凑数值步进器：− 数值 ＋（系统 Stepper 在紧凑布局下只剩裸箭头、数值不可见）
+struct CompactStepper: View {
+    let value: Int
+    let range: ClosedRange<Int>
+    let onChange: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            stepButton(symbol: "minus", enabled: value > range.lowerBound) { onChange(value - 1) }
+            Text("\(value)")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.primary)
+                .frame(minWidth: 24)
+            stepButton(symbol: "plus", enabled: value < range.upperBound) { onChange(value + 1) }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private func stepButton(symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            guard enabled else { return }
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(Color.primary.opacity(enabled ? 0.55 : 0.18))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 }
