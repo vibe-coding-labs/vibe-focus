@@ -65,6 +65,13 @@ final class ShortcutRecorderButton: NSButton {
         return super.resignFirstResponder()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // VibeColors.cardNS/hairlineNS 的 .cgColor 是按当前外观一次性解析的静态色，
+        // 系统亮暗切换时不会自动重解析，必须重设 layer 颜色
+        updateAppearance()
+    }
+
     private func updateAppearance() {
         let fontSize: CGFloat = 13
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium)
