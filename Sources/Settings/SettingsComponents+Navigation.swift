@@ -47,12 +47,16 @@ struct AppLogoBadge: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
-                            .fill(Color.accentColor)
+                            .fill(VibeColors.accent)
                     )
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+        )
     }
 }
 
@@ -77,16 +81,39 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
-/// Single tab button used in the settings navigation.
-struct SettingsTabButton: View {
-    let tab: SettingsTab
-    let isSelected: Bool
-    let action: () -> Void
+/// 分段式标签栏：凹槽底 + 滑动选中块（matchedGeometryEffect），
+/// 选中态 = 亮面浮起小块，观感对齐 macOS 原生分段控件。
+struct SettingsTabBar: View {
+    @Binding var selection: SettingsTab
 
-    @State private var isHovered = false
+    @Namespace private var thumbNamespace
 
     var body: some View {
-        Button(action: action) {
+        HStack(spacing: 2) {
+            ForEach(SettingsTab.allCases, id: \.self) { tab in
+                tabButton(tab)
+            }
+            Spacer()
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: VibeRadius.control + 2, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: VibeRadius.control + 2, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func tabButton(_ tab: SettingsTab) -> some View {
+        let isSelected = selection == tab
+
+        return Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                selection = tab
+            }
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: tab.icon)
                     .font(.system(size: 12, weight: .medium))
@@ -94,27 +121,21 @@ struct SettingsTabButton: View {
                 Text(tab.rawValue)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(
-                        isSelected ? Color.accentColor.opacity(0.13)
-                        : isHovered ? Color.primary.opacity(0.05)
-                        : Color.clear
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.25) : Color.clear, lineWidth: 1)
-            )
-            .foregroundStyle(isSelected ? Color.accentColor : Color.primary.opacity(isHovered ? 0.75 : 0.55))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6.5)
+            .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.52))
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                        .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
+                        .matchedGeometryEffect(id: "tab-thumb", in: thumbNamespace)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous))
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.15), value: isSelected)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityLabel(tab.rawValue)
     }
 }

@@ -6,7 +6,8 @@ extension SettingsView {
     var workspaceSection: some View {
         SettingsCard(
             title: "跨工作区（高级）",
-            subtitle: "检测到 yabai 后自动启用跨工作区移动；未安装或不可用时保持当前能力。"
+            subtitle: "检测到 yabai 后自动启用跨工作区移动；未安装或不可用时保持当前能力。",
+            icon: "square.stack.3d.up"
         ) {
             SettingsRow(
                 title: "yabai 状态",
@@ -52,7 +53,7 @@ extension SettingsView {
                                 ])
                             }
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.vibeProminent)
 
                         Button("验证安装") {
                             spaceController.refreshAvailability(force: true)
@@ -115,6 +116,7 @@ extension SettingsView {
             ) {
                 Toggle("", isOn: $spaceIntegrationEnabled)
                     .labelsHidden()
+                    .toggleStyle(.switch)
             }
         }
     }

@@ -6,7 +6,8 @@ extension SettingsView {
     var permissionsSection: some View {
         SettingsCard(
             title: "权限与授权",
-            subtitle: "用于确认当前实例是否已获得辅助功能权限，并提供快速跳转与修复指引。"
+            subtitle: "用于确认当前实例是否已获得辅助功能权限，并提供快速跳转与修复指引。",
+            icon: "lock.shield"
         ) {
             SettingsRow(
                 title: "辅助功能权限",
@@ -17,7 +18,7 @@ extension SettingsView {
                 HStack(spacing: 10) {
                     SettingsStatusPill(
                         title: hotKeyManager.accessibilityGranted ? "已授权" : "未授权",
-                        tint: hotKeyManager.accessibilityGranted ? .green : .red
+                        tint: hotKeyManager.accessibilityGranted ? VibeColors.success : VibeColors.danger
                     )
 
                     Button("重新检测") {
@@ -37,7 +38,7 @@ extension SettingsView {
                     Button("打开辅助功能设置") {
                         hotKeyManager.openAccessibilitySettings()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.vibeProminent)
 
                     Button("复制重置命令") {
                         // P-INST-243: 复制权限重置命令到剪贴板耗时（NSPasteboard.clearContents + setString；权限设置 UI 按钮触发；slow-op ≥5ms warn）。
@@ -113,7 +114,7 @@ extension SettingsView {
                     ForEach(otherInstallations, id: \.self) { (path: String) in
                         HStack(spacing: 10) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(VibeColors.warning)
                                 .font(.system(size: 10))
                             Text(path)
                                 .font(.system(size: 11, design: .monospaced))
@@ -126,19 +127,23 @@ extension SettingsView {
                                 }
                                 .buttonStyle(.borderless)
                                 .font(.system(size: 11))
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(VibeColors.accent)
                                 Button("删除") {
                                     moveDuplicateToTrash(path: path)
                                 }
                                 .buttonStyle(.borderless)
                                 .font(.system(size: 11))
-                                .foregroundStyle(.red)
+                                .foregroundStyle(VibeColors.danger)
                             }
                         }
-                        .padding(8)
+                        .padding(10)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.orange.opacity(0.08))
+                            RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
+                                .fill(Color.orange.opacity(0.07))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
+                                .strokeBorder(Color.orange.opacity(0.16), lineWidth: 1)
                         )
                     }
                     HStack {
@@ -148,7 +153,7 @@ extension SettingsView {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(VibeColors.danger)
                     }
                 }
             }
@@ -158,7 +163,8 @@ extension SettingsView {
     var loginItemSection: some View {
         SettingsCard(
             title: "开机启动",
-            subtitle: "控制 VibeFocus 是否在登录后自动启动；如需确认或移除，可在系统设置中操作。"
+            subtitle: "控制 VibeFocus 是否在登录后自动启动；如需确认或移除，可在系统设置中操作。",
+            icon: "power"
         ) {
             SettingsRow(
                 title: "登录时启动",
@@ -168,15 +174,15 @@ extension SettingsView {
                     SettingsStatusPill(
                         title: loginItemManager.statusTitle,
                         tint: loginItemManager.isEnabled
-                            ? .green
-                            : (loginItemManager.requiresApproval ? .orange : Color.secondary)
+                            ? VibeColors.success
+                            : (loginItemManager.requiresApproval ? VibeColors.warning : VibeColors.neutral)
                     )
                     Toggle("", isOn: Binding(
                         get: { loginItemManager.isEnabled },
                         set: { loginItemManager.setEnabled($0) }
                     ))
                     .labelsHidden()
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(.switch)
                 }
             }
 

@@ -7,19 +7,14 @@ extension SettingsView {
     var layoutHotKeySection: some View {
         SettingsCard(
             title: "摆位快捷键",
-            subtitle: "Rectangle 式窗口摆位：把当前焦点窗口摆到半屏 / 四分 / 最大化 / 居中 / 下一屏。点击录制按钮后直接按下新组合键。"
+            subtitle: "Rectangle 式窗口摆位：把当前焦点窗口摆到半屏 / 四分 / 最大化 / 居中 / 下一屏。点击录制按钮后直接按下新组合键。",
+            icon: "macwindow.on.rectangle"
         ) {
             if let conflictSummary = layoutConflictSummary {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
-                    Text("检测到同类窗口管理器正在运行：\(conflictSummary)。摆位热键已自动停用，避免双方抢键；如仍要启用请打开下方开关。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.12)))
+                InfoBanner(
+                    style: .warning,
+                    text: "检测到同类窗口管理器正在运行：\(conflictSummary)。摆位热键已自动停用，避免双方抢键；如仍要启用请打开下方开关。"
+                )
 
                 Divider()
             }

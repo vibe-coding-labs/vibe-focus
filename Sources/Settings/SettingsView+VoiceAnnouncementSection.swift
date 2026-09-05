@@ -7,7 +7,8 @@ extension SettingsView {
     var voiceAnnouncementSection: some View {
         SettingsCard(
             title: "语音播报",
-            subtitle: "会话完成时语音播报，支持固定文案、本地音频或 LLM 一句话总结。兼容 Claude Code 与 Codex CLI。"
+            subtitle: "会话完成时语音播报，支持固定文案、本地音频或 LLM 一句话总结。兼容 Claude Code 与 Codex CLI。",
+            icon: "waveform"
         ) {
             SettingsRow(
                 title: "播报模式",

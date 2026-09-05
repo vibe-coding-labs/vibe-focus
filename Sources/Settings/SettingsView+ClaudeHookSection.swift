@@ -6,29 +6,13 @@ extension SettingsView {
     var claudeHookSection: some View {
         SettingsCard(
             title: "Claude Code 集成",
-            subtitle: "让 VibeFocus 监听 Claude Code 的对话事件，实现对话完成后自动将终端窗口拉回主屏幕并最大化。"
+            subtitle: "让 VibeFocus 监听 Claude Code 的对话事件，实现对话完成后自动将终端窗口拉回主屏幕并最大化。",
+            icon: "link"
         ) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "lightbulb.fill")
-                    .foregroundStyle(.yellow.opacity(0.8))
-                    .font(.system(size: 14))
-                    .padding(.top, 2)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("工作原理")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("开启服务并安装 Hook 后，Claude Code 会在对话结束时自动将终端窗口移到主屏幕。开启「提交后自动恢复」后，在你提交新提示词时窗口会自动回到原来的位置 — 无需手动按快捷键。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.yellow.opacity(0.06))
+            InfoBanner(
+                style: .tip,
+                title: "工作原理",
+                text: "开启服务并安装 Hook 后，Claude Code 会在对话结束时自动将终端窗口移到主屏幕。开启「提交后自动恢复」后，在你提交新提示词时窗口会自动回到原来的位置 — 无需手动按快捷键。"
             )
 
             Divider()
@@ -40,7 +24,7 @@ extension SettingsView {
                 HStack(spacing: 10) {
                     SettingsStatusPill(
                         title: hookServer.isRunning ? "运行中" : "未启动",
-                        tint: hookServer.isRunning ? .green : .gray
+                        tint: hookServer.isRunning ? VibeColors.success : VibeColors.neutral
                     )
                     Toggle("", isOn: Binding(
                         get: { hookEnabled },
@@ -55,6 +39,7 @@ extension SettingsView {
                         }
                     ))
                     .labelsHidden()
+                    .toggleStyle(.switch)
                 }
             }
 
@@ -68,7 +53,7 @@ extension SettingsView {
             ) {
                 SettingsStatusPill(
                     title: ClaudeHookPreferences.isHookInstalled ? "已安装" : "未安装",
-                    tint: ClaudeHookPreferences.isHookInstalled ? .green : .orange
+                    tint: ClaudeHookPreferences.isHookInstalled ? VibeColors.success : VibeColors.warning
                 )
             }
 
@@ -78,7 +63,7 @@ extension SettingsView {
                     hookInstallSucceeded = ok
                     hookInstallMessage = msg
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vibeProminent)
                 .disabled(!hookEnabled)
 
                 if ClaudeHookPreferences.isHookInstalled {
@@ -88,7 +73,7 @@ extension SettingsView {
                         hookInstallMessage = msg
                     }
                     .buttonStyle(.bordered)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(VibeColors.danger)
                 }
 
                 Button("复制配置 JSON") {
@@ -115,7 +100,7 @@ extension SettingsView {
             if let msg = hookInstallMessage {
                 Text(msg)
                     .font(.system(size: 12))
-                    .foregroundStyle(hookInstallSucceeded ? .green : .red)
+                    .foregroundStyle(hookInstallSucceeded ? VibeColors.success : VibeColors.danger)
             }
 
             Divider()
@@ -260,7 +245,7 @@ extension SettingsView {
                     sessionRegistry.clearAllBindings()
                 }
                 .buttonStyle(.bordered)
-                .foregroundStyle(.red)
+                .foregroundStyle(VibeColors.danger)
 
                 Spacer()
             }
@@ -275,7 +260,7 @@ extension SettingsView {
 
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "terminal.fill")
-                    .foregroundStyle(.blue.opacity(0.8))
+                    .foregroundStyle(VibeColors.accent.opacity(0.8))
                     .font(.system(size: 14))
                     .padding(.top, 2)
 
@@ -290,10 +275,14 @@ extension SettingsView {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.blue.opacity(0.06))
+                RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
+                    .fill(VibeColors.accent.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
+                    .strokeBorder(VibeColors.accent.opacity(0.14), lineWidth: 1)
             )
 
             SettingsRow(
@@ -304,7 +293,7 @@ extension SettingsView {
             ) {
                 SettingsStatusPill(
                     title: CodexHookPreferences.isHookInstalled ? "已安装" : "未安装",
-                    tint: CodexHookPreferences.isHookInstalled ? .green : .orange
+                    tint: CodexHookPreferences.isHookInstalled ? VibeColors.success : VibeColors.warning
                 )
             }
 
@@ -314,7 +303,7 @@ extension SettingsView {
                     codexInstallSucceeded = ok
                     codexInstallMessage = msg
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vibeProminent)
                 .disabled(!hookEnabled)
 
                 if CodexHookPreferences.isHookInstalled {
@@ -324,7 +313,7 @@ extension SettingsView {
                         codexInstallMessage = msg
                     }
                     .buttonStyle(.bordered)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(VibeColors.danger)
                 }
 
                 Spacer()
@@ -333,7 +322,7 @@ extension SettingsView {
             if let msg = codexInstallMessage {
                 Text(msg)
                     .font(.system(size: 12))
-                    .foregroundStyle(codexInstallSucceeded ? .green : .red)
+                    .foregroundStyle(codexInstallSucceeded ? VibeColors.success : VibeColors.danger)
             }
 
             Text("Codex 首次运行 Hook 时需在 Codex 界面确认信任（hook trust 机制）。触发时机与上方 Claude Code 设置共享。")

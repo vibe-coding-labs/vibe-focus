@@ -71,21 +71,21 @@ public struct SettingsView: View {
 
     private var headerBar: some View {
         HStack(spacing: 14) {
-            AppLogoBadge(size: 44)
-                .shadow(color: Color.black.opacity(0.18), radius: 5, y: 2)
+            AppLogoBadge(size: 46)
+                .shadow(color: VibeColors.accent.opacity(0.28), radius: 7, y: 3)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text("VibeFocus")
-                        .font(.system(size: 19, weight: .bold))
-                        .tracking(-0.3)
+                        .font(.system(size: 20, weight: .bold))
+                        .tracking(-0.4)
                     Text(appVersionDisplay)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.primary.opacity(0.06)))
-                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+                        .background(Capsule().fill(Color.primary.opacity(0.055)))
+                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.09), lineWidth: 1))
                 }
                 Text("菜单栏里的窗口流转工具")
                     .font(.system(size: 12))
@@ -96,25 +96,13 @@ public struct SettingsView: View {
 
             SettingsStatusPill(
                 title: hotKeyManager.shortcutStatusIsError ? "需要处理" : "工作正常",
-                tint: hotKeyManager.shortcutStatusIsError ? .red : .green
+                tint: hotKeyManager.shortcutStatusIsError ? VibeColors.danger : VibeColors.success
             )
         }
     }
 
     private var tabBar: some View {
-        HStack(spacing: 4) {
-            ForEach(SettingsTab.allCases, id: \.self) { tab in
-                SettingsTabButton(
-                    tab: tab,
-                    isSelected: selectedTab == tab
-                ) {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        selectedTab = tab
-                    }
-                }
-            }
-            Spacer()
-        }
+        SettingsTabBar(selection: $selectedTab)
     }
 
     @ViewBuilder
@@ -173,23 +161,30 @@ public struct SettingsView: View {
     public var body: some View {
         VStack(spacing: 0) {
             headerBar
-                .padding(.top, 20)
+                .padding(.top, 22)
 
             tabBar
-                .padding(.top, 14)
+                .padding(.top, 16)
 
             Rectangle()
-                .fill(Color.primary.opacity(0.06))
+                .fill(Color.primary.opacity(0.07))
                 .frame(height: 1)
-                .padding(.top, 12)
+                .padding(.top, 14)
 
             tabContent
-                .padding(.top, 16)
-                .padding(.bottom, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 22)
         }
         .padding(.horizontal, 26)
         .frame(minWidth: 780, idealWidth: 780, minHeight: 680, idealHeight: 740)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .tint(VibeColors.accent)
+        .background(alignment: .top) {
+            VibeColors.headerWash
+                .frame(height: 150)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+        .background(Color(nsColor: .underPageBackgroundColor))
         .onAppear {
             let startedAt = Date()
             log("[Settings] view onAppear start")

@@ -34,6 +34,8 @@ struct ScreenMinimapView: View {
             let centeringY = (geo.size.height - layout.contentRect.height) / 2 - layout.contentRect.minY
 
             ZStack(alignment: .topLeading) {
+                DotGridPattern()
+
                 ForEach(layout.screens, id: \.displayID) { screen in
                     screenView(screen)
                         .offset(x: screen.frame.minX, y: screen.frame.minY)
@@ -65,14 +67,14 @@ struct ScreenMinimapView: View {
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Metrics.screenCornerRadius, style: .continuous)
                 .fill(
-                    selectedScreen ? Color.accentColor.opacity(0.05)
-                    : Color.primary.opacity(hovered ? 0.06 : 0.035)
+                    selectedScreen ? VibeColors.accent.opacity(0.055)
+                    : Color(nsColor: .controlBackgroundColor).opacity(hovered ? 1 : 0.85)
                 )
 
             RoundedRectangle(cornerRadius: Metrics.screenCornerRadius, style: .continuous)
                 .strokeBorder(
-                    selectedScreen ? Color.accentColor.opacity(0.85)
-                    : Color.primary.opacity(hovered ? 0.42 : 0.20),
+                    selectedScreen ? VibeColors.accent.opacity(0.85)
+                    : Color.primary.opacity(hovered ? 0.34 : 0.15),
                     lineWidth: selectedScreen ? 1.5 : 1
                 )
 
@@ -84,6 +86,12 @@ struct ScreenMinimapView: View {
                 gridPreviewLines(size: screen.frame.size)
             }
         }
+        .shadow(
+            color: selectedScreen ? VibeColors.accent.opacity(0.20)
+                : hovered ? Color.black.opacity(0.10) : Color.black.opacity(0.05),
+            radius: selectedScreen ? 8 : (hovered ? 5 : 3),
+            y: 2
+        )
         .frame(width: screen.frame.width, height: screen.frame.height)
         .contentShape(RoundedRectangle(cornerRadius: Metrics.screenCornerRadius))
         .onHover { hovering in
@@ -95,6 +103,7 @@ struct ScreenMinimapView: View {
         }
         .onTapGesture { onSelect(.display(displayID: screen.displayID)) }
         .animation(.easeOut(duration: 0.15), value: hoveredDisplayID)
+        .animation(.easeOut(duration: 0.15), value: selectedScreen)
         .help(screenTapHelp(screen))
         .accessibilityLabel(screenTapHelp(screen))
         .accessibilityAddTraits(selectedScreen ? .isSelected : [])
@@ -110,24 +119,24 @@ struct ScreenMinimapView: View {
             HStack(spacing: 5) {
                 Text(screen.name)
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(Color.primary.opacity(selected ? 0.85 : 0.60))
+                    .foregroundStyle(Color.primary.opacity(selected ? 0.88 : 0.66))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if screen.isMain {
                     Text("主")
                         .font(.system(size: 7.5, weight: .bold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.accentColor))
+                        .background(Capsule().fill(VibeColors.accent))
                 }
             }
             Text(labelLine(screen))
-                .font(.system(size: 8.5, design: .monospaced))
-                .foregroundStyle(Color.secondary.opacity(0.9))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Color.secondary.opacity(0.85))
                 .lineLimit(1)
         }
-        .padding(8)
+        .padding(9)
     }
 
     private func labelLine(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
@@ -151,7 +160,7 @@ struct ScreenMinimapView: View {
                 ForEach(1..<gridPreviewRows, id: \.self) { row in
                     let y = size.height * CGFloat(row) / CGFloat(gridPreviewRows)
                     Rectangle()
-                        .fill(Color.accentColor.opacity(0.30))
+                        .fill(VibeColors.accent.opacity(0.30))
                         .frame(width: size.width, height: Metrics.gridLineThickness)
                         .offset(x: 0, y: y - Metrics.gridLineThickness / 2)
                 }
@@ -160,7 +169,7 @@ struct ScreenMinimapView: View {
                 ForEach(1..<gridPreviewCols, id: \.self) { col in
                     let x = size.width * CGFloat(col) / CGFloat(gridPreviewCols)
                     Rectangle()
-                        .fill(Color.accentColor.opacity(0.30))
+                        .fill(VibeColors.accent.opacity(0.30))
                         .frame(width: Metrics.gridLineThickness, height: size.height)
                         .offset(x: x - Metrics.gridLineThickness / 2, y: 0)
                 }
@@ -173,16 +182,16 @@ struct ScreenMinimapView: View {
 
     private func spaceCapsule(_ screen: ScreenLayoutMapper.MappedScreen, _ space: ScreenLayoutMapper.MappedSpace) -> some View {
         let isTargetSpace = selected == .displaySpace(displayID: screen.displayID, spaceIndex: space.yabaiIndex)
-        return RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius, style: .continuous)
+        return RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius + 0.5, style: .continuous)
             .fill(
-                isTargetSpace ? Color.accentColor.opacity(0.14)
-                : space.isVisible ? Color.accentColor.opacity(0.16)
-                : Color.primary.opacity(0.06)
+                isTargetSpace ? VibeColors.accent.opacity(0.16)
+                : space.isVisible ? VibeColors.accent.opacity(0.18)
+                : Color.primary.opacity(0.055)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius + 0.5, style: .continuous)
                     .strokeBorder(
-                        isTargetSpace ? Color.accentColor : Color.clear,
+                        isTargetSpace ? VibeColors.accent : Color.clear,
                         lineWidth: 1.2
                     )
             )
@@ -191,12 +200,12 @@ struct ScreenMinimapView: View {
                 Text("\(space.yabaiIndex)")
                     .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(
-                        isTargetSpace ? Color.accentColor
-                        : space.isVisible ? Color.primary.opacity(0.75)
-                        : Color.secondary.opacity(0.75)
+                        isTargetSpace ? VibeColors.accent
+                        : space.isVisible ? Color.primary.opacity(0.72)
+                        : Color.secondary.opacity(0.7)
                     )
             )
-            .contentShape(RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius))
+            .contentShape(RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius + 0.5))
             .onTapGesture { onSelect(.displaySpace(displayID: screen.displayID, spaceIndex: space.yabaiIndex)) }
             .help("Space \(space.yabaiIndex)\(space.isVisible ? "（当前）" : "")——编排到此工作区")
             .accessibilityLabel("屏幕 \(screen.name) Space \(space.yabaiIndex)")

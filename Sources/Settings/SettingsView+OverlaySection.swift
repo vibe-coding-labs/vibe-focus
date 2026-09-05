@@ -6,7 +6,8 @@ extension SettingsView {
     var overlaySection: some View {
         SettingsCard(
             title: "屏幕序号显示",
-            subtitle: "在每个屏幕上显示编号标签，方便识别多屏幕环境。"
+            subtitle: "在每个屏幕上显示编号标签，方便识别多屏幕环境。",
+            icon: "number"
         ) {
             SettingsRow(
                 title: "启用屏幕序号",
@@ -17,53 +18,47 @@ extension SettingsView {
                     set: { overlayManager.setEnabled($0) }
                 ))
                 .labelsHidden()
+                .toggleStyle(.switch)
             }
 
             if overlayManager.preferences.isEnabled {
                 Divider()
 
-                HStack(spacing: 8) {
-                    Image(systemName: spaceController.isEnabled ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundColor(spaceController.isEnabled ? .green : .orange)
-                        .font(.system(size: 14))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(spaceController.isEnabled ? "已检测到 yabai" : "未检测到 yabai")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(spaceController.isEnabled ? .green : .orange)
-
-                        Text(spaceController.isEnabled
-                            ? "将显示完整索引（如 1-0, 1-2），表示「屏幕-工作区」"
-                            : "仅显示屏幕索引（如 0, 1）。安装 yabai 后可显示工作区索引"
-                        )
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    }
-
-                    Spacer()
+                if spaceController.isEnabled {
+                    InfoBanner(
+                        style: .success,
+                        title: "已检测到 yabai",
+                        text: "将显示完整索引（如 1-0, 1-2），表示「屏幕-工作区」。"
+                    )
+                } else {
+                    InfoBanner(
+                        style: .warning,
+                        title: "未检测到 yabai",
+                        text: "仅显示屏幕索引（如 0, 1）。安装 yabai 后可显示工作区索引。"
+                    )
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
 
                 if !spaceController.isEnabled {
-                    Divider()
-
                     HStack(spacing: 8) {
                         Image(systemName: "info.circle")
                             .foregroundColor(.secondary)
                             .font(.system(size: 12))
 
-                        Text("请先添加 yabai: brew tap koekeishiya/formulae && brew install yabai")
+                        Text("brew tap koekeishiya/formulae && brew install yabai")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .textSelection(.enabled)
 
                         Spacer()
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
+                            .fill(Color.primary.opacity(0.04))
+                    )
                 }
 
                 Divider()

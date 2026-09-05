@@ -2,6 +2,7 @@
 // VibeFocus — 设置页核心展示组件
 // 快捷键/滑块交互组件已移至 SettingsComponents+Shortcuts.swift
 // 导航与品牌图标已移至 SettingsComponents+Navigation.swift
+// 色彩/圆角/横幅等 token 见 DesignSystem.swift
 
 import AppKit
 import SwiftUI
@@ -10,17 +11,24 @@ import Foundation
 // MARK: - Settings Card
 
 /// Reusable card container with rounded corners for settings sections.
+/// icon 传入 SF Symbol 名即渲染标题左侧的 tinted 徽章（各区块的视觉锚点）。
 struct SettingsCard<Content: View>: View {
     let title: String
     let subtitle: String
+    var icon: String? = nil
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .tracking(-0.1)
+                HStack(spacing: 9) {
+                    if let icon {
+                        SectionIconChip(icon: icon)
+                    }
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .tracking(-0.1)
+                }
                 Text(subtitle)
                     .font(.system(size: 12.5))
                     .lineSpacing(2)
@@ -31,14 +39,7 @@ struct SettingsCard<Content: View>: View {
             content
         }
         .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.75), lineWidth: 1)
-        )
+        .vibeCardStyle()
     }
 }
 
@@ -49,52 +50,48 @@ struct CodeBlockView: View {
     let code: String
     let language: String
     @State private var isCopied = false
+    @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(language)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.secondary.opacity(0.1))
-                    )
-
-                Spacer()
-
-                Button(action: copyToClipboard) {
-                    HStack(spacing: 4) {
-                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 11))
-                        Text(isCopied ? "已复制" : "复制")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundStyle(isCopied ? .green : .secondary)
-                }
-                .buttonStyle(.plain)
-            }
+        HStack(spacing: 10) {
+            CapsuleTag(text: language)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                     .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                     .textSelection(.enabled)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 2)
             }
+
+            Spacer(minLength: 8)
+
+            Button(action: copyToClipboard) {
+                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isCopied ? VibeColors.success : Color.secondary.opacity(isHovered ? 0.9 : 0.55))
+                    .frame(width: 26, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: VibeRadius.chip, style: .continuous)
+                            .fill(Color.primary.opacity(isHovered ? 0.06 : 0.035))
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("复制命令")
         }
-        .padding(12)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color(nsColor: .textBackgroundColor).opacity(0.3))
+            RoundedRectangle(cornerRadius: VibeRadius.chip + 2, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 1)
+            RoundedRectangle(cornerRadius: VibeRadius.chip + 2, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
         )
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 
     private func copyToClipboard() {
@@ -127,17 +124,18 @@ struct SettingsStatusPill: View {
             Circle()
                 .fill(tint)
                 .frame(width: 6, height: 6)
+                .shadow(color: tint.opacity(0.55), radius: 2.5)
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .padding(.trailing, 5)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.leading, 10)
+        .padding(.vertical, 5.5)
         .background(
-            Capsule().fill(tint.opacity(0.12))
+            Capsule().fill(tint.opacity(0.10))
         )
         .overlay(
-            Capsule().strokeBorder(tint.opacity(0.28), lineWidth: 1)
+            Capsule().strokeBorder(tint.opacity(0.22), lineWidth: 1)
         )
         .foregroundStyle(tint)
     }
@@ -172,12 +170,12 @@ struct SettingsRow<Accessory: View>: View {
     @ViewBuilder let accessory: Accessory
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13.5, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                 Text(detail)
-                    .font(.system(size: 12))
+                    .font(.system(size: 11.5))
                     .lineSpacing(2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

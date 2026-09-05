@@ -74,15 +74,18 @@ final class ShortcutRecorderButton: NSButton {
                 string: "录制快捷键…",
                 attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
             )
-            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
+            layer?.backgroundColor = VibeColors.accentNS.withAlphaComponent(0.12).cgColor
+            layer?.cornerRadius = 6
         } else {
             attributedTitle = NSAttributedString(
                 string: displayedShortcut,
                 attributes: [.font: font, .foregroundColor: NSColor.labelColor]
             )
             layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            layer?.cornerRadius = 6
+            layer?.borderWidth = 1
+            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.14).cgColor
         }
-        layer?.cornerRadius = 6
         frame.size.height = 28
         needsDisplay = true
     }
@@ -109,46 +112,27 @@ struct ShortcutRecorderView: NSViewRepresentable {
 
 // MARK: - Draggable Slider
 
-/// Custom slider with drag-to-adjust behavior for numeric settings.
-struct DraggableSlider: NSViewRepresentable {
+/// 数值滑杆：SwiftUI Slider（跟随根视图品牌 tint），保留原 NSSlider 版的
+/// 步进取整 + 范围钳制语义，调用方 API 不变。
+struct DraggableSlider: View {
     var value: Binding<Double>
     var minValue: Double
     var maxValue: Double
     var step: Double
 
-    func makeNSView(context: Context) -> NSSlider {
-        let slider = NSSlider(value: value.wrappedValue,
-                              minValue: minValue,
-                              maxValue: maxValue,
-                              target: context.coordinator,
-                              action: #selector(Coordinator.valueChanged))
-        slider.isContinuous = true
-        slider.allowsTickMarkValuesOnly = false
-        return slider
-    }
-
-    func updateNSView(_ nsView: NSSlider, context: Context) {
-        nsView.doubleValue = value.wrappedValue
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    @MainActor
-    class Coordinator {
-        var parent: DraggableSlider
-        init(parent: DraggableSlider) { self.parent = parent }
-
-        @objc func valueChanged(_ sender: NSSlider) {
-            var newValue = sender.doubleValue
-            if parent.step > 0 {
-                newValue = round(newValue / parent.step) * parent.step
-            }
-            // Clamp to valid range
-            newValue = max(parent.minValue, min(parent.maxValue, newValue))
-            parent.value.wrappedValue = newValue
-            sender.doubleValue = newValue
-        }
+    var body: some View {
+        Slider(
+            value: Binding(
+                get: { value.wrappedValue },
+                set: { rawValue in
+                    var newValue = rawValue
+                    if step > 0 {
+                        newValue = (newValue / step).rounded() * step
+                    }
+                    value.wrappedValue = max(minValue, min(maxValue, newValue))
+                }
+            ),
+            in: minValue...maxValue
+        )
     }
 }

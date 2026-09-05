@@ -12,7 +12,8 @@ extension SettingsView {
     var soundSection: some View {
         SettingsCard(
             title: "提示音",
-            subtitle: "对话完成时播放提示音，支持内置音效或自定义音频文件；可设节流间隔与免打扰时段防打扰。"
+            subtitle: "对话完成时播放提示音，支持内置音效或自定义音频文件；可设节流间隔与免打扰时段防打扰。",
+            icon: "speaker.wave.2"
         ) {
             SettingsRow(
                 title: "提示音类型",
@@ -181,10 +182,10 @@ extension SettingsView {
                 )
 
                 if customSoundStatus == .missing {
-                    Text("⚠️ 所选文件不存在，完成音将自动降级为系统默认。请重新选择或清除该配置。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
+                    InfoBanner(
+                        style: .warning,
+                        text: "所选文件不存在，完成音将自动降级为系统默认。请重新选择或清除该配置。"
+                    )
                 }
 
                 Text("支持 WAV、MP3、M4A、AIFF 格式。选择后可点击「试听」验证效果。")

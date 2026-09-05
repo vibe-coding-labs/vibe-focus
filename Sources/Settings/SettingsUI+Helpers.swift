@@ -34,8 +34,12 @@ extension SettingsView {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .fill(Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
                     )
                 }
             }
@@ -67,8 +71,12 @@ extension SettingsView {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
                             .fill(Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
                     )
                 }
             }
@@ -148,11 +156,11 @@ extension SettingsView {
     var spaceStatusTint: Color {
         switch spaceController.availability {
         case .available:
-            return .green
+            return VibeColors.success
         case .notInstalled, .unknown:
-            return .gray
+            return VibeColors.neutral
         case .unavailable:
-            return .orange
+            return VibeColors.warning
         }
     }
 

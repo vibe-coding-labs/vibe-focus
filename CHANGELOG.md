@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Settings window visual overhaul — unified design system introduced in
+  `Sources/Settings/DesignSystem.swift` and applied across all five tabs
+  - Brand indigo accent (light/dark adaptive) injected via root `.tint`, replacing
+    the mix of system blue and ad-hoc colors
+  - Segmented tab bar with sliding selection thumb
+  - Section icon chips on every settings card; hairline borders + soft shadows
+  - Unified info banners replacing per-section yellow/orange boxes
+  - Gradient primary buttons for each tab's core action
+  - Screen minimap redrawn as a dot-grid canvas with elevated screen tiles
+  - Consistent status colors (success/warning/danger/neutral) and radii tokens
+
 - Major codebase refactoring for maintainability and open-source readiness
   - Split 12 large files (>300 lines) into focused single-responsibility modules
   - Extracted pure decision logic for testability (decideRestore, decideWindowMove, decideWindowResolution)

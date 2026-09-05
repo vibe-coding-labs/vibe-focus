@@ -8,29 +8,64 @@ extension SettingsView {
     @ViewBuilder
     var terminalGridSection: some View {
         Group {
-        // 主视觉：真实屏幕布局 minimap
+        gridMinimapPanel
+
+        gridParamsCard
+
+        terminalSessionCard
+
+        // 已保存布局
+        if !gridSnapshots.isEmpty {
+            savedLayoutsCard
+        }
+        }
+        .onAppear {
+            refreshGridMinimap()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            // 接拔显示器 / 分辨率变化后重建缩略图
+            refreshGridMinimap()
+        }
+    }
+
+    /// 主视觉：真实屏幕布局 minimap（点阵画布）
+    private var gridMinimapPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .center, spacing: 9) {
+                SectionIconChip(icon: "display")
+
                 Text("屏幕布局")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("LIVE")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.10)))
+                    .font(.system(size: 13.5, weight: .semibold))
+
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(VibeColors.success)
+                        .frame(width: 5, height: 5)
+                        .shadow(color: VibeColors.success.opacity(0.6), radius: 2.5)
+                    Text("LIVE")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .tracking(0.5)
+                }
+                .foregroundStyle(VibeColors.success)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2.5)
+                .background(Capsule().fill(VibeColors.success.opacity(0.10)))
+                .overlay(Capsule().strokeBorder(VibeColors.success.opacity(0.20), lineWidth: 1))
+
                 Text("点屏幕选目标屏 · 点胶囊选工作区")
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundStyle(.secondary)
+
                 Spacer()
+
                 if let selectedSummary = gridTargetSummary {
                     Text(selectedSummary)
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Color.accentColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.10)))
-                        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1))
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(VibeColors.accent)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3.5)
+                        .background(Capsule().fill(VibeColors.accent.opacity(0.09)))
+                        .overlay(Capsule().strokeBorder(VibeColors.accent.opacity(0.22), lineWidth: 1))
                 }
             }
 
@@ -45,17 +80,12 @@ extension SettingsView {
                     TerminalGridPreferences.target = target.code
                 }
             )
-            .padding(.top, 10)
+            .padding(.top, 12)
 
             if GridTargetCode.parse(gridTargetCode)?.explicitDisplayID.map({ displayID in
                 !gridMinimapScreens.contains { $0.displayID == displayID }
             }) == true {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                    Text("当前编排目标的显示器已断开（\(gridTargetCode)）")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                InfoBanner(style: .warning, text: "当前编排目标的显示器已断开（\(gridTargetCode)）。") {
                     Button("重置为主屏") {
                         gridTargetCode = GridTargetCode.main.code
                         TerminalGridPreferences.target = gridTargetCode
@@ -63,23 +93,26 @@ extension SettingsView {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
-                .padding(.top, 10)
+                .padding(.top, 12)
             }
         }
-        .padding(14)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.03))
+            RoundedRectangle(cornerRadius: VibeRadius.card, style: .continuous)
+                .fill(Color.primary.opacity(0.032))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: VibeRadius.card, style: .continuous)
                 .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
         )
+    }
 
-        // 网格参数 + 动作
+    /// 网格参数 + 动作
+    private var gridParamsCard: some View {
         SettingsCard(
             title: "网格",
-            subtitle: "行列决定 minimap 预览与落格数量；0 间距 = Rectangle 式无缝铺满。"
+            subtitle: "行列决定 minimap 预览与落格数量；0 间距 = Rectangle 式无缝铺满。",
+            icon: "square.grid.2x2"
         ) {
             HStack(spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -133,12 +166,10 @@ extension SettingsView {
                         Image(systemName: "square.grid.2x2")
                             .font(.system(size: 12, weight: .medium))
                         Text("创建 \(gridRows)×\(gridCols) 网格")
-                            .font(.system(size: 13, weight: .semibold))
                     }
-                    .frame(width: 172)
+                    .frame(width: 176)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .buttonStyle(.vibeProminent)
             }
 
             HStack(spacing: 10) {
@@ -175,11 +206,14 @@ extension SettingsView {
                 }
             }
         }
+    }
 
-        // 终端与会话偏好
+    /// 终端与会话偏好
+    private var terminalSessionCard: some View {
         SettingsCard(
             title: "终端与会话",
-            subtitle: "选择编排目标终端；捕获的布局会记住每个终端的工作目录与 Claude Code session。"
+            subtitle: "选择编排目标终端；捕获的布局会记住每个终端的工作目录与 Claude Code session。",
+            icon: "terminal"
         ) {
             SettingsRow(title: "终端应用", detail: selectionDetailText) {
                 Picker("", selection: Binding(
@@ -219,16 +253,7 @@ extension SettingsView {
             }
 
             if let favoriteWarning = gridFavoriteWarning {
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle")
-                        .foregroundStyle(.orange)
-                    Text(favoriteWarning)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.10)))
+                InfoBanner(style: .tip, text: favoriteWarning)
             }
 
             Divider()
@@ -252,13 +277,15 @@ extension SettingsView {
                 .toggleStyle(.switch)
             }
         }
+    }
 
-        // 已保存布局
-        if !gridSnapshots.isEmpty {
-            SettingsCard(
-                title: "已保存布局",
-                subtitle: "捕获的布局快照；恢复时重建窗口并自动 cd 回工作目录、claude --resume。"
-            ) {
+    /// 已保存布局
+    private var savedLayoutsCard: some View {
+        SettingsCard(
+            title: "已保存布局",
+            subtitle: "捕获的布局快照；恢复时重建窗口并自动 cd 回工作目录、claude --resume。",
+            icon: "clock.arrow.circlepath"
+        ) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(gridSnapshots.indices, id: \.self) { index in
                         if index > 0 {
@@ -271,15 +298,6 @@ extension SettingsView {
                     }
                 }
             }
-        }
-        }
-        .onAppear {
-            refreshGridMinimap()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
-            // 接拔显示器 / 分辨率变化后重建缩略图
-            refreshGridMinimap()
-        }
     }
 
     /// 快照行：mini 格位图 + 名称/元数据 + 动作
@@ -434,7 +452,7 @@ struct GridSnapshotThumbnail: View {
                 HStack(spacing: 2) {
                     ForEach(0..<cols, id: \.self) { _ in
                         RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                            .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
+                            .strokeBorder(VibeColors.accent.opacity(0.50), lineWidth: 1)
                     }
                 }
             }
@@ -443,11 +461,11 @@ struct GridSnapshotThumbnail: View {
         .padding(5)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
     }
 }
@@ -463,33 +481,56 @@ struct CompactStepper: View {
         HStack(spacing: 0) {
             stepButton(symbol: "minus", enabled: value > range.lowerBound) { onChange(value - 1) }
             Text("\(value)")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.primary)
-                .frame(minWidth: 24)
+                .frame(minWidth: 26)
             stepButton(symbol: "plus", enabled: value < range.upperBound) { onChange(value + 1) }
         }
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.primary.opacity(0.045))
+            RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
         )
     }
 
     private func stepButton(symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        StepIconButton(symbol: symbol, enabled: enabled, action: action)
+    }
+}
+
+/// 步进器单键：悬停着色 + 按压回弹（独立视图持有 hover 状态，避免整条重绘）
+private struct StepIconButton: View {
+    let symbol: String
+    let enabled: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
         Button {
             guard enabled else { return }
             action()
         } label: {
             Image(systemName: symbol)
-                .font(.system(size: 8.5, weight: .bold))
-                .foregroundStyle(Color.primary.opacity(enabled ? 0.55 : 0.18))
-                .frame(width: 24, height: 24)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(
+                    enabled
+                        ? Color.primary.opacity(isHovered ? 0.85 : 0.5)
+                        : Color.primary.opacity(0.16)
+                )
+                .frame(width: 26, height: 26)
+                .background(
+                    Rectangle()
+                        .fill(Color.primary.opacity(enabled && isHovered ? 0.05 : 0))
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.1), value: isHovered)
     }
 }

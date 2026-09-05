@@ -11,7 +11,8 @@ struct LANSettingsView: View {
     var body: some View {
         SettingsCard(
             title: "局域网 Hook",
-            subtitle: "允许局域网内其他机器发送 Hook 事件到本机。"
+            subtitle: "允许局域网内其他机器发送 Hook 事件到本机。",
+            icon: "network"
         ) {
             SettingsRow(
                 title: "局域网模式",
@@ -28,7 +29,7 @@ struct LANSettingsView: View {
                     }
                 ))
                 .labelsHidden()
-                .toggleStyle(.checkbox)
+                .toggleStyle(.switch)
             }
 
             if lanMode {
@@ -104,7 +105,7 @@ struct LANSettingsView: View {
                     } else {
                         Text("未映射")
                             .font(.system(size: 11))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(VibeColors.warning)
                     }
 
                     Button("映射当前窗口") {
@@ -121,7 +122,7 @@ struct LANSettingsView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .foregroundColor(.red)
+                    .foregroundStyle(VibeColors.danger)
                 }
             }
         }
@@ -161,7 +162,7 @@ struct LANSettingsView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "info.circle")
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(VibeColors.accent)
                     .font(.system(size: 12))
                 Text("复制以下命令，在运行 Claude Code 的远程机器终端执行即可。")
                     .font(.system(size: 12))
@@ -178,13 +179,17 @@ struct LANSettingsView: View {
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .textBackgroundColor))
-                    )
+                    .padding(10)
             }
             .frame(maxHeight: 200)
+            .background(
+                RoundedRectangle(cornerRadius: VibeRadius.chip + 2, style: .continuous)
+                    .fill(Color.primary.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: VibeRadius.chip + 2, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+            )
 
             HStack(spacing: 12) {
                 Button("复制安装命令") {
@@ -200,7 +205,7 @@ struct LANSettingsView: View {
                     remoteInstallMessage = "已复制到剪贴板（\(script.count) 字符）"
                     remoteInstallSucceeded = true
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vibeProminent)
                 .controlSize(.small)
 
                 Button("复制 curl 一行命令") {
@@ -227,12 +232,12 @@ struct LANSettingsView: View {
             if let msg = remoteInstallMessage {
                 Text(msg)
                     .font(.system(size: 12))
-                    .foregroundStyle(remoteInstallSucceeded ? .green : .red)
+                    .foregroundStyle(remoteInstallSucceeded ? VibeColors.success : VibeColors.danger)
             }
 
             Text("注意：安装命令包含认证 Token，仅在可信网络中使用。卸载需在远程机器手动清理 ~/.vibefocus 和 ~/.claude/settings.json。")
                 .font(.system(size: 11))
-                .foregroundStyle(.orange)
+                .foregroundStyle(VibeColors.warning)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
