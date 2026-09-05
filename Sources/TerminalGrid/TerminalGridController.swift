@@ -32,16 +32,26 @@ final class TerminalGridController {
         let rows = TerminalGridPreferences.rows
         let cols = TerminalGridPreferences.cols
 
-        guard let screen = resolveTargetScreen() else {
+        guard let (screen, screenNote) = resolveTargetScreen() else {
             return OperationResult(ok: false, message: "无法确定目标显示器")
         }
         guard let appBundleID = resolveAppBundleID() else {
             return OperationResult(ok: false, message: "终端应用不可用（Terminal/iTerm2）")
         }
 
-        let visibleFrame = CoordinateKit.quartzVisibleFrame(of: screen)
-        let frames = TerminalGridPlanner.cells(
-            visibleFrame: visibleFrame,
+        // 显式选了非当前工作区 → 先把视角切过去（切换失败不阻断，落在该屏当前工作区）
+        let spaceNote = await focusTargetSpaceIfNeeded(screen: screen, op: op)
+
+        // 规划可用区：visibleFrame 扣「已学习保留区」。副屏菜单栏等隐形钳制
+        // 真机实证（P40UG）：visibleFrame 谎报整屏 3440×1440，但窗口写不进顶部
+        // 25px——按原始 visibleFrame 规划的网格顶行必留一条空带（用户反馈的
+        // "空隙"来源之一）。
+        let baseVisible = CoordinateKit.quartzVisibleFrame(of: screen)
+        let gridDisplayID = CoordinateKit.cgDisplayID(for: screen) ?? 0
+        let learnedInsets = DisplayWorkArea.learnedInsets(displayID: gridDisplayID)
+        var planningFrame = DisplayWorkArea.plannedFrame(visibleFrame: baseVisible, insets: learnedInsets)
+        var frames = TerminalGridPlanner.cells(
+            visibleFrame: planningFrame,
             spec: .init(rows: rows, cols: cols, gap: TerminalGridPreferences.gap)
         )
         guard frames.count == rows * cols else {
@@ -94,6 +104,87 @@ final class TerminalGridController {
             ])
         }
 
+        // 保留区学习：回读实际落点，与规划 frame 反推四边钳制（副屏菜单栏等）。
+        // 学到非零 → 叠加进缓存并按新可用区整体重排。
+        func readbackFrames() -> [CGRect?] {
+            let entries = cgWindowListAll()
+            return createdWindowIDs.map { id in entries.first(where: { $0.windowID == id })?.bounds }
+        }
+        var insets = learnedInsets
+        let observed = DisplayWorkArea.inferInsets(planned: frames, actual: readbackFrames(), planningFrame: planningFrame)
+        if !observed.isZero {
+            insets = insets.merged(with: observed)
+            DisplayWorkArea.store(insets, displayID: gridDisplayID)
+            let fields: [String: String] = [
+                "op": op,
+                "displayID": "\(gridDisplayID)",
+                "top": "\(insets.top)",
+                "left": "\(insets.left)",
+                "bottom": "\(insets.bottom)",
+                "right": "\(insets.right)"
+            ]
+            log("[TerminalGrid] createGrid work-area learned", fields: fields)
+        } else if !learnedInsets.isZero {
+            // 缓存非零但本轮格子都到达了规划边缘 → 探测写验证能否缩回
+            // （菜单栏改自动隐藏等设置变化后自愈）。
+            if let probeFrame = TerminalGridPlanner.cells(
+                visibleFrame: baseVisible,
+                spec: .init(rows: 1, cols: 1, gap: 0)
+            ).first, let probeID = createdWindowIDs.first {
+                _ = WindowManager.shared.placeWindow(windowID: probeID, frame: probeFrame, operationID: op)
+                if let actual = readbackFrames().first ?? nil {
+                    let probed = DisplayWorkArea.probedInsets(probeTarget: probeFrame, actual: actual, learned: learnedInsets)
+                    if probed != learnedInsets {
+                        insets = probed
+                        DisplayWorkArea.store(insets, displayID: gridDisplayID)
+                        log("[TerminalGrid] createGrid work-area probe shrunk", fields: [
+                            "op": op,
+                            "top": "\(insets.top)",
+                            "left": "\(insets.left)"
+                        ])
+                    }
+                }
+            }
+        }
+        if insets != learnedInsets {
+            planningFrame = DisplayWorkArea.plannedFrame(visibleFrame: baseVisible, insets: insets)
+            frames = TerminalGridPlanner.cells(
+                visibleFrame: planningFrame,
+                spec: .init(rows: rows, cols: cols, gap: TerminalGridPreferences.gap)
+            )
+            for (index, windowID) in createdWindowIDs.enumerated() where index < frames.count {
+                _ = WindowManager.shared.placeWindow(windowID: windowID, frame: frames[index], operationID: op)
+            }
+        }
+
+        // 收敛复核：逐格摆放各允许 ≤10px 残余漂移，相邻格累积成肉眼可见的缝
+        // （用户反馈"格子间空隙很大"）。单次 CGWindowList 快照全量回读，
+        // 偏离 >4px 的格子再用 placeWindow 直写纠一次。
+        let recheckEntries = cgWindowListAll()
+        var reCorrected = 0
+        for (frame, windowID) in zip(frames, createdWindowIDs) {
+            guard let actual = recheckEntries.first(where: { $0.windowID == windowID })?.bounds,
+                  !CoordinateKit.isFrameConverged(actual: actual, target: frame, tolerance: 4) else {
+                continue
+            }
+            if WindowManager.shared.placeWindow(windowID: windowID, frame: frame, operationID: op) {
+                reCorrected += 1
+            }
+        }
+        if reCorrected > 0 {
+            log("[TerminalGrid] createGrid convergence recheck", fields: [
+                "op": op, "reCorrected": String(reCorrected)
+            ])
+        }
+
+        // 快照记录最终 frame（保留区学习可能已整体重排）
+        for index in cells.indices where index < frames.count {
+            cells[index].x = frames[index].origin.x
+            cells[index].y = frames[index].origin.y
+            cells[index].width = frames[index].width
+            cells[index].height = frames[index].height
+        }
+
         // Terminal.app：回填 tty（AppleScript window id == CGWindowNumber）
         if appBundleID == "com.apple.Terminal" {
             let ttyMap = await terminalWindowTTYMap()
@@ -117,7 +208,10 @@ final class TerminalGridController {
         log("[TerminalGrid] createGrid done", fields: [
             "op": op, "windows": String(createdWindowIDs.count), "snapshot": snapshot.id
         ])
-        return OperationResult(ok: true, message: "已创建 \(rows)×\(cols) 网格并保存快照「\(name)」")
+        let whereLabel = "「\(screen.localizedName)」" + (activeSpaceIndex(for: screen).map { " · Space \($0)" } ?? "")
+        let notes = [screenNote, spaceNote].compactMap { $0 }
+        let noteSuffix = notes.isEmpty ? "" : "；" + notes.joined(separator: "；")
+        return OperationResult(ok: true, message: "已创建 \(rows)×\(cols) 网格（\(whereLabel)）并保存快照「\(name)」\(noteSuffix)")
     }
 
     // MARK: 捕获当前摆法
@@ -125,7 +219,7 @@ final class TerminalGridController {
     func captureLayout(name: String? = nil) async -> OperationResult {
         let op = makeOperationID(prefix: "grid-capture")
 
-        guard let screen = resolveTargetScreen(),
+        guard let (screen, _) = resolveTargetScreen(),
               let displayID = CoordinateKit.cgDisplayID(for: screen) else {
             return OperationResult(ok: false, message: "无法确定目标显示器")
         }
@@ -266,9 +360,9 @@ final class TerminalGridController {
             return OperationResult(ok: false, message: "目标显示器不可用")
         }
 
-        // 目标屏仍在 → 按记录 frame 恢复（clamp 进可视区）；失效 → 按 rows×cols 重排
+        // 目标屏仍在 → 按记录 frame 恢复（clamp 进可用区）；失效 → 按 rows×cols 重排
         let recordedStillFits = CoordinateKit.cgDisplayID(for: screen) == snapshot.displayID
-        let visibleFrame = CoordinateKit.quartzVisibleFrame(of: screen)
+        let visibleFrame = gridPlanningFrame(for: screen)
         let targetFrames: [CGRect]
         if recordedStillFits {
             targetFrames = snapshot.cells.map { TerminalGridPlanner.clampToVisible(frame: $0.frame, visibleFrame: visibleFrame) }
@@ -365,7 +459,7 @@ final class TerminalGridController {
             return OperationResult(ok: false, message: "自动恢复失败：目标显示器不可用")
         }
         let recordedStillFits = CoordinateKit.cgDisplayID(for: screen) == snapshot.displayID
-        let visibleFrame = CoordinateKit.quartzVisibleFrame(of: screen)
+        let visibleFrame = gridPlanningFrame(for: screen)
         let targetFrames: [CGRect]
         if recordedStillFits {
             targetFrames = snapshot.cells.map { TerminalGridPlanner.clampToVisible(frame: $0.frame, visibleFrame: visibleFrame) }
@@ -514,17 +608,72 @@ final class TerminalGridController {
         return result
     }
 
-    /// 目标屏（偏好：主屏 / 焦点窗口所在屏）
-    private func resolveTargetScreen() -> NSScreen? {
-        switch TerminalGridPreferences.displayMode {
+    /// 目标屏：GridTargetCode 解析（main/focused/显式屏/显式屏+工作区）。
+    /// 显式屏已断开或焦点屏不可得时回落主屏，note 随结果消息告知用户。
+    private func resolveTargetScreen() -> (screen: NSScreen, note: String?)? {
+        let target = GridTargetCode.parse(TerminalGridPreferences.target) ?? .main
+        switch target {
         case .main:
-            return primaryScreen()
+            guard let screen = primaryScreen() else { return nil }
+            return (screen, nil)
         case .focused:
-            if let focusedScreen = focusedWindowScreen() {
-                return focusedScreen
+            if let screen = focusedWindowScreen() {
+                return (screen, nil)
             }
-            return primaryScreen()
+            guard let screen = primaryScreen() else { return nil }
+            return (screen, "焦点屏不可得，已回落主屏")
+        case .display(let displayID), .displaySpace(let displayID, _):
+            if let screen = CoordinateKit.nsScreen(forCGDisplayID: displayID) {
+                return (screen, nil)
+            }
+            guard let screen = primaryScreen() else { return nil }
+            return (screen, "目标显示器已断开，已回落主屏")
         }
+    }
+
+    /// 该屏当前可见工作区（yabai 全局索引；yabai 不可用时 nil）
+    private func activeSpaceIndex(for screen: NSScreen) -> Int? {
+        guard let displayIndex = CoordinateKit.yabaiDisplayIndex(for: screen) else { return nil }
+        return SpaceController.shared.visibleSpaceIndex(forDisplayIndex: displayIndex, spaces: nil, ignoreCache: true)?.yabaiIndex
+    }
+
+    /// 网格规划可用区：visibleFrame 扣该屏已学习保留区（重排/恢复共用同一事实源）
+    private func gridPlanningFrame(for screen: NSScreen) -> CGRect {
+        let base = CoordinateKit.quartzVisibleFrame(of: screen)
+        let insets = DisplayWorkArea.learnedInsets(displayID: CoordinateKit.cgDisplayID(for: screen) ?? 0)
+        return DisplayWorkArea.plannedFrame(visibleFrame: base, insets: insets)
+    }
+
+    /// 显式目标带工作区且非该屏当前可见 → 切视角（yabai 直切 → 聚焦带动双层），
+    /// 切换后轮询等 visible space 到位（~2s）。任何一层失败都不阻断编排：
+    /// 返回说明 note，格子落在该屏当前工作区（结果可用性优先于目标保真）。
+    private func focusTargetSpaceIfNeeded(screen: NSScreen, op: String) async -> String? {
+        guard case .displaySpace(_, let spaceIndex) = GridTargetCode.parse(TerminalGridPreferences.target) ?? .main else {
+            return nil
+        }
+        guard let displayIndex = CoordinateKit.yabaiDisplayIndex(for: screen) else {
+            return "yabai 不可用，无法定位工作区，已在该屏当前工作区创建"
+        }
+        let spaces = SpaceController.shared.querySpaces() ?? []
+        let displaySpaces = spaces.filter { $0.display == displayIndex }
+        guard displaySpaces.contains(where: { $0.index == spaceIndex }) else {
+            return "Space \(spaceIndex) 不在「\(screen.localizedName)」上，已在该屏当前工作区创建"
+        }
+        if activeSpaceIndex(for: screen) == spaceIndex {
+            return nil
+        }
+        if !SpaceController.shared.focusSpace(.yabai(spaceIndex), operationID: op) {
+            // 直切依赖 scripting addition（SA 失效时必败）；退聚焦带动通道
+            _ = SpaceController.shared.refocusWindowOnSpace(spaceIndex, excludingWindowID: nil, operationID: op, prefetchedWindows: nil)
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if activeSpaceIndex(for: screen) == spaceIndex {
+                return nil
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        return "未能切换到 Space \(spaceIndex)（视角切换通道不可用），已在该屏当前工作区创建"
     }
 
     private func primaryScreen() -> NSScreen? {

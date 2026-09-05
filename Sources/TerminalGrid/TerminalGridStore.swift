@@ -6,16 +6,12 @@ enum TerminalGridPreferences {
     static let rowsKey = "terminalGridRows"
     static let colsKey = "terminalGridCols"
     static let displayModeKey = "terminalGridDisplayMode"
+    static let targetKey = "terminalGridTarget"
     static let appPreferenceKey = "terminalGridApp"
     static let launchCommandKey = "terminalGridLaunchCommand"
     static let gapKey = "terminalGridGap"
     static let autoRestoreEnabledKey = "terminalGridAutoRestoreEnabled"
     static let autoRestoreSnapshotIDKey = "terminalGridAutoRestoreSnapshotID"
-
-    enum DisplayMode: String {
-        case main          // 主屏
-        case focused       // 焦点窗口所在屏
-    }
 
     enum AppPreference: String {
         case auto          // iTerm2 在运行则用 iTerm2，否则 Terminal.app
@@ -33,9 +29,20 @@ enum TerminalGridPreferences {
         set { UserDefaults.standard.set(min(max(newValue, 1), TerminalGridPlanner.maxGridSize), forKey: colsKey) }
     }
 
-    static var displayMode: DisplayMode {
-        get { DisplayMode(rawValue: UserDefaults.standard.string(forKey: displayModeKey) ?? "") ?? .main }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: displayModeKey) }
+    /// 编排目标（"main"/"focused"/"d<displayID>"/"d<displayID>s<space>"）。
+    /// 旧 displayMode（main/focused）在 target 未设置过时自动迁移；
+    /// 显式目标失效（屏断开等）由控制器回落并在结果里说明。
+    static var target: String {
+        get {
+            if let raw = UserDefaults.standard.string(forKey: targetKey), GridTargetCode.parse(raw) != nil {
+                return raw
+            }
+            if UserDefaults.standard.string(forKey: displayModeKey) == "focused" {
+                return GridTargetCode.focused.code
+            }
+            return GridTargetCode.main.code
+        }
+        set { UserDefaults.standard.set(newValue, forKey: targetKey) }
     }
 
     static var appPreference: AppPreference {
@@ -64,9 +71,14 @@ enum TerminalGridPreferences {
         set { UserDefaults.standard.set(newValue, forKey: autoRestoreSnapshotIDKey) }
     }
 
+    /// 格子间距（px，Quartz）。默认 0 = Rectangle 式无缝铺满；显式设 0 同样持久
+    /// （旧实现 `== 0 ? 8` 把未设置与显式 0 混为一谈，0 永远不生效——已修）。
     static var gap: CGFloat {
-        get { CGFloat(min(max(UserDefaults.standard.double(forKey: gapKey) == 0 ? 8 : UserDefaults.standard.double(forKey: gapKey), 0), 40)) }
-        set { UserDefaults.standard.set(Double(newValue), forKey: gapKey) }
+        get {
+            let raw = UserDefaults.standard.object(forKey: gapKey) as? Double
+            return CGFloat(min(max(raw ?? 0, 0), 40))
+        }
+        set { UserDefaults.standard.set(Double(min(max(newValue, 0), 40)), forKey: gapKey) }
     }
 }
 

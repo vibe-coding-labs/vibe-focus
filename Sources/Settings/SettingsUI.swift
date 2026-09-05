@@ -45,7 +45,9 @@ public struct SettingsView: View {
     let terminalGridController = TerminalGridController.shared
     @State var gridRows = TerminalGridPreferences.rows
     @State var gridCols = TerminalGridPreferences.cols
-    @State var gridDisplayMode = TerminalGridPreferences.displayMode
+    @State var gridTargetCode = TerminalGridPreferences.target
+    @State var gridTargetOptions: [GridTargetOption] = []
+    @State var gridGap = Double(TerminalGridPreferences.gap)
     @State var gridAppPreference = TerminalGridPreferences.appPreference
     @State var gridLaunchCommand = TerminalGridPreferences.launchCommand
     @State var gridResultMessage = ""

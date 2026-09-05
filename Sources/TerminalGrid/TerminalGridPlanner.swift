@@ -10,7 +10,7 @@ enum TerminalGridPlanner {
         var cols: Int
         var gap: CGFloat
 
-        init(rows: Int, cols: Int, gap: CGFloat = 8) {
+        init(rows: Int, cols: Int, gap: CGFloat = 0) {
             self.rows = rows
             self.cols = cols
             self.gap = gap
@@ -35,25 +35,34 @@ enum TerminalGridPlanner {
 
     /// row-major（先行后列，Quartz y 自上而下）格子 frames。
     /// gap 为格子间距；可见区入参用 CoordinateKit.quartzVisibleFrame(of:)。
+    /// 边界法取整：每条格线按累计位置四舍五入，相邻格严格共边、末格严格贴可视区边——
+    /// 逐格宽度累加在非整除（如 2560/3）时会因浮点/取整漂移在末格留 1px 缝或越界，
+    /// 而窗口写入（AppleScript bounds / yabai）只接受整数像素。
     static func cells(visibleFrame: CGRect, spec: GridSpec) -> [CGRect] {
         guard validate(rows: spec.rows, cols: spec.cols), visibleFrame.width > 0, visibleFrame.height > 0 else {
             return []
         }
         let gap = max(0, spec.gap)
-        let cellWidth = (visibleFrame.width - gap * CGFloat(spec.cols - 1)) / CGFloat(spec.cols)
-        let cellHeight = (visibleFrame.height - gap * CGFloat(spec.rows - 1)) / CGFloat(spec.rows)
-        guard cellWidth > 0, cellHeight > 0 else { return [] }
+        let innerWidth = visibleFrame.width - gap * CGFloat(spec.cols - 1)
+        let innerHeight = visibleFrame.height - gap * CGFloat(spec.rows - 1)
+        guard innerWidth / CGFloat(spec.cols) > 0, innerHeight / CGFloat(spec.rows) > 0 else { return [] }
+
+        func start(_ i: Int, count: Int, origin: CGFloat, inner: CGFloat) -> CGFloat {
+            (origin + inner * CGFloat(i) / CGFloat(count) + gap * CGFloat(i)).rounded()
+        }
+        func end(_ i: Int, count: Int, origin: CGFloat, inner: CGFloat) -> CGFloat {
+            (origin + inner * CGFloat(i + 1) / CGFloat(count) + gap * CGFloat(i)).rounded()
+        }
 
         var result: [CGRect] = []
         result.reserveCapacity(spec.rows * spec.cols)
         for row in 0..<spec.rows {
+            let y0 = start(row, count: spec.rows, origin: visibleFrame.minY, inner: innerHeight)
+            let y1 = end(row, count: spec.rows, origin: visibleFrame.minY, inner: innerHeight)
             for col in 0..<spec.cols {
-                result.append(CGRect(
-                    x: visibleFrame.minX + CGFloat(col) * (cellWidth + gap),
-                    y: visibleFrame.minY + CGFloat(row) * (cellHeight + gap),
-                    width: cellWidth,
-                    height: cellHeight
-                ))
+                let x0 = start(col, count: spec.cols, origin: visibleFrame.minX, inner: innerWidth)
+                let x1 = end(col, count: spec.cols, origin: visibleFrame.minX, inner: innerWidth)
+                result.append(CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0))
             }
         }
         return result

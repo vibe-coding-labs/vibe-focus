@@ -89,7 +89,13 @@ extension WindowManager {
             targetScreen = sourceScreen
         }
 
-        let visibleFrame = CoordinateKit.quartzVisibleFrame(of: targetScreen)
+        // 可用区：visibleFrame 扣已学习保留区（副屏菜单栏等隐形钳制——真机实证
+        // P40UG visibleFrame 谎报整屏，窗口写不进顶部 25px；insets 由 TerminalGrid
+        // 编排学习缓存，无缓存时行为不变）
+        let visibleFrame = DisplayWorkArea.plannedFrame(
+            visibleFrame: CoordinateKit.quartzVisibleFrame(of: targetScreen),
+            insets: DisplayWorkArea.learnedInsets(displayID: CoordinateKit.cgDisplayID(for: targetScreen) ?? 0)
+        )
         guard let targetFrame = LayoutFrameCalculator.frame(
             for: action,
             visibleFrame: visibleFrame,

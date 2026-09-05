@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - 终端网格设置（Claude 会话编排）
@@ -33,16 +34,38 @@ extension SettingsView {
 
             Divider()
 
-            SettingsRow(title: "目标屏", detail: "网格摆放的显示器") {
+            SettingsRow(title: "目标屏 / 工作区", detail: "列出所有连接的显示器，yabai 可用时细分到工作区（Space）；选定后编排落在该处") {
                 Picker("", selection: Binding(
-                    get: { gridDisplayMode },
-                    set: { gridDisplayMode = $0; TerminalGridPreferences.displayMode = $0 }
+                    get: { gridTargetCode },
+                    set: { gridTargetCode = $0; TerminalGridPreferences.target = $0 }
                 )) {
-                    Text("主屏").tag(TerminalGridPreferences.DisplayMode.main)
-                    Text("焦点所在屏").tag(TerminalGridPreferences.DisplayMode.focused)
+                    ForEach(gridTargetOptions) { option in
+                        Text(option.label).tag(option.target.code)
+                    }
                 }
-                .frame(width: 140)
+                .frame(width: 300)
                 .labelsHidden()
+            }
+
+            Divider()
+
+            SettingsRow(title: "格子间距", detail: "0 = 无缝铺满（Rectangle 默认风格）；相邻格子共享边缘") {
+                HStack(spacing: 10) {
+                    Slider(value: Binding(
+                        get: { gridGap },
+                        set: { newValue in
+                            let stepped = (newValue / 2).rounded() * 2
+                            gridGap = stepped
+                            TerminalGridPreferences.gap = CGFloat(stepped)
+                        }
+                    ), in: 0...24, step: 2)
+                    .frame(width: 150)
+
+                    Text(gridGap == 0 ? "无缝" : "\(Int(gridGap)) px")
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: 56, alignment: .leading)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Divider()
@@ -95,6 +118,7 @@ extension SettingsView {
                 Button {
                     gridSnapshots = terminalGridController.snapshotsForRefresh()
                     gridAutoRestoreSnapshotID = TerminalGridPreferences.autoRestoreSnapshotID
+                    refreshGridTargetOptions()
                     refreshSelectionInfo()
                 } label: {
                     Image(systemName: "arrow.clockwise")
@@ -208,6 +232,37 @@ extension SettingsView {
                 }
             }
         }
+        .onAppear {
+            refreshGridTargetOptions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            // 接拔显示器 / 分辨率变化后重建目标目录
+            refreshGridTargetOptions()
+        }
+    }
+
+    /// 目标目录构建：真实屏幕快照 + yabai 空间快照 → Picker 选项。
+    /// 显式选择失效（屏断开等）时附加占位项，避免 Picker 选中值悬空。
+    func refreshGridTargetOptions() {
+        let screens = NSScreen.screens.map { screen in
+            GridTargetCatalog.ScreenInput(
+                displayID: CoordinateKit.cgDisplayID(for: screen) ?? 0,
+                name: screen.localizedName,
+                width: Int(screen.frame.width),
+                height: Int(screen.frame.height),
+                isMain: CoordinateKit.cgDisplayID(for: screen) == CGMainDisplayID(),
+                yabaiDisplayIndex: CoordinateKit.yabaiDisplayIndex(for: screen)
+            )
+        }
+        let spaces = (SpaceController.shared.querySpaces() ?? []).compactMap { info -> GridTargetCatalog.SpaceInput? in
+            guard let index = info.index, let display = info.display else { return nil }
+            return GridTargetCatalog.SpaceInput(yabaiIndex: index, yabaiDisplayIndex: display, isVisible: info.isVisible ?? false)
+        }
+        var options = GridTargetCatalog.options(screens: screens, spaces: spaces)
+        if let current = GridTargetCode.parse(gridTargetCode), !options.contains(where: { $0.target == current }) {
+            options.append(GridTargetOption(target: current, label: "（已断开）\(current.code)", isActiveSpace: true))
+        }
+        gridTargetOptions = options
     }
 
     /// 「终端应用」行的说明文案（随偏好/检测变化）
