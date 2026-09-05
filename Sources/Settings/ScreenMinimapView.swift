@@ -68,7 +68,7 @@ struct ScreenMinimapView: View {
             RoundedRectangle(cornerRadius: Metrics.screenCornerRadius, style: .continuous)
                 .fill(
                     selectedScreen ? VibeColors.accent.opacity(0.055)
-                    : Color(nsColor: .controlBackgroundColor).opacity(hovered ? 1 : 0.85)
+                    : VibeColors.card.opacity(hovered ? 1 : 0.85)
                 )
 
             RoundedRectangle(cornerRadius: Metrics.screenCornerRadius, style: .continuous)

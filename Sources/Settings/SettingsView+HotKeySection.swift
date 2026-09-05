@@ -20,13 +20,13 @@ extension SettingsView {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: VibeRadius.chip, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
+                            .fill(VibeColors.card)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: VibeRadius.chip, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
+                            .strokeBorder(VibeColors.hairline, lineWidth: 1)
                     )
-                    .shadow(color: Color.black.opacity(0.05), radius: 2, y: 1)
+                    .shadow(color: VibeColors.shadow.opacity(0.08), radius: 2, y: 1)
             }
 
             Divider()

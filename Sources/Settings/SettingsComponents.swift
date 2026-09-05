@@ -28,6 +28,7 @@ struct SettingsCard<Content: View>: View {
                     Text(title)
                         .font(.system(size: 15, weight: .semibold))
                         .tracking(-0.1)
+                        .foregroundStyle(VibeColors.ink)
                 }
                 Text(subtitle)
                     .font(.system(size: 12.5))
@@ -88,7 +89,7 @@ struct CodeBlockView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: VibeRadius.chip + 2, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                .strokeBorder(VibeColors.hairline, lineWidth: 1)
         )
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)

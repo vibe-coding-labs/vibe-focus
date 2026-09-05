@@ -188,7 +188,7 @@ struct LANSettingsView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: VibeRadius.chip + 2, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                    .strokeBorder(VibeColors.hairline, lineWidth: 1)
             )
 
             HStack(spacing: 12) {

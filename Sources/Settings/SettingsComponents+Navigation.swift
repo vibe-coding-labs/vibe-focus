@@ -98,11 +98,11 @@ struct SettingsTabBar: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: VibeRadius.control + 2, style: .continuous)
-                .fill(Color.primary.opacity(0.05))
+                .fill(VibeColors.hairline.opacity(0.45))
         )
         .overlay(
             RoundedRectangle(cornerRadius: VibeRadius.control + 2, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                .strokeBorder(VibeColors.hairline.opacity(0.7), lineWidth: 1)
         )
     }
 
@@ -127,8 +127,8 @@ struct SettingsTabBar: View {
             .background {
                 if isSelected {
                     RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                        .shadow(color: Color.black.opacity(0.08), radius: 3, y: 1)
+                        .fill(VibeColors.card)
+                        .shadow(color: VibeColors.shadow.opacity(0.12), radius: 3, y: 1)
                         .matchedGeometryEffect(id: "tab-thumb", in: thumbNamespace)
                 }
             }

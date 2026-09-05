@@ -37,32 +37,55 @@ extension NSColor {
 }
 
 // MARK: - 色彩 Token
+//
+// 小红书独立开发者风：奶油暖底 + 珊瑚红主色 + 暖棕墨色 + 柔和暖阴影。
+// 全部自定义动态色（不取系统语义色），亮暗两套分别校准。
 
 enum VibeColors {
-    /// 品牌主色（靛蓝）：亮色取深一档保证白底可读性，暗色提亮
-    static let accent = Color(light: 0x4F46E5, dark: 0x818CF8)
-    /// 品牌渐变第二色（紫）：与主色构成主按钮 / 品牌晕染渐变
-    static let accentViolet = Color(light: 0x7C3AED, dark: 0xA78BFA)
+    // --- 画布层 ---
+    /// 窗口底：奶油米色 / 暖棕近黑
+    static let background = Color(light: 0xF6F1E7, dark: 0x211C18)
+    /// 卡片面：暖白 / 暖深棕
+    static let card = Color(light: 0xFFFCF5, dark: 0x2C2721)
+    /// 暖发丝线 / 分隔
+    static let hairline = Color(
+        light: NSColor(rgbHex: 0xE8DDCB),
+        dark: NSColor.white.withAlphaComponent(0.08)
+    )
+    /// 标题墨色：暖棕黑 / 暖白（比纯 label 更柔和）
+    static let ink = Color(light: 0x40362B, dark: 0xF1E9DE)
 
-    /// 语义状态色（比系统 .green/.orange/.red 更沉稳、亮暗分别校准）
-    static let success = Color(light: 0x189A55, dark: 0x4ADE80)
-    static let warning = Color(light: 0xC77414, dark: 0xFBBF24)
-    static let danger = Color(light: 0xD5423B, dark: 0xF87171)
+    // --- 品牌 ---
+    /// 品牌主色：珊瑚朱红（小红书系）
+    static let accent = Color(light: 0xE64A33, dark: 0xFF8266)
+    /// 品牌渐变第二色：蜜桃橙
+    static let accentPeach = Color(light: 0xF49A4A, dark: 0xFFB07A)
+
+    // --- 语义状态色（低饱和暖调） ---
+    /// 抹茶绿
+    static let success = Color(light: 0x539B6B, dark: 0x8FD6A8)
+    /// 蜂蜜琥珀
+    static let warning = Color(light: 0xD98E2B, dark: 0xF6C453)
+    /// 深砖红（危险动作，比主色更深沉以示区分）
+    static let danger = Color(light: 0xC13327, dark: 0xFF7B6E)
     static let neutral = Color(nsColor: .secondaryLabelColor)
 
-    /// 头部品牌晕染：靛→紫的极淡渐变，只在窗口顶部铺一层空气感
+    /// 暖棕阴影色（替代纯黑，投影不发灰）
+    static let shadow = Color(red: 0.36, green: 0.25, blue: 0.14)
+
+    /// 头部品牌晕染：珊瑚→蜜桃的极淡渐变，只在窗口顶部铺一层空气感
     static var headerWash: LinearGradient {
         LinearGradient(
-            colors: [accent.opacity(0.07), accentViolet.opacity(0.04), .clear],
+            colors: [accent.opacity(0.08), accentPeach.opacity(0.05), .clear],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
     }
 
-    /// 主按钮渐变
+    /// 主按钮渐变：珊瑚→蜜桃
     static var prominentGradient: LinearGradient {
         LinearGradient(
-            colors: [accent, accentViolet],
+            colors: [accent, accentPeach],
             startPoint: .leading,
             endPoint: .trailing
         )
@@ -71,17 +94,38 @@ enum VibeColors {
     /// 品牌主色的 NSColor 版（AppKit 视图如快捷键录制按钮使用）
     static let accentNS = NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        return NSColor(rgbHex: isDark ? 0x818CF8 : 0x4F46E5)
+        return NSColor(rgbHex: isDark ? 0xFF8266 : 0xE64A33)
+    }
+
+    /// 窗口底的 NSColor 版（SettingsWindowController 背景与 SwiftUI 根保持一致）
+    static let backgroundNS = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor(rgbHex: isDark ? 0x211C18 : 0xF6F1E7)
+    }
+
+    /// 卡片面的 NSColor 版
+    static let cardNS = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor(rgbHex: isDark ? 0x2C2721 : 0xFFFCF5)
+    }
+
+    /// 暖发丝线的 NSColor 版
+    static let hairlineNS = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor.white.withAlphaComponent(0.08)
+            : NSColor(rgbHex: 0xE8DDCB)
     }
 }
 
 // MARK: - 圆角 Token
+// 小红书风整体放大一档圆角，观感更软
 
 enum VibeRadius {
-    static let card: CGFloat = 14       // 设置卡片外框
-    static let panel: CGFloat = 10      // 卡片内画布 / 横幅
-    static let control: CGFloat = 8     // 按钮 / 输入框 / 标签栏
-    static let chip: CGFloat = 6        // 小徽标 / 代码块
+    static let card: CGFloat = 16       // 设置卡片外框
+    static let panel: CGFloat = 12      // 卡片内画布 / 横幅
+    static let control: CGFloat = 9     // 按钮 / 输入框 / 标签栏
+    static let chip: CGFloat = 7        // 小徽标 / 代码块
 }
 
 // MARK: - 区块图标徽章
@@ -221,7 +265,7 @@ struct InfoBanner<Accessory: View>: View {
 
 // MARK: - 主按钮样式
 
-/// 渐变主按钮：品牌靛→紫渐变 + 悬停微亮 + 按压微暗，用于每页至多一两个核心动作
+/// 渐变主按钮：珊瑚→蜜桃渐变 + 暖色投影 + 悬停微亮 + 按压微暗，用于每页至多一两个核心动作
 struct VibeProminentButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovered = false
@@ -238,8 +282,8 @@ struct VibeProminentButtonStyle: ButtonStyle {
                     .opacity(isEnabled ? 1 : 0.35)
             )
             .shadow(
-                color: VibeColors.accent.opacity(isEnabled ? (isHovered ? 0.35 : 0.22) : 0),
-                radius: isHovered ? 8 : 5,
+                color: VibeColors.accent.opacity(isEnabled ? (isHovered ? 0.38 : 0.26) : 0),
+                radius: isHovered ? 9 : 6,
                 y: 2
             )
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
@@ -255,19 +299,20 @@ extension ButtonStyle where Self == VibeProminentButtonStyle {
 
 // MARK: - 卡片背景修饰器
 
-/// 统一卡片容器外观：亮面浮起 + 发丝描边 + 极浅投影（暗色模式投影自然弱化）
+/// 统一卡片容器外观：暖白浮起 + 暖发丝描边 + 柔和暖棕投影（小红书风的关键是阴影带暖调、
+/// 半径偏大，形成「枕状」蓬松感；暗色模式投影自然弱化）
 struct VibeCardStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(
                 RoundedRectangle(cornerRadius: VibeRadius.card, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(VibeColors.card)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: VibeRadius.card, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
+                    .strokeBorder(VibeColors.hairline, lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(0.05), radius: 7, y: 2)
+            .shadow(color: VibeColors.shadow.opacity(0.08), radius: 9, y: 3)
     }
 }
 

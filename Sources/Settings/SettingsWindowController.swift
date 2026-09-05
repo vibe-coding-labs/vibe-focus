@@ -35,7 +35,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.toolbarStyle = .unifiedCompact
-        window.backgroundColor = .underPageBackgroundColor
+        window.backgroundColor = VibeColors.backgroundNS
         window.contentViewController = hostingController
         super.init(window: window)
         window.delegate = self

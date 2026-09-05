@@ -72,20 +72,21 @@ public struct SettingsView: View {
     private var headerBar: some View {
         HStack(spacing: 14) {
             AppLogoBadge(size: 46)
-                .shadow(color: VibeColors.accent.opacity(0.28), radius: 7, y: 3)
+                .shadow(color: VibeColors.shadow.opacity(0.30), radius: 7, y: 3)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text("VibeFocus")
                         .font(.system(size: 20, weight: .bold))
                         .tracking(-0.4)
+                        .foregroundStyle(VibeColors.ink)
                     Text(appVersionDisplay)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.primary.opacity(0.055)))
-                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.09), lineWidth: 1))
+                        .background(Capsule().fill(Color.primary.opacity(0.05)))
+                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
                 }
                 Text("菜单栏里的窗口流转工具")
                     .font(.system(size: 12))
@@ -184,7 +185,7 @@ public struct SettingsView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
         }
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background(VibeColors.background)
         .onAppear {
             let startedAt = Date()
             log("[Settings] view onAppear start")

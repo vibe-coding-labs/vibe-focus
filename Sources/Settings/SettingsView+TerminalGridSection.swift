@@ -103,7 +103,7 @@ extension SettingsView {
         )
         .overlay(
             RoundedRectangle(cornerRadius: VibeRadius.card, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+                .strokeBorder(VibeColors.hairline, lineWidth: 1)
         )
     }
 
@@ -460,12 +460,12 @@ struct GridSnapshotThumbnail: View {
         .frame(width: 30, height: 22)
         .padding(5)
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(VibeColors.card)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(VibeColors.hairline, lineWidth: 1)
         )
     }
 }
@@ -488,11 +488,11 @@ struct CompactStepper: View {
         }
         .background(
             RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(VibeColors.card)
         )
         .overlay(
             RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
+                .strokeBorder(VibeColors.hairline, lineWidth: 1)
         )
     }
 

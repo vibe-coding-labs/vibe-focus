@@ -81,10 +81,10 @@ final class ShortcutRecorderButton: NSButton {
                 string: displayedShortcut,
                 attributes: [.font: font, .foregroundColor: NSColor.labelColor]
             )
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            layer?.backgroundColor = VibeColors.cardNS.cgColor
             layer?.cornerRadius = 6
             layer?.borderWidth = 1
-            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.14).cgColor
+            layer?.borderColor = VibeColors.hairlineNS.cgColor
         }
         frame.size.height = 28
         needsDisplay = true
