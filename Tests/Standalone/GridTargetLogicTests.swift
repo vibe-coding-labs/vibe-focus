@@ -1,6 +1,6 @@
 // Tests/Standalone/GridTargetLogicTests.swift
 // Verification: 网格目标（屏幕/工作区）编解码 + 目标目录构建 + 无缝铺排几何
-// Mirrors: Sources/TerminalGrid/GridTargetCatalog.swift, Sources/TerminalGrid/TerminalGridPlanner.swift
+// Mirrors: Sources/TerminalGrid/GridTargetCatalog.swift, Sources/TerminalGrid/ScreenLayoutMapper.swift, Sources/TerminalGrid/TerminalGridPlanner.swift
 // Run: swift Tests/Standalone/GridTargetLogicTests.swift
 //
 // 用户反馈（2026-09-06）：① 网格格子间有大空隙（Rectangle 无缝）；② 编排永远落主屏，
@@ -144,6 +144,120 @@ func gapPolicy(stored: Double?) -> CGFloat {
     CGFloat(min(max(stored ?? 0, 0), 40))
 }
 
+
+// MARK: Mirrors: Sources/TerminalGrid/ScreenLayoutMapper.swift
+
+struct ScreenLayoutMapper {
+    struct InputScreen: Equatable {
+        let displayID: UInt32
+        let name: String
+        let cocoaFrame: CGRect
+        let isMain: Bool
+        let spaces: [InputSpace]
+    }
+    struct InputSpace: Equatable {
+        let yabaiIndex: Int
+        let isVisible: Bool
+    }
+    struct MappedScreen: Equatable {
+        let displayID: UInt32
+        let name: String
+        let isMain: Bool
+        let frame: CGRect
+        let spaces: [MappedSpace]
+        let visibleSpaceIndex: Int?
+        var hasSpaces: Bool { !spaces.isEmpty }
+    }
+    struct MappedSpace: Equatable {
+        let yabaiIndex: Int
+        let frame: CGRect
+        let isVisible: Bool
+    }
+    struct MappedLayout: Equatable {
+        let screens: [MappedScreen]
+        let contentRect: CGRect
+        let scale: CGFloat
+    }
+
+    static let spaceStripHeight: CGFloat = 14
+    static let spaceStripInset: CGFloat = 3
+    static let spaceCapsuleGap: CGFloat = 2
+    static let minScreenHeightForStrip: CGFloat = 34
+
+    static func map(screens: [InputScreen], viewSize: CGSize, padding: CGFloat = 14) -> MappedLayout {
+        guard !screens.isEmpty, viewSize.width > padding * 2, viewSize.height > padding * 2 else {
+            return MappedLayout(screens: [], contentRect: .zero, scale: 0)
+        }
+        var bounds = CGRect.null
+        for screen in screens {
+            bounds = bounds.union(screen.cocoaFrame)
+        }
+        guard bounds.width > 0, bounds.height > 0 else {
+            return MappedLayout(screens: [], contentRect: .zero, scale: 0)
+        }
+        let availW = viewSize.width - padding * 2
+        let availH = viewSize.height - padding * 2
+        let scale = min(availW / bounds.width, availH / bounds.height)
+        func toView(_ rect: CGRect) -> CGRect {
+            CGRect(
+                x: (rect.minX - bounds.minX) * scale + padding,
+                y: (bounds.maxY - rect.maxY) * scale + padding,
+                width: rect.width * scale,
+                height: rect.height * scale
+            )
+        }
+        var mapped: [MappedScreen] = []
+        mapped.reserveCapacity(screens.count)
+        for screen in screens {
+            let frame = toView(screen.cocoaFrame)
+            let stripY = frame.maxY - spaceStripInset - spaceStripHeight
+            let usable = frame.width - spaceStripInset * 2
+            let segment = usable / CGFloat(max(screen.spaces.count, 1))
+            let spaces = screen.spaces.enumerated().map { pair -> MappedSpace in
+                let (offset, space) = pair
+                return MappedSpace(
+                    yabaiIndex: space.yabaiIndex,
+                    frame: CGRect(
+                        x: frame.minX + spaceStripInset + segment * CGFloat(offset) + spaceCapsuleGap / 2,
+                        y: stripY,
+                        width: max(segment - spaceCapsuleGap, 0),
+                        height: spaceStripHeight
+                    ),
+                    isVisible: space.isVisible
+                )
+            }
+            mapped.append(MappedScreen(
+                displayID: screen.displayID,
+                name: screen.name,
+                isMain: screen.isMain,
+                frame: frame,
+                spaces: spaces,
+                visibleSpaceIndex: screen.spaces.first { $0.isVisible }?.yabaiIndex
+            ))
+        }
+        var content = CGRect.null
+        for screen in mapped {
+            content = content.union(screen.frame)
+        }
+        return MappedLayout(screens: mapped, contentRect: content, scale: scale)
+    }
+
+    static func gridPreviewCells(screenFrame: CGRect, rows: Int, cols: Int) -> [CGRect] {
+        guard rows >= 1, cols >= 1, screenFrame.width > 0, screenFrame.height > 0 else { return [] }
+        var cells: [CGRect] = []
+        for row in 0..<rows {
+            let y0 = screenFrame.minY + screenFrame.height * CGFloat(row) / CGFloat(rows)
+            let y1 = screenFrame.minY + screenFrame.height * CGFloat(row + 1) / CGFloat(rows)
+            for col in 0..<cols {
+                let x0 = screenFrame.minX + screenFrame.width * CGFloat(col) / CGFloat(cols)
+                let x1 = screenFrame.minX + screenFrame.width * CGFloat(col + 1) / CGFloat(cols)
+                cells.append(CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0))
+            }
+        }
+        return cells
+    }
+}
+
 // MARK: Mirrors: Sources/TerminalGrid/DisplayWorkArea.swift
 
 struct WorkAreaInsets: Codable, Equatable {
@@ -248,55 +362,69 @@ check("explicitDisplayID：display/displaySpace 取屏 ID",
       GridTargetCode.display(displayID: 7).explicitDisplayID == 7
       && GridTargetCode.displaySpace(displayID: 8, spaceIndex: 2).explicitDisplayID == 8)
 
-// MARK: - 目录构建（用户三屏：主屏在下，两副屏在上）
+// MARK: - 屏幕布局映射（可视化 minimap）
 
-print("\n== GridTargetCatalog 目录 ==")
-let screens = [
-    GridTargetCatalog.ScreenInput(displayID: 1, name: "内建视网膜显示器", width: 1728, height: 1117, isMain: true, yabaiDisplayIndex: 1),
-    GridTargetCatalog.ScreenInput(displayID: 2, name: "DELL U2723QE", width: 2560, height: 1440, isMain: false, yabaiDisplayIndex: 2),
-    GridTargetCatalog.ScreenInput(displayID: 3, name: "DELL U2723QE", width: 2560, height: 1440, isMain: false, yabaiDisplayIndex: 3)
+print("\n== ScreenLayoutMapper 屏幕布局映射 ==")
+// 用户真实布局（2026-09-06）：主屏在下（Cocoa y 0..1117），P40UG 在上（Cocoa y 1117..2557）
+let layoutScreens = [
+    ScreenLayoutMapper.InputScreen(
+        displayID: 1, name: "Built-in Retina Display",
+        cocoaFrame: CGRect(x: 0, y: 0, width: 1728, height: 1117), isMain: true,
+        spaces: [ScreenLayoutMapper.InputSpace(yabaiIndex: 1, isVisible: true)]
+    ),
+    ScreenLayoutMapper.InputScreen(
+        displayID: 2, name: "P40UG",
+        cocoaFrame: CGRect(x: -814, y: 1117, width: 3440, height: 1440), isMain: false,
+        spaces: (2...5).map { ScreenLayoutMapper.InputSpace(yabaiIndex: $0, isVisible: $0 == 3) }
+    )
 ]
-let spaces = [
-    GridTargetCatalog.SpaceInput(yabaiIndex: 1, yabaiDisplayIndex: 1, isVisible: true),
-    GridTargetCatalog.SpaceInput(yabaiIndex: 2, yabaiDisplayIndex: 1, isVisible: false),
-    GridTargetCatalog.SpaceInput(yabaiIndex: 3, yabaiDisplayIndex: 2, isVisible: true),
-    GridTargetCatalog.SpaceInput(yabaiIndex: 5, yabaiDisplayIndex: 3, isVisible: false),
-    GridTargetCatalog.SpaceInput(yabaiIndex: 4, yabaiDisplayIndex: 3, isVisible: true)
-]
-let full = GridTargetCatalog.options(screens: screens, spaces: spaces)
-check("目录：前两项恒为 主屏 / 焦点屏", full[0].target == .main && full[1].target == .focused)
-check("目录：三屏各一项 + 每屏 space 细分（2+1+2）→ 共 2+3+5=10 项", full.count == 10)
-check("目录：屏级项紧跟其 space 项（层级顺序）",
-      full[2].target == .display(displayID: 1)
-      && full[3].target == .displaySpace(displayID: 1, spaceIndex: 1)
-      && full[4].target == .displaySpace(displayID: 1, spaceIndex: 2)
-      && full[5].target == .display(displayID: 2)
-      && full[6].target == .displaySpace(displayID: 2, spaceIndex: 3)
-      && full[7].target == .display(displayID: 3))
-check("目录：同屏 space 按 yabai 索引升序（5 在 4 之后）",
-      full[8].target == .displaySpace(displayID: 3, spaceIndex: 4)
-      && full[9].target == .displaySpace(displayID: 3, spaceIndex: 5))
-check("目录：主屏标签带（主）与尺寸与当前 Space", full[2].label == "内建视网膜显示器 1728×1117（主） · Space 1")
-check("目录：重名屏追加 #displayID 消歧",
-      full[5].label.contains("DELL U2723QE #2") && full[7].label.contains("DELL U2723QE #3"))
-check("目录：非重名屏不加 #", !full[2].label.contains("#"))
-check("目录：当前可见 space 标（当前）且 isActiveSpace=true",
-      full[3].label.contains("（当前）") && full[3].isActiveSpace
-      && !full[4].label.contains("（当前）") && !full[4].isActiveSpace)
-check("目录：屏级项 isActiveSpace 恒 true（无需切换）", full.filter { if case .display = $0.target { return true }; return false }.allSatisfy { $0.isActiveSpace })
-check("目录：选项 code 唯一（Picker tag 不冲突）", Set(full.map { $0.target.code }).count == full.count)
+let mapped = ScreenLayoutMapper.map(screens: layoutScreens, viewSize: CGSize(width: 660, height: 216), padding: 14)
+check("映射：两块屏都产出", mapped.screens.count == 2)
+check("映射：主屏在前（输入顺序保持）", mapped.screens[0].displayID == 1 && mapped.screens[1].displayID == 2)
+check("映射：全部内容落在可用区（含 padding，±0.01 浮点容差）",
+      mapped.contentRect.minX >= 13.99 && mapped.contentRect.minY >= 13.99
+      && mapped.contentRect.maxX <= 646.01 && mapped.contentRect.maxY <= 202.01)
+check("映射：等比缩放（副屏 3440 宽映射宽 / 主屏 1728 宽映射宽 == 2±0.01）",
+      abs(mapped.screens[1].frame.width / mapped.screens[0].frame.width - 2) < 0.01)
+check("映射：物理左右关系保持（副屏在左上、主屏在右下 → 主屏 y 更大）",
+      mapped.screens[0].frame.minY > mapped.screens[1].frame.minY)
+check("映射：Cocoa y 向上翻转为 view y 向下（副屏在物理上方 → view minY 更小）",
+      mapped.screens[1].frame.minY < mapped.screens[0].frame.minY)
+let stripInside = mapped.screens[1].spaces.allSatisfy { capsule in
+    let screenFrame = mapped.screens[1].frame
+    return capsule.frame.minY >= screenFrame.minY
+        && capsule.frame.maxY <= screenFrame.maxY - ScreenLayoutMapper.spaceStripInset + 0.01
+        && capsule.frame.minX >= screenFrame.minX
+        && capsule.frame.maxX <= screenFrame.maxX + 0.01
+}
+check("映射：Space 胶囊内嵌屏底缘（整条胶囊都在屏矩形内）", stripInside)
+check("映射：4 个 Space 等分内嵌可用宽（宽 == (屏宽-6)/4 - 2）",
+      abs(mapped.screens[1].spaces[0].frame.width - (mapped.screens[1].frame.width - 6) / 4 + 2) < 0.01)
+check("映射：可见 Space 标记跟随输入（3 可见）",
+      mapped.screens[1].spaces.first { $0.yabaiIndex == 3 }?.isVisible == true
+      && mapped.screens[1].visibleSpaceIndex == 3)
+check("映射：Space 胶囊横向等距排布",
+      abs(mapped.screens[1].spaces[1].frame.minX - mapped.screens[1].spaces[0].frame.minX - (mapped.screens[1].frame.width - 6) / 4) < 0.01)
+check("映射：visibleSpaceIndex 无 Space 时为 nil", mapped.screens[0].spaces.count == 1 && mapped.screens[0].visibleSpaceIndex == 1)
 
-let noYabai = GridTargetCatalog.options(screens: screens.map {
-    GridTargetCatalog.ScreenInput(displayID: $0.displayID, name: $0.name, width: $0.width, height: $0.height, isMain: $0.isMain, yabaiDisplayIndex: nil)
-}, spaces: [])
-check("目录（无 yabai）：只到屏级 2+3=5 项，无 space 项", noYabai.count == 5 && !noYabai.contains { if case .displaySpace = $0.target { return true }; return false })
-check("目录（无 yabai）：屏标签不带 Space 后缀", !noYabai[2].label.contains("Space"))
+let mappedNoSpace = ScreenLayoutMapper.map(screens: layoutScreens.map {
+    ScreenLayoutMapper.InputScreen(displayID: $0.displayID, name: $0.name, cocoaFrame: $0.cocoaFrame, isMain: $0.isMain, spaces: [])
+}, viewSize: CGSize(width: 660, height: 216))
+check("映射（无 yabai）：Space 带为空、hasSpaces=false", mappedNoSpace.screens.allSatisfy { !$0.hasSpaces && $0.visibleSpaceIndex == nil })
 
-let singleScreen = GridTargetCatalog.options(screens: [screens[0]], spaces: [spaces[0]])
-check("目录（单屏单 space）：主屏 + 焦点 + 屏 + 1 space = 4 项", singleScreen.count == 4)
+let emptyMapped = ScreenLayoutMapper.map(screens: [], viewSize: CGSize(width: 660, height: 216))
+check("映射：空输入 → 空布局", emptyMapped.screens.isEmpty && emptyMapped.scale == 0)
 
-let orphanSpaces = GridTargetCatalog.options(screens: [screens[0]], spaces: [GridTargetCatalog.SpaceInput(yabaiIndex: 9, yabaiDisplayIndex: 7, isVisible: true)])
-check("目录：归属未知屏的 space 被忽略（不产生悬空项）", orphanSpaces.count == 3)
+let tinyMapped = ScreenLayoutMapper.map(screens: layoutScreens, viewSize: CGSize(width: 10, height: 10))
+check("映射：view 尺寸过小 → 空布局（不崩溃不越界）", tinyMapped.screens.isEmpty)
+
+// 网格预览格线：与真实规划器同语义（gap=0 边界法）
+let previewCells = ScreenLayoutMapper.gridPreviewCells(screenFrame: CGRect(x: 0, y: 0, width: 200, height: 100), rows: 2, cols: 2)
+let seamH = previewCells[0].maxX == previewCells[1].minX
+let seamV = previewCells[0].maxY == previewCells[2].minY
+check("预览：2×2 四格且相邻严格共边", previewCells.count == 4 && seamH && seamV)
+check("预览：末格贴屏右/下缘", previewCells[1].maxX == 200 && previewCells[2].maxY == 100)
+check("预览：非法行列 → 空", ScreenLayoutMapper.gridPreviewCells(screenFrame: CGRect(x: 0, y: 0, width: 100, height: 100), rows: 0, cols: 2).isEmpty)
 
 // MARK: - 偏好语义
 

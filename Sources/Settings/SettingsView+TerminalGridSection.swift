@@ -34,17 +34,52 @@ extension SettingsView {
 
             Divider()
 
-            SettingsRow(title: "目标屏 / 工作区", detail: "列出所有连接的显示器，yabai 可用时细分到工作区（Space）；选定后编排落在该处") {
-                Picker("", selection: Binding(
-                    get: { gridTargetCode },
-                    set: { gridTargetCode = $0; TerminalGridPreferences.target = $0 }
-                )) {
-                    ForEach(gridTargetOptions) { option in
-                        Text(option.label).tag(option.target.code)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("编排目标")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("点屏幕选目标屏 · 点胶囊选工作区 · 选中屏内为 \(gridRows)×\(gridCols) 网格预览")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if let selectedSummary = gridTargetSummary {
+                        Text(selectedSummary)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.10)))
                     }
                 }
-                .frame(width: 300)
-                .labelsHidden()
+
+                ScreenMinimapView(
+                    screens: gridMinimapScreens,
+                    selected: GridTargetCode.parse(gridTargetCode),
+                    gridPreviewRows: gridRows,
+                    gridPreviewCols: gridCols,
+                    onSelect: { target in
+                        gridTargetCode = target.code
+                        TerminalGridPreferences.target = target.code
+                    }
+                )
+
+                if GridTargetCode.parse(gridTargetCode)?.explicitDisplayID.map({ displayID in
+                    !gridMinimapScreens.contains { $0.displayID == displayID }
+                }) == true {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                        Text("当前编排目标的显示器已断开（\(gridTargetCode)）")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Button("重置为主屏") {
+                            gridTargetCode = GridTargetCode.main.code
+                            TerminalGridPreferences.target = gridTargetCode
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
             }
 
             Divider()
@@ -118,7 +153,7 @@ extension SettingsView {
                 Button {
                     gridSnapshots = terminalGridController.snapshotsForRefresh()
                     gridAutoRestoreSnapshotID = TerminalGridPreferences.autoRestoreSnapshotID
-                    refreshGridTargetOptions()
+                    refreshGridMinimap()
                     refreshSelectionInfo()
                 } label: {
                     Image(systemName: "arrow.clockwise")
@@ -233,36 +268,48 @@ extension SettingsView {
             }
         }
         .onAppear {
-            refreshGridTargetOptions()
+            refreshGridMinimap()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
-            // 接拔显示器 / 分辨率变化后重建目标目录
-            refreshGridTargetOptions()
+            // 接拔显示器 / 分辨率变化后重建缩略图
+            refreshGridMinimap()
         }
     }
 
-    /// 目标目录构建：真实屏幕快照 + yabai 空间快照 → Picker 选项。
-    /// 显式选择失效（屏断开等）时附加占位项，避免 Picker 选中值悬空。
-    func refreshGridTargetOptions() {
-        let screens = NSScreen.screens.map { screen in
-            GridTargetCatalog.ScreenInput(
-                displayID: CoordinateKit.cgDisplayID(for: screen) ?? 0,
+    /// 当前编排目标的摘要胶囊文案
+    private var gridTargetSummary: String? {
+        guard let target = GridTargetCode.parse(gridTargetCode) else { return nil }
+        switch target {
+        case .main:
+            return "→ 主屏"
+        case .focused:
+            return "→ 焦点屏"
+        case .display(let displayID):
+            return "→ #\(displayID) 当前 Space"
+        case .displaySpace(let displayID, let spaceIndex):
+            return "→ #\(displayID) · Space \(spaceIndex)"
+        }
+    }
+
+    /// minimap 数据构建：真实屏幕快照（Cocoa frame）+ yabai 空间快照。
+    /// yabai 不可用时 Space 带为空，minimap 退化为纯屏幕选择，功能不缺失。
+    func refreshGridMinimap() {
+        let spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]] = Dictionary(grouping: (SpaceController.shared.querySpaces() ?? []).compactMap { info -> (display: Int, space: ScreenLayoutMapper.InputSpace)? in
+            guard let index = info.index, let display = info.display else { return nil }
+            return (display, ScreenLayoutMapper.InputSpace(yabaiIndex: index, isVisible: info.isVisible ?? false))
+        }, by: { $0.display }).mapValues { $0.map { $0.space }.sorted { $0.yabaiIndex < $1.yabaiIndex } }
+
+        gridMinimapScreens = NSScreen.screens.map { screen in
+            let displayID = CoordinateKit.cgDisplayID(for: screen) ?? 0
+            let yabaiIndex = CoordinateKit.yabaiDisplayIndex(for: screen)
+            return ScreenLayoutMapper.InputScreen(
+                displayID: displayID,
                 name: screen.localizedName,
-                width: Int(screen.frame.width),
-                height: Int(screen.frame.height),
-                isMain: CoordinateKit.cgDisplayID(for: screen) == CGMainDisplayID(),
-                yabaiDisplayIndex: CoordinateKit.yabaiDisplayIndex(for: screen)
+                cocoaFrame: screen.frame,
+                isMain: displayID == CGMainDisplayID(),
+                spaces: yabaiIndex.flatMap { spacesByYabaiDisplay[$0] } ?? []
             )
         }
-        let spaces = (SpaceController.shared.querySpaces() ?? []).compactMap { info -> GridTargetCatalog.SpaceInput? in
-            guard let index = info.index, let display = info.display else { return nil }
-            return GridTargetCatalog.SpaceInput(yabaiIndex: index, yabaiDisplayIndex: display, isVisible: info.isVisible ?? false)
-        }
-        var options = GridTargetCatalog.options(screens: screens, spaces: spaces)
-        if let current = GridTargetCode.parse(gridTargetCode), !options.contains(where: { $0.target == current }) {
-            options.append(GridTargetOption(target: current, label: "（已断开）\(current.code)", isActiveSpace: true))
-        }
-        gridTargetOptions = options
     }
 
     /// 「终端应用」行的说明文案（随偏好/检测变化）
