@@ -200,9 +200,9 @@ extension SettingsView {
                     Text(gridResultMessage)
                         .font(.system(size: 11.5, design: .monospaced))
                         .foregroundStyle(gridResultIsError ? Color.red : Color.secondary)
-                        .lineLimit(2)
+                        .lineLimit(4)
                         .textSelection(.enabled)
-                        .frame(maxWidth: 380, alignment: .trailing)
+                        .frame(maxWidth: 460, alignment: .trailing)
                 }
             }
         }
