@@ -12,12 +12,13 @@ struct ScreenMinimapView: View {
     let selected: GridTargetCode?
     let gridPreviewRows: Int
     let gridPreviewCols: Int
+    /// 容器高度（编排页主视觉传更大值）
+    var height: CGFloat = 216
     let onSelect: (GridTargetCode) -> Void
 
     @State private var hoveredDisplayID: UInt32?
 
     private enum Metrics {
-        static let containerHeight: CGFloat = 216
         static let screenCornerRadius: CGFloat = 8
         static let spaceCornerRadius: CGFloat = 4
     }
@@ -40,7 +41,7 @@ struct ScreenMinimapView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
-        .frame(height: Metrics.containerHeight)
+        .frame(height: height)
     }
 
     // MARK: 单块屏

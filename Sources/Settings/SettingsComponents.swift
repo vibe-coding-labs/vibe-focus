@@ -17,11 +17,12 @@ struct SettingsCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
+                    .tracking(-0.1)
                 Text(subtitle)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12.5))
                     .lineSpacing(2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -29,10 +30,14 @@ struct SettingsCard<Content: View>: View {
 
             content
         }
-        .padding(22)
+        .padding(20)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
         )
     }
 }
@@ -118,15 +123,23 @@ struct SettingsStatusPill: View {
     let tint: Color
 
     var body: some View {
-        Text(title)
-            .font(.system(size: 11, weight: .semibold))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(tint.opacity(0.12))
-            )
-            .foregroundStyle(tint)
+        HStack(spacing: 6) {
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.trailing, 5)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule().fill(tint.opacity(0.12))
+        )
+        .overlay(
+            Capsule().strokeBorder(tint.opacity(0.28), lineWidth: 1)
+        )
+        .foregroundStyle(tint)
     }
 }
 
@@ -160,11 +173,11 @@ struct SettingsRow<Accessory: View>: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .medium))
                 Text(detail)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .lineSpacing(2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

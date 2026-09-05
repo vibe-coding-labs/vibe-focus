@@ -19,14 +19,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         )
 
         let window = FocusableSettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 740),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "VibeFocus 设置"
         window.center()
-        window.minSize = NSSize(width: 720, height: 680)
+        window.minSize = NSSize(width: 780, height: 680)
         window.isReleasedWhenClosed = false
         window.level = .normal
         window.collectionBehavior = [.moveToActiveSpace]

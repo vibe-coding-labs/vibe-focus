@@ -62,6 +62,7 @@ struct AppLogoBadge: View {
 enum SettingsTab: String, CaseIterable {
     case general = "通用"
     case workspace = "工作区"
+    case orchestration = "编排"
     case claudeIntegration = "Claude 集成"
     case appearance = "外观与反馈"
 
@@ -69,34 +70,51 @@ enum SettingsTab: String, CaseIterable {
         switch self {
         case .general: return "gearshape"
         case .workspace: return "macwindow"
+        case .orchestration: return "rectangle.split.2x2"
         case .claudeIntegration: return "link"
         case .appearance: return "paintbrush"
         }
     }
 }
 
-/// Single tab button used in the settings sidebar navigation.
+/// Single tab button used in the settings navigation.
 struct SettingsTabButton: View {
     let tab: SettingsTab
     let isSelected: Bool
     let action: () -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 12))
+                    .font(.system(size: 12, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
                 Text(tab.rawValue)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        isSelected ? Color.accentColor.opacity(0.13)
+                        : isHovered ? Color.primary.opacity(0.05)
+                        : Color.clear
+                    )
             )
-            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.25) : Color.clear, lineWidth: 1)
+            )
+            .foregroundStyle(isSelected ? Color.accentColor : Color.primary.opacity(isHovered ? 0.75 : 0.55))
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.15), value: isSelected)
     }
 }

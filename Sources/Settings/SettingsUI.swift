@@ -70,19 +70,25 @@ public struct SettingsView: View {
     // MARK: - Tab Navigation
 
     private var headerBar: some View {
-        HStack(spacing: 16) {
-            AppLogoBadge(size: 52)
+        HStack(spacing: 14) {
+            AppLogoBadge(size: 44)
+                .shadow(color: Color.black.opacity(0.18), radius: 5, y: 2)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text("VibeFocus")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: 19, weight: .bold))
+                        .tracking(-0.3)
                     Text(appVersionDisplay)
-                        .font(.system(size: 12))
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.primary.opacity(0.06)))
+                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
                 }
                 Text("菜单栏里的窗口流转工具")
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
 
@@ -116,7 +122,7 @@ public struct SettingsView: View {
         switch selectedTab {
         case .general:
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     hotKeySection
                     layoutHotKeySection
                     permissionsSection
@@ -127,18 +133,25 @@ public struct SettingsView: View {
 
         case .workspace:
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     workspaceSection
+                    overlaySection
+                }
+            }
+            .scrollIndicators(.visible)
+
+        case .orchestration:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                     terminalGridSection
                         .onAppear { refreshSelectionInfo() }
-                    overlaySection
                 }
             }
             .scrollIndicators(.visible)
 
         case .claudeIntegration:
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     claudeHookSection
                     soundSection
                     voiceAnnouncementSection
@@ -149,7 +162,7 @@ public struct SettingsView: View {
 
         case .appearance:
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     titleEditorSection
                 }
             }
@@ -165,15 +178,17 @@ public struct SettingsView: View {
             tabBar
                 .padding(.top, 14)
 
-            Divider()
-                .padding(.top, 10)
+            Rectangle()
+                .fill(Color.primary.opacity(0.06))
+                .frame(height: 1)
+                .padding(.top, 12)
 
             tabContent
                 .padding(.top, 16)
                 .padding(.bottom, 20)
         }
-        .padding(.horizontal, 28)
-        .frame(minWidth: 720, idealWidth: 720, minHeight: 680, idealHeight: 680)
+        .padding(.horizontal, 26)
+        .frame(minWidth: 780, idealWidth: 780, minHeight: 680, idealHeight: 740)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             let startedAt = Date()
