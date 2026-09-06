@@ -3872,6 +3872,49 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             WindowStateStore.shared.deleteWindowState(windowID: wid)
         }
         check("registry: 内存+DB 双清后 → nil", registry.binding(for: "sess-A") == nil)
+
+        // ===== B24：状态操作语义（markCompleted/reactivate/remap/clearAll）=====
+        func mkState(_ wid: UInt32, session: String?) -> WindowState {
+            var ws = WindowState(
+                windowID: wid, pid: terminalPID, tty: nil,
+                axWindowNumber: nil, appName: "TestTerminal", bundleIdentifier: nil, title: nil,
+                termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                envWindowID: nil, sessionID: session, cwd: nil, model: nil,
+                isCompleted: false, createdAt: Date(), updatedAt: Date()
+            )
+            return ws
+        }
+        registry.windowStates[9101] = mkState(9101, session: "b24-complete")
+        registry.markCompleted(sessionID: "b24-complete")
+        check("b24 state: markCompleted 置位", registry.windowStates[9101]?.isCompleted == true)
+        check("b24 state: markCompleted 清别名",
+              registry.sessionAliasWindowID.values.contains(9101) == false)
+
+        registry.windowStates[9102] = mkState(9102, session: "b24-react")
+        registry.markCompleted(sessionID: "b24-react")
+        registry.reactivate(sessionID: "b24-react")
+        check("b24 state: reactivate 复位", registry.windowStates[9102]?.isCompleted == false)
+
+        let beforeTouch = registry.windowStates[9101]?.updatedAt
+        registry.touch(sessionID: "b24-complete", message: "touched")
+        check("b24 state: touch 推进 updatedAt + 记录消息",
+              registry.windowStates[9101]!.updatedAt > (beforeTouch ?? .distantPast)
+              && registry.lastEventDescription == "touched")
+
+        registry.setLastEventDescription("   ")
+        check("b24 state: 空白消息不覆盖 lastEventDescription",
+              registry.lastEventDescription == "touched")
+
+        registry.windowStates[9103] = mkState(9103, session: "b24-remap")
+        registry.remapWindowID(oldWindowID: 9103, newWindowID: 9104)
+        check("b24 state: remap 迁移绑定到新 windowID",
+              registry.windowStates[9103] == nil && registry.windowStates[9104]?.sessionID == "b24-remap")
+
+        registry.clearAllBindings()
+        check("b24 state: clearAllBindings 清空内存",
+              registry.windowStates.isEmpty && registry.sessionAliasWindowID.isEmpty)
+        // 隔离库兜底清理（clearAllBindings 已清 DB 全表）
+        check("b24 cleanup: 注册表已清空", registry.windowStates.isEmpty)
     }
 
     // MARK: LAN 远程绑定持久化（真实实现——B22：JSON 新格式/旧字典迁移/nil 过滤三层语义）
