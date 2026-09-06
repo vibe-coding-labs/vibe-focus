@@ -40,7 +40,7 @@
 | 批次 | 内容 | 状态 |
 |---|---|---|
 | B1 | TerminalGridController 1055→6 文件 + 纯函数提取（parseWindowTTYMap/sortedByReadingOrder/restoreTargetFrames 去重）+ 12 断言 | ✅ 2026-09-07 |
-| B2 | SoundManager 域审计与拆分/补测 | 待开工 |
-| B3 | SettingsView+TerminalGridSection 拆分 | 待开工 |
-| B4 | SpaceController+Recovery 镜像测试补齐 | 待开工 |
+| B2 | SoundManager 模型块拆出 SoundPreferencesModels（515→393）+ **实锤并修复 volume 必填解码潜伏 bug**（旧 JSON 静默重置用户偏好）+ 真实实现兼容解码 15 断言 | ✅ 2026-09-07 |
+| B3 | SettingsView+TerminalGridSection 拆四文件（536→137/214/87/99）+ summaryText/selectionDetailText/steppedGap 提纯 + 13 断言 | ✅ 2026-09-07 |
+| B4 | SA 恢复状态机真实实现测试补齐（recoveryVerdict 6 + autoRecoveryAllowed 冷静期矩阵 6 + saProbeVerdict 4 = 16 断言，Runner 直测优于镜像）| ✅ 2026-09-07 |
 | B5 | AppDelegate+MenuAndInstance / VoiceAnnouncementManager | 待开工 |

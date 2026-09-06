@@ -29,6 +29,20 @@ enum GridTargetCode: Equatable {
         }
     }
 
+    /// minimap 摘要胶囊文案（四分支，Runner 穷尽锁定）
+    var summaryText: String {
+        switch self {
+        case .main:
+            return "→ 主屏"
+        case .focused:
+            return "→ 焦点屏"
+        case .display(let displayID):
+            return "→ #\(displayID) 当前 Space"
+        case .displaySpace(let displayID, let spaceIndex):
+            return "→ #\(displayID) · Space \(spaceIndex)"
+        }
+    }
+
     static func parse(_ raw: String?) -> GridTargetCode? {
         guard let raw, !raw.isEmpty else { return nil }
         if raw == "main" { return .main }

@@ -17,6 +17,18 @@ enum TerminalGridPreferences {
         case auto          // iTerm2 在运行则用 iTerm2，否则 Terminal.app
         case terminal      // Terminal.app
         case iterm2        // iTerm2
+
+        /// 「终端应用」行的说明文案（三分支，Runner 穷尽锁定）
+        var selectionDetailText: String {
+            switch self {
+            case .auto:
+                return "自动识别你最常用的终端（优先当前在运行者）；也可手动指定。"
+            case .terminal:
+                return "手动指定 Terminal.app（完整支持：建窗/注入/tty/精确恢复）。"
+            case .iterm2:
+                return "手动指定 iTerm2（部分支持：无 tty 映射，自动恢复降级为只重建缺失格）。"
+            }
+        }
     }
 
     static var rows: Int {

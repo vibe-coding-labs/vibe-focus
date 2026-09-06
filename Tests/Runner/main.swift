@@ -3267,6 +3267,125 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && clampedFrames[0].maxX <= visible.maxX && clampedFrames[0].maxY <= visible.maxY)
     }
 
+    // MARK: SoundPreferences 兼容解码 + CustomSoundStatus（真实实现——持久化铁律：旧 JSON 缺字段不得静默重置）
+
+    do {
+        // 旧版本 JSON：只有 soundType 一个字段（v1 时代用户保存的形态）
+        let legacyJSON = Data(#"{"soundType":"builtin_ding"}"#.utf8)
+        let legacy = try? JSONDecoder().decode(SoundPreferences.self, from: legacyJSON)
+        check("prefs: 旧 JSON 可解码", legacy != nil)
+        check("prefs: soundType 保留", legacy?.soundType == .builtinDing)
+        check("prefs: customSoundPath 缺省 nil", legacy?.customSoundPath == nil)
+        check("prefs: minPlayIntervalSeconds 缺省 2", legacy?.minPlayIntervalSeconds == 2)
+        check("prefs: quietHours 缺省关闭", legacy?.quietHoursEnabled == false)
+        check("prefs: quietStart/End 缺省 22/8",
+              legacy?.quietStartHour == 22 && legacy?.quietEndHour == 8)
+        check("prefs: projectRules 缺省空", legacy?.projectRules.isEmpty == true)
+
+        // 全字段往返
+        let full = SoundPreferences(
+            soundType: .custom, customSoundPath: "/tmp/a.m4a",
+            volume: 0.5, minPlayIntervalSeconds: 7,
+            quietHoursEnabled: true, quietStartHour: 1, quietEndHour: 6,
+            projectRules: [ProjectSoundRule(projectName: "p", soundType: .builtinPing)]
+        )
+        let roundtrip = try? JSONDecoder().decode(SoundPreferences.self, from: JSONEncoder().encode(full))
+        check("prefs: 全字段往返一致", roundtrip == full)
+
+        // 未来版本多字段（向前容忍：JSONDecoder 默认忽略未知键）
+        let futureJSON = Data(#"{"soundType":"builtin_ping","futureField":123}"#.utf8)
+        let future = try? JSONDecoder().decode(SoundPreferences.self, from: futureJSON)
+        check("prefs: 未来字段不炸解码", future?.soundType == .builtinPing)
+
+        // 非法 JSON → nil（调用方 loadPreferences 回退 .default）
+        check("prefs: 非法 JSON 解码失败可被捕获",
+              (try? JSONDecoder().decode(SoundPreferences.self, from: Data("not-json".utf8))) == nil)
+
+        // CustomSoundStatus.evaluate 真实实现分支（文件系统交互）
+        check("soundStatus: nil → notSet", CustomSoundStatus.evaluate(path: nil) == .notSet)
+        check("soundStatus: 空串 → notSet", CustomSoundStatus.evaluate(path: "") == .notSet)
+        check("soundStatus: 不存在文件 → missing",
+              CustomSoundStatus.evaluate(path: "/tmp/vf-definitely-missing-\(UUID().uuidString).wav") == .missing)
+        let tmp = "/tmp/vf-sound-status-\(UUID().uuidString).wav"
+        FileManager.default.createFile(atPath: tmp, contents: Data([0]))
+        check("soundStatus: 存在文件 → valid", CustomSoundStatus.evaluate(path: tmp) == .valid)
+        try? FileManager.default.removeItem(atPath: tmp)
+        check("soundStatus: 文件删除后 → missing", CustomSoundStatus.evaluate(path: tmp) == .missing)
+    }
+
+    // MARK: 编排页提纯单元（真实实现——B3：目标摘要/终端说明文案/间距步进）
+
+    do {
+        // GridTargetCode.summaryText：四分支
+        check("targetSummary: main", GridTargetCode.main.summaryText == "→ 主屏")
+        check("targetSummary: focused", GridTargetCode.focused.summaryText == "→ 焦点屏")
+        check("targetSummary: display", GridTargetCode.display(displayID: 7).summaryText == "→ #7 当前 Space")
+        check("targetSummary: displaySpace", GridTargetCode.displaySpace(displayID: 7, spaceIndex: 3).summaryText == "→ #7 · Space 3")
+        check("targetSummary: parse→summary 集成",
+              GridTargetCode.parse("d2s5")?.summaryText == "→ #2 · Space 5")
+
+        // AppPreference.selectionDetailText：三分支非空且互异
+        let details = [
+            TerminalGridPreferences.AppPreference.auto,
+            .terminal,
+            .iterm2
+        ].map { $0.selectionDetailText }
+        check("appPrefDetail: 三分支非空且互异",
+              details.allSatisfy { !$0.isEmpty } && Set(details).count == 3)
+        check("appPrefDetail: terminal 指明完整支持", details[1].contains("完整支持"))
+        check("appPrefDetail: iterm2 指明部分支持", details[2].contains("部分支持"))
+
+        // TerminalGridPlanner.steppedGap：2px 步进取整
+        check("steppedGap: 0 → 0（无缝）", TerminalGridPlanner.steppedGap(0) == 0)
+        check("steppedGap: 1.2 → 2（向上取档）", TerminalGridPlanner.steppedGap(1.2) == 2)
+        check("steppedGap: 3.9 → 4（恰档不动）", TerminalGridPlanner.steppedGap(3.9) == 4)
+        check("steppedGap: 24 → 24（上界）", TerminalGridPlanner.steppedGap(24) == 24)
+        check("steppedGap: 23 → 24（越上界取整）", TerminalGridPlanner.steppedGap(23) == 24)
+    }
+
+    // MARK: SA 恢复状态机（真实实现——B4：recoveryVerdict/autoRecoveryAllowed/saProbeVerdict 穷尽锁定）
+
+    do {
+        // recoveryVerdict：成功/SIP 阻断/用户拒绝（大小写容忍）/其他失败
+        check("saVerdict: success → succeeded",
+              SpaceController.recoveryVerdict(success: true, outputOrError: "") == .succeeded)
+        check("saVerdict: success 优先于错误文本",
+              SpaceController.recoveryVerdict(success: true, outputOrError: "System Integrity Protection") == .succeeded)
+        check("saVerdict: SIP 文本 → blockedBySIP",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "yabai: System Integrity Protection forbids") == .blockedBySIP)
+        check("saVerdict: User Canceled 大小写容忍 → userDeclined",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "script error: User Canceled.") == .userDeclined)
+        check("saVerdict: 其他输出 → failedOther",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "connection invalid") == .failedOther)
+        check("saVerdict: 空输出 → failedOther",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "") == .failedOther)
+
+        // autoRecoveryAllowed：冷静期矩阵（含边界小时）
+        let week: TimeInterval = 7 * 24
+        check("saRetry: blockedBySIP 永不自动重试",
+              !SpaceController.autoRecoveryAllowed(verdict: .blockedBySIP, hoursSince: week * 52))
+        check("saRetry: succeeded 无需恢复",
+              !SpaceController.autoRecoveryAllowed(verdict: .succeeded, hoursSince: week))
+        check("saRetry: userDeclined 冷静期未满拒",
+              !SpaceController.autoRecoveryAllowed(verdict: .userDeclined, hoursSince: week - 1))
+        check("saRetry: userDeclined 冷静期满放行",
+              SpaceController.autoRecoveryAllowed(verdict: .userDeclined, hoursSince: week))
+        check("saRetry: failedOther 24h 未满拒",
+              !SpaceController.autoRecoveryAllowed(verdict: .failedOther, hoursSince: 23.9))
+        check("saRetry: failedOther 24h 满放行",
+              SpaceController.autoRecoveryAllowed(verdict: .failedOther, hoursSince: 24))
+
+        // saProbeVerdict（真实实现直测，收敛 Standalone 镜像语义）
+        check("saProbe: exit 0 → 通过",
+              SpaceController.saProbeVerdict(exitCode: 0, stderr: ""))
+        check("saProbe: SA 缺失 → 不通过",
+              !SpaceController.saProbeVerdict(exitCode: 1, stderr: "yabai: error with the scripting-addition"))
+        check("saProbe: mission-control 阻断 → 不通过",
+              !SpaceController.saProbeVerdict(exitCode: 1, stderr: "yabai: cannot focus space: mission-control is active!"))
+        check("saProbe: 其他错误 → 通过（非 SA 类失败不判死）",
+              SpaceController.saProbeVerdict(exitCode: 2, stderr: "yabai: unknown command"))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
