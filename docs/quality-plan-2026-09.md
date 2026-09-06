@@ -55,10 +55,42 @@ fallback 行为，原则改为「保守退让（保持原状/最小移动）+ �
 - ax=false 引导流每实例只开一次系统设置（避免焦点反复被抢）。
 **验收**：连续两次部署（一升一空跑）审计完整、授权状态时间线连续。
 
-## P4 观测运营固化
+## P4 观测运营固化 ✅
 
-- 排查首站固化为文档：`--diagnose` → exits.jsonl → crash-fatal 归档 → keepalive 决策行；
+- 排查首站固化为文档：`docs/troubleshooting-runbook.md`（2026-09-06）——`--diagnose`
+  六段读法 → exits.jsonl 事件/字段速查 → 常见症状对照表 → 取证后动作；
 - 新增热路径行为变更时，PR 描述必须附 E2E 运行输出。
+
+## P5 测试互斥锁（2026-09-06 二轮新增）✅
+
+P3 部署锁同款机制推广到测试（「运行注意事项」实测项的机制化收尾）：
+Runner 检测到任一 `*_E2E=1` 环境变量即取 `/tmp/vibefocus-e2e.lock`（mkdir 原子；
+被持有拒跑退出码 3；>10min 陈锁回收；atexit 释放——E2E 汇总以 exit() 结束，defer 不执行）。
+环境变量名后缀匹配，未来新增 E2E 模式自动纳入。
+**验收**：真机 SIZE_E2E 全绿 + 并发第二个 Runner 实例被拒（见补充实测）。
+
+## P6 焦点链路清查与回归保护（2026-09-06 二轮立项）
+
+根因模型最后一项未机制化覆盖的风险：「toggle 行为绑定全局焦点窗口」。清查结果：
+
+| 焦点读取点 | 触发 | fallback | 保护状态 |
+|---|---|---|---|
+| `resolveFocusedWindowForToggle`（FocusResolution）三分支：CGWindowList(count==1) → yabai(pid 一致) → AX | 每次 toggle | 全空 → identity nil → stuck/identity-missing 路径 | 分支顺序按阻塞代价锁死（注释红线）；焦点禁缓存（P3.4 回归已回退）；**分支决策内嵌命令式代码，无纯函数核心、零自动化回归** ← 本阶段缺口 |
+| `resolveFallbackWindowForToggle` + `pickFallbackFrontWindow`（FocusFallback） | identity nil 且前台无候选窗口 | 无合格窗 → 维持死终但 `fallbackRequested=false` 归因 | 540d007 真机修复；纯函数有镜像测试（ToggleFallbackWindowTests）；守卫齐备（ownPID 排除 / 仅 .regular / 非 1x1 / 无状态） |
+| `captureFocusedWindowIdentity`（Finding，hook 路径） | hook 触发采集 | nil 上抛 | P-INST-25 耗时埋点在岗 |
+| `frontmostAppDescriptor()`（Toggle 入口） | 每次 toggle | — | 仅日志字段 |
+
+**后续步骤（按序）**：
+1. Batch 式提取三分支决策纯函数核心（输入 candidatesCount / yabai 结果+pid 匹配 / AX
+   结果 → 选中 source 与窗口），行为零变更 + 镜像测试穷尽分支组合；
+2. 评估 windowless-frontmost（540d007）真机回归用例的自动化触发可行性
+   （伪造无窗口前台），可行则纳入 Tests/e2e 家族；
+3. 任何焦点分支行为变更，PR 附 SIZE_E2E 输出（P4 约定）。
+
+## P7 结构降耦（接 refactor 账本，后续批次）
+
+FrameWriteExecutor / 阶段状态机（重构进度账本 Batch 3/4 热点）：热路径继续按
+「纯函数内核 + 镜像测试」拆解，原则与本计划 P1 同源——见 memory 重构进度账本。
 
 ## 进度台账
 
@@ -68,13 +100,17 @@ fallback 行为，原则改为「保守退让（保持原状/最小移动）+ �
 | P1 | ✅ 2026-09-06 | 见本文件提交历史 | restore 屏外 origFrame 保守退让（clampFrame 夹进源屏重试）+ SIZE_E2E 五用例全绿（跨屏放大/缩小/toggle 往返/解堵尺寸保持/屏外夹取还原） |
 | P2 | ✅ 2026-09-06 | 见本文件提交历史 | SIZE_E2E 补 move_to_main 路由直呼用例 + Tests/e2e/README.md 归口文档（清单/红线/跑法） |
 | P3 | ✅ 2026-09-06 | 见本文件提交历史 | run.sh 部署文件锁（mkdir+陈锁回收）+ 安装事件（replaced/skipped-unchanged）写入 exits.jsonl，--diagnose 时间线可见 |
-| P4 | 文档已建 | 本文件 | — |
+| P4 | ✅ 2026-09-06 | 见本文件提交历史 | docs/troubleshooting-runbook.md 排查首站固化（--diagnose 六段读法 + 事件速查 + 症状对照） |
+| P5 | ✅ 2026-09-06 | 见本文件提交历史 | Runner 内建 E2E 同机互斥锁（mkdir + 陈锁回收 + atexit 释放，并发拒跑退出码 3） |
+| P6 | 立项 | 本文件 | 焦点链路清查表完成；缺口=三分支决策纯函数化 + windowless 回归用例评估 |
+| P7 | 立项 | 本文件 | 结构降耦接重构账本 Batch 3/4（FrameWriteExecutor / 阶段状态机） |
 
 ## 运行注意事项（实测）
 
 - **E2E 同机互斥**：SIZE_E2E 等 toggle 类真机测试与并行会话的 toggle 测试同机运行时会
   互相扰动（yabai re-tile 把 float 窗口弹回原位、焦点被对方测试抢走）——表现为 toggle
-  类用例间歇性 FAIL 但重跑即绿。两个会话不要同时跑窗口类 E2E（P3 部署锁应扩展为测试锁）。
+  类用例间歇性 FAIL 但重跑即绿。已机制化（P5）：Runner 取 /tmp/vibefocus-e2e.lock，
+  并发第二个拒跑。
 - **部署=真升级时 AX 会断一次**：macOS 对本地签名按 CDHash 校验授权，应用侧无法绕过；
   无变化重装已被 4c99345 哈希跳过保护。
 
