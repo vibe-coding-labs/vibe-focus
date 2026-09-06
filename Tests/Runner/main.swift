@@ -3343,6 +3343,49 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("steppedGap: 23 → 24（越上界取整）", TerminalGridPlanner.steppedGap(23) == 24)
     }
 
+    // MARK: SA 恢复状态机（真实实现——B4：recoveryVerdict/autoRecoveryAllowed/saProbeVerdict 穷尽锁定）
+
+    do {
+        // recoveryVerdict：成功/SIP 阻断/用户拒绝（大小写容忍）/其他失败
+        check("saVerdict: success → succeeded",
+              SpaceController.recoveryVerdict(success: true, outputOrError: "") == .succeeded)
+        check("saVerdict: success 优先于错误文本",
+              SpaceController.recoveryVerdict(success: true, outputOrError: "System Integrity Protection") == .succeeded)
+        check("saVerdict: SIP 文本 → blockedBySIP",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "yabai: System Integrity Protection forbids") == .blockedBySIP)
+        check("saVerdict: User Canceled 大小写容忍 → userDeclined",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "script error: User Canceled.") == .userDeclined)
+        check("saVerdict: 其他输出 → failedOther",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "connection invalid") == .failedOther)
+        check("saVerdict: 空输出 → failedOther",
+              SpaceController.recoveryVerdict(success: false, outputOrError: "") == .failedOther)
+
+        // autoRecoveryAllowed：冷静期矩阵（含边界小时）
+        let week: TimeInterval = 7 * 24
+        check("saRetry: blockedBySIP 永不自动重试",
+              !SpaceController.autoRecoveryAllowed(verdict: .blockedBySIP, hoursSince: week * 52))
+        check("saRetry: succeeded 无需恢复",
+              !SpaceController.autoRecoveryAllowed(verdict: .succeeded, hoursSince: week))
+        check("saRetry: userDeclined 冷静期未满拒",
+              !SpaceController.autoRecoveryAllowed(verdict: .userDeclined, hoursSince: week - 1))
+        check("saRetry: userDeclined 冷静期满放行",
+              SpaceController.autoRecoveryAllowed(verdict: .userDeclined, hoursSince: week))
+        check("saRetry: failedOther 24h 未满拒",
+              !SpaceController.autoRecoveryAllowed(verdict: .failedOther, hoursSince: 23.9))
+        check("saRetry: failedOther 24h 满放行",
+              SpaceController.autoRecoveryAllowed(verdict: .failedOther, hoursSince: 24))
+
+        // saProbeVerdict（真实实现直测，收敛 Standalone 镜像语义）
+        check("saProbe: exit 0 → 通过",
+              SpaceController.saProbeVerdict(exitCode: 0, stderr: ""))
+        check("saProbe: SA 缺失 → 不通过",
+              !SpaceController.saProbeVerdict(exitCode: 1, stderr: "yabai: error with the scripting-addition"))
+        check("saProbe: mission-control 阻断 → 不通过",
+              !SpaceController.saProbeVerdict(exitCode: 1, stderr: "yabai: cannot focus space: mission-control is active!"))
+        check("saProbe: 其他错误 → 通过（非 SA 类失败不判死）",
+              SpaceController.saProbeVerdict(exitCode: 2, stderr: "yabai: unknown command"))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
