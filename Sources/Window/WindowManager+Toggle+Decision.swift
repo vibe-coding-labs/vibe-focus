@@ -43,6 +43,43 @@ extension WindowManager {
         return .restore
     }
 
+    // MARK: - 执行路由（Batch 5：mode 日志与执行分支的唯一映射）
+
+    /// toggle 实际执行的分支。
+    enum ToggleRoute: Equatable {
+        case restore
+        case moveToMain
+        case moveSecondaryStuck
+
+        /// 日志 mode 字段名（与审计 eventType 的 mode 值一致）。
+        var logName: String {
+            switch self {
+            case .restore: return "restore"
+            case .moveToMain: return "move_to_main"
+            case .moveSecondaryStuck: return "move_to_secondary_stuck"
+            }
+        }
+    }
+
+    /// 路由决策唯一映射（纯函数，ToggleRouteTests 分支穷尽锁定）。
+    ///
+    /// ## 场景（Batch 5）
+    /// 此前 `(decision, onMainScreen) → 分支` 的映射以两份表示散在 toggle() 里：
+    /// mode 字符串 switch 与执行 switch 内联 if——在 (decision=.moveToMain,
+    /// onMainScreen=true) 组合下 mode 记 "move_to_main" 而执行走 stuck（日志失真，
+    /// 2026-09-06 已注释承认过一次同类失真）。本函数是该映射的唯一事实源：
+    /// mode 字符串、执行分支、审计 mode 全部由它派生。
+    ///
+    /// 语义：
+    /// - .restore → 回原位；
+    /// - 其余决策按解析层归属（resolution.onMainScreen，与决策层的
+    ///   isWindowOnMainScreen 是不同来源，可能不一致——以解析层为准执行）：
+    ///   在主屏 → stuck 解堵（移副屏）；不在主屏或归属未知（nil）→ move_to_main。
+    static func route(for decision: RestoreDecision, onMainScreen: Bool?) -> ToggleRoute {
+        if case .restore = decision { return .restore }
+        return onMainScreen == true ? .moveSecondaryStuck : .moveToMain
+    }
+
     func shouldRestoreCurrentWindow() -> Bool {
         return shouldRestoreCurrentWindow(windowID: nil, store: ToggleEngine.shared)
     }

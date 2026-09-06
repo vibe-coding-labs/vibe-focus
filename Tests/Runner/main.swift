@@ -2424,6 +2424,31 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         }
     }
 
+    // MARK: WindowManager.route（真实实现——toggle 执行路由唯一映射，Batch 5）
+
+    do {
+        check("route: .restore → restore（onMain=true 不影响）",
+              WindowManager.route(for: .restore, onMainScreen: true) == .restore)
+        check("route: .restore → restore（onMain=nil 也不影响）",
+              WindowManager.route(for: .restore, onMainScreen: nil) == .restore)
+        check("route: .moveToMain + onMain=false → moveToMain",
+              WindowManager.route(for: .moveToMain, onMainScreen: false) == .moveToMain)
+        check("route: .moveToMain + onMain=true → moveSecondaryStuck（mode 与执行同源）",
+              WindowManager.route(for: .moveToMain, onMainScreen: true) == .moveSecondaryStuck)
+        check("route: .noRecord + onMain=nil → moveToMain（归属未知不进 stuck）",
+              WindowManager.route(for: .noRecord, onMainScreen: nil) == .moveToMain)
+        check("route: .corruptedClearWindowID + onMain=true → moveSecondaryStuck",
+              WindowManager.route(for: .corruptedClearWindowID(7), onMainScreen: true) == .moveSecondaryStuck)
+        check("route: .noFocusedWindow + onMain=false → moveToMain",
+              WindowManager.route(for: .noFocusedWindow, onMainScreen: false) == .moveToMain)
+        check("route: .noMainScreen + onMain=true → moveSecondaryStuck",
+              WindowManager.route(for: .noMainScreen, onMainScreen: true) == .moveSecondaryStuck)
+        check("route: logName 与审计 mode 值一致",
+              WindowManager.ToggleRoute.restore.logName == "restore"
+              && WindowManager.ToggleRoute.moveToMain.logName == "move_to_main"
+              && WindowManager.ToggleRoute.moveSecondaryStuck.logName == "move_to_secondary_stuck")
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

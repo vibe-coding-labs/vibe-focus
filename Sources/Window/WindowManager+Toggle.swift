@@ -110,14 +110,11 @@ extension WindowManager {
         let decisionStart = Date()
         let decision = evaluateRestoreDecision(windowID: resolvedWindowID, store: ToggleEngine.shared)
         let decisionMs = elapsedMilliseconds(since: decisionStart)
-        // mode 反映实际执行分支（此前 stuck 分支也记 "move_to_main"，日志失真）
-        let mode: String
-        switch decision {
-        case .restore: mode = "restore"
-        case .moveToMain: mode = "move_to_main"
-        case .noRecord, .corruptedClearWindowID, .noFocusedWindow, .noMainScreen:
-            mode = resolution.onMainScreen == true ? "move_to_secondary_stuck" : "move_to_main"
-        }
+        // Batch 5：mode 字符串与执行分支同源（route 唯一映射）——此前 mode 计算
+        // 与执行 switch 是两份表示，(decision=.moveToMain, onMain=true) 组合下
+        // 日志与执行各说各话（stuck 分支记 "move_to_main" 的日志失真）。
+        let route = Self.route(for: decision, onMainScreen: resolution.onMainScreen)
+        let mode = route.logName
 
         // 采集 toggle record 状态用于决策日志
         var decisionFields: [String: String] = [
@@ -147,13 +144,9 @@ extension WindowManager {
         )
 
         // coreOpMs：核心操作（restore / moveToMain / moveStuck）净耗时，与 snapshotMs/ctxMs（决策前置）区分。
-        // 路由规则（与决策枚举一一对应）：
-        //   .restore                                  → restore 回原位
-        //   其余 case 且解析层判定窗口在主屏（onMainScreen == true）→ stuck 解堵（移副屏）
-        //   其余 case 且不在主屏 / 主屏归属未知（nil）  → move_to_main（identity 缺失时
-        //     moveToMainScreen 内部走 captureFocusedWindowIdentity 兜底，与拆分前行为一致）
+        // 路由 = route 唯一映射（见上方 route 注释与 ToggleRouteTests 分支穷尽锁定）。
         let coreOpStart = Date()
-        switch decision {
+        switch route {
         case .restore:
             restore(operationID: op, triggerSource: triggerSource, windowID: resolvedWindowID)
             // 设置冷却期：防止 Stop 事件立即把刚恢复的窗口再次拉到主屏
@@ -165,38 +158,36 @@ extension WindowManager {
                     details: ["mode": "restore", "source": triggerSource]
                 )
             }
-        case .moveToMain, .noRecord, .corruptedClearWindowID, .noFocusedWindow, .noMainScreen:
-            if resolution.onMainScreen == true {
-                // Window is on main screen but has no valid toggle record → stuck state.
-                // Move to secondary screen to unblock the toggle cycle.
-                log(
-                    "[WindowManager] toggle: window stuck on main screen with no toggle record, moving to secondary",
-                    level: .info,
-                    fields: ["op": op, "windowID": toggleContext["windowID"] ?? "nil"]
+        case .moveSecondaryStuck:
+            // Window is on main screen but has no valid toggle record → stuck state.
+            // Move to secondary screen to unblock the toggle cycle.
+            log(
+                "[WindowManager] toggle: window stuck on main screen with no toggle record, moving to secondary",
+                level: .info,
+                fields: ["op": op, "windowID": toggleContext["windowID"] ?? "nil"]
+            )
+            moveStuckWindowToSecondaryScreen(operationID: op, triggerSource: triggerSource, windowID: resolvedWindowID)
+            if let winID = resolvedWindowID {
+                AuditLogger.shared.record(
+                    eventType: "toggle_move_to_secondary",
+                    windowID: winID,
+                    details: ["mode": "move_to_secondary_stuck", "source": triggerSource]
                 )
-                moveStuckWindowToSecondaryScreen(operationID: op, triggerSource: triggerSource, windowID: resolvedWindowID)
-                if let winID = resolvedWindowID {
-                    AuditLogger.shared.record(
-                        eventType: "toggle_move_to_secondary",
-                        windowID: winID,
-                        details: ["mode": "move_to_secondary_stuck", "source": triggerSource]
-                    )
-                }
-            } else {
-                moveToMainScreen(
-                    operationID: op,
-                    triggerSource: triggerSource,
-                    knownIdentity: resolvedIdentity,
-                    knownWindowAX: resolvedWindowAX,
-                    knownOrigFrame: resolution.windowFrame
+            }
+        case .moveToMain:
+            moveToMainScreen(
+                operationID: op,
+                triggerSource: triggerSource,
+                knownIdentity: resolvedIdentity,
+                knownWindowAX: resolvedWindowAX,
+                knownOrigFrame: resolution.windowFrame
+            )
+            if let winID = resolvedWindowID {
+                AuditLogger.shared.record(
+                    eventType: "toggle_move_to_main",
+                    windowID: winID,
+                    details: ["mode": "move_to_main", "source": triggerSource]
                 )
-                if let winID = resolvedWindowID {
-                    AuditLogger.shared.record(
-                        eventType: "toggle_move_to_main",
-                        windowID: winID,
-                        details: ["mode": "move_to_main", "source": triggerSource]
-                    )
-                }
             }
         }
         let coreOpMs = elapsedMilliseconds(since: coreOpStart)
