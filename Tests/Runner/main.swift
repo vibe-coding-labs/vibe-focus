@@ -4629,6 +4629,49 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               matchResp.statusCode == 409 && matchResp.response.code == "terminal_context_match_failed")
     }
 
+    // MARK: LayoutFrameCalculator（真实实现——摆位几何，Batch 20）
+
+    do {
+        let vis = CGRect(x: 0, y: 0, width: 2000, height: 1000)
+
+        // A. gap=0：与 Rectangle 一致（铺满分割无缝隙）。
+        check("layout: leftHalf 铺满左半", LayoutFrameCalculator.frame(for: .leftHalf, visibleFrame: vis) == CGRect(x: 0, y: 0, width: 1000, height: 1000))
+        check("layout: rightHalf 铺满右半", LayoutFrameCalculator.frame(for: .rightHalf, visibleFrame: vis) == CGRect(x: 1000, y: 0, width: 1000, height: 1000))
+        check("layout: topHalf 铺满上半（Y 向下，top=小 y）", LayoutFrameCalculator.frame(for: .topHalf, visibleFrame: vis) == CGRect(x: 0, y: 0, width: 2000, height: 500))
+        check("layout: bottomHalf 铺满下半", LayoutFrameCalculator.frame(for: .bottomHalf, visibleFrame: vis) == CGRect(x: 0, y: 500, width: 2000, height: 500))
+        check("layout: 四分（TL/TR/BL/BR）",
+              LayoutFrameCalculator.frame(for: .topLeftQuarter, visibleFrame: vis) == CGRect(x: 0, y: 0, width: 1000, height: 500)
+              && LayoutFrameCalculator.frame(for: .topRightQuarter, visibleFrame: vis) == CGRect(x: 1000, y: 0, width: 1000, height: 500)
+              && LayoutFrameCalculator.frame(for: .bottomLeftQuarter, visibleFrame: vis) == CGRect(x: 0, y: 500, width: 1000, height: 500)
+              && LayoutFrameCalculator.frame(for: .bottomRightQuarter, visibleFrame: vis) == CGRect(x: 1000, y: 500, width: 1000, height: 500))
+        check("layout: maximize=可见区", LayoutFrameCalculator.frame(for: .maximize, visibleFrame: vis) == vis)
+        check("layout: nextDisplay=可见区", LayoutFrameCalculator.frame(for: .nextDisplay, visibleFrame: vis) == vis)
+
+        // B. gap>0：外缘让 gap、接缝让 gap/2。
+        let g: CGFloat = 20
+        check("layout: gap 左半 span=(w-2g-g/2)/2",
+              LayoutFrameCalculator.frame(for: .leftHalf, visibleFrame: vis, gap: g) == CGRect(x: 20, y: 20, width: 975, height: 960))
+        check("layout: gap 右半 x=minX+g+span+g/2",
+              LayoutFrameCalculator.frame(for: .rightHalf, visibleFrame: vis, gap: g) == CGRect(x: 1005, y: 20, width: 975, height: 960))
+        check("layout: gap 四分 BR",
+              LayoutFrameCalculator.frame(for: .bottomRightQuarter, visibleFrame: vis, gap: g) == CGRect(x: 1005, y: 505, width: 975, height: 475))
+
+        // C. 极小可见区：max(0,...) 防负尺寸。
+        let tiny = CGRect(x: 0, y: 0, width: 5, height: 5)
+        let tinyFrame = LayoutFrameCalculator.frame(for: .leftHalf, visibleFrame: tiny, gap: 100)
+        check("layout: 极小区防负尺寸（width≥0）", tinyFrame != nil && tinyFrame!.width >= 0)
+
+        // D. center：保持尺寸居中 / 超大钳制 / 无窗口 frame → nil。
+        check("layout: center 保持尺寸几何居中",
+              LayoutFrameCalculator.frame(for: .center, visibleFrame: vis, windowFrame: CGRect(x: 500, y: 300, width: 400, height: 200))
+              == CGRect(x: 800, y: 400, width: 400, height: 200))
+        check("layout: center 超大窗口钳到可视区",
+              LayoutFrameCalculator.frame(for: .center, visibleFrame: vis, windowFrame: CGRect(x: -50, y: -50, width: 5000, height: 3000))
+              == CGRect(x: 0, y: 0, width: 2000, height: 1000))
+        check("layout: center 无窗口 frame → nil",
+              LayoutFrameCalculator.frame(for: .center, visibleFrame: vis) == nil)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
