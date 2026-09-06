@@ -3267,6 +3267,52 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && clampedFrames[0].maxX <= visible.maxX && clampedFrames[0].maxY <= visible.maxY)
     }
 
+    // MARK: SoundPreferences 兼容解码 + CustomSoundStatus（真实实现——持久化铁律：旧 JSON 缺字段不得静默重置）
+
+    do {
+        // 旧版本 JSON：只有 soundType 一个字段（v1 时代用户保存的形态）
+        let legacyJSON = Data(#"{"soundType":"builtin_ding"}"#.utf8)
+        let legacy = try? JSONDecoder().decode(SoundPreferences.self, from: legacyJSON)
+        check("prefs: 旧 JSON 可解码", legacy != nil)
+        check("prefs: soundType 保留", legacy?.soundType == .builtinDing)
+        check("prefs: customSoundPath 缺省 nil", legacy?.customSoundPath == nil)
+        check("prefs: minPlayIntervalSeconds 缺省 2", legacy?.minPlayIntervalSeconds == 2)
+        check("prefs: quietHours 缺省关闭", legacy?.quietHoursEnabled == false)
+        check("prefs: quietStart/End 缺省 22/8",
+              legacy?.quietStartHour == 22 && legacy?.quietEndHour == 8)
+        check("prefs: projectRules 缺省空", legacy?.projectRules.isEmpty == true)
+
+        // 全字段往返
+        let full = SoundPreferences(
+            soundType: .custom, customSoundPath: "/tmp/a.m4a",
+            volume: 0.5, minPlayIntervalSeconds: 7,
+            quietHoursEnabled: true, quietStartHour: 1, quietEndHour: 6,
+            projectRules: [ProjectSoundRule(projectName: "p", soundType: .builtinPing)]
+        )
+        let roundtrip = try? JSONDecoder().decode(SoundPreferences.self, from: JSONEncoder().encode(full))
+        check("prefs: 全字段往返一致", roundtrip == full)
+
+        // 未来版本多字段（向前容忍：JSONDecoder 默认忽略未知键）
+        let futureJSON = Data(#"{"soundType":"builtin_ping","futureField":123}"#.utf8)
+        let future = try? JSONDecoder().decode(SoundPreferences.self, from: futureJSON)
+        check("prefs: 未来字段不炸解码", future?.soundType == .builtinPing)
+
+        // 非法 JSON → nil（调用方 loadPreferences 回退 .default）
+        check("prefs: 非法 JSON 解码失败可被捕获",
+              (try? JSONDecoder().decode(SoundPreferences.self, from: Data("not-json".utf8))) == nil)
+
+        // CustomSoundStatus.evaluate 真实实现分支（文件系统交互）
+        check("soundStatus: nil → notSet", CustomSoundStatus.evaluate(path: nil) == .notSet)
+        check("soundStatus: 空串 → notSet", CustomSoundStatus.evaluate(path: "") == .notSet)
+        check("soundStatus: 不存在文件 → missing",
+              CustomSoundStatus.evaluate(path: "/tmp/vf-definitely-missing-\(UUID().uuidString).wav") == .missing)
+        let tmp = "/tmp/vf-sound-status-\(UUID().uuidString).wav"
+        FileManager.default.createFile(atPath: tmp, contents: Data([0]))
+        check("soundStatus: 存在文件 → valid", CustomSoundStatus.evaluate(path: tmp) == .valid)
+        try? FileManager.default.removeItem(atPath: tmp)
+        check("soundStatus: 文件删除后 → missing", CustomSoundStatus.evaluate(path: tmp) == .missing)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
