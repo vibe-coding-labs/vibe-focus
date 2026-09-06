@@ -65,7 +65,25 @@ fallback 行为，原则改为「保守退让（保持原状/最小移动）+ �
 | 阶段 | 状态 | 提交 | 备注 |
 |---|---|---|---|
 | P0 | ✅ 2026-09-06 | 见本文件提交历史 | LoginItemManager refresh 延迟化 + 红线注释固化 |
-| P1 | 待启动 | — | stuck 已修（6bb3460），其余路由待清查 |
-| P2 | 部分（SIZE_E2E 已建） | 6bb3460 | 待补 move_to_main 用例 + 归口文档 |
-| P3 | 待启动 | — | sidecar 哈希跳过已落地（4c99345） |
+| P1 | ✅ 2026-09-06 | 见本文件提交历史 | restore 屏外 origFrame 保守退让（clampFrame 夹进源屏重试）+ SIZE_E2E 五用例全绿（跨屏放大/缩小/toggle 往返/解堵尺寸保持/屏外夹取还原） |
+| P2 | ✅ 2026-09-06 | 见本文件提交历史 | SIZE_E2E 补 move_to_main 路由直呼用例 + Tests/e2e/README.md 归口文档（清单/红线/跑法） |
+| P3 | ✅ 2026-09-06 | 见本文件提交历史 | run.sh 部署文件锁（mkdir+陈锁回收）+ 安装事件（replaced/skipped-unchanged）写入 exits.jsonl，--diagnose 时间线可见 |
 | P4 | 文档已建 | 本文件 | — |
+
+## 运行注意事项（实测）
+
+- **E2E 同机互斥**：SIZE_E2E 等 toggle 类真机测试与并行会话的 toggle 测试同机运行时会
+  互相扰动（yabai re-tile 把 float 窗口弹回原位、焦点被对方测试抢走）——表现为 toggle
+  类用例间歇性 FAIL 但重跑即绿。两个会话不要同时跑窗口类 E2E（P3 部署锁应扩展为测试锁）。
+- **部署=真升级时 AX 会断一次**：macOS 对本地签名按 CDHash 校验授权，应用侧无法绕过；
+  无变化重装已被 4c99345 哈希跳过保护。
+
+## P1/P2/P3 补充实测（2026-09-06 晚）
+
+- SIZE_E2E 现六用例：跨屏放大/缩小（Δ=0）、toggle 往返（精确还原）、stuck 解堵
+  （尺寸保持 900x600）、屏外夹取还原（restored）、move_to_main 路由直呼
+  （fill + record 落库）——196/196 真机全绿。
+- 部署锁实测：并发第二个 run.sh 被拒（锁存在时）；无变化重装走 skipped-unchanged
+  且不替换 bundle、不重启实例。
+- 安装事件与 ax 时间线在 --diagnose 同流展示：「授权失效」与「替换二进制」的
+  相关性可直接对齐读数。

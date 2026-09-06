@@ -163,6 +163,17 @@ enum CoordinateKit {
         )
     }
 
+    /// 把 frame 夹进 bounds：尺寸按 min 收窄、位置夹回 bounds 内部。
+    /// P1 保守退让共用纯函数（restore 屏外 origFrame 补救 / stuck 解堵尺寸保持），
+    /// mirror 测试：Tests/Standalone/FrameClampTests.swift。
+    static func clampFrame(_ frame: CGRect, into bounds: CGRect) -> CGRect {
+        let width = min(frame.width, bounds.width)
+        let height = min(frame.height, bounds.height)
+        let x = max(bounds.minX, min(frame.origin.x, bounds.maxX - width))
+        let y = max(bounds.minY, min(frame.origin.y, bounds.maxY - height))
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
     static func isOnMainScreen(_ point: CGPoint) -> Bool {
         guard let mainFrame = mainScreenQuartzFrame else { return false }
         return mainFrame.contains(point)
