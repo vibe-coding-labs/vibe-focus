@@ -4127,6 +4127,37 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               TerminalRegistry.isTerminalOrIDEApp(appName: "Code", bundleIdentifier: "com.microsoft.VSCode"))
     }
 
+    // MARK: Hook 脚本生成器（真实实现——B17：hooks JSON 合法性/事件注册/远程安装脚本不变量）
+
+    do {
+        // hooks JSON：可解析 + SessionStart/Stop 恒注册 + 条目结构
+        let hooksJSON = ClaudeHookPreferences.generateHooksJSON()
+        let obj = (try? JSONSerialization.jsonObject(with: Data(hooksJSON.utf8))) as? [String: Any]
+        check("hooksJSON: 合法 JSON 且含 hooks 键", obj?["hooks"] != nil)
+        let hooks = obj?["hooks"] as? [String: Any]
+        check("hooksJSON: SessionStart 恒注册", hooks?["SessionStart"] != nil)
+        check("hooksJSON: Stop 恒注册（remoteOnly 分流在服务端）", hooks?["Stop"] != nil)
+        let entry = (hooks?["SessionStart"] as? [[String: Any]])?.first
+        let hookList = entry?["hooks"] as? [[String: Any]]
+        check("hooksJSON: 条目含 command+timeout=10",
+              hookList?.first?["type"] as? String == "command"
+              && (hookList?.first?["timeout"] as? Int) == 10
+              && (hookList?.first?["command"] as? String)?.contains("bash") == true)
+
+        // 远程安装脚本不变量：host 插值 + machine_label 点号转连字符 + 严格模式
+        let remote = ClaudeHookPreferences.generateRemoteInstallScript(host: "192.168.1.83")
+        check("remoteScript: shebang + 严格模式", remote.contains("#!/bin/bash") && remote.contains("set -euo pipefail"))
+        check("remoteScript: host 插值", remote.contains("192.168.1.83"))
+        check("remoteScript: machine_label 点号转连字符", remote.contains("remote-192-168-1-83"))
+
+        // helper 脚本不变量：端口默认值 + 上下文采集环境变量
+        let helper = ClaudeHookPreferences.generateHelperScriptContent()
+        check("helperScript: 默认端口 39277", helper.contains("39277"))
+        check("helperScript: 采集 terminal_ctx 环境变量",
+              helper.contains("TERM_SESSION_ID") && helper.contains("CLAUDE_PROJECT_DIR")
+              && helper.contains("terminal_ctx"))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
