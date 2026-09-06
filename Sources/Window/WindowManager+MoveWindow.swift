@@ -68,7 +68,6 @@ extension WindowManager {
         var axResizeWriteMs = 0
         var axResizeSendCount = 0
         var yabaiSendCount = 0
-        var attemptNo = 0
         // 写前 frame 快照：顺序判定依据（查询失败走历史顺序，见 FrameConvergence.writeOrder）。
         let preWriteBounds = cgWindowBounds(for: windowID)
         let writeOrder = FrameConvergence.writeOrder(
@@ -99,21 +98,7 @@ extension WindowManager {
                 operationID: op
             )
         }
-        // 段间等待：轮询第一段效果可观测（早满足早返回），超时也照发第二段——
-        // 最终由段二的收敛循环如实裁决，不在此静默失败。
-        func waitForPhase(_ label: String, observed: () -> Bool) {
-            let outcome = ConditionPolling.waitUntil(
-                intervalMs: WindowSettle.frameVerifyPollIntervalMs,
-                budgetMs: WindowSettle.framePhaseVerifyBudgetMs,
-                condition: observed
-            )
-            if !outcome.satisfied {
-                log("[WindowManager] moveWindowToFrameViaYabai: phase \(label) verify exhausted", level: .warn, fields: [
-                    "op": op, "stage": stage, "windowID": String(windowID),
-                    "budgetMs": String(WindowSettle.framePhaseVerifyBudgetMs)
-                ])
-            }
-        }
+        // 段间等待逻辑在 FrameWriteExecutor.waitForPhase（Batch 3 提取，含超时告警）。
         // AX resize 通道（同屏 resize 无 fork）：窗口 AX 解析失败/属性不可写时 fallback yabai。
         // 解析顺序：yabai queryWindow(pid) → findWindowByPID（queryWindow 走流程内缓存常命中）。
         func resolveAXForResize() -> AXUIElement? {
@@ -143,81 +128,40 @@ extension WindowManager {
                 applyResize()
             }
         }
-        let phase1Start = Date()
-        switch writeOrder {
-        case .resizeThenMove:
-            applyResizeBestChannel()
-            waitForPhase("resize", observed: {
-                !FrameConvergence.shortfalls(current: cgWindowBounds(for: windowID), target: frame, tolerance: frameTolerance).contains(.size)
-            })
-            applyMove()
-        case .moveThenResize:
-            applyMove()
-            waitForPhase("move", observed: {
-                !FrameConvergence.shortfalls(current: cgWindowBounds(for: windowID), target: frame, tolerance: frameTolerance).contains(.origin)
-            })
-            applyResizeBestChannel()
-        }
-        let phase1Elapsed = elapsedMilliseconds(since: phase1Start)
-        // 段二 + 全帧收敛验证（轮询版：写→每 25ms 读，一收敛即返回，400ms 预算兜底）。
-        // 重写补发计划由 FrameConvergence 唯一事实源产出（shortfalls 判缺哪维 +
+        // 段间等待 + 段二收敛验证的执行编排委托 FrameWriteExecutor（Batch 3 提取）：
+        // 补发计划由 FrameConvergence 唯一事实源产出（shortfalls 判缺哪维 +
         // resendSegments 按写序定补发顺序），使 clamp 在窗口落目标屏后自愈。
         // 执行器差异保留历史行为：单 .resize 走 AX/yabai 择优通道；全缺（两段都在
         // 计划里）走纯 yabai 最稳通道。停滞重发（连续 4 读不变）在轮询内幂等补发，
-        // 写丢失不再干等整轮预算。注：轮询读不逐次记 mismatch 日志（25ms 节拍会
-        // 刷屏），只在整轮耗尽时记一次。
-        let phase2Start = Date()
-        let outcome = FrameConvergence.convergeFramePolling(
-            attempts: 2,
-            intervalMs: WindowSettle.frameVerifyPollIntervalMs,
-            budgetMs: WindowSettle.frameVerifyBudgetMs,
-            write: {
-                attemptNo += 1
-                let shortfall = FrameConvergence.shortfalls(current: cgWindowBounds(for: windowID), target: frame, tolerance: frameTolerance)
-                let segments = FrameConvergence.resendSegments(shortfall: shortfall, order: writeOrder)
-                for segment in segments {
-                    switch segment {
-                    case .move:
-                        applyMove()
-                    case .resize:
-                        // 全缺（两段计划）= 大漂移，历史行为走纯 yabai 最稳通道；
-                        // 仅 size 缺才用 AX/yabai 择优（AX 写一轮不收敛自动降级）。
-                        if segments.count == 2 { applyResize() } else { applyResizeBestChannel() }
-                    }
-                }
-                // yabai 写不返回硬失败（exit code 吞掉，最终以读回判据为准）。
-                return true
-            },
-            read: { cgWindowBounds(for: windowID) },
-            isConverged: { FrameConvergence.shortfalls(current: $0, target: frame, tolerance: frameTolerance).isEmpty },
-            stallResendReads: 4
+        // 写丢失不再干等整轮预算。
+        let executor = FrameWriteExecutor(
+            deps: .init(
+                read: { cgWindowBounds(for: windowID) },
+                applyMove: applyMove,
+                applyResizeAdaptive: applyResizeBestChannel,
+                applyResizeRobust: applyResize
+            ),
+            tolerance: frameTolerance,
+            op: op,
+            stage: stage,
+            windowID: windowID
         )
-        let phase2Elapsed = elapsedMilliseconds(since: phase2Start)
-        // 停滞重发次数 = write 闭包总调用数 − 收敛轮数（重发发生在轮询内，不换轮）。
-        let convergedRounds: Int
-        switch outcome {
-        case .converged(let attempt, _):
-            convergedRounds = attempt
-        case .mismatched(let attempts, _):
-            convergedRounds = attempts
-        case .writeFailed(let attempt):
-            convergedRounds = attempt
-        }
-        let resendCount = max(0, attemptNo - convergedRounds)
+        let run = executor.run(target: frame, order: writeOrder)
+        let outcome = run.outcome
         // 段级计时汇总（INFO 恒开）：下次「副→主慢」投诉可直接按 op 抽本行归因，
         // 不再需要猜测负载或加埋点重编（2026-09-06 排查教训：段内无数据干猜 5 小时）。
         log("[WindowManager] moveWindowToFrameViaYabai: segment timing", level: .info, fields: [
             "op": op, "stage": stage, "windowID": String(windowID),
             "order": writeOrder == .resizeThenMove ? "resize_then_move" : "move_then_resize",
-            "phase1Ms": String(phase1Elapsed),
-            "phase2ConvergeMs": String(phase2Elapsed),
+            "phase1Ms": String(run.phase1Ms),
+            "phase2ConvergeMs": String(run.phase2ConvergeMs),
             "totalMs": String(elapsedMilliseconds(since: segStart)),
             "axResizeSendCount": String(axResizeSendCount),
             "axResizeWriteMs": String(axResizeWriteMs),
             "axResizeUnreliable": String(axResizeUnreliable),
             "yabaiSendCount": String(yabaiSendCount),
-            "convergeRounds": String(convergedRounds),
-            "stallResendCount": String(resendCount)
+            "convergeRounds": String(run.convergedRounds),
+            "stallResendCount": String(run.resendCount)
         ])
         switch outcome {
         case .converged(let attempt, _):

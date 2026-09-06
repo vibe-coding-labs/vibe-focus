@@ -2331,6 +2331,99 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("shortfalls × CoordinateKit 交叉验证 4 样本一致", crossOK)
     }
 
+    // MARK: FrameWriteExecutor（真实实现——执行编排 + apply 调用序列断言）
+
+    do {
+        let target = CGRect(x: 75, y: 38, width: 1653, height: 1079)
+        let tol: CGFloat = 20
+        let missSize = CGRect(x: 75, y: 38, width: 1653, height: 900)   // 仅 size 缺
+        let fullMiss = CGRect(x: 500, y: 500, width: 800, height: 600)  // 双维缺
+        let noSleep: (UInt32) -> Void = { _ in } // 虚拟时间：预算分支瞬时跑满
+
+        func makeExecutor(
+            read: @escaping () -> CGRect?,
+            calls: @escaping (String) -> Void
+        ) -> FrameWriteExecutor {
+            FrameWriteExecutor(
+                deps: .init(
+                    read: read,
+                    applyMove: { calls("move") },
+                    applyResizeAdaptive: { calls("resizeAdaptive") },
+                    applyResizeRobust: { calls("resizeRobust") }
+                ),
+                tolerance: tol,
+                op: "runner", stage: "executor-test", windowID: 1,
+                pollSleep: noSleep
+            )
+        }
+
+        // A. resizeThenMove 满意路径：读恒收敛 → resize→move 各一次，零补发。
+        do {
+            var calls: [String] = []
+            let run = makeExecutor(read: { target }, calls: { calls.append($0) })
+                .run(target: target, order: .resizeThenMove)
+            check("executor A: 调用序列 [resizeAdaptive, move]",
+                  calls == ["resizeAdaptive", "move"])
+            check("executor A: converged / 1 轮 / 0 补发",
+                  run.outcome.isConverged && run.convergedRounds == 1 && run.resendCount == 0)
+        }
+
+        // B. moveThenResize 满意路径：move→resize 各一次。
+        do {
+            var calls: [String] = []
+            let run = makeExecutor(read: { target }, calls: { calls.append($0) })
+                .run(target: target, order: .moveThenResize)
+            check("executor B: 调用序列 [move, resizeAdaptive]",
+                  calls == ["move", "resizeAdaptive"])
+            check("executor B: converged", run.outcome.isConverged)
+        }
+
+        // C. size 单缺补发：phase1 等待耗尽（13 次读全缺）→ move → 段二补 adaptive
+        //    resize → 读收敛。序列锁死：resize→move→resize。
+        do {
+            var n = 0
+            var calls: [String] = []
+            let run = makeExecutor(
+                read: { n += 1; return n <= 14 ? missSize : target },
+                calls: { calls.append($0) }
+            ).run(target: target, order: .resizeThenMove)
+            check("executor C: 调用序列 [resizeAdaptive, move, resizeAdaptive]（单缺补发走择优通道）",
+                  calls == ["resizeAdaptive", "move", "resizeAdaptive"])
+            check("executor C: converged / 1 轮", run.outcome.isConverged && run.convergedRounds == 1)
+        }
+
+        // D. 全缺 × 两轮不收敛：段一 [resizeAdaptive, move]；段二每轮计划两段走
+        //    robust 纯 yabai 按写序 [resizeRobust, move]；停滞重发（4 读不变）在
+        //    轮询内重复同一计划、不计新轮——因此断言模式而非精确次数。
+        do {
+            var calls: [String] = []
+            let run = makeExecutor(read: { fullMiss }, calls: { calls.append($0) })
+                .run(target: target, order: .resizeThenMove)
+            check("executor D: 段一 [resizeAdaptive, move]",
+                  calls.count >= 2 && calls[0] == "resizeAdaptive" && calls[1] == "move")
+            var pairsOK = (calls.count - 2) >= 2 && (calls.count - 2) % 2 == 0
+            var i = 2
+            while i + 1 < calls.count {
+                if calls[i] != "resizeRobust" || calls[i + 1] != "move" { pairsOK = false }
+                i += 2
+            }
+            check("executor D: 段二每轮 [resizeRobust, move] 按写序（停滞重发重复同一计划）", pairsOK)
+            check("executor D: mismatched / 2 轮 / 停滞补发计入 resend（≥1）",
+                  !run.outcome.isConverged && run.convergedRounds == 2 && run.resendCount >= 1)
+        }
+
+        // E. 停滞重发：读恒 size 缺 → 轮询内 4 读不变即幂等补发 adaptive（≥1 次）。
+        do {
+            var calls: [String] = []
+            let run = makeExecutor(read: { missSize }, calls: { calls.append($0) })
+                .run(target: target, order: .resizeThenMove)
+            let adaptiveCount = calls.filter { $0 == "resizeAdaptive" }.count
+            check("executor E: 停滞重发触发多次 adaptive 补发（≥3）", adaptiveCount >= 3)
+            check("executor E: 全程无 robust（单 size 缺不进全缺通道）", !calls.contains("resizeRobust"))
+            check("executor E: 不收敛如实上报 mismatched", !run.outcome.isConverged)
+        }
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
