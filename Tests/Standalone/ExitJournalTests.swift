@@ -47,7 +47,8 @@ func launchLine(
     exeMtimeEpoch: Int?,
     exeInode: UInt64?,
     bundleID: String?,
-    version: String?
+    version: String?,
+    axTrusted: Bool?
 ) -> String {
     var line = "{\"kind\":\"launch\",\"pid\":\(pid),\"at\":\"\(jsonEscape(at))\""
     line += ",\"exe\":\"\(jsonEscape(exe))\""
@@ -55,6 +56,7 @@ func launchLine(
     if let i = exeInode { line += ",\"exeInode\":\(i)" }
     if let b = bundleID { line += ",\"bundle\":\"\(jsonEscape(b))\"" }
     if let v = version { line += ",\"version\":\"\(jsonEscape(v))\"" }
+    if let ax = axTrusted { line += ",\"ax\":\(ax)" }
     line += "}"
     return line
 }
@@ -103,7 +105,8 @@ check(diagnosticFilePath(base: "/tmp/fatal.log", processName: "") == "/tmp/fatal
 
 // 2. launch 行编码：字段完整、可被 JSONSerialization 解析回读
 let ll = launchLine(pid: 42, at: "2026-09-06T08:44:40Z", exe: "/Applications/VibeFocus.app/Contents/MacOS/VibeFocusHotkeys",
-                    exeMtimeEpoch: 1_788_629_068, exeInode: 99, bundleID: "com.openai.vibe-focus", version: "0.0.0")
+                    exeMtimeEpoch: 1_788_629_068, exeInode: 99, bundleID: "com.openai.vibe-focus", version: "0.0.0",
+                    axTrusted: true)
 var llOK = false
 if let data = ll.data(using: .utf8),
    let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -111,8 +114,12 @@ if let data = ll.data(using: .utf8),
         && (obj["pid"] as? NSNumber)?.intValue == 42
         && (obj["exeInode"] as? NSNumber)?.uint64Value == 99
         && (obj["bundle"] as? String) == "com.openai.vibe-focus"
+        && (obj["ax"] as? Bool) == true
 }
-check(llOK, "launch 行编码可解析且字段齐全")
+check(llOK, "launch 行编码可解析且字段齐全（含 ax）")
+check(launchLine(pid: 1, at: "-", exe: "x", exeMtimeEpoch: nil, exeInode: nil,
+                 bundleID: nil, version: nil, axTrusted: nil).contains("ax") == false,
+      "ax 为 nil 时字段省略")
 
 // 3. exit 行编码：signal/name 可选字段按需出现
 let elWith = exitLine(pid: 7, at: "2026-09-06T08:43:40Z", reason: "fatal-signal", signal: 11, name: "SIGSEGV")

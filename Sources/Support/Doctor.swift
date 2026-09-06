@@ -48,6 +48,7 @@ enum Doctor {
         var reason: String?
         var signalName: String?
         var exe: String?
+        var ax: Bool?
     }
 
     // MARK: - 纯逻辑（镜像测试覆盖）
@@ -67,8 +68,26 @@ enum Doctor {
             at: dict["at"] as? String ?? "-",
             reason: dict["reason"] as? String,
             signalName: dict["name"] as? String,
-            exe: dict["exe"] as? String
+            exe: dict["exe"] as? String,
+            ax: dict["ax"] as? Bool
         )
+    }
+
+    /// 辅助功能授权翻转检测：两次相邻 launch 之间 true→false = 授权在运行期间失效
+    /// （重装替换二进制后 TCC 拒绝，2026-09-06 实锤）。返回翻转点描述数组。
+    static func accessibilityFlips(events: [JournalEvent]) -> [String] {
+        let launches = events.filter { $0.kind == "launch" && $0.ax != nil }
+        var flips: [String] = []
+        var previous: JournalEvent?
+        for launch in launches {
+            if let prev = previous, let prevAX = prev.ax, let ax = launch.ax, prevAX != ax {
+                let direction = prevAX ? "true→false（授权失效，需重新勾选辅助功能）"
+                                       : "false→true（已重新授权）"
+                flips.append("\(launch.at) pid=\(launch.pid)：\(direction)")
+            }
+            previous = launch
+        }
+        return flips
     }
 
     /// launch 无配对 exit = 进程未走正常退出路径（SIGKILL/kill -9/断电）——外部击杀实证。
@@ -125,6 +144,24 @@ enum Doctor {
         } else {
             out.append("")
             out.append("[最近一次死亡] 无退出记录")
+        }
+
+        // 辅助功能授权时间线
+        out.append("")
+        let axLaunches = events.filter { $0.kind == "launch" && $0.ax != nil }
+        if let latest = axLaunches.last, let ax = latest.ax {
+            out.append("[辅助功能授权] 当前：\(ax ? "已授权" : "未授权（热键/窗口管理失效，请到系统设置勾选）")")
+            let flips = accessibilityFlips(events: events)
+            if flips.isEmpty {
+                out.append("  审计期内无 true/false 翻转。")
+            } else {
+                out.append("  检测到 \(flips.count) 次翻转：")
+                for f in flips.suffix(5) {
+                    out.append("    \(f)")
+                }
+            }
+        } else {
+            out.append("[辅助功能授权] 审计中无 ax 记录（旧版本实例）")
         }
 
         // 疑似外部击杀（排除还活着的 pid：运行中的实例本来就没有 exit 记录）

@@ -1,4 +1,5 @@
 import Foundation
+import ApplicationServices
 
 // MARK: - 退出审计日志（exits.jsonl，append-only）
 //
@@ -60,7 +61,8 @@ enum ExitJournal {
         exeMtimeEpoch: Int?,
         exeInode: UInt64?,
         bundleID: String?,
-        version: String?
+        version: String?,
+        axTrusted: Bool?
     ) -> String {
         var line = "{\"kind\":\"launch\",\"pid\":\(pid),\"at\":\"\(jsonEscape(at))\""
         line += ",\"exe\":\"\(jsonEscape(exe))\""
@@ -68,6 +70,7 @@ enum ExitJournal {
         if let i = exeInode { line += ",\"exeInode\":\(i)" }
         if let b = bundleID { line += ",\"bundle\":\"\(jsonEscape(b))\"" }
         if let v = version { line += ",\"version\":\"\(jsonEscape(v))\"" }
+        if let ax = axTrusted { line += ",\"ax\":\(ax)" }
         line += "}"
         return line
     }
@@ -120,7 +123,8 @@ enum ExitJournal {
     }
 
     /// 启动记录：应尽早在 applicationDidFinishLaunching 调用（越早，后续任何
-    /// 死法都能与「本实例存在过」对上账）。
+    /// 死法都能与「本实例存在过」对上账）。axTrusted 一并落账——重装替换二进制
+    /// 后辅助功能授权失效（2026-09-06 实锤），ax 时间线让失效时刻可归因。
     static func recordLaunch(bundleID: String?, version: String?, exePath: String) {
         let pid = ProcessInfo.processInfo.processIdentifier
         var mtime: Int?
@@ -139,7 +143,8 @@ enum ExitJournal {
             exeMtimeEpoch: mtime,
             exeInode: inode,
             bundleID: bundleID,
-            version: version
+            version: version,
+            axTrusted: AXIsProcessTrusted()
         ))
     }
 

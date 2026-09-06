@@ -18,6 +18,7 @@ struct JournalEvent: Equatable {
     var reason: String?
     var signalName: String?
     var exe: String?
+    var ax: Bool?
 }
 
 func parseJournalLine(_ line: String) -> JournalEvent? {
@@ -35,8 +36,24 @@ func parseJournalLine(_ line: String) -> JournalEvent? {
         at: dict["at"] as? String ?? "-",
         reason: dict["reason"] as? String,
         signalName: dict["name"] as? String,
-        exe: dict["exe"] as? String
+        exe: dict["exe"] as? String,
+        ax: dict["ax"] as? Bool
     )
+}
+
+func accessibilityFlips(events: [JournalEvent]) -> [String] {
+    let launches = events.filter { $0.kind == "launch" && $0.ax != nil }
+    var flips: [String] = []
+    var previous: JournalEvent?
+    for launch in launches {
+        if let prev = previous, let prevAX = prev.ax, let ax = launch.ax, prevAX != ax {
+            let direction = prevAX ? "true→false（授权失效，需重新勾选辅助功能）"
+                                   : "false→true（已重新授权）"
+            flips.append("\(launch.at) pid=\(launch.pid)：\(direction)")
+        }
+        previous = launch
+    }
+    return flips
 }
 
 func unmatchedLaunches(events: [JournalEvent]) -> [JournalEvent] {
@@ -83,6 +100,19 @@ let unmatched = unmatchedLaunches(events: events)
 check(unmatched.count == 1 && unmatched[0].pid == 300, "仅未配对 launch 被点名")
 check(unmatched[0].exe == "c", "未配对记录携带 exe 身份")
 
+// 2.5 辅助功能授权翻转检测：true→false 现形、false→true 也要报、无翻转不误报
+let axEvents: [JournalEvent] = [
+    JournalEvent(kind: "launch", pid: 10, at: "01", reason: nil, signalName: nil, exe: nil, ax: true),
+    JournalEvent(kind: "launch", pid: 11, at: "02", reason: nil, signalName: nil, exe: nil, ax: true),
+    JournalEvent(kind: "launch", pid: 12, at: "03", reason: nil, signalName: nil, exe: nil, ax: false),
+    JournalEvent(kind: "launch", pid: 13, at: "04", reason: nil, signalName: nil, exe: nil, ax: true),
+]
+let flips = accessibilityFlips(events: axEvents)
+check(flips.count == 2, "相邻 launch 的 ax 翻转各记一次")
+check(flips[0].contains("true→false") && flips[0].contains("pid=12"), "true→false 翻转被点名")
+check(flips[1].contains("false→true"), "false→true（重新授权）也记录")
+check(accessibilityFlips(events: events).isEmpty, "无 ax 字段的旧审计不产生误报")
+
 // 3. 端到端：临时目录装配取证现场 → 报告包含各段落与点名
 let tmp = NSTemporaryDirectory() + "doctor-test-\(UUID().uuidString)"
 let logDir = tmp + "/Library/Logs/VibeFocus"
@@ -90,9 +120,9 @@ try? FileManager.default.createDirectory(atPath: logDir, withIntermediateDirecto
 try? FileManager.default.createDirectory(atPath: tmp + "/DiagnosticReports", withIntermediateDirectories: true)
 
 let journalLines = [
-    "{\"kind\":\"launch\",\"pid\":100,\"at\":\"2026-09-06T01:00:00Z\",\"exe\":\"/a\"}",
+    "{\"kind\":\"launch\",\"pid\":100,\"at\":\"2026-09-06T01:00:00Z\",\"exe\":\"/a\",\"ax\":true}",
     "{\"kind\":\"exit\",\"pid\":100,\"at\":\"2026-09-06T01:10:00Z\",\"reason\":\"clean\"}",
-    "{\"kind\":\"launch\",\"pid\":41369,\"at\":\"2026-09-06T08:43:39Z\",\"exe\":\"/x/VibeFocusHotkeys\"}",
+    "{\"kind\":\"launch\",\"pid\":41369,\"at\":\"2026-09-06T08:43:39Z\",\"exe\":\"/x/VibeFocusHotkeys\",\"ax\":false}",
     "坏行故意",
 ]
 try? journalLines.joined(separator: "\n").write(toFile: logDir + "/exits.jsonl", atomically: true, encoding: .utf8)
@@ -174,6 +204,21 @@ if let lastExit = parsed.last(where: { $0.kind == "exit" }) {
     report += "[最近一次死亡] 无退出记录\n"
 }
 
+// 辅助功能授权（mirror Doctor.accessibilityFlips）
+let axLaunches = parsed.filter { $0.kind == "launch" && $0.ax != nil }
+if let latest = axLaunches.last, let ax = latest.ax {
+    report += "[辅助功能授权] 当前：\(ax ? "已授权" : "未授权")\n"
+    let axFlips = accessibilityFlips(events: parsed)
+    if axFlips.isEmpty {
+        report += "  审计期内无 true/false 翻转。\n"
+    } else {
+        report += "  检测到 \(axFlips.count) 次翻转：\n"
+        for f in axFlips { report += "    \(f)\n" }
+    }
+} else {
+    report += "[辅助功能授权] 审计中无 ax 记录\n"
+}
+
 let unmatched2 = unmatchedLaunches(events: parsed)
 report += "[疑似外部击杀] \(unmatched2.count) 个\n"
 for e in unmatched2 { report += "  pid=\(e.pid) launchedAt=\(e.at)\n" }
@@ -194,6 +239,8 @@ check(report.contains("crash-fatal-20260906-084340.log"), "fatal 归档出现在
 check(report.contains("VibeFocusHotkeys-2026-09-06-084340.ips"), ".ips 出现在报告中")
 check(report.contains("bin=REPLACED"), "keepalive 二进制替换指纹进入报告")
 check(report.contains("ERROR 1 条"), "应用日志错误行被采集")
+check(report.contains("[辅助功能授权] 当前：未授权"), "AX 当前状态进入报告（fixture 最新 launch ax=false）")
+check(report.contains("检测到 1 次翻转") && report.contains("true→false（授权失效"), "ax true→false 翻转被检测")
 
 // ageSeconds 容错：信号审计行的 "-" 时间戳不参与分钟数计算
 check(ageSeconds(fromISO: "-", now: Date()) == nil, "非法时间戳返回 nil（不误算年龄）")
