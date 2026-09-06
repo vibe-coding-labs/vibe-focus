@@ -4574,6 +4574,21 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               ToggleTriggerGate.cgEventRoute(type: .keyDown, isAutorepeat: false, primaryMatch: false, layoutMatch: nil) == .passThrough)
     }
 
+    // MARK: IPS 崩溃报告解析（真实实现——B26：首行头丢弃 + JSON 载荷提取穷尽锁定）
+
+    do {
+        let report = "header-line\n{\"exception\":{\"type\":\"SIGTRAP\"},\"pid\":123}"
+        let payload = CrashContextRecorder.parseIPSJSONPayload(from: report)
+        check("ips: 跳首行提取 JSON 载荷",
+              (payload?["pid"] as? Int) == 123
+              && (payload?["exception"] as? [String: Any])?["type"] as? String == "SIGTRAP")
+        check("ips: 单行输入 → nil", CrashContextRecorder.parseIPSJSONPayload(from: "{\"pid\":1}") == nil)
+        check("ips: 非法 JSON → nil",
+              CrashContextRecorder.parseIPSJSONPayload(from: "header\nnot-json") == nil)
+        let pretty = "header-line\n{\n  \"k\": \"v\"\n}"
+        check("ips: 多行 JSON 完整解析",
+              (CrashContextRecorder.parseIPSJSONPayload(from: pretty)?["k"] as? String) == "v")
+        check("ips: 空输入 → nil", CrashContextRecorder.parseIPSJSONPayload(from: "") == nil)
     // MARK: SessionBind 决策（真实实现——SessionStart 双通道绑定裁决，Batch 19）
 
     do {
