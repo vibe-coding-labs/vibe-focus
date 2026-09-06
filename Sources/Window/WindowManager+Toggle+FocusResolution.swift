@@ -5,6 +5,8 @@ import Foundation
 // toggle 的第一步：识别「当前要操作哪个窗口」。三分支 fallback（CGWindowList → yabai → AX）
 // 的存在原因与各分支代价见 resolveFocusedWindowForToggle 的场景注释——这是 toggle 热路径
 // 历史上最大的耗时来源（副屏 AX 调用被 WindowServer 阻塞 1.5s+），也是多次性能回归的发生地。
+// 分支选择策略已拆到 ToggleFocusBranching 纯内核（P6 步骤 1）——本文件只保留 lazy 探测
+// 顺序（按阻塞代价递增）与计时/日志副作用。
 
 @MainActor
 extension WindowManager {
@@ -105,11 +107,11 @@ extension WindowManager {
             // （count==1 = 单窗口命中快速路径；count>1 = 多窗口必须 fallback yabai；count==0 = 异常）。
             let cgListProbeStart = Date()
             let cgSnapshot = cgWindowListAll()
-            let candidates = cgSnapshot.filter { $0.ownerPID == frontPID && $0.layer == 0 && $0.isOnScreen }
+            let candidates = ToggleFocusBranching.cgListFocusCandidates(snapshot: cgSnapshot, ownerPID: frontPID)
             let cgListProbeMs = elapsedMilliseconds(since: cgListProbeStart)
             toggleContext["cgListProbeMs"] = String(cgListProbeMs)
             toggleContext["candidatesCount"] = String(candidates.count)
-            if candidates.count == 1, let entry = candidates.first, let bounds = entry.bounds {
+            if let entry = ToggleFocusBranching.singleWindowFastPath(candidates) {
                 resolvedIdentity = WindowIdentity(
                     windowID: entry.windowID,
                     pid: frontPID,
@@ -119,7 +121,7 @@ extension WindowManager {
                     title: entry.name
                 )
                 if let identity = resolvedIdentity {
-                    adopt(frame: bounds, windowID: entry.windowID, ax: nil, identity: identity, source: "cgwindowlist", branchMs: cgListProbeMs, titleForLog: entry.name ?? "")
+                    adopt(frame: entry.bounds, windowID: entry.windowID, ax: nil, identity: identity, source: "cgwindowlist", branchMs: cgListProbeMs, titleForLog: entry.name ?? "")
                 }
             } else {
                 // P-INST-1: yabai 分支探测计时（queryFocusedWindow fork，副屏 ~635ms 是 ctx 主因）。
@@ -127,22 +129,20 @@ extension WindowManager {
                 let focusedInfo = spaceController.queryFocusedWindow()
                 let yabaiProbeMs = elapsedMilliseconds(since: yabaiProbeStart)
                 toggleContext["yabaiProbeMs"] = String(yabaiProbeMs)
-                if let focusedInfo = focusedInfo,
-                   let yabaiWinID = focusedInfo.id,
-                   let winID = UInt32(exactly: yabaiWinID),
-                   focusedInfo.pid == Int(frontPID) {
+                if let yabaiHit = ToggleFocusBranching.yabaiFocusCandidate(focusedInfo, frontPID: frontPID) {
                     // yabai fallback（多窗口 / CGWindowList 候选≠1）：副屏慢 648ms，但可靠拿系统焦点窗口。
-                    let bounds = focusedInfo.frame?.cgRect ?? .zero
+                    let winID = yabaiHit.winID
+                    let bounds = yabaiHit.info.frame?.cgRect ?? .zero
                     resolvedIdentity = WindowIdentity(
                         windowID: winID,
                         pid: frontPID,
                         bundleIdentifier: frontApp.bundleIdentifier,
                         appName: frontApp.localizedName,
                         windowNumber: Int(winID),
-                        title: focusedInfo.title ?? focusedInfo.app
+                        title: yabaiHit.info.title ?? yabaiHit.info.app
                     )
                     if let identity = resolvedIdentity {
-                        adopt(frame: bounds, windowID: winID, ax: nil, identity: identity, source: "yabai", branchMs: yabaiProbeMs, titleForLog: focusedInfo.title ?? focusedInfo.app ?? "")
+                        adopt(frame: bounds, windowID: winID, ax: nil, identity: identity, source: "yabai", branchMs: yabaiProbeMs, titleForLog: yabaiHit.info.title ?? yabaiHit.info.app ?? "")
                     }
                 } else {
                     // P-INST-1: AX 分支探测计时（focusedWindow + windowHandle，副屏阻塞 ~1.5s）。
@@ -156,7 +156,7 @@ extension WindowManager {
                         // 热路径读 frame 禁 AX frame(of:)，故 frame/title 仍走 CGWindowList（按已知 windowID 查，非 AX）。
                         toggleContext["windowID"] = String(winID)
                         let cgList = cgWindowListAll()
-                        if let entry = cgList.first(where: { $0.windowID == winID }) {
+                        if let entry = ToggleFocusBranching.axIdentityEntry(cgList: cgList, winID: winID) {
                             resolvedIdentity = WindowIdentity(
                                 windowID: winID,
                                 pid: frontApp.processIdentifier,
