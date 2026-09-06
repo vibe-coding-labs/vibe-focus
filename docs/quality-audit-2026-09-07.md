@@ -57,4 +57,6 @@
 | B16 | walkToTerminalPID 谓词注入行走直测 9 断言（起始即终端/上溯/深度上限/ppid≤1 断链/自环/深度防御 + 注册表静态集合）| ✅ 2026-09-07 |
 | B17 | Hook 脚本生成器不变量直测 9 断言（hooks JSON 合法性+恒注册事件/远程安装脚本 host 插值与 machine_label 归一/helper 端口与上下文采集）| ✅ 2026-09-07 |
 | B18 | YabaiErrorClassifier 直测 8 断言（六类别/大小写不敏感/多类命中优先级）| ✅ 2026-09-07 |
+| B19 | 镜像存活审计：70 个 Standalone 逐符号核对，**删除 1 个死镜像**（FocusStepsCalculationTests 镜像的 calculateFocusSteps 已从源码删除，测试在测自己的副本）；其余存活 | ✅ 2026-09-07 |
+| B20 | SettingsUI.swift（244 行 34 个 @State 状态枢纽）审计结论=拆分属高风险 SwiftUI 状态重构且无单测面，缓办并记录；AppDelegate+MenuAndInstance=纯菜单粘合无需拆分 | 审计完成 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
