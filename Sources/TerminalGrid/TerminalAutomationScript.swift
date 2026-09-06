@@ -154,4 +154,24 @@ enum TerminalAutomationScript {
     static func isSupported(appBundleID: String) -> Bool {
         appBundleID == "com.apple.Terminal" || appBundleID == "com.googlecode.iterm2"
     }
+
+    /// 解析 `terminalEnumerateWindowTTYs` 的 stdout（每行 `windowID|tty`）。
+    ///
+    /// ## 边界（穷尽锁定于 Runner TerminalGridTTYParsingTests）
+    /// - 窗口 id 非 UInt32 的行跳过；缺 `|` 的行跳过；
+    /// - tty 缺 `/dev/` 前缀自动补全；首 `|` 之后全部视为 tty（tty 路径含 `|` 不撕列）；
+    /// - 空行/纯空白行跳过。
+    static func parseWindowTTYMap(_ stdout: String) -> [UInt32: String] {
+        var mapping: [UInt32: String] = [:]
+        for line in stdout.split(separator: "\n") {
+            let parts = line.split(separator: "|", maxSplits: 1)
+            guard parts.count == 2, let windowID = UInt32(parts[0]) else { continue }
+            var tty = String(parts[1]).trimmingCharacters(in: .whitespaces)
+            if !tty.hasPrefix("/dev/") {
+                tty = "/dev/" + tty
+            }
+            mapping[windowID] = tty
+        }
+        return mapping
+    }
 }
