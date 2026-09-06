@@ -35,6 +35,16 @@
   阶段状态机）；本清单不动这些文件，B 前先 fetch 查 origin/main 近期提交。
 - E2E 同机互斥锁（P5）在岗；动窗口行为的批次加跑对应 E2E。
 
+## 冲刺收官（2026-09-07 08:00）
+
+- **覆盖率**：全库行覆盖 10.60% → **15.84%**（+49% 相对提升）；函数覆盖 6433 中新增 1000+ 可测函数入覆盖。
+  B13~B18 六轮镜像转直测后，WindowMove+Decision 80.9%、ClaudeHookModels 80.8%（区域）、
+  TerminalContext+Helpers 75%——提取单元函数级≈100%，编排路径由真机 E2E 家族验收。
+- **Runner 直测断言**：278 → 534/534 全绿（+256 条，全部真实实现直测、零镜像漂移）。
+- **结构**：1055 行巨石 → 六模块；编排页/提示音段拆分；恢复帧规划去重；模型与编排分层。
+- **真 bug**：volume 必填解码静默重置用户偏好（单测先行实锤修复）。
+- **死测试清理**：FocusStepsCalculationTests（镜像函数已从源码删除）。
+
 ## 批次台账
 
 | 批次 | 内容 | 状态 |
@@ -55,6 +65,9 @@
 | B14 | restore 结局→播报计划总映射 Runner 直测 10 断言（spaceExact 三态/文案 nil 语义/成败音效通道）| ✅ 2026-09-07 |
 | B15 | Quartz/Cocoa y 互转 + MoveCooldownRegistry 冷却纯决策/剩余秒数取整 Runner 直测 7 断言（无记录→0 语义对齐实现）| ✅ 2026-09-07 |
 | B16 | walkToTerminalPID 谓词注入行走直测 9 断言（起始即终端/上溯/深度上限/ppid≤1 断链/自环/深度防御 + 注册表静态集合）| ✅ 2026-09-07 |
+| B16.5 | soundType 兜底接线修正——规则未选音效时 Picker/试听共用 effectiveSoundType 单一事实源 | ✅ 2026-09-07 |
 | B17 | Hook 脚本生成器不变量直测 9 断言（hooks JSON 合法性+恒注册事件/远程安装脚本 host 插值与 machine_label 归一/helper 端口与上下文采集）| ✅ 2026-09-07 |
 | B18 | YabaiErrorClassifier 直测 8 断言（六类别/大小写不敏感/多类命中优先级）| ✅ 2026-09-07 |
+| B19 | 镜像存活审计：70 个 Standalone 逐符号核对，**删除 1 个死镜像**（FocusStepsCalculationTests 镜像的 calculateFocusSteps 已从源码删除，测试在测自己的副本）；其余存活 | ✅ 2026-09-07 |
+| B20 | SettingsUI.swift（244 行 34 个 @State 状态枢纽）审计结论=拆分属高风险 SwiftUI 状态重构且无单测面，缓办并记录；AppDelegate+MenuAndInstance=纯菜单粘合无需拆分 | 审计完成 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
