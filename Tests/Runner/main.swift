@@ -3831,7 +3831,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             .processIdentifier ?? ProcessInfo.processInfo.processIdentifier
 
         func state(_ wid: UInt32, pid: Int32, session: String?) -> WindowState {
-            var ws = WindowState(
+            let ws = WindowState(
                 windowID: wid, pid: pid, tty: nil,
                 axWindowNumber: nil, appName: "TestTerminal", bundleIdentifier: nil, title: nil,
                 termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
