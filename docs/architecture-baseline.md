@@ -47,6 +47,34 @@
   验证保留，角色从「抓两处公式漂移」降级为「回归金丝雀」；
 - 纯度约定成文：纯数学函数一律 nonisolated，AppKit 触碰函数留在 MainActor 域。
 
+## Batch 8 度量（refactor/restore-sequence-lock）
+
+- restore 主体的全部决策核心此前已纯化并分支锁定（sourceSpacePreSwitch /
+  switchSourceSpace / refocusPerspective / isMoveFailureRetryable / FloatSettle），
+  唯余 `performRestore` 集成层的**阶段顺序**没有断言——preMoveSpace 必须先于
+  4-pre 采集（漏采把切换后的 space 当基准、漏切回用户视角）等契约仍只活在注释。
+  本批给四类假依赖接上共享 `RestoreSeqLog`，用 4 个全序断言把顺序钉死：
+  - S1 happy + 4-pre 切回 + 守卫成功：16 步全序（load→lookup→query→current→
+    visible→focus→visible→预取→float→清缓存→move→current→focus→清缓存→clear→审计）；
+  - S2 最小化快检失败：query 后立即短路（视角/float/move/clear 零发起）；
+  - S3 move 失败屏内 → retryable：失败路径同样守卫先行、record 保留；
+  - S4 屏外 clamp 重试仍败 → permanent：审计后才 clear（record 生命周期终点）；
+- **move/restore 对称性复查**（逐维核对，同源即同一函数/同一原语）：
+
+| 策略维度 | move_to_main | restore | 同源 |
+|---|---|---|---|
+| float 脱管+等重摆 | FloatSettle（管线内） | FloatSettle（4a） | ✓ |
+| 跨屏 frame 写+收敛 | moveWindowToFrameViaYabai（FrameWriteExecutor） | 同左 | ✓ |
+| 补发计划 | shortfalls/resendSegments | 同左（同一函数实例化） | ✓ |
+| 源上下文捕获时机 | captureSpaceContext 排首（管线断言） | record 于 toggle 入口捕获 | 语义对称 |
+| 原始帧快照时机 | knownOrigFrame 先于 apply（管线断言） | record.origFrame（同源捕获点） | ✓ |
+| 查询缓存失效 | FloatSettle 恒清 | FloatSettle 恒清 + 守卫成功清 | ✓ |
+| 视角逐卫 | 无（frame 直写不改可见 space 归属） | 4-pre + 成功/失败共用 runPerspectiveGuard | 刻意不对称 |
+| 序列断言 | Runner 场景 A~J（Batch 7） | Runner 场景 S1~S4（本批） | ✓ 对称完成 |
+
+  唯一刻意不对称 = 视角逐卫：move_to_main 的直写不改任何屏的可见 space，restore
+  必须精确落回 sourceSpace（SA 直切/聚焦带动双层）；已有 branch 穷尽锁定。
+
 ## 当前热点（后续批次目标，按优先级）
 
 1. `WindowManager+MoveWindow.swift` 547 行——仍是编排+段执行+日志混合体；
