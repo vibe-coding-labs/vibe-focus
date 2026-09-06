@@ -16,6 +16,12 @@ enum FrameWriteOutcome: Equatable {
     case converged(attempt: Int, frame: CGRect)
     case mismatched(attempts: Int, lastFrame: CGRect?)
     case writeFailed(attempt: Int)
+
+    /// 收敛与否的便捷判定（供日志与测试）。
+    var isConverged: Bool {
+        if case .converged = self { return true }
+        return false
+    }
 }
 
 /// move/resize 两段写入的顺序决策（纯函数，FrameWriteOrderTests 分支穷尽锁定）。

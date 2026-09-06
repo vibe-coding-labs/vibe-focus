@@ -18,7 +18,14 @@
 | `FrameConvergence.shortfalls` | 偏差维判定唯一事实源（Batch 2 新增） | ✓ FrameResendPlanTests | ✓（含与 CoordinateKit 交叉验证） |
 | `FrameConvergence.resendSegments` | 补发段序列决策（Batch 2 新增） | ✓ FrameResendPlanTests | ✓ |
 
-## Batch 2 度量（refactor/move-resend-plan）
+## Batch 3 度量（refactor/frame-write-executor）
+
+- 新增 `Support/FrameWriteExecutor.swift`（150 行）：两段写入的阶段顺序、阶段等待、补发执行从 WindowManager 抽出为可注入编排值——deps 注入 read/move/resize 择优/resize 最稳四通道，决策全部委托 FrameConvergence，等待与预算常量取自 WindowSettle；
+- `WindowManager+MoveWindow.swift`：547 → 491 行，`moveWindowToFrameViaYabai` 仅剩「解析 → 构造 deps → 执行 → 汇总日志」四段；内联 `waitForPhase` 与收敛轮询循环从编排层消失；
+- **apply 调用序列断言**（此前不可测）：Runner 注入假 IO 驱动 5 场景 12 断言——满意路径两写序、size 单缺补发走择优通道、全缺计划走 robust yabai 按写序、停滞重发重复同一计划且计入 resend、不收敛如实上报 mismatched；
+- 执行器不做 standalone 镜像（编排属执行域），其纯决策部分由 FrameConvergence 镜像锁定——测试按「决策镜像锁 + 执行真身锁」分层。
+
+## Batch 2 度量（4b1834e）
 
 - `WindowManager+MoveWindow.swift` 内联补发决策（4 分支 originOK/sizeOK 开关 +
   双处 wait/收敛判据）→ 收敛为 `FrameConvergence.shortfalls/resendSegments`
