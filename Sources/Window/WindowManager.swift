@@ -13,7 +13,12 @@ final class WindowManager {
     let spaceController = SpaceController.shared
     var focusSpaceKnownBroken: Bool = false
     private var didPromptForAccessibility = false
-    let frameTolerance: CGFloat = 10
+    /// frame 收敛容差（漂移和 |Δw|+|Δh|，origin 同值）。2026-09-06 真机验收实证 10→20：
+    /// Terminal.app 按字符网格量化窗口尺寸，目标 1653×1079 落成 1656×1070（漂移和 12），
+    /// 容差 10 下永不收敛 → 假阴性 MOVE FAILED + 收敛循环对量化尺寸空转重发（~800ms）；
+    /// 20 覆盖粗网格 app 量化（cell ~8×16px）+ CGWindowList 阴影噪声（±2~3px），
+    /// 真实错位（写丢失/被钳）是几十~百 px 级，仍必失败。
+    let frameTolerance: CGFloat = 20
     let axWindowNumberAttribute = "AXWindowNumber"
     let axFrameAttribute = "AXFrame"
 
