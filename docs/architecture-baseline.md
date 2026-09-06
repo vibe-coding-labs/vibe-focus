@@ -75,6 +75,27 @@
   唯一刻意不对称 = 视角逐卫：move_to_main 的直写不改任何屏的可见 space，restore
   必须精确落回 sourceSpace（SA 直切/聚焦带动双层）；已有 branch 穷尽锁定。
 
+## Batch 9 度量（refactor/arch-conformance）
+
+- 新增 `Tests/Standalone/ArchitectureConformanceTests.swift`（架构守护测试，
+  8 检）：把 Batch 1~8 建立的**单出口不变量**变成 run_all_tests 的机械断言——
+  静态扫描 Sources/ 全部代码行（注释行跳过），9 条规则 = 「禁止模式 + 合法
+  消费文件白名单」：
+  - R1/R2：waitForRelayout 调用与 floatRelayoutSettleMicros 消费只许
+    FrameConvergence/WindowSettle/FloatSettle（Batch 6 单出口 + budgetMs 单位
+    bug 的源头封堵）；
+  - R3/R4/R7：setWindowFloat、原始 yabai float 切换、查询缓存失效的白名单
+    （TerminalGrid 投递是文档化的刻意旁路）；
+  - R5：AX frame 写（size/position 属性复合匹配，title/focus 写放行）只许
+    写原语与 post-check 重写兜底；
+  - R8/R9/R10：FloatSettle/MoveToMainPipeline/FrameWriteExecutor 的合法接线
+    点清单——新增调用点必须显式改白名单，让「谁在绕过唯一出口」在 diff 里
+    可见；
+- 检测器自测锁定（命中白名单外/放行白名单内/放行 title 与 focus 写/R8 抓
+  第三处手抄）——守门者自己被证明能抓违例；
+- 现状 9 规则零违例 = Batch 1~8 的出口纪律当前无一处漂移，且此后任何新手抄
+  会在 run_all_tests 当场爆掉，不再依赖注释自觉。
+
 ## 当前热点（后续批次目标，按优先级）
 
 1. `WindowManager+MoveWindow.swift` 547 行——仍是编排+段执行+日志混合体；
