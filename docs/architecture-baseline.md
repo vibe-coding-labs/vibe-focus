@@ -96,6 +96,23 @@
 - 现状 9 规则零违例 = Batch 1~8 的出口纪律当前无一处漂移，且此后任何新手抄
   会在 run_all_tests 当场爆掉，不再依赖注释自觉。
 
+## Batch 11 度量（refactor/coverage-gaps）
+
+- 覆盖率数据驱动（scripts/coverage_test_runner.sh 实测）发现：**镜像测试锁副本、
+  不锁真身**的盲区——`FrameConvergence.convergeFrame` 真实实现在 Runner 通道
+  零执行（调用方 PostMove/AXWrite 均不在 Runner 跑），副本测试全绿不等于真身
+  被验证。本批补 Runner 真身直测：
+  - convergeFrame 六分支（首轮收敛/第 N 轮收敛/mismatched/writeFailed 短路/
+    nil 读不终止/attempts=0 归一）；
+  - CoordinateKit 真身（QuartzRect 访问器、NScreen 依赖函数在 GUI 会话 Runner
+    实测、clampFrame、cocoaY/quartzY 往返、漂移和判据回归位）；
+  - MoveToMainPipeline windowHandle 回退分支；
+- 覆盖率变化（Runner 通道）：FrameConvergence 78.7→92.0%、CoordinateKit
+  44.0→65.5%、MoveToMainPipeline 89.8→93.2%；剩余未覆盖 = 默认参数闭包与
+  日志插值分支（覆盖噪声）+ 纯 IO 路径（E2E 域）；
+- 经验入册：**新增纯函数内核时，Runner 真身直测与镜像测试同等必要**——镜像
+  的价值是「无构建依赖快速跑」，真身直测的价值是「锁的就是生产代码」。
+
 ## 当前热点（后续批次目标，按优先级）
 
 1. `WindowManager+MoveWindow.swift` 547 行——仍是编排+段执行+日志混合体；

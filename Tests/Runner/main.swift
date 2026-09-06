@@ -2732,6 +2732,152 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
 
     }
 
+    // MARK: FrameConvergence.convergeFrame（真实实现直测——镜像测试锁副本，本段锁真身，Batch 11）
+
+    do {
+        // convergeFrame 语义契约（FrameConvergenceLoopTests 锁副本；此处真身逐分支）：
+        // write→settle→read→判据；write 硬失败短路；read nil 不终止；attempts 归一。
+
+        // C1. 首轮即收敛：write 1 次、settle 1 次、read 1 次。
+        do {
+            var calls: [String] = []
+            let outcome = FrameConvergence.convergeFrame(
+                attempts: 3,
+                settleMicros: 1,
+                write: { calls.append("write"); return true },
+                read: { calls.append("read"); return CGRect(x: 0, y: 0, width: 100, height: 100) },
+                isConverged: { _ in true },
+                sleep: { _ in calls.append("settle") }
+            )
+            check("convergeFrame C1: converged(attempt:1) 且序列 write→settle→read",
+                  outcome == .converged(attempt: 1, frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+                  && calls == ["write", "settle", "read"])
+        }
+
+        // C2. 第 3 轮收敛：前两轮判据不满足，attempt 计数如实。
+        do {
+            var round = 0
+            let outcome = FrameConvergence.convergeFrame(
+                attempts: 3, settleMicros: 1,
+                write: { true },
+                read: { CGRect(x: round * 10, y: 0, width: 100, height: 100) },
+                isConverged: { _ in
+                    round += 1
+                    return round >= 3
+                },
+                sleep: { _ in }
+            )
+            check("convergeFrame C2: 第 3 轮收敛 attempt=3", 
+                  outcome == .converged(attempt: 3, frame: CGRect(x: 20, y: 0, width: 100, height: 100)))
+        }
+
+        // C3. 走满轮数不收敛 → mismatched（lastFrame=最后一次读回）。
+        do {
+            let outcome = FrameConvergence.convergeFrame(
+                attempts: 2, settleMicros: 1,
+                write: { true },
+                read: { CGRect(x: 5, y: 5, width: 50, height: 50) },
+                isConverged: { _ in false },
+                sleep: { _ in }
+            )
+            check("convergeFrame C3: mismatched(attempts:2, lastFrame)",
+                  outcome == .mismatched(attempts: 2, lastFrame: CGRect(x: 5, y: 5, width: 50, height: 50)))
+        }
+
+        // C4. write 硬失败：当轮短路（无 settle/read），attempt 计入。
+        do {
+            var writes = 0
+            var settles = 0
+            var reads = 0
+            let outcome = FrameConvergence.convergeFrame(
+                attempts: 3, settleMicros: 1,
+                write: { writes += 1; return writes < 2 },  // 第 2 轮 write 失败
+                read: { reads += 1; return CGRect(x: 0, y: 0, width: 1, height: 1) },
+                isConverged: { _ in false },
+                sleep: { _ in settles += 1 }
+            )
+            check("convergeFrame C4: writeFailed(attempt:2)；失败轮不进 settle/read（写2/settle1/read1）",
+                  outcome == .writeFailed(attempt: 2) && writes == 2 && settles == 1 && reads == 1)
+        }
+
+        // C5. read 持续 nil：轮次继续（不终止、不计收敛），走满后 mismatched(lastFrame=nil)。
+        do {
+            var reads = 0
+            let outcome = FrameConvergence.convergeFrame(
+                attempts: 3, settleMicros: 1,
+                write: { true },
+                read: { reads += 1; return nil },
+                isConverged: { _ in true },               // 有读即判收敛——nil 读不该触发
+                sleep: { _ in }
+            )
+            check("convergeFrame C5: nil 读不终止不收敛（3 读后 mismatched lastFrame=nil）",
+                  outcome == .mismatched(attempts: 3, lastFrame: nil) && reads == 3)
+        }
+
+        // C6. attempts=0 归一为 1（防 1...0 崩溃）。
+        do {
+            let outcome = FrameConvergence.convergeFrame(
+                attempts: 0, settleMicros: 1,
+                write: { true },
+                read: { CGRect(x: 0, y: 0, width: 1, height: 1) },
+                isConverged: { _ in false },
+                sleep: { _ in }
+            )
+            check("convergeFrame C6: attempts=0 归一 1 轮 mismatched",
+                  outcome == .mismatched(attempts: 1, lastFrame: CGRect(x: 0, y: 0, width: 1, height: 1)))
+        }
+    }
+
+    // MARK: CoordinateKit 真实实现直测（访问器与 NSScreen 依赖函数，Batch 11）
+
+    do {
+        // QuartzRect 访问器与换算。
+        let qr = QuartzRect(x: 3, y: 4, width: 100, height: 50)
+        check("coordKit: midX/midY/maxX/maxY", qr.midX == 53 && qr.midY == 29 && qr.maxX == 103 && qr.maxY == 54)
+        check("coordKit: cgRect 换算", qr.cgRect == CGRect(x: 3, y: 4, width: 100, height: 50))
+        check("coordKit: sizeDescription", qr.sizeDescription == "100x50")
+
+        // DisplayIdentifier / SpaceIdentifier 便捷构造。
+        check("coordKit: DisplayIdentifier.yabai/.cgDisplay 构造",
+              DisplayIdentifier.yabai(2) == .yabaiIndex(2) && DisplayIdentifier.cgDisplay(7) == .cgDirectDisplayID(7))
+        check("coordKit: SpaceIdentifier.native 构造",
+              SpaceIdentifier.native(9) == .nativeID(9))
+
+        // NSScreen 依赖函数（Runner 跑在 GUI 会话，screens 非空）。
+        if let mainScreen = NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.screens.first {
+            check("coordKit: mainScreenQuartzFrame 非空且含原点屏 frame",
+                  CoordinateKit.mainScreenQuartzFrame == mainScreen.frame)
+            check("coordKit: isOnMainScreen(mainScreen 中心)=true",
+                  CoordinateKit.isOnMainScreen(CGPoint(x: mainScreen.frame.midX, y: mainScreen.frame.midY)))
+            check("coordKit: isOnMainScreen(远点)=false",
+                  !CoordinateKit.isOnMainScreen(CGPoint(x: 99_999, y: 99_999)))
+            check("coordKit: mainScreenHeight > 0", CoordinateKit.mainScreenHeight > 0)
+            let yabaiIdx = CoordinateKit.yabaiDisplayIndex(for: mainScreen)
+            check("coordKit: yabaiDisplayIndex(主屏)=1", yabaiIdx == 1)
+            check("coordKit: nsScreen(forYabaiDisplayIndex:1) 回主屏",
+                  CoordinateKit.nsScreen(forYabaiDisplayIndex: 1) != nil)
+            check("coordKit: nsScreen(越界 99)=nil（防御分支）",
+                  CoordinateKit.nsScreen(forYabaiDisplayIndex: 99) == nil)
+            check("coordKit: quartzVisibleFrame 非空且在屏 frame 内（visibleFrame ⊆ frame）",
+                  CoordinateKit.quartzVisibleFrame(of: mainScreen).width <= mainScreen.frame.width
+                  && CoordinateKit.quartzVisibleFrame(of: mainScreen).height <= mainScreen.frame.height)
+            check("coordKit: clampFrame 夹取（屏外点收回 bounds）",
+                  CoordinateKit.clampFrame(CGRect(x: 9_999, y: 9_999, width: 50, height: 50),
+                                           into: mainScreen.frame).maxX <= mainScreen.frame.maxX)
+            check("coordKit: cocoaY/quartzY 往返自洽",
+                  CoordinateKit.cocoaY(fromQuartzY: CoordinateKit.quartzY(fromCocoaY: 37)) == 37)
+        }
+
+        // 纯收敛判据（真身直测，Batch 4 nonisolated 化后的回归位）。
+        check("coordKit: isFrameConverged 漂移和判据",
+              CoordinateKit.isFrameConverged(actual: CGRect(x: 8, y: 0, width: 100, height: 100),
+                                             target: CGRect(x: 0, y: 0, width: 100, height: 100),
+                                             tolerance: 20)
+              && !CoordinateKit.isFrameConverged(actual: CGRect(x: 21, y: 0, width: 100, height: 100),
+                                                 target: CGRect(x: 0, y: 0, width: 100, height: 100),
+                                                 tolerance: 20))
+    }
+
     // MARK: FloatSettle（真实实现——float 脱管→等重摆→缓存失效唯一序列原语，Batch 6）
 
     do {
@@ -2821,7 +2967,8 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             queryDisplay: Int? = 2,
             settableOK: Bool = true,
             applyDirectOK: Bool = true,
-            applyAXOK: Bool = true
+            applyAXOK: Bool = true,
+            handleOK: Bool = true
         ) -> MoveToMainPipeline.Deps {
             MoveToMainPipeline.Deps(
                 hasAX: { rec.events.append("hasAX"); return hasAX },
@@ -2853,7 +3000,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                     return CGRect(x: 75, y: 38, width: mainScreenFrame.width, height: mainScreenFrame.height)
                 },
                 targetDisplayIndexOf: { _ in rec.events.append("targetIndex"); return 1 },
-                windowHandleOf: { _ in rec.events.append("handle"); return 77 },
+                windowHandleOf: { _ in rec.events.append("handle"); return handleOK ? 77 : nil },
                 visibleFrameOfYabaiDisplay: { _ in rec.events.append("sourceVisible"); return CGRect(x: 0, y: 0, width: 3440, height: 1440) },
                 applyFrameDirect: { _, _, _, _ in rec.events.append("applyDirect"); return applyDirectOK },
                 applyAX: { _, _, _, _ in rec.events.append("applyAX"); return applyAXOK },
@@ -2957,6 +3104,16 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             check("pipeline J: apply_ax 失败", result.outcome == .failed(stage: "apply_ax"))
             check("pipeline J: float 恰一次且无 postCheck/save",
                   rec.floatIDs == [77] && !rec.events.contains("postCheck") && !rec.events.contains("save"))
+        }
+
+        // L. windowHandle 解析失败 → effectiveWindowID 回退 identity.windowID；
+        //    space 上下文字段为 nil 时日志分支如实降级。
+        do {
+            let rec = Rec()
+            let result2 = MoveToMainPipeline.run(identity: identity, op: "L2", knownWindowAX: sysWideAX, knownOrigFrame: nil,
+                                                 deps: makeDeps(rec, axFrameToRead: axReadFrame, handleOK: false))
+            check("pipeline L: windowHandle nil → 回退 identity.windowID",
+                  result2.outcome == .moved(effectiveWindowID: 42))
         }
 
         // K. skip 纯决策（真实实现直锁；镜像另立 MoveToMainSkipDecisionTests）。
