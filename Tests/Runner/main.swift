@@ -3917,6 +3917,20 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("b24 cleanup: 注册表已清空", registry.windowStates.isEmpty)
     }
 
+    // MARK: 恢复命令组装与 shell 转义（真实实现——B25：cellCommand 分支穷尽）
+
+    do {
+        // cellCommand 分支已由并行会话直测覆盖（本文件 1385-1387），此处只补 shellQuoted 转义
+        let q: Character = "\u{27}"
+        let escapedSegment = String(q) + "\\" + String(q) + String(q)   // '\'' 四字符
+        let expected = String(q) + "my " + escapedSegment + "proj" + escapedSegment + String(q)
+        check("shellQuoted: 单引号转义惯用法",
+              TerminalAutomationScript.shellQuoted("my 'proj'") == expected)
+        check("shellQuoted: 无单引号原样包裹",
+              TerminalAutomationScript.shellQuoted("plain") == "'plain'")
+        check("shellQuoted: 空串 → ''", TerminalAutomationScript.shellQuoted("") == "''")
+    }
+
     // MARK: LAN 远程绑定持久化（真实实现——B22：JSON 新格式/旧字典迁移/nil 过滤三层语义）
     // Runner 进程的 UserDefaults.standard 是独立域（无 bundle id），与真机应用偏好隔离。
 
