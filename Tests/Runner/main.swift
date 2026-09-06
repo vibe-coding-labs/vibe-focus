@@ -4358,6 +4358,62 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("ups D: 多会话互不干扰", !rb.limited && rb.recentCount == 0)
     }
 
+    // MARK: HookSettingsComposition（真实实现——settings.json hooks 编排，Batch 15）
+
+    do {
+        let URL = "http://127.0.0.1:8787/hook"
+        let SCRIPT = "/Users/x/.vibefocus/hook-helper.sh"
+        func hook(url: String? = nil, cmd: String? = nil) -> [String: Any] {
+            var h: [String: Any] = [:]
+            if let url { h["url"] = url }
+            if let cmd { h["command"] = cmd }
+            return h
+        }
+        func entry(_ hooks: [[String: Any]]) -> [String: Any] { ["hooks": hooks] }
+
+        // A. 识别判据：url 精确相等 OR command 含脚本路径。
+        check("compose A: url 精确命中", HookSettingsComposition.isVibeFocusHook(hook(url: URL), targetURL: URL, scriptPath: SCRIPT))
+        check("compose A: command 含路径命中", HookSettingsComposition.isVibeFocusHook(hook(cmd: "sh \(SCRIPT) --x"), targetURL: "http://none:1", scriptPath: SCRIPT))
+        check("compose A: 外部条目不命中",
+              !HookSettingsComposition.isVibeFocusHook(hook(url: "http://other:9", cmd: "/opt/other.sh"), targetURL: URL, scriptPath: SCRIPT))
+
+        // B. strip：摘我们的、留外部的、无 hooks 数组原样保留。
+        let entries = [
+            entry([hook(url: URL)]),                       // 我们的
+            entry([hook(cmd: "/opt/other.sh")]),           // 外部
+            ["matcher": "x"],                              // 无 hooks 数组
+        ]
+        let stripped = HookSettingsComposition.stripVibeFocusEntries(from: entries, targetURL: URL, scriptPath: SCRIPT)
+        check("compose B: 摘我们的留外部（removed=1）", stripped.removed == 1 && stripped.kept.count == 2)
+
+        // C. composeDesiredHooks：键并集 + 外部共存 + 整键删除 bug 防回退。
+        // 夹具形状 = 真实 Claude settings：hooks[事件] 是**条目数组**（[[String: Any]]）。
+        let existing: [String: Any] = [
+            "Stop": [entry([hook(url: URL)]), entry([hook(cmd: "/opt/user-stop.sh")])],  // 我们的 + 外部（分立条目）
+            "UserPromptSubmit": [entry([hook(url: URL)])],                                // 仅我们（generated 关闭）→ 全空删键
+            "SessionStart": [entry([hook(cmd: "/opt/user-start.sh")])],                   // 仅外部（generated 关闭）→ 键保留
+        ]
+        let generated: [String: Any] = [
+            "Stop": [entry([hook(url: "http://127.0.0.1:9999/hook")])],                   // 新端口条目
+        ]
+        let composed = HookSettingsComposition.composeDesiredHooks(existing: existing, generated: generated, targetURL: URL, scriptPath: SCRIPT)
+        let stopEntries = composed["Stop"] as? [[String: Any]] ?? []
+        check("compose C: Stop 键外部条目保留 + 新条目并入（共 2 条目，不整键覆盖）",
+              stopEntries.count == 2)
+        check("compose C: 仅我们的键被摘除删除（UserPromptSubmit）", composed["UserPromptSubmit"] == nil)
+        check("compose C: 仅外部的键保留（SessionStart）", composed["SessionStart"] != nil)
+
+        // D. containsVibeFocusHook：深层命中/畸形跳过/全外布 false。
+        let goodHooks: [String: Any] = ["Stop": [entry([hook(cmd: "x\(SCRIPT)y")])]]
+        check("compose D: 深层 command 命中", HookSettingsComposition.containsVibeFocusHook(hooks: goodHooks, targetURL: URL, scriptPath: SCRIPT))
+        let malformed: [String: Any] = [
+            "Stop": "not-an-array",                        // 事件值非数组 → 跳过
+            "PreToolUse": ["no-hooks-key": true],          // entry 无 hooks → 跳过
+        ]
+        check("compose D: 畸形结构跳过不崩返回 false",
+              !HookSettingsComposition.containsVibeFocusHook(hooks: malformed, targetURL: URL, scriptPath: SCRIPT))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
