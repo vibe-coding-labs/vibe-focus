@@ -70,7 +70,7 @@ DEPLOY_LOCK="/tmp/vibefocus-deploy.lock"
 if ! mkdir "$DEPLOY_LOCK" 2>/dev/null; then
   LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$DEPLOY_LOCK" 2>/dev/null || echo 0) ))
   if [ "$LOCK_AGE" -lt 600 ]; then
-    echo -e "${RED}⛔ 另一个部署正在进行（锁: $DEPLOY_LOCK，${LOCK_AGE}s 前取得）。${NC}"
+    echo -e "${RED}⛔ 另一个部署正在进行（锁: ${DEPLOY_LOCK}，${LOCK_AGE}s 前取得）。${NC}"
     echo -e "${RED}   如确认无部署在跑：rm -rf $DEPLOY_LOCK 后重试。${NC}"
     exit 1
   fi
