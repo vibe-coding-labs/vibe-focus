@@ -3820,6 +3820,214 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                 focusedSpaceIndex: nil) == nil)
     }
 
+    // MARK: SessionWindowRegistry 查找级联（真实实现 + 隔离 DB——B10：绑定查找唯一事实源）
+    // 仅 VIBEFOCUS_REGISTRY_E2E=1 时运行（须配 VIBEFOCUS_DB_PATH 隔离库；E2E 互斥锁自动生效）。
+
+    if ProcessInfo.processInfo.environment["VIBEFOCUS_REGISTRY_E2E"] == "1" {
+        let registry = SessionWindowRegistry.shared
+        // 取一个真实终端 app 的 pid（查找级联按「pid 仍是终端进程」判有效）
+        let terminalPID = NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == "com.googlecode.iterm2" || $0.bundleIdentifier == "com.apple.Terminal" }?
+            .processIdentifier ?? ProcessInfo.processInfo.processIdentifier
+
+        func state(_ wid: UInt32, pid: Int32, session: String?) -> WindowState {
+            var ws = WindowState(
+                windowID: wid, pid: pid, tty: nil,
+                axWindowNumber: nil, appName: "TestTerminal", bundleIdentifier: nil, title: nil,
+                termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                envWindowID: nil, sessionID: session, cwd: nil, model: nil,
+                isCompleted: false, createdAt: Date(), updatedAt: Date()
+            )
+            return ws
+        }
+
+        // 直命中：sessionID 精确匹配
+        registry.windowStates[9001] = state(9001, pid: terminalPID, session: "sess-A")
+        check("registry: 直命中 sessionID", registry.binding(for: "sess-A")?.windowID == 9001)
+
+        // 有效 pid 优先：同 session 两条（一条 pid 已死），返回 pid 有效者
+        registry.windowStates[9002] = state(9002, pid: 999_999_999, session: "sess-B")
+        registry.windowStates[9003] = state(9003, pid: terminalPID, session: "sess-B")
+        check("registry: 同会话多绑定优先 pid 有效者", registry.binding(for: "sess-B")?.windowID == 9003)
+
+        // 别名通道：主表无、别名表有
+        registry.sessionAliasWindowID["alias-sess"] = 9001
+        check("registry: 别名通道命中", registry.binding(for: "alias-sess")?.windowID == 9001)
+
+        // 未注册会话 → nil
+        check("registry: 未注册会话 → nil", registry.binding(for: "nope") == nil)
+
+        // markCompleted 联动（State 扩展唯一入口）
+        registry.markCompleted(sessionID: "sess-A")
+        check("registry: markCompleted 后绑定仍可查",
+              registry.binding(for: "sess-A")?.windowID == 9001)
+
+        // 清理：markCompleted 已持久化，仅删内存不够——查找级联第三层是 DB 兜底
+        // （findWindowStateBySession），隔离库行须一并删除（本轮实测验证了该层真实存在）。
+        registry.windowStates.removeValue(forKey: 9001)
+        registry.windowStates.removeValue(forKey: 9002)
+        registry.windowStates.removeValue(forKey: 9003)
+        registry.sessionAliasWindowID.removeValue(forKey: "alias-sess")
+        for wid in [UInt32(9001), 9002, 9003] {
+            WindowStateStore.shared.deleteWindowState(windowID: wid)
+        }
+        check("registry: 内存+DB 双清后 → nil", registry.binding(for: "sess-A") == nil)
+    }
+
+    // MARK: 终端上下文匹配族 + Claude 窗口定位（真实实现——B11：镜像转直测）
+
+    do {
+        // fullDevicePath / normalizeTTY
+        check("tty: fullDevicePath 补前缀", WindowManager.fullDevicePath("ttys003") == "/dev/ttys003")
+        check("tty: fullDevicePath 已带前缀原样", WindowManager.fullDevicePath("/dev/ttys003") == "/dev/ttys003")
+        check("tty: normalize nil/空/not-a-tty → nil",
+              WindowManager.normalizeTTY(nil) == nil
+              && WindowManager.normalizeTTY("") == nil
+              && WindowManager.normalizeTTY("not a tty") == nil)
+        check("tty: normalize 正常补全", WindowManager.normalizeTTY("ttys009") == "/dev/ttys009")
+
+        // matchCommandToWindowTitle：倒序命令优先 + em-dash contains + 大小写
+        let wins = [
+            WindowIdentity(windowID: 1, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 1, title: "user — Zsh"),
+            WindowIdentity(windowID: 2, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 2, title: "repo — claude"),
+        ]
+        check("cmdMatch: 命中 em-dash 标题",
+              WindowManager.matchCommandToWindowTitle(commands: ["claude"], windows: wins)?.windowID == 2)
+        check("cmdMatch: 倒序遍历（后者优先）",
+              WindowManager.matchCommandToWindowTitle(commands: ["zsh", "claude"], windows: wins)?.windowID == 2)
+        check("cmdMatch: 大小写敏感命令不命中小写标题",
+              WindowManager.matchCommandToWindowTitle(commands: ["CLAUDE"], windows: wins) == nil)
+
+        // parseCommandBasename：路径取 basename、空行跳过
+        let basenames = WindowManager.parseCommandBasename(from: "/usr/bin/claude\n\n  /opt/homebrew/bin/nvim ")
+        check("cmdBasename: 取末段 + 空行跳过", basenames == ["claude", "nvim"])
+
+        // parseItermSessionUUID / UUID / TTY 校验（注入防御 allowlist）
+        check("itermUUID: 冒号后取段", WindowManager.parseItermSessionUUID("iTerm:ABC-123") == "ABC-123")
+        check("itermUUID: 无冒号原样", WindowManager.parseItermSessionUUID("ABC") == "ABC")
+        check("itermUUID: 冒号后空 → nil", WindowManager.parseItermSessionUUID("iTerm:") == nil)
+        check("uuidAllow: hex+连字符通过", WindowManager.isValidUUIDPart("ABC-def-0123"))
+        check("uuidAllow: 元字符拒绝", !WindowManager.isValidUUIDPart("abc\"; rm"))
+        check("ttyAllow: /dev/ttys### 通过", WindowManager.isValidTTYPath("/dev/ttys004"))
+        check("ttyAllow: /dev/pty### 通过", WindowManager.isValidTTYPath("/dev/pty3"))
+        check("ttyAllow: 非设备路径拒绝", !WindowManager.isValidTTYPath("/dev/tty; rm -rf"))
+
+        // Claude 窗口定位：两级策略
+        typealias Cand = WindowManager.WindowCandidate
+        let candidates = [
+            Cand(windowID: 11, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "proj — zsh"),
+            Cand(windowID: 12, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "Claude Code — proj"),
+        ]
+        let isHost: (Cand) -> Bool = { $0.appName == "iTerm2" }
+        let m1 = WindowManager.matchClaudeCodeCandidate(candidates, projectName: "proj", isHostApp: isHost)
+        check("claudeMatch: 策略1 项目名命中前者",
+              m1?.strategy == .hostAppProjectName && m1?.candidate.windowID == 11)
+        let m2 = WindowManager.matchClaudeCodeCandidate(candidates, projectName: nil, isHostApp: isHost)
+        check("claudeMatch: 策略2 无项目名回落标题", m2?.strategy == .hostAppClaudeCodeTitle && m2?.candidate.windowID == 12)
+        let m3 = WindowManager.matchClaudeCodeCandidate(candidates, projectName: "nomatch", isHostApp: isHost)
+        check("claudeMatch: 项目名未命中回落策略2", m3?.strategy == .hostAppClaudeCodeTitle && m3?.candidate.windowID == 12)
+        let noHost = WindowManager.matchClaudeCodeCandidate(candidates, projectName: "proj", isHostApp: { _ in false })
+        check("claudeMatch: 无 hostApp 候选 → nil", noHost == nil)
+    }
+
+    // MARK: 编排目标与终端选择解析（真实实现——B12：GridTargetCode.parse / TerminalSelectionResolver.resolve 直测）
+
+    do {
+        // GridTargetCode.parse：全形态 + 非法输入
+        check("gridParse: main/focused", GridTargetCode.parse("main") == .main && GridTargetCode.parse("focused") == .focused)
+        check("gridParse: 纯 display", GridTargetCode.parse("d42") == .display(displayID: 42))
+        check("gridParse: display+space", GridTargetCode.parse("d7s3") == .displaySpace(displayID: 7, spaceIndex: 3))
+        check("gridParse: 非法形态 → nil",
+              GridTargetCode.parse(nil) == nil && GridTargetCode.parse("") == nil
+              && GridTargetCode.parse("x1") == nil && GridTargetCode.parse("dx") == nil)
+        check("gridParse: space 非法（0/非数字）→ nil",
+              GridTargetCode.parse("d7s0") == nil && GridTargetCode.parse("d7sx") == nil)
+        check("gridParse: display 非数字 → nil", GridTargetCode.parse("d-1") == nil)
+
+        // TerminalSelectionResolver.resolve：手动优先 / auto 运行优先 / fallback
+        func candidate(_ bundleID: String, running: Bool, count: Int) -> TerminalSelectionCandidate {
+            TerminalSelectionCandidate(
+                bundleID: bundleID, name: bundleID, support: .full,
+                usageCount: count, lastUsedAt: nil, isRunning: running
+            )
+        }
+        let cands = [candidate("com.apple.Terminal", running: false, count: 3),
+                     candidate("com.googlecode.iterm2", running: true, count: 9)]
+        let manual = TerminalSelectionResolver.resolve(manualBundleID: "com.apple.Terminal", candidates: cands)
+        check("selection: 手动指定优先", manual.bundleID == "com.apple.Terminal")
+        let auto = TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: cands)
+        check("selection: auto 按使用频次排序取最常用", auto.bundleID == "com.googlecode.iterm2")
+        let empty = TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: [])
+        check("selection: 无候选回落 Terminal.app", empty.bundleID == "com.apple.Terminal")
+    }
+
+    // MARK: float 脱管/恢复链路纯决策（真实实现——B13：FloatToggle/RestoreGuard/RefocusCandidate 镜像转直测）
+
+    do {
+        // floatToggleDecision：决策序 disabled → query_nil → already_floating → unmanaged → toggled
+        func info(float: Bool, ax: Bool) -> YabaiWindowInfo {
+            YabaiWindowInfo(id: 7, pid: 100, app: "T", title: "t", space: 1, display: 1,
+                            frame: nil, isFloatingRaw: float, hasAXReferenceRaw: ax,
+                            isMinimizedRaw: false, hasFocusRaw: false)
+        }
+        var lazyTouched = false
+        let disabled = SpaceController.floatToggleDecision(isEnabled: false, info: { lazyTouched = true; return info(float: false, ax: true) }())
+        check("floatToggle: disabled → skip 且惰性不触查询",
+              disabled.outcome == .skippedNoOp && disabled.skipReason == "disabled" && !lazyTouched)
+        check("floatToggle: 查询 nil → query_nil",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { nil }()).skipReason == "query_nil")
+        check("floatToggle: 已 float → already_floating",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: true, ax: true) }()).skipReason == "already_floating")
+        check("floatToggle: 无 AX 引用 → unmanaged",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: false, ax: false) }()).skipReason == "unmanaged")
+        check("floatToggle: 可脱管 → toggled",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: false, ax: true) }()).outcome == .toggled)
+
+        // selectRefocusCandidate：space/可管理/排除过滤 + 非最小化优先
+        func win(_ id: Int, space: Int, ax: Bool, minimized: Bool) -> YabaiWindowInfo {
+            YabaiWindowInfo(id: id, pid: 100, app: "T", title: "w\(id)", space: space, display: 1,
+                            frame: nil, isFloatingRaw: false, hasAXReferenceRaw: ax,
+                            isMinimizedRaw: minimized, hasFocusRaw: false)
+        }
+        let wins = [win(1, space: 5, ax: true, minimized: false),
+                    win(2, space: 4, ax: true, minimized: false),
+                    win(3, space: 5, ax: true, minimized: true),
+                    win(4, space: 5, ax: false, minimized: false)]
+        check("refocus: 过滤 space/可管理，非最小化优先",
+              SpaceController.selectRefocusCandidate(windows: wins, spaceIndex: 5, excludingWindowID: nil)?.id == 1)
+        check("refocus: 排除窗不入选",
+              SpaceController.selectRefocusCandidate(windows: wins, spaceIndex: 5, excludingWindowID: 1)?.id == 3)
+        check("refocus: 全最小化回落首个可管理",
+              SpaceController.selectRefocusCandidate(
+                windows: [win(3, space: 5, ax: true, minimized: true), win(6, space: 5, ax: true, minimized: true)],
+                spaceIndex: 5, excludingWindowID: nil)?.id == 3)
+
+        // RestoreOutcome.outcomeLabel：四分支机器可读标签
+        check("outcomeLabel: restored(spaceExact=nil)",
+              ToggleEngine.RestoreOutcome.restored(spaceExact: nil).outcomeLabel == "restored(spaceExact=nil)")
+        check("outcomeLabel: aborted_reason",
+              ToggleEngine.RestoreOutcome.aborted(reason: "no_window").outcomeLabel == "aborted_no_window")
+        check("outcomeLabel: 可重试标签",
+              ToggleEngine.RestoreOutcome.moveFailedRetryable.outcomeLabel == "move_failed_retryable_record_kept")
+        check("outcomeLabel: 永久失败标签",
+              ToggleEngine.RestoreOutcome.moveFailedPermanent.outcomeLabel == "move_failed_permanent_record_cleared")
+
+        // isMoveFailureRetryable：origFrame 在屏与否
+        check("retryable: 在屏 → 保留 record", ToggleEngine.isMoveFailureRetryable(origFrameOnAnyDisplay: true))
+        check("retryable: 不在任何屏 → 清除 record", !ToggleEngine.isMoveFailureRetryable(origFrameOnAnyDisplay: false))
+
+        // sourceSpacePreSwitch：三态决策
+        check("preSwitch: 无上下文（0 值）→ noContext",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 0, sourceYabaiDisp: 0, visibleSpaceOnSourceDisplay: 5) == .noContext)
+        check("preSwitch: 可见性查询失败 → notNeeded（不盲切）",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 5, sourceYabaiDisp: 1, visibleSpaceOnSourceDisplay: nil) == .notNeeded)
+        check("preSwitch: 已在源 space → notNeeded",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 5, sourceYabaiDisp: 1, visibleSpaceOnSourceDisplay: 5) == .notNeeded)
+        check("preSwitch: 停在别 space → switchNeeded",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 5, sourceYabaiDisp: 1, visibleSpaceOnSourceDisplay: 2)
+              == .switchNeeded(visibleSpace: 2))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
