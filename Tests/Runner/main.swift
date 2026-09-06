@@ -4254,6 +4254,89 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && SettingsView.CodexInstallPresentation.pillTintName(installed: false) == "warning")
     }
 
+    // MARK: PromptMoveDecision + UPSRateLimiter（真实实现——UPS 搬窗决策链与防循环限流，Batch 14）
+
+    do {
+        // A. 守护顺序穷举：每道门 + 前门不满足时才看后门。
+        check("ups A1: 自动恢复关闭 → autoRestoreDisabled（最优先）",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: false, hasWindowIdentity: false, rateLimited: true,
+                                                recentUPSCount: 99, maxUPSEvents: 20, isOnMainScreen: false,
+                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .autoRestoreDisabled)
+        check("ups A2: 无窗口身份 → noBinding",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: false, rateLimited: true,
+                                                recentUPSCount: 99, maxUPSEvents: 20, isOnMainScreen: false,
+                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .noBinding)
+        check("ups A3: 限流 → rateLimited(计数/阈值)",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: true,
+                                                recentUPSCount: 20, maxUPSEvents: 20, isOnMainScreen: false,
+                                                isInCooldown: false, cooldownRemainingSeconds: 0)
+              == .rateLimited(recentCount: 20, maxEvents: 20))
+        check("ups A4: 已在主屏 → alreadyOnMain（先于冷却）",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
+                                                recentUPSCount: 1, maxUPSEvents: 20, isOnMainScreen: true,
+                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .alreadyOnMain)
+        check("ups A5: 冷却中 → cooldownActive(剩余秒)",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
+                                                recentUPSCount: 1, maxUPSEvents: 20, isOnMainScreen: false,
+                                                isInCooldown: true, cooldownRemainingSeconds: 7) == .cooldownActive(remainingSeconds: 7))
+        check("ups A6: 全门通过 → proceedToMove",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
+                                                recentUPSCount: 1, maxUPSEvents: 20, isOnMainScreen: false,
+                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .proceedToMove)
+
+        // B. 响应映射表：码/状态逐项锁定。
+        func code(_ r: (statusCode: Int, response: ClaudeHookResponse)) -> String { r.response.code }
+        check("ups B: 六决策响应码唯一且稳定",
+              code(HookEventHandler.promptHttpResponse(for: .autoRestoreDisabled, sessionID: "s")) == "auto_restore_disabled"
+              && code(HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s")) == "no_binding_skip"
+              && code(HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")) == "session_rate_limited"
+              && code(HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s")) == "already_on_main_screen"
+              && code(HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 3), sessionID: "s")) == "cooldown_active"
+              && code(HookEventHandler.promptHttpResponse(for: .proceedToMove, sessionID: "s")) == "proceed_to_move")
+        let rr = HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")
+        check("ups B: 限流文案含计数与阈值、handled=false、状态码 200",
+              rr.statusCode == 200 && rr.response.handled == false
+              && rr.response.message == "Session UPS rate limited (20/20 in 10min), skipping move")
+        let cr = HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 9), sessionID: "s")
+        check("ups B: 冷却文案含剩余秒", cr.response.message == "Auto-restore cooldown active (9s remaining)")
+
+        // C. 搬窗结果二分。
+        check("ups C: moved → moved_to_main/handled=true",
+              HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "s").response.code == "moved_to_main"
+              && HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "s").response.handled == true)
+        check("ups C: 失败 → move_failed/handled=false",
+              HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "s").response.code == "move_failed"
+              && HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "s").response.handled == false)
+
+        // D. UPSRateLimiter 滑动窗口（100% 分支）。
+        var lim = UPSRateLimiter(windowDuration: 600, maxEvents: 3)
+        let t0 = Date(timeIntervalSince1970: 1000)
+        var r = lim.registerAndEvaluate(now: t0)
+        check("ups D: 空窗口首次注册不限流（0/3）", !r.limited && r.recentCount == 0)
+        r = lim.registerAndEvaluate(now: t0.addingTimeInterval(10))
+        check("ups D: 窗口内 1/3 仍不限流", !r.limited && r.recentCount == 1)
+        r = lim.registerAndEvaluate(now: t0.addingTimeInterval(20))
+        check("ups D: 窗口内 2/3 仍不限流", !r.limited && r.recentCount == 2)
+        r = lim.registerAndEvaluate(now: t0.addingTimeInterval(30))
+        check("ups D: 窗口内存量 3/3 达阈值 → 限流", r.limited && r.recentCount == 3)
+        r = lim.registerAndEvaluate(now: t0.addingTimeInterval(40))
+        check("ups D: 被限事件同样注册（存量持续 ≥ 阈值，持续限流）", r.limited && r.recentCount == 4)
+        // 剪枝：首批事件滑出窗口后存量下降，解除限流。
+        r = lim.registerAndEvaluate(now: t0.addingTimeInterval(1000 + 41))
+        check("ups D: 窗口滑出后剪枝解除限流（存量 0）", !r.limited && r.recentCount == 0)
+        // 剪枝严格边界：恰在 windowDuration 上的事件已过期（< 为存活）。
+        var lim2 = UPSRateLimiter(windowDuration: 600, maxEvents: 1)
+        _ = lim2.registerAndEvaluate(now: t0)
+        let r2 = lim2.registerAndEvaluate(now: t0.addingTimeInterval(600))
+        check("ups D: 恰在 600s 边界的旧事件已过期（严格 < 为存活）", !r2.limited && r2.recentCount == 0)
+        // 多会话独立。
+        var limA = UPSRateLimiter(windowDuration: 600, maxEvents: 1)
+        var limB = UPSRateLimiter(windowDuration: 600, maxEvents: 1)
+        _ = limA.registerAndEvaluate(now: t0)
+        let rb = limB.registerAndEvaluate(now: t0)
+        check("ups D: 多会话互不干扰", !rb.limited && rb.recentCount == 0)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
