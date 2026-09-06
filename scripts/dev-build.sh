@@ -105,10 +105,13 @@ PLIST
 echo -e "${GREEN}   ✓ 应用包创建完成${NC}"
 
 # Sign the app
+# 「证书或拒绝」（2026-09-07）：原写法 `2>/dev/null ||` 把证书签名失败静默吞掉、降级
+# ad-hoc——ad-hoc 二进制一旦请求 AX 会毒化 TCC 行 csreq，之后正式构建全部 denied。
 echo -e "${YELLOW}4. 签名应用...${NC}"
-codesign --force --deep --sign "VibeFocus Local Code Signing" \
-    "$APP_BUNDLE" 2>/dev/null || \
-codesign --force --deep --sign - "$APP_BUNDLE"
+if ! codesign --force --deep --sign "VibeFocus Local Code Signing" "$APP_BUNDLE"; then
+  echo "ERROR: 证书签名失败，拒绝 ad-hoc（会毒化辅助功能授权）。创建证书：bash scripts/setup_local_codesign.sh" >&2
+  exit 1
+fi
 
 echo -e "${GREEN}   ✓ 签名完成${NC}"
 

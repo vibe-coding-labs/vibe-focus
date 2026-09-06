@@ -43,8 +43,15 @@ if [[ -d "$DST_APP" ]]; then
 fi
 
 echo "4/6 安装新 app..."
-ditto "$SRC_APP" "$DST_APP"
-codesign --force --deep --sign - "$DST_APP" >/dev/null 2>&1
+# 「证书或拒绝」：ad-hoc 装机会毒化辅助功能授权（TCC csreq 被钉死，之后正式构建全 denied
+# 且系统设置勾选显示正常）。见 docs/bug-patterns/tcc-permission-breakage.md。
+if security find-identity -v -p codesigning 2>/dev/null | grep -F "VibeFocus Local Code Signing" >/dev/null 2>&1; then
+  codesign --force --deep --sign "VibeFocus Local Code Signing" "$DST_APP"
+else
+  echo "ERROR: 找不到 'VibeFocus Local Code Signing'，拒绝 ad-hoc 装机（会毒化辅助功能授权）。" >&2
+  echo "创建证书：bash scripts/setup_local_codesign.sh" >&2
+  exit 1
+fi
 xattr -rd com.apple.quarantine "$DST_APP" 2>/dev/null || true
 
 echo "5/6 启动新 app..."

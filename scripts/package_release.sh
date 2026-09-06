@@ -84,9 +84,11 @@ if command -v codesign >/dev/null 2>&1; then
     echo "== Applying local code signature: $CERT_NAME =="
     codesign --force --deep --sign "$CERT_NAME" "$APP_DIR" >/dev/null
   else
-    echo "WARNING: Local certificate '$CERT_NAME' not found, using ad-hoc signature"
-    echo "Create it with: security create-certificate -c '$CERT_NAME' -p codeSigning"
-    codesign --force --deep --sign - "$APP_DIR" >/dev/null
+    # 「证书或拒绝」：ad-hoc 包一旦运行会毒化辅助功能授权（TCC csreq 钉死），
+    # 之后的正式构建全部 accessibility denied。见 docs/bug-patterns/tcc-permission-breakage.md。
+    echo "ERROR: Local certificate '$CERT_NAME' not found, refusing ad-hoc signature" >&2
+    echo "Create it with: bash scripts/setup_local_codesign.sh" >&2
+    exit 1
   fi
 fi
 
