@@ -165,30 +165,21 @@ private func crashSignalHandler(_ sig: Int32) {
         nlData[idx] = 0
     }
 
-    // 2026-08-31 警告清理：iov 基址改在 writev 同作用域内经 withUnsafeMutableBytes 获取，
-    // 消除 & 局部数组临时指针逃逸（#TemporaryPointers 悬垂警告）；写入内容与顺序不变。
+    // 2026-09-06：writev 改三次普通 write。writev 在真机反复部分失败——只落
+    // iov[1] 的 3-10 个二进制字节、sigMsg 文本整体丢失（01:24/04:30/17:27 的
+    // 8-10B 神秘归档即此成因，crash-test 复现并定位）；write 则全程零丢失
+    // （审计行/BT 头均完整落地）。三次 write 均为 async-signal-safe，O_APPEND
+    // 下各自原子定位；多线程并发崩溃时可能交错，属可接受的取证折衷。
     withUnsafeMutableBytes(of: &sigData) { sigBase in
         let sigLen = strlen(sigBase.baseAddress!)
         withUnsafeMutableBytes(of: &nlData) { nlBase in
             let nlLen = strlen(nlBase.baseAddress!)
             func emit(to fd: Int32) {
+                _ = write(fd, sigBase.baseAddress, sigLen)
                 if len > 0 {
-                    var iov = [iovec](repeating: iovec(), count: 3)
-                    iov[0].iov_base = sigBase.baseAddress
-                    iov[0].iov_len = sigLen
-                    iov[1].iov_base = UnsafeMutableRawPointer(mutating: buf)
-                    iov[1].iov_len = len
-                    iov[2].iov_base = nlBase.baseAddress
-                    iov[2].iov_len = nlLen
-                    writev(fd, iov, 3)
-                } else {
-                    var iov = [iovec](repeating: iovec(), count: 2)
-                    iov[0].iov_base = sigBase.baseAddress
-                    iov[0].iov_len = sigLen
-                    iov[1].iov_base = nlBase.baseAddress
-                    iov[1].iov_len = nlLen
-                    writev(fd, iov, 2)
+                    _ = write(fd, buf, len)
                 }
+                _ = write(fd, nlBase.baseAddress, nlLen)
             }
             emit(to: crashSnapshotFD)
             // 额外写入独立 fatal FD（O_APPEND 不截断），下次启动 archivePreviousCrashFatalIfNeeded
