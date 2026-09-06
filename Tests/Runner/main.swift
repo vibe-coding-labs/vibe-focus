@@ -3492,6 +3492,57 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("response: session_id snake_case 键", respObj?["session_id"] as? String == "s9" && respObj?["ok"] as? Bool == true)
     }
 
+    // MARK: Hook 窗移决策树（真实实现——B7：守护顺序契约从镜像转 Runner 直测，决策树唯一事实源）
+
+    do {
+        typealias D = HookEventHandler.WindowMoveDecision
+        // 守护顺序逐条锁定（顺序即生产契约：前一条满足时后条不可达）
+        check("decide: autoFocus 关闭最优先",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: false, hasBinding: false, bindingVerified: false, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: nil, isTerminalOrIDE: false) == .autoFocusDisabled)
+        check("decide: remoteOnly → localBindingSkip（跳过全部绑定语义）",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true, remoteOnly: true) == .localBindingSkip)
+        check("decide: 无绑定 → noBindingSkip",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: false, bindingVerified: false, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: nil, isTerminalOrIDE: false) == .noBindingSkip)
+        check("decide: 绑定未验证 → bindingVerificationFailed",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: false, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: nil, isTerminalOrIDE: false) == .bindingVerificationFailed)
+        check("decide: 已在主屏 → alreadyOnMainScreen",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: true, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true) == .alreadyOnMainScreen)
+        check("decide: 恢复冷却 → restoreCooldownActive",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: true, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true) == .restoreCooldownActive)
+        check("decide: 陈旧绑定+pid 失配 → staleBindingPIDMismatch",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 1801, pidMatches: false, isTerminalOrIDE: true) == .staleBindingPIDMismatch)
+        check("decide: pid 失配但未超龄 → 继续移动",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 1799, pidMatches: false, isTerminalOrIDE: true) == .proceedToMove(source: "binding"))
+        check("decide: 非终端窗 → nonTerminalWindow",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: false) == .nonTerminalWindow)
+        check("decide: 全绿 → proceedToMove(binding)",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true) == .proceedToMove(source: "binding"))
+        check("decide: pidMatches nil（查询失败）+ 超龄 → 不判死继续移动",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 1801, pidMatches: nil, isTerminalOrIDE: true) == .proceedToMove(source: "binding"))
+
+        // 决策 → HTTP 响应映射表：8 跳过类全部 200+handled=false+code 对应；proceed → nil
+        for (decision, code) in [(D.autoFocusDisabled, "auto_focus_disabled"),
+                                 (D.localBindingSkip, "trigger_disabled_skip"),
+                                 (D.noBindingSkip, "no_binding_skip"),
+                                 (D.bindingVerificationFailed, "binding_verification_failed"),
+                                 (D.alreadyOnMainScreen, "already_on_main_screen"),
+                                 (D.restoreCooldownActive, "restore_cooldown_active"),
+                                 (D.staleBindingPIDMismatch, "stale_binding_pid_mismatch"),
+                                 (D.nonTerminalWindow, "non_terminal_window")] as [(HookEventHandler.WindowMoveDecision, String)] {
+            guard let resp = HookEventHandler.httpResponse(for: decision, triggerName: "T", sessionID: "s") else {
+                check("httpResponse: \(code) 应有响应", false)
+                continue
+            }
+            check("httpResponse: \(code) → 200/handled=false/code 对应",
+                  resp.statusCode == 200 && resp.response.ok && !resp.response.handled
+                  && resp.response.code == code)
+        }
+        check("httpResponse: proceedToMove → nil（响应由执行器产生）",
+              HookEventHandler.httpResponse(for: .proceedToMove(source: "binding"), triggerName: "T", sessionID: "s") == nil)
+        check("logDescription: proceed 带源标注",
+              D.proceedToMove(source: "binding").logDescription == "proceed_to_move(source=binding)")
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
