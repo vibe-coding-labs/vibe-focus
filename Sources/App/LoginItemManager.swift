@@ -91,23 +91,36 @@ final class LoginItemManager: ObservableObject {
             return deletedCount as text
         end tell
         """
-        var error: NSDictionary?
         guard let appleScript = NSAppleScript(source: script) else { return }
-        let result = appleScript.executeAndReturnError(&error)
-        if let error {
-            log(
-                "[LoginItemManager] stale login item cleanup failed",
-                level: .warn,
-                fields: ["error": error.description]
-            )
-            return
+        // 2026-09-06：NSAppleScript 移出主线程。execute 会在主线程泵嵌套
+        // RunLoop（WNEInternal），期间派发队列上排队的 MainActor 任务被重入执行，
+        // 若其再次触碰正在 dispatch_once 中的 LoginItemManager.shared →
+        // _dispatch_once_wait 同线程重入 → dispatch 层 SIGTRAP 击杀（当日 75424/
+        // 84552/83091/41369 等「启动后秒死」案件的根因，crash 观测堆栈实证）。
+        // 清理为纯后台副作用，放全局队列执行，与主线程彻底解耦。
+        final class ScriptBox: @unchecked Sendable {
+            let script: NSAppleScript
+            init(_ script: NSAppleScript) { self.script = script }
         }
-        let cleaned = result.stringValue ?? ""
-        if cleaned != "0" && !cleaned.isEmpty {
-            log(
-                "[LoginItemManager] cleaned up stale login items",
-                fields: ["count": cleaned]
-            )
+        let box = ScriptBox(appleScript)
+        DispatchQueue.global(qos: .utility).async {
+            var asyncError: NSDictionary?
+            let result = box.script.executeAndReturnError(&asyncError)
+            if let asyncError {
+                log(
+                    "[LoginItemManager] stale login item cleanup failed",
+                    level: .warn,
+                    fields: ["error": asyncError.description]
+                )
+                return
+            }
+            let cleaned = result.stringValue ?? ""
+            if cleaned != "0" && !cleaned.isEmpty {
+                log(
+                    "[LoginItemManager] cleaned up stale login items",
+                    fields: ["count": cleaned]
+                )
+            }
         }
     }
 
