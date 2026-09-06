@@ -37,6 +37,16 @@
 - 内联漂移算式在 `WindowManager+MoveWindow.swift` 的出现次数：3 → 0（全部经
   `shortfalls` 走唯一出口）。
 
+## Batch 4 度量（refactor/batch4-purity）
+
+- 纯度约定统一第一步：`CoordinateKit` 的四个收敛判据函数（originDrift/sizeDrift/
+  isSizeConverged/isFrameConverged）标 `nonisolated`（纯数学、无 AppKit 触碰），
+  枚举级 @MainActor 保留给 NSScreen 读取类成员；
+- `FrameConvergence.shortfalls` 删除 Batch 2 的漂移公式内联副本，改直连
+  CoordinateKit——漂移公式回到全仓唯一事实源；Runner 与 CoordinateKit 的交叉
+  验证保留，角色从「抓两处公式漂移」降级为「回归金丝雀」；
+- 纯度约定成文：纯数学函数一律 nonisolated，AppKit 触碰函数留在 MainActor 域。
+
 ## 当前热点（后续批次目标，按优先级）
 
 1. `WindowManager+MoveWindow.swift` 547 行——仍是编排+段执行+日志混合体；

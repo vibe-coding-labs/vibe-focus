@@ -160,9 +160,8 @@ enum FrameConvergence {
     /// current=nil（CGWindowList 偶发读失败）→ 两维全偏差（最坏情况，与历史上
     /// 调用点 `?? false` 的防御语义一致）。
     ///
-    /// 漂移公式与 CoordinateKit.originDrift/sizeDrift 逐字一致（|Δ| 求和；本模块
-    /// 保持非隔离纯函数不直连 @MainActor 的 CoordinateKit）——Runner 以真实
-    /// CoordinateKit 对拍锁定，公式单边漂移会被交叉验证抓出。
+    /// 漂移判据直连 CoordinateKit（Batch 4 起其判据函数 nonisolated）——公式
+    /// 全仓唯一，Batch 2 的内联副本已删除；Runner 交叉验证保留作回归金丝雀。
     static func shortfalls(
         current: CGRect?,
         target: CGRect,
@@ -170,8 +169,8 @@ enum FrameConvergence {
     ) -> FrameShortfall {
         guard let current else { return [.origin, .size] }
         var shortfall: FrameShortfall = []
-        if abs(current.origin.x - target.origin.x) + abs(current.origin.y - target.origin.y) > tolerance { shortfall.insert(.origin) }
-        if abs(current.size.width - target.size.width) + abs(current.size.height - target.size.height) > tolerance { shortfall.insert(.size) }
+        if CoordinateKit.originDrift(current.origin, target.origin) > tolerance { shortfall.insert(.origin) }
+        if !CoordinateKit.isSizeConverged(actual: current.size, target: target.size, tolerance: tolerance) { shortfall.insert(.size) }
         return shortfall
     }
 

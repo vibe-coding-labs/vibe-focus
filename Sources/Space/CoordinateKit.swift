@@ -281,14 +281,16 @@ enum CoordinateKit {
     }
 
     // MARK: 窗口帧收敛判据（唯一事实源）
+    // 四个判据均为纯数学（无 NSScreen/AppKit 触碰），nonisolated 使非隔离纯模块
+    // （FrameConvergence 等）可直连——漂移公式由此唯一，调用方不再内联副本。
 
     /// 位置漂移和 |dx| + |dy|（日志展示与收敛判定共用同一数值）。
-    static func originDrift(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+    nonisolated static func originDrift(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
         abs(a.x - b.x) + abs(a.y - b.y)
     }
 
     /// 尺寸漂移和 |dw| + |dh|（日志展示与收敛判定共用同一数值）。
-    static func sizeDrift(_ a: CGSize, _ b: CGSize) -> CGFloat {
+    nonisolated static func sizeDrift(_ a: CGSize, _ b: CGSize) -> CGFloat {
         abs(a.width - b.width) + abs(a.height - b.height)
     }
 
@@ -296,13 +298,13 @@ enum CoordinateKit {
     /// 语义约定（playbook 2.16a 第十二刀统一）：全仓收敛判据一律用"漂移和"而非逐轴比较——
     /// 逐轴允许单轴贴容差、另一轴再漂的合计超调（历史上 apply 循环逐轴、PostMove 漂移和，
     /// 两层判据不一致曾出现 apply 判收敛、PostMove 立即重写的自我打架）。
-    static func isSizeConverged(actual: CGSize, target: CGSize, tolerance: CGFloat) -> Bool {
+    nonisolated static func isSizeConverged(actual: CGSize, target: CGSize, tolerance: CGFloat) -> Bool {
         sizeDrift(actual, target) <= tolerance
     }
 
     /// 整 frame 收敛判定：origin 与 size 双维度漂移和均 ≤ 容差。
-    /// 使用点：moveWindowToFrameViaYabai 闭环验证。
-    static func isFrameConverged(actual: CGRect, target: CGRect, tolerance: CGFloat) -> Bool {
+    /// 使用点：moveWindowToFrameViaYabai 闭环验证、FrameConvergence.shortfalls。
+    nonisolated static func isFrameConverged(actual: CGRect, target: CGRect, tolerance: CGFloat) -> Bool {
         originDrift(actual.origin, target.origin) <= tolerance &&
         sizeDrift(actual.size, target.size) <= tolerance
     }
