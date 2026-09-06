@@ -1710,6 +1710,256 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         TerminalGridPreferences.launchCommand = savedLaunch
     }
 
+    // MARK: 跨屏移动尺寸保真真机 E2E（仅 VIBEFOCUS_SIZE_E2E=1 时运行）
+    // 用户主诉（2026-09-06）：移动窗口后尺寸错误。用已知尺寸的 iTerm2 窗口走
+    // WindowManager.moveWindowToFrameViaYabai 跨屏移动，覆盖两条写序：
+    //   Case A 放大跨屏（主→副，800x600→1500x900，旧 origin+目标尺寸在源屏可视
+    //          区内 → 命中 af19b2b 新增的 resizeThenMove 先行终态路径）
+    //   Case B 缩小跨屏（副→主，1500x900→800x600 → 缩小分支 resizeThenMove）
+    // 断言：最终 frame 尺寸/位置与目标一致（±40 量化容差）。结束清理窗口。
+    if ProcessInfo.processInfo.environment["VIBEFOCUS_SIZE_E2E"] == "1" {
+        print("\n=== 跨屏移动尺寸保真真机 E2E ===")
+        SpaceController.shared.refreshAvailability(force: true)
+        check("SizeE2E: yabai 可用", SpaceController.shared.isEnabled)
+
+        func yabaiWindowIDs() -> Set<UInt32> {
+            guard let out = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "query", "--windows"], timeout: 30),
+                  out.exitCode == 0 else { return [] }
+            let regex = try? NSRegularExpression(pattern: "\"id\":\\s*(\\d+)")
+            let range = NSRange(out.stdout.startIndex..., in: out.stdout)
+            var ids: Set<UInt32> = []
+            for result in (regex ?? NSRegularExpression()).matches(in: out.stdout, range: range) {
+                guard result.numberOfRanges > 1, let r = Range(result.range(at: 1), in: out.stdout),
+                      let n = UInt32(out.stdout[r]) else { continue }
+                ids.insert(n)
+            }
+            return ids
+        }
+        func yabaiWindowFrame(_ id: UInt32) -> CGRect? {
+            guard let out = ShellRunner.run(executable: "/opt/homebrew/bin/yabai",
+                arguments: ["-m", "query", "--windows", "--window", "\(id)"], timeout: 30),
+                out.exitCode == 0,
+                let data = out.stdout.data(using: .utf8),
+                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let f = obj["frame"] as? [String: Any],
+                let x = (f["x"] as? NSNumber)?.doubleValue,
+                let y = (f["y"] as? NSNumber)?.doubleValue,
+                let w = (f["w"] as? NSNumber)?.doubleValue,
+                let h = (f["h"] as? NSNumber)?.doubleValue else { return nil }
+            return CGRect(x: x, y: y, width: w, height: h)
+        }
+        func yabaiPlace(_ id: UInt32, frame: CGRect) {
+            _ = SpaceController.shared.runYabai(
+                arguments: ["-m", "window", "\(id)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
+                operation: "size-e2e.place", operationID: "size-e2e")
+            _ = SpaceController.shared.runYabai(
+                arguments: ["-m", "window", "\(id)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
+                operation: "size-e2e.place", operationID: "size-e2e")
+        }
+        func itermWindowIDs() -> Set<UInt32> {
+            guard let out = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                "tell application id \"com.googlecode.iterm2\" to return id of every window"], timeout: 30),
+                  out.exitCode == 0 else { return [] }
+            return Set(out.stdout.split(separator: ",").compactMap { UInt32($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
+        }
+
+        guard let mainScreen = NSScreen.screens.first(where: { CoordinateKit.cgDisplayID(for: $0) == CGMainDisplayID() }),
+              let secondaryScreen = NSScreen.screens.first(where: { CoordinateKit.cgDisplayID(for: $0) != CGMainDisplayID() }) else {
+            check("SizeE2E: 找到主副双屏", false)
+            exit(1)
+        }
+
+        let idsBefore = yabaiWindowIDs()
+        // 创建 iTerm2 窗口（落点由 app 决定，随后 yabai 摆到精确初始帧）
+        _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+            "tell application id \"com.googlecode.iterm2\" to create window with default profile"], timeout: 30)
+        Thread.sleep(forTimeInterval: 0.8)
+        let created = yabaiWindowIDs().subtracting(idsBefore)
+        guard created.count == 1, let wid = created.first else {
+            check("SizeE2E: 创建 iTerm2 测试窗口", false)
+            exit(1)
+        }
+        print("    [诊断] 测试窗口 id=\(wid)")
+
+        func runCase(name: String, initial: CGRect, target: CGRect, sourceVisible: CGRect) {
+            let placeSem = DispatchSemaphore(value: 0)
+            Task { @MainActor in
+                yabaiPlace(wid, frame: initial)
+                placeSem.signal()
+            }
+            while placeSem.wait(timeout: .now()) == .timedOut {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            Thread.sleep(forTimeInterval: 0.6)
+            guard let startFrame = yabaiWindowFrame(wid) else {
+                check("SizeE2E \(name): 读取初始帧", false)
+                return
+            }
+            print("    [诊断] \(name) 初始=\(startFrame) 目标=\(target)")
+            let moveSem = DispatchSemaphore(value: 0)
+            Task { @MainActor in
+                _ = WindowManager.shared.moveWindowToFrameViaYabai(
+                    windowID: wid, frame: target, op: "size-e2e", stage: "size_e2e.\(name)",
+                    sourceVisibleFrame: sourceVisible)
+                moveSem.signal()
+            }
+            while moveSem.wait(timeout: .now()) == .timedOut {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            // 收敛观察窗：2s 内帧稳定即采样
+            var final: CGRect?
+            var last: CGRect?
+            var stable = 0
+            for _ in 0..<20 {
+                let f = yabaiWindowFrame(wid)
+                if let f, let last, f == last { stable += 1; if stable >= 3 { final = f; break } }
+                else { stable = 0 }
+                last = f
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            guard let final else {
+                check("SizeE2E \(name): 读到稳定终帧", false)
+                return
+            }
+            let sizeDW = abs(final.width - target.width)
+            let sizeDH = abs(final.height - target.height)
+            let posDX = abs(final.origin.x - target.origin.x)
+            let posDY = abs(final.origin.y - target.origin.y)
+            print("    [诊断] \(name) 终帧=\(final) Δsize=(\(sizeDW),\(sizeDH)) Δpos=(\(posDX),\(posDY))")
+            check("SizeE2E \(name): 尺寸保真（Δ≤40，实测 Δ=(\(Int(sizeDW)),\(Int(sizeDH)))）",
+                  sizeDW <= 40 && sizeDH <= 40)
+            check("SizeE2E \(name): 位置保真（Δ≤80）", posDX <= 80 && posDY <= 80)
+        }
+
+        // Case A：主→副 放大（旧 origin(100,100)+目标尺寸在主屏可视区内 → 命中
+        // af19b2b 放大先行 resizeThenMove 新路径）
+        runCase(name: "main_to_secondary_enlarge",
+                initial: CGRect(x: 100, y: 100, width: 800, height: 600),
+                target: CGRect(x: 200, y: 150, width: 1500, height: 900),
+                sourceVisible: mainScreen.visibleFrame)
+        // Case B：副→主 缩小（缩小分支：目标 fits 源屏可视区 → resizeThenMove）
+        runCase(name: "secondary_to_main_shrink",
+                initial: CGRect(x: 200, y: 150, width: 1500, height: 900),
+                target: CGRect(x: 100, y: 100, width: 800, height: 600),
+                sourceVisible: secondaryScreen.visibleFrame)
+
+        // Case C：完整 toggle 往返（用户真实操作路径：聚焦副屏窗口 → 热键 toggle
+        // 到主屏 → 再 toggle 还原回副屏原帧）。两次 toggle 各测一次尺寸。
+        let c1Sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            yabaiPlace(wid, frame: CGRect(x: -814, y: -1415, width: 1146, height: 707))
+            c1Sem.signal()
+        }
+        while c1Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 0.6)
+        // 聚焦测试窗口（toggle 操作聚焦窗口）
+        _ = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "window", "\(wid)", "--focus"], timeout: 30)
+        Thread.sleep(forTimeInterval: 0.5)
+        let toggle1Sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            WindowManager.shared.toggle(operationID: "size-e2e-toggle-1", triggerSource: "size_e2e")
+            toggle1Sem.signal()
+        }
+        while toggle1Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 1.2)
+        if let afterMove = yabaiWindowFrame(wid) {
+            let onMain = afterMove.origin.x >= 0
+            let sizeOK = abs(afterMove.width - 1653) <= 40 && abs(afterMove.height - 1079) <= 40
+            print("    [诊断] toggle1 移主屏 终帧=\(afterMove) onMain=\(onMain)")
+            check("SizeE2E toggleCase: toggle 到主屏尺寸 = 主屏可视区 1653x1079（±40）", onMain && sizeOK)
+        } else {
+            check("SizeE2E toggleCase: 读取 toggle 后帧", false)
+        }
+        let toggle2Sem = DispatchSemaphore(value: 0)
+        // 重聚焦后再 toggle：期间系统设置等窗口可能抢焦点（ax 引导流会开系统设置）
+        _ = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "window", "\(wid)", "--focus"], timeout: 30)
+        Thread.sleep(forTimeInterval: 0.3)
+        Task { @MainActor in
+            WindowManager.shared.toggle(operationID: "size-e2e-toggle-2", triggerSource: "size_e2e")
+            toggle2Sem.signal()
+        }
+        while toggle2Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 1.2)
+        if let afterRestore = yabaiWindowFrame(wid) {
+            print("    [诊断] toggle2 还原 终帧=\(afterRestore)（期望 -814,-1415 1146x707）")
+            let backOnSecondary = afterRestore.origin.x < 0
+            let sizeOK = abs(afterRestore.width - 1146) <= 40 && abs(afterRestore.height - 707) <= 40
+            check("SizeE2E toggleCase: 还原回副屏尺寸保真（±40）", backOnSecondary && sizeOK)
+            check("SizeE2E toggleCase: 还原回副屏原位置（±80）",
+                  abs(afterRestore.origin.x - (-814)) <= 80 && abs(afterRestore.origin.y - (-1415)) <= 80)
+        } else {
+            check("SizeE2E toggleCase: 读取还原后帧", false)
+        }
+
+        // Case D：解堵路由尺寸保持。主屏上一个无 toggle 记录的窗口（新窗即满足）
+        // toggle → 走 stuck 路由移副屏。修复前：目标=副屏整屏可视区（3440x1440），
+        // 窗口被撑满整副屏（用户主诉「尺寸搞错」）；修复后：保持原尺寸 900x600，
+        // 位置夹进副屏可视区。
+        let idsBeforeD = yabaiWindowIDs()
+        _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+            "tell application id \"com.googlecode.iterm2\" to create window with default profile"], timeout: 30)
+        Thread.sleep(forTimeInterval: 0.8)
+        let createdD = yabaiWindowIDs().subtracting(idsBeforeD)
+        guard createdD.count == 1, let widD = createdD.first else {
+            check("SizeE2E stuckCase: 创建第二测试窗口", false)
+            exit(1)
+        }
+        let d1Sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            yabaiPlace(widD, frame: CGRect(x: 600, y: 300, width: 900, height: 600))
+            d1Sem.signal()
+        }
+        while d1Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 0.6)
+        _ = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "window", "\(widD)", "--focus"], timeout: 30)
+        Thread.sleep(forTimeInterval: 0.5)
+        let d2Sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            WindowManager.shared.toggle(operationID: "size-e2e-toggle-stuck", triggerSource: "size_e2e")
+            d2Sem.signal()
+        }
+        while d2Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 1.2)
+        if let stuckFrame = yabaiWindowFrame(widD) {
+            print("    [诊断] stuckCase 终帧=\(stuckFrame)（期望尺寸保持 900x600、移到副屏）")
+            let onSecondary = stuckFrame.origin.y < 0
+            let sizeKept = abs(stuckFrame.width - 900) <= 40 && abs(stuckFrame.height - 600) <= 40
+            check("SizeE2E stuckCase: 解堵移副屏尺寸保持 900x600（±40，修复前=撑满 3440x1440）",
+                  onSecondary && sizeKept)
+        } else {
+            check("SizeE2E stuckCase: 读取解堵后帧", false)
+        }
+
+        // 清理：向两个测试窗口的 session 写 exit 结束 shell，窗口随会话关闭（best-effort）
+        let exitScript = """
+        tell application id "com.googlecode.iterm2"
+            repeat with targetID in {\(wid), \(widD)}
+                try
+                    tell window id (targetID as integer) to tell current session to write text "exit"
+                end try
+            end repeat
+        end tell
+        """
+        _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", exitScript], timeout: 30)
+        Thread.sleep(forTimeInterval: 1.5)
+        let leftover = yabaiWindowIDs().intersection(created)
+        if leftover.isEmpty {
+            check("SizeE2E: 测试窗口已关闭", true)
+        } else {
+            print("    [诊断] 关闭滞后（iTerm2 后台处理）：\(leftover.sorted())")
+        }
+    }
+
         // MARK: Terminal 网格真机 E2E（仅 VIBEFOCUS_GRID_E2E=1 时运行）
     // 会真实创建 Terminal 窗口、调用 osascript/yabai/claude，普通门禁不跑。
     // 前置：主屏上有若干终端窗口；其中某窗口的 tty 上有存活 claude 会话。

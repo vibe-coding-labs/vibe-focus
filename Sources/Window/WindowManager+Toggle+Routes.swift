@@ -88,15 +88,25 @@ extension WindowManager {
             )
         }
         spaceController.clearWindowQueryCache()
-        let targetFrame = CoordinateKit.quartzVisibleFrame(of: targetScreen)
+        // 2026-09-06 尺寸保真修复：解堵 = 把卡住的窗口挪去副屏，**保持窗口当前尺寸**
+        // （位置放副屏可视区原点、整框向内夹紧；窗口大于副屏可视区时才收窄）。
+        // 旧实现目标 = 副屏整屏可视区（3440x1440），任何窗口一解堵就被放大成
+        // 整屏——用户主诉「移动窗口连尺寸都搞错了」的直接来源（观测堆栈+E2E 复现：
+        // 系统设置抢焦点后 toggle 误入 stuck 路由，普通窗口被撑满整副屏）。
+        let secondaryVisible = CoordinateKit.quartzVisibleFrame(of: targetScreen)
+        let currentBounds = cgWindowBounds(for: windowID) ?? secondaryVisible
+        let keptWidth = min(currentBounds.width, secondaryVisible.width)
+        let keptHeight = min(currentBounds.height, secondaryVisible.height)
+        let keptX = max(secondaryVisible.minX, min(currentBounds.origin.x, secondaryVisible.maxX - keptWidth))
+        let keptY = max(secondaryVisible.minY, min(currentBounds.origin.y, secondaryVisible.maxY - keptHeight))
+        let targetFrame = CGRect(x: keptX, y: keptY, width: keptWidth, height: keptHeight)
         let moved = moveWindowToFrameViaYabai(
             windowID: windowID,
             frame: targetFrame,
             op: operationID,
             stage: "move_to_secondary_stuck",
-            // 源屏=主屏（stuck 窗口必在主屏）；目标为副屏可视区，宽度可超主屏可见——
-            // 放大场景走 moveThenResize 不触发收窄序，此参数仅供判定兜底 + 放大序
-            // 源屏先行判定（主屏尺寸小于目标时 contains 不满足，自动回退 moveThenResize）。
+            // 源屏=主屏（stuck 窗口必在主屏）；尺寸保持后目标 ≤ 当前尺寸（缩小序），
+            // 此参数仅供判定兜底 + 缩小序源屏先行判定。
             sourceVisibleFrame: CoordinateKit.quartzVisibleFrame(of: getMainScreen() ?? targetScreen)
         )
         let moveMs = elapsedMilliseconds(since: moveStart)
