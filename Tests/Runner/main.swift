@@ -3432,6 +3432,66 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("queue: capacity<1 防御为 1（新条目总在）", ids(defensive) == ["x"])
     }
 
+    // MARK: Hook 数据契约（真实实现——B6：ClaudeHookPayload 容错解码/TerminalContext 绑定判据穷尽锁定）
+
+    do {
+        func decode(_ json: String) throws -> ClaudeHookPayload {
+            try JSONDecoder().decode(ClaudeHookPayload.self, from: Data(json.utf8))
+        }
+        // 事件键双别名
+        check("payload: event 键", (try? decode(#"{"event":"Stop","session_id":"s1"}"#))?.event == .stop)
+        check("payload: hook_event_name 别名", (try? decode(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#))?.event == .sessionStart)
+        check("payload: 两键皆缺 → 抛错", (try? decode(#"{"session_id":"s1"}"#)) == nil)
+        check("payload: 未知事件值 → 抛错", (try? decode(#"{"event":"Nonsense","session_id":"s1"}"#)) == nil)
+        // 会话键别名 + trim + 空拒绝
+        check("payload: session_id 键", (try? decode(#"{"event":"Stop","session_id":"  abc  "}"#))?.sessionID == "abc")
+        check("payload: sessionId 别名", (try? decode(#"{"event":"Stop","sessionId":"abc"}"#))?.sessionID == "abc")
+        check("payload: 空白会话 → 抛错", (try? decode(#"{"event":"Stop","session_id":"   "}"#)) == nil)
+        check("payload: 缺会话 → 抛错", (try? decode(#"{"event":"Stop"}"#)) == nil)
+        // 可选字段缺省 nil
+        let minimal = try! decode(#"{"event":"Stop","session_id":"m1"}"#)
+        check("payload: 可选字段缺省 nil",
+              minimal.source == nil && minimal.cwd == nil && minimal.model == nil
+              && minimal.terminalCtx == nil && minimal.lastAssistantMessage == nil
+              && minimal.transcriptPath == nil)
+        // 嵌套 terminalCtx（snake_case 键）+ 文本字段
+        let rich = try! decode("""
+        {"event":"UserPromptSubmit","session_id":"r1","source":"cc","cwd":"/w",
+         "model":"m","transcript_path":"/t.jsonl","last_assistant_message":"hi",
+         "terminal_ctx":{"tty":"/dev/ttys004","claude_project_dir":"/repo","window_id":"42"}}
+        """)
+        check("payload: 嵌套 ctx 解码", rich.terminalCtx?.tty == "/dev/ttys004"
+              && rich.terminalCtx?.claudeProjectDir == "/repo" && rich.terminalCtx?.windowID == "42")
+        check("payload: 其余可选字段解码", rich.source == "cc" && rich.cwd == "/w"
+              && rich.model == "m" && rich.transcriptPath == "/t.jsonl"
+              && rich.lastAssistantMessage == "hi")
+
+        // TerminalContext.hasUsefulContext：五因子判定（绑定前置判据）
+        func ctx(tty: String? = nil, term: String? = nil, iterm: String? = nil,
+                 ppid: String? = nil, machine: String? = nil) -> TerminalContext {
+            TerminalContext(termSessionID: term, itermSessionID: iterm, kittyWindowID: nil,
+                            weztermPane: nil, tty: tty, ppid: ppid,
+                            claudeProjectDir: nil, windowID: nil, machineLabel: machine)
+        }
+        check("ctx: tty 单独即有用", ctx(tty: "/dev/ttys001").hasUsefulContext)
+        check("ctx: termSessionID 单独即有用", ctx(term: "t").hasUsefulContext)
+        check("ctx: itermSessionID 单独即有用", ctx(iterm: "i").hasUsefulContext)
+        check("ctx: 有效 ppid(>1) 即有用", ctx(ppid: "123").hasUsefulContext)
+        check("ctx: ppid=1 无用（init 进程排除）", !ctx(ppid: "1").hasUsefulContext)
+        check("ctx: ppid 非数字无用", !ctx(ppid: "abc").hasUsefulContext)
+        check("ctx: machineLabel 单独即有用", ctx(machine: "srv-1").hasUsefulContext)
+        check("ctx: 全空无用", !ctx(tty: "", term: "", iterm: "", ppid: "", machine: "").hasUsefulContext)
+        check("ctx: 全 nil 无用", !ctx().hasUsefulContext)
+        check("ctx: isRemote 有标签 true", ctx(machine: "srv").isRemote)
+        check("ctx: isRemote 空/nil 标签 false", !ctx(machine: "").isRemote && !ctx().isRemote)
+
+        // ClaudeHookResponse 编码：sessionID 走 snake_case
+        let respObj = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            ClaudeHookResponse(ok: true, code: "ok", message: "done", sessionID: "s9", handled: true)
+        ))) as? [String: Any]
+        check("response: session_id snake_case 键", respObj?["session_id"] as? String == "s9" && respObj?["ok"] as? Bool == true)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

@@ -44,4 +44,5 @@
 | B3 | SettingsView+TerminalGridSection 拆四文件（536→137/214/87/99）+ summaryText/selectionDetailText/steppedGap 提纯 + 13 断言 | ✅ 2026-09-07 |
 | B4 | SA 恢复状态机真实实现测试补齐（recoveryVerdict 6 + autoRecoveryAllowed 冷静期矩阵 6 + saProbeVerdict 4 = 16 断言，Runner 直测优于镜像）| ✅ 2026-09-07 |
 | B5 | VoiceAnnouncement 模板插值/队列策略转 Runner 直测（消镜像漂移，8 断言）；AppDelegate+MenuAndInstance 审计结论=纯菜单粘合无需拆分 | ✅ 2026-09-07 |
+| B6 | ClaudeHookModels 数据契约真实实现 23 断言（payload 双事件键别名/session 别名+trim+空拒绝/嵌套 ctx snake_case；TerminalContext 五因子绑定判据+isRemote；Response snake_case 编码）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
