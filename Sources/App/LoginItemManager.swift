@@ -15,7 +15,12 @@ final class LoginItemManager: ObservableObject {
     private var didCleanupStaleItems = false
 
     private init() {
-        refresh()
+        // P0 红线（docs/quality-plan-2026-09.md）：单例 init→dispatch_once 链上禁止
+        // 同步外部 IPC。refresh() 内含 SMAppService XPC 同步查询与（已后台化的）
+        // AppleScript 清理——在 once 链上执行曾与主队列重入任务互撞致 SIGTRAP
+        // （2026-09-06 75472 等秒死案，堆栈实证）。延迟到主队列异步执行：once 链
+        // 立即结束，@Published 回填语义不变（MainActor 上仍串行、UI 照常刷新）。
+        Task { self.refresh() }
     }
 
     func refresh() {

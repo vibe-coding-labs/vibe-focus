@@ -14,6 +14,17 @@
 
 ## 一、规范
 
+### 1.0 单例 init 链红线（2026-09-06 新增，P0）
+
+| 规则 | 要求 |
+|------|------|
+| 禁止 | `static let shared` 单例的 init→（直接/间接）调用链上出现同步外部 IPC：NSAppleScript/OSA 执行（泵嵌套 RunLoop，dispatch_once 重入 → SIGTRAP 实锤）、SMAppService 等同步 XPC、yabai/外部进程 fork |
+| 做法 | 外部调用一律移出 once 链：主队列 `Task { … }` 异步化（@MainActor 类）或全局队列 + Sendable 包装 |
+| 后果 | 违反者与主队列重入任务互撞即被 dispatch 层 SIGTRAP 击杀（2026-09-06「启动后秒死」系列根因，堆栈实证 LoginItemManager.cleanupStaleLoginItems） |
+| 例外出入口 | 毫秒级本地 SQLite 读可接受（记录在案即可）；启动必需的探测必须在 didFinishLaunching 显式路径而非单例 once 链 |
+
+细则与阶段台账见 [quality-plan-2026-09.md](quality-plan-2026-09.md)。
+
 ### 1.1 文件拆分规范
 
 | 规则 | 要求 |
