@@ -54,6 +54,20 @@ func logDiagnostics(_ context: String) {
     log("Frontmost app bundleURL=\(frontBundleURL)")
     log("AX trusted (prompt=false)=\(axTrusted)")
 
+    // 构建能力标记自检（2026-09-06 部署互踩回归：修复在 main 但装机二进制被旧构建覆盖，
+    // 用户按 ⌃Q 走回水波路径排查一小时才定位）。启动恒开一行，装机 drift 直接可读。
+    if execPath != "nil", let capData = FileManager.default.contents(atPath: execPath) {
+        let caps = BuildCapabilities.detect(in: capData)
+        let missingCaps = BuildCapabilities.missing(caps)
+        if missingCaps.isEmpty {
+            log("Build capabilities: \(BuildCapabilities.summary(caps))")
+        } else {
+            log("Build capabilities: \(BuildCapabilities.summary(caps)) MISSING=\(missingCaps.joined(separator: ",")) —— 装机二进制落后于代码基线（疑部署互踩/旧构建覆盖）", level: .warn)
+        }
+    } else {
+        log("Build capabilities: unreadable", level: .warn)
+    }
+
     if execPath != "nil" {
         logCodesign(targetPath: execPath, label: "Executable codesign")
     }

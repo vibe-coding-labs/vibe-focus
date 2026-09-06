@@ -56,6 +56,11 @@ final class WindowManager {
         return NSScreen.screens.first { $0.isMainScreen } ?? NSScreen.main
     }
 
+    /// 运行期 AX 授权翻转监控（2026-09-06：并行会话安装实验毒化 TCC 行，move_to_main
+    /// 静默失效数小时才被用户感知）。AXIsProcessTrusted 结果与上次不同 → WARN 日志 +
+    /// UserDefaults 落账供 --diagnose 报告；首次调用仅记基线不告警。
+    private static var lastKnownAXTrusted: Bool?
+
     /// Check whether the app has Accessibility permission (AXIsProcessTrusted).
     ///
     /// Called before toggle operations and at startup. Usually fast (~5ms) but
@@ -68,6 +73,15 @@ final class WindowManager {
         let hapStart = Date()
         #endif
         let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
+        if let last = WindowManager.lastKnownAXTrusted, last != trusted {
+            let flip = "\(last)→\(trusted)"
+            let d = UserDefaults.standard
+            d.set(d.integer(forKey: "axTrustRuntimeFlipCount") + 1, forKey: "axTrustRuntimeFlipCount")
+            d.set(Date().timeIntervalSince1970, forKey: "axTrustRuntimeFlipLastAt")
+            d.set(flip, forKey: "axTrustRuntimeFlipLastDirection")
+            log("[WindowManager] AX trust flipped (runtime): \(flip) — 辅助功能授权状态改变，热键/移动可能失效", level: .warn)
+        }
+        WindowManager.lastKnownAXTrusted = trusted
         #if PERF_INSTRUMENT
         let hapMs = elapsedMilliseconds(since: hapStart)
         if hapMs >= 50 {

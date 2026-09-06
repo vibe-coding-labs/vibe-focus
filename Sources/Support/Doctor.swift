@@ -103,6 +103,15 @@ enum Doctor {
         return open.values.sorted { $0.at < $1.at }
     }
 
+    /// 运行期 AX 翻转摘要行（WindowManager.hasAccessibilityPermission 落账的 UserDefaults
+    /// 计数）。count<=0 → nil（无运行期翻转，不占报告版面）。
+    static func runtimeAXFlipLine(count: Int, direction: String?, lastAt: TimeInterval) -> String? {
+        guard count > 0 else { return nil }
+        let dir = direction ?? "?"
+        let at = lastAt > 0 ? ExitJournal.timestamp(Date(timeIntervalSince1970: lastAt)) : "?"
+        return "  运行期翻转 \(count) 次（最近 \(dir) @ \(at)）"
+    }
+
     // MARK: - 报告
 
     static func report(paths: DoctorPaths = .live(), now: Date = Date()) -> String {
@@ -160,8 +169,28 @@ enum Doctor {
                     out.append("    \(f)")
                 }
             }
+            let d = UserDefaults.standard
+            if let runtimeLine = runtimeAXFlipLine(
+                count: d.integer(forKey: "axTrustRuntimeFlipCount"),
+                direction: d.string(forKey: "axTrustRuntimeFlipLastDirection"),
+                lastAt: d.double(forKey: "axTrustRuntimeFlipLastAt")) {
+                out.append(runtimeLine)
+            }
         } else {
             out.append("[辅助功能授权] 审计中无 ax 记录（旧版本实例）")
+        }
+
+        // 构建能力标记（2026-09-06 部署互踩回归：修复在 main 但装机二进制被旧构建覆盖。
+        // 检测对象是「诊断进程自身」这份二进制——对装机 App 跑 --diagnose 即检装机版本）
+        out.append("")
+        if let caps = BuildCapabilities.detectInOwnBinary() {
+            let missingCaps = BuildCapabilities.missing(caps)
+            out.append("[构建能力标记] \(BuildCapabilities.summary(caps))")
+            out.append(missingCaps.isEmpty
+                ? "  关键修复全部在跑的这份二进制里。"
+                : "  缺失: \(missingCaps.joined(separator: ", ")) —— 装机二进制落后于代码基线（疑部署互踩/旧构建覆盖）")
+        } else {
+            out.append("[构建能力标记] 无法读取自身二进制（诊断上下文无执行文件）")
         }
 
         // 疑似外部击杀（排除还活着的 pid：运行中的实例本来就没有 exit 记录）
