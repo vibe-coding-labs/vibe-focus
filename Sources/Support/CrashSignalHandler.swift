@@ -147,73 +147,48 @@ private func crashSignalHandler(_ sig: Int32) {
     sigMsg += String(cString: timeBuf)
     sigMsg += "\n\n=== PRE-CRASH STATE ===\n"
 
-    var sigData = [CChar](repeating: 0, count: 512)
-    sigMsg.withCString { ptr in
-        var idx = 0
-        while idx < 511 && ptr[idx] != 0 {
-            sigData[idx] = ptr[idx]
-            idx += 1
+    // 2026-09-06：写入路径统一为 withCString + 单次 write。此前的 writev 与
+    // withUnsafeMutableBytes 两条路径在真机反复只落 3-10 个二进制字节、文本整体
+    // 丢失（01:24/04:30 的 8-10B 神秘归档、17:27 75472 文本缺失同成因；
+    // --crash-test-signal 复现定位），而 withCString+write 路径（审计行/BT 头）
+    // 全程零丢失。快照缓冲以 NUL 截断后并入同一段文本。
+    let snapshotText = len > 0 ? String(cString: buf) : ""
+    let fullText = sigMsg + snapshotText + "\n=== END PRE-CRASH STATE ===\n"
+    fullText.withCString { ptr in
+        func emit(to fd: Int32) {
+            _ = write(fd, ptr, strlen(ptr))
         }
-        sigData[idx] = 0
-    }
-
-    let nl = "\n=== END PRE-CRASH STATE ===\n"
-    var nlData = [CChar](repeating: 0, count: 32)
-    nl.withCString { ptr in
-        var idx = 0
-        while idx < 31 && ptr[idx] != 0 { nlData[idx] = ptr[idx]; idx += 1 }
-        nlData[idx] = 0
-    }
-
-    // 2026-09-06：writev 改三次普通 write。writev 在真机反复部分失败——只落
-    // iov[1] 的 3-10 个二进制字节、sigMsg 文本整体丢失（01:24/04:30/17:27 的
-    // 8-10B 神秘归档即此成因，crash-test 复现并定位）；write 则全程零丢失
-    // （审计行/BT 头均完整落地）。三次 write 均为 async-signal-safe，O_APPEND
-    // 下各自原子定位；多线程并发崩溃时可能交错，属可接受的取证折衷。
-    withUnsafeMutableBytes(of: &sigData) { sigBase in
-        let sigLen = strlen(sigBase.baseAddress!)
-        withUnsafeMutableBytes(of: &nlData) { nlBase in
-            let nlLen = strlen(nlBase.baseAddress!)
-            func emit(to fd: Int32) {
-                _ = write(fd, sigBase.baseAddress, sigLen)
-                if len > 0 {
-                    _ = write(fd, buf, len)
-                }
-                _ = write(fd, nlBase.baseAddress, nlLen)
-            }
-            emit(to: crashSnapshotFD)
-            // 额外写入独立 fatal FD（O_APPEND 不截断），下次启动 archivePreviousCrashFatalIfNeeded
-            // 会读取归档。修复根因 #3：crashSnapshotFD 启动时 O_TRUNC 会覆盖此处写的 FATAL SIGNAL。
-            // 仅 writev（async-signal-safe）。不 close（writev 返回数据已在内核 page cache，
-            // 紧随的退出不影响落盘）。
-            if crashFatalFD >= 0 {
-                emit(to: crashFatalFD)
-            }
-            // 退出审计：预编码的 fatal-signal 行写入 exits.jsonl（install 期预生成，
-            // handler 内一次 write，async-signal-safe）。SIGKILL 无此行——审计上
-            // 「launch 无配对 exit」即外部击杀实证。
-            if exitJournalFD >= 0, let line = fatalSignalJournalLines[sig] {
-                line.withUnsafeBufferPointer { buf in
-                    if let base = buf.baseAddress {
-                        _ = write(exitJournalFD, base, strlen(base))
-                    }
+        emit(to: crashSnapshotFD)
+        // 额外写入独立 fatal FD（O_APPEND 不截断），下次启动 archivePreviousCrashFatalIfNeeded
+        // 会读取归档。修复根因 #3：crashSnapshotFD 启动时 O_TRUNC 会覆盖此处写的 FATAL SIGNAL。
+        // 不 close（写入数据已在内核 page cache，紧随的退出不影响落盘）。
+        if crashFatalFD >= 0 {
+            emit(to: crashFatalFD)
+        }
+        // 退出审计：预编码的 fatal-signal 行写入 exits.jsonl（install 期预生成，
+        // handler 内一次 write，async-signal-safe）。SIGKILL 无此行——审计上
+        // 「launch 无配对 exit」即外部击杀实证。
+        if exitJournalFD >= 0, let line = fatalSignalJournalLines[sig] {
+            line.withUnsafeBufferPointer { jbuf in
+                if let base = jbuf.baseAddress {
+                    _ = write(exitJournalFD, base, strlen(base))
                 }
             }
-            // 崩溃堆栈：SIGTRAP 类死亡无 .ips 时的唯一堆栈来源（见文件头 execinfo 注释）。
-            var stackAddrs = [UnsafeMutableRawPointer?](repeating: nil, count: 64)
-            let frameCount = crash_backtrace(&stackAddrs, 64)
-            if frameCount > 0 {
-                let btHeader = "\n=== BACKTRACE (frames=\(frameCount)) ===\n"
-                btHeader.withCString { ptr in
-                    _ = write(crashSnapshotFD, ptr, strlen(ptr))
-                    if crashFatalFD >= 0 {
-                        _ = write(crashFatalFD, ptr, strlen(ptr))
-                    }
-                }
-                crash_backtrace_symbols_fd(&stackAddrs, frameCount, crashSnapshotFD)
+        }
+        // 崩溃堆栈：SIGTRAP 类死亡无 .ips 时的唯一堆栈来源（见文件头 execinfo 注释）。
+        var stackAddrs = [UnsafeMutableRawPointer?](repeating: nil, count: 64)
+        let frameCount = crash_backtrace(&stackAddrs, 64)
+        if frameCount > 0 {
+            let btHeader = "\n=== BACKTRACE (frames=\(frameCount)) ===\n"
+            btHeader.withCString { ptr in
+                _ = write(crashSnapshotFD, ptr, strlen(ptr))
                 if crashFatalFD >= 0 {
-                    crash_backtrace_symbols_fd(&stackAddrs, frameCount, crashFatalFD)
+                    _ = write(crashFatalFD, ptr, strlen(ptr))
                 }
+            }
+            crash_backtrace_symbols_fd(&stackAddrs, frameCount, crashSnapshotFD)
+            if crashFatalFD >= 0 {
+                crash_backtrace_symbols_fd(&stackAddrs, frameCount, crashFatalFD)
             }
         }
     }
