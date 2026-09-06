@@ -4084,6 +4084,49 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-5), now: now, cooldownSeconds: 3) == 0)
     }
 
+    // MARK: 进程树行走 + 终端注册表（真实实现——B16：walkToTerminalPID 谓词注入直测）
+
+    do {
+        // 场景 1：起始 pid 即终端
+        let immediate = TerminalRegistry.walkToTerminalPID(
+            startPID: 500, parentPID: { _ in nil }, isTerminal: { $0 == 500 })
+        check("walk: 起始即终端 (pid=500, depth=1)",
+              immediate.pid == 500 && immediate.depth == 1)
+        // 场景 2：沿父链上溯两级命中
+        let chain: [Int32: Int32] = [900: 800, 800: 700]  // pid → parent
+        let walked = TerminalRegistry.walkToTerminalPID(
+            startPID: 900,
+            parentPID: { chain[$0] },
+            isTerminal: { $0 == 700 })
+        check("walk: 父链上溯两级命中 (depth=3)",
+              walked.pid == 700 && walked.depth == 3)
+        // 场景 3：深度上限保护
+        let infinite: (Int32) -> Int32? = { $0 - 1 }
+        let capped = TerminalRegistry.walkToTerminalPID(
+            startPID: 100, parentPID: infinite, isTerminal: { _ in false }, maxDepth: 4)
+        check("walk: 深度上限 4 步止步", capped.pid == nil && capped.depth == 4)
+        // 场景 4：ppid<=1（launchd）断链
+        let launchd = TerminalRegistry.walkToTerminalPID(
+            startPID: 50, parentPID: { _ in 1 }, isTerminal: { _ in false })
+        check("walk: ppid=1 断链不进 init 进程", launchd.pid == nil)
+        // 场景 5：自环防护（父=自身）
+        let selfLoop = TerminalRegistry.walkToTerminalPID(
+            startPID: 60, parentPID: { _ in 60 }, isTerminal: { _ in false })
+        check("walk: 自环防护", selfLoop.pid == nil)
+        // 场景 6：maxDepth<1 防御为至少 1 步
+        let minDepth = TerminalRegistry.walkToTerminalPID(
+            startPID: 70, parentPID: { _ in nil }, isTerminal: { _ in false }, maxDepth: 0)
+        check("walk: maxDepth<1 防御为 1 步", minDepth.depth == 1 && minDepth.pid == nil)
+
+        // 终端注册表静态集合
+        check("registry: Terminal/iTerm2 bundleID 认可",
+              TerminalRegistry.isTerminalBundleID("com.apple.Terminal")
+              && TerminalRegistry.isTerminalBundleID("com.googlecode.iterm2"))
+        check("registry: 陌生 bundleID 不认可", !TerminalRegistry.isTerminalBundleID("com.example.unknown"))
+        check("registry: IDE 识别 VS Code",
+              TerminalRegistry.isTerminalOrIDEApp(appName: "Code", bundleIdentifier: "com.microsoft.VSCode"))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
