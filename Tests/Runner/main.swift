@@ -2675,6 +2675,181 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         }
     }
 
+    // MARK: MoveToMainPipeline（真实实现——move_to_main 阶段管线，Batch 7）
+
+    do {
+        final class Rec {
+            var events: [String] = []
+            var floatIDs: [UInt32] = []
+            var saveArgs: (windowID: UInt32, origFrame: CGRect)?
+            var postCheckWindowID: UInt32?
+            var notifyCount = 0
+        }
+
+        let sysWideAX = AXUIElementCreateSystemWide()
+        let identity = WindowIdentity(windowID: 42, pid: 100, bundleIdentifier: "com.test.app", appName: "Test", windowNumber: nil, title: "t")
+        let realScreen = NSScreen.screens.first!
+        let mainScreenFrame = realScreen.frame
+        let knownFrame = CGRect(x: -800, y: -700, width: 1146, height: 707)
+        let axReadFrame = CGRect(x: -810, y: -710, width: 1146, height: 707)
+        let onMainCenterFrame = CGRect(x: mainScreenFrame.midX, y: mainScreenFrame.midY, width: 800, height: 600)
+
+        /// 假通道工厂：默认「AX 路径 happy path」配置，场景按需覆盖。
+        func makeDeps(
+            _ rec: Rec,
+            hasAX: Bool = true,
+            visSpace: SpaceIdentifier? = .yabaiIndex(1),
+            resolveOK: Bool = true,
+            axFrameToRead: CGRect?,
+            queryDisplay: Int? = 2,
+            settableOK: Bool = true,
+            applyDirectOK: Bool = true,
+            applyAXOK: Bool = true
+        ) -> MoveToMainPipeline.Deps {
+            MoveToMainPipeline.Deps(
+                hasAX: { rec.events.append("hasAX"); return hasAX },
+                notifyAXRequired: { rec.notifyCount += 1 },
+                captureSpaceContext: { _, _ in
+                    rec.events.append("capture")
+                    return SpaceContext(sourceSpaceIndex: .yabaiIndex(5), targetSpaceIndex: nil,
+                                        sourceDisplayIndex: .yabaiIndex(2), sourceDisplaySpaceIndex: 7)
+                },
+                visibleSpaceIndexOfMainDisplay: { rec.events.append("visSpace"); return visSpace },
+                floatAndSettle: { id, _, _ in
+                    rec.events.append("float"); rec.floatIDs.append(id)
+                    return FloatSettle.Outcome(didToggle: true, durationMs: 123)
+                },
+                resolveWindow: { _ in rec.events.append("resolve"); return resolveOK ? sysWideAX : nil },
+                readAXFrame: { _ in rec.events.append("readAXFrame"); return axFrameToRead },
+                queryWindow: { _ in
+                    rec.events.append("query")
+                    return queryDisplay.map {
+                        YabaiWindowInfo(id: 42, pid: 100, app: "App", title: "t", space: 5, display: $0,
+                                        frame: nil, isFloatingRaw: false, hasAXReferenceRaw: true,
+                                        isMinimizedRaw: false, hasFocusRaw: false)
+                    }
+                },
+                isSettable: { _ in rec.events.append("settable"); return settableOK },
+                mainScreen: { rec.events.append("mainScreen"); return realScreen },
+                targetFrameFor: { _ in
+                    rec.events.append("targetFrame")
+                    return CGRect(x: 75, y: 38, width: mainScreenFrame.width, height: mainScreenFrame.height)
+                },
+                targetDisplayIndexOf: { _ in rec.events.append("targetIndex"); return 1 },
+                windowHandleOf: { _ in rec.events.append("handle"); return 77 },
+                visibleFrameOfYabaiDisplay: { _ in rec.events.append("sourceVisible"); return CGRect(x: 0, y: 0, width: 3440, height: 1440) },
+                applyFrameDirect: { _, _, _, _ in rec.events.append("applyDirect"); return applyDirectOK },
+                applyAX: { _, _, _, _ in rec.events.append("applyAX"); return applyAXOK },
+                postCheck: { _, id, _, _, _, _ in
+                    rec.events.append("postCheck"); rec.postCheckWindowID = id; return 8
+                },
+                save: { _, id, orig, _, _, _, _ in
+                    rec.events.append("save"); rec.saveArgs = (id, orig); return 3
+                }
+            )
+        }
+
+        // A. AX 路径 happy path：origFrame 来自 AX 读（apply 前），apply 后 post-check→save。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "A", knownWindowAX: sysWideAX, knownOrigFrame: nil, deps: makeDeps(rec, axFrameToRead: axReadFrame))
+            check("pipeline A: AX 路径结局 moved(effectiveWindowID=77)", result.outcome == .moved(effectiveWindowID: 77))
+            check("pipeline A: 序列 hasAX→capture→readAXFrame→query→settable→mainScreen→target→float→applyAX→postCheck→save",
+                  rec.events == ["hasAX", "capture", "readAXFrame", "query", "settable", "mainScreen", "targetFrame", "targetIndex", "handle", "float", "applyAX", "postCheck", "save"])
+            check("pipeline A: AX 路径 float 恰一次（apply 前、用 effectiveWindowID）", rec.floatIDs == [77])
+            check("pipeline A: save 收到的 origFrame = AX 快照读值", rec.saveArgs?.origFrame == axReadFrame)
+            check("pipeline A: postCheck 用 effectiveWindowID", rec.postCheckWindowID == 77)
+        }
+
+        // B. P2 路径 happy path：预 float 恰一次，origFrame 用 knownOrigFrame（绝不 AX 读）。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "B", knownWindowAX: nil, knownOrigFrame: knownFrame, deps: makeDeps(rec, axFrameToRead: nil))
+            check("pipeline B: P2 路径结局 moved(77)", result.outcome == .moved(effectiveWindowID: 77))
+            check("pipeline B: 序列 capture→visSpace→float→resolve→query→…→sourceVisible→applyDirect→postCheck→save",
+                  rec.events == ["hasAX", "capture", "visSpace", "float", "resolve", "query", "settable", "mainScreen", "targetFrame", "targetIndex", "handle", "sourceVisible", "applyDirect", "postCheck", "save"])
+            check("pipeline B: readAXFrame 未被调用（a049a86 快照时机铁律）", !rec.events.contains("readAXFrame"))
+            check("pipeline B: float 恰一次（预 float，窗口 42）", rec.floatIDs == [42])
+            check("pipeline B: save 收到 knownOrigFrame", rec.saveArgs?.origFrame == knownFrame)
+            check("pipeline B: floatMs = P2 预 float 段耗时", result.timings.floatMs == result.timings.p2SpaceMoveMs)
+        }
+
+        // C. AX 路径已在主屏：skip 短路（不 settable/不 apply/不 post-check/不 save）。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "C", knownWindowAX: sysWideAX, knownOrigFrame: nil,
+                                                deps: makeDeps(rec, axFrameToRead: onMainCenterFrame, queryDisplay: 1))
+            check("pipeline C: 已在主屏 → alreadyOnMain", result.outcome == .alreadyOnMain)
+            check("pipeline C: 序列止于 skip 检查（短路 settable/apply/save）",
+                  rec.events == ["hasAX", "capture", "readAXFrame", "query", "mainScreen"])
+        }
+
+        // D. AX 拒绝：notify 恰一次，其余一切短路。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "D", knownWindowAX: nil, knownOrigFrame: nil, deps: makeDeps(rec, hasAX: false, axFrameToRead: nil))
+            check("pipeline D: ax_denied", result.outcome == .failed(stage: "ax_denied"))
+            check("pipeline D: 无任何通道调用 + notify 恰一次", rec.events == ["hasAX"] && rec.notifyCount == 1)
+        }
+
+        // E. P2 主屏 visible space 解析失败：float 之前短路。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "E", knownWindowAX: nil, knownOrigFrame: nil, deps: makeDeps(rec, visSpace: nil, axFrameToRead: nil))
+            check("pipeline E: visible_space 失败", result.outcome == .failed(stage: "visible_space"))
+            check("pipeline E: float 未被发起", !rec.events.contains("float"))
+        }
+
+        // F. P2 resolve 失败：float 已发生（真实序），apply/post-check/save 短路。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "F", knownWindowAX: nil, knownOrigFrame: nil, deps: makeDeps(rec, resolveOK: false, axFrameToRead: nil))
+            check("pipeline F: resolve_window 失败", result.outcome == .failed(stage: "resolve_window"))
+            check("pipeline F: 序列止于 resolve（float 已发生，无 apply/save）",
+                  rec.events == ["hasAX", "capture", "visSpace", "float", "resolve"])
+        }
+
+        // G. origFrame 不可读：快照 guard 短路（query 都不发起）。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "G", knownWindowAX: sysWideAX, knownOrigFrame: nil, deps: makeDeps(rec, axFrameToRead: nil))
+            check("pipeline G: orig_frame 失败", result.outcome == .failed(stage: "orig_frame"))
+            check("pipeline G: 序列止于 AX 快照读", rec.events == ["hasAX", "capture", "readAXFrame"])
+        }
+
+        // H. settable false：不解析主屏不 apply。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "H", knownWindowAX: sysWideAX, knownOrigFrame: nil, deps: makeDeps(rec, axFrameToRead: axReadFrame, settableOK: false))
+            check("pipeline H: settable 失败", result.outcome == .failed(stage: "settable"))
+            check("pipeline H: 序列止于 settable", rec.events == ["hasAX", "capture", "readAXFrame", "query", "settable"])
+        }
+
+        // I. P2 frame 直写不收敛：post-check/save 短路。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "I", knownWindowAX: nil, knownOrigFrame: knownFrame, deps: makeDeps(rec, axFrameToRead: nil, applyDirectOK: false))
+            check("pipeline I: apply_p2 失败", result.outcome == .failed(stage: "apply_p2"))
+            check("pipeline I: 无 postCheck/save", !rec.events.contains("postCheck") && !rec.events.contains("save"))
+        }
+
+        // J. AX apply 失败：post-check/save 短路；float 恰一次。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "J", knownWindowAX: sysWideAX, knownOrigFrame: nil, deps: makeDeps(rec, axFrameToRead: axReadFrame, applyAXOK: false))
+            check("pipeline J: apply_ax 失败", result.outcome == .failed(stage: "apply_ax"))
+            check("pipeline J: float 恰一次且无 postCheck/save",
+                  rec.floatIDs == [77] && !rec.events.contains("postCheck") && !rec.events.contains("save"))
+        }
+
+        // K. skip 纯决策（真实实现直锁；镜像另立 MoveToMainSkipDecisionTests）。
+        check("pipeline K: display≠1 不 skip", !MoveToMainPipeline.isAlreadyMaximizedOnMain(displayYabaiIndex: 2, mainScreenFrame: mainScreenFrame, frame: onMainCenterFrame))
+        check("pipeline K: display nil 不 skip", !MoveToMainPipeline.isAlreadyMaximizedOnMain(displayYabaiIndex: nil, mainScreenFrame: mainScreenFrame, frame: onMainCenterFrame))
+        check("pipeline K: 主屏 frame nil 不 skip", !MoveToMainPipeline.isAlreadyMaximizedOnMain(displayYabaiIndex: 1, mainScreenFrame: nil, frame: onMainCenterFrame))
+        check("pipeline K: 中心在主屏内 → skip", MoveToMainPipeline.isAlreadyMaximizedOnMain(displayYabaiIndex: 1, mainScreenFrame: mainScreenFrame, frame: onMainCenterFrame))
+        check("pipeline K: 中心在主屏外不 skip", !MoveToMainPipeline.isAlreadyMaximizedOnMain(displayYabaiIndex: 1, mainScreenFrame: mainScreenFrame, frame: CGRect(x: -800, y: -700, width: 400, height: 300)))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

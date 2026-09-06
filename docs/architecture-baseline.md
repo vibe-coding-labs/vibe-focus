@@ -54,13 +54,34 @@
    applyMove/applyResize 执行器与 read 闭包，决策全部走 FrameConvergence），
    编排层降到 <300 行；
 2. `WindowManager` extension 族 22 文件共享隐式时序契约（float→写→收敛→
-   post-check→save）——契约目前只存在于注释；阶段化目标的第一刀已完成：
-   float 段收敛为 `FloatSettle` 唯一序列原语（Batch 6，见下），post-check/save
-   段已函数化（+MoveWindow+PostMove.swift），剩余是跨函数调用的顺序约定；
+   post-check→save）——阶段化完成三刀：float 段 = `FloatSettle` 唯一序列原语
+   （Batch 6）；两段写入 = `FrameWriteExecutor`（Batch 3）；move_to_main 主编排 =
+   `MoveToMainPipeline` 阶段管线（Batch 7，见下）——顺序契约已从注释升级为
+   Runner 假 IO 调用序列断言；
 3. 判定/工具函数的 @MainActor 隔离与纯函数化不一致（CoordinateKit MainActor、
    FrameConvergence 非隔离）——统一约定：纯数学函数一律非隔离（Batch 4 完成）；
 4. 移动管线对 `cgWindowBounds`（全局函数）的直接依赖 7 处/文件——Batch 3 已
    收敛到执行器注入，残余在 FloatSettle 接线闭包（单点）。
+
+## Batch 7 度量（refactor/move-to-main-pipeline）
+
+- 新增 `Support/MoveToMainPipeline.swift`（279 行）：move_to_main 六段混排
+  （capture→解析→origFrame 快照→skip 检查→settable→apply→post-check→save）
+  从 `moveWindowToMainScreen` 抽为全依赖注入的阶段管线——阶段顺序、提前返回、
+  双路径（P2 yabai 预 float / AX apply 前 float）各只 float 一次的契约由
+  Runner 假 IO 调用序列断言锁定（场景 A~J + skip 纯决策 K，30 检）；
+- 历史事故的时序契约变成可断言不变量：a049a86（origFrame 必须先于 apply 快照，
+  P2 路径 `readAXFrame` 禁止被调用）、2026-09-01 尺寸错乱（float 先于 apply）、
+  sourceSpace 必须先于一切写捕获（capture 排首）——各由专门断言锁定；
+- `WindowManager+MoveWindow.swift`：470 → 306 行，`moveWindowToMainScreen`
+  剩「started 日志 → 通道接线 → 结局分发 + 汇总日志」三段；全部日志文本逐字
+  保留（stage 锚点与失败日志一一对应）；
+- 诊断字段小修：finished 日志 `floatMs` 在 AX 路径从写死 300（Batch 6 等稳定化
+  后已失真）改为 FloatSettle 实测耗时；P2 路径语义不变（=p2SpaceMoveMs）；
+- skip 纯决策 `isAlreadyMaximizedOnMain` 镜像锁定（8 检，含短路求值保真：
+  mainScreen 只在 display==1 时才查询，与拆分前惰性一致）；
+- 顺带修复：`ToggleEngine+Restore.swift` Batch 6 潜伏的未使用结果警告（全新
+  缓存整编译才暴露），零警告门禁恢复严格。
 
 ## Batch 6 度量（refactor/float-settle）
 

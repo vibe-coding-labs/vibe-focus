@@ -299,7 +299,7 @@ extension ToggleEngine {
         var moveMs = 0
         if let info = windowInfo {
             let floatStart = Date()
-            FloatSettle.floatAndSettle(
+            _ = FloatSettle.floatAndSettle(
                 windowID: windowID,
                 operationID: trace,
                 knownWindowInfo: info,
