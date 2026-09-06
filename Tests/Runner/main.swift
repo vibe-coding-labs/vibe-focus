@@ -3967,6 +3967,36 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               == .switchNeeded(visibleSpace: 2))
     }
 
+    // MARK: restore 结局播报映射（真实实现——B14：outcome→plan 总映射 + 文案/通道语义）
+
+    do {
+        // restored(spaceExact) 三态映射
+        check("announce: spaceExact=nil → restoredExact",
+              ToggleEngine.RestoreOutcome.restored(spaceExact: nil).restoreAnnouncementPlan == .restoredExact)
+        check("announce: spaceExact=true → restoredExact",
+              ToggleEngine.RestoreOutcome.restored(spaceExact: true).restoreAnnouncementPlan == .restoredExact)
+        check("announce: spaceExact=false → restoredDegraded",
+              ToggleEngine.RestoreOutcome.restored(spaceExact: false).restoreAnnouncementPlan == .restoredDegraded)
+        check("announce: retryable → failedRetryable",
+              ToggleEngine.RestoreOutcome.moveFailedRetryable.restoreAnnouncementPlan == .failedRetryable)
+        check("announce: permanent → failedPermanent",
+              ToggleEngine.RestoreOutcome.moveFailedPermanent.restoreAnnouncementPlan == .failedPermanent)
+        check("announce: aborted → silent",
+              ToggleEngine.RestoreOutcome.aborted(reason: "no_window").restoreAnnouncementPlan == .silent)
+
+        // 文案 nil 语义（silent 不播报）+ 成败通道
+        check("announce: silent 文案为 nil", RestoreAnnouncementPlan.silent.text == nil)
+        check("announce: degraded 文案指向工作区不可达",
+              RestoreAnnouncementPlan.restoredDegraded.text?.contains("不可达") == true)
+        check("announce: 成功/降级/静默走完成通道",
+              RestoreAnnouncementPlan.restoredExact.isSuccessful
+              && RestoreAnnouncementPlan.restoredDegraded.isSuccessful
+              && RestoreAnnouncementPlan.silent.isSuccessful)
+        check("announce: 两类失败走失败音效（Basso）",
+              !RestoreAnnouncementPlan.failedRetryable.isSuccessful
+              && !RestoreAnnouncementPlan.failedPermanent.isSuccessful)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
