@@ -56,6 +56,7 @@
 | 莫名退出/秒死 | `--diagnose` → 最近一次死亡 | fatal-signal → 取 BACKTRACE 归因（SIGTRAP 主线程重入已修 be47013）；无遗言 → 疑似外部击杀段 + .ips |
 | ⌃Q 没反应/授权断 | `--diagnose` 生命周期段 | ax 时间线回退点 vs install 行（见上）；恢复：系统设置辅助功能重新勾选（重装断授权是 macOS CDHash 行为，无法应用侧绕过） |
 | 窗口尺寸/位置错 | 跑 `VIBEFOCUS_SIZE_E2E=1`（见 Tests/e2e/README） | 全绿则查是否同机并行 E2E 互扰（锁在 /tmp/vibefocus-e2e.lock） |
+| 改名不生效/改错窗 | 跑 `VIBEFOCUS_TITLE_E2E=1` + 日志 `targetTTY` 字段 | 写错对象已修（tty 定向，2026-09-07）；「写入成功但回车后被改回」= shell 的 precmd OSC 重设标题（macOS 默认 zsh 行为，应用层不可控；claude 会话窗不画提示符所以能常驻） |
 | 按了切换卡顿 | 应用日志 `focusedBranchMs` / `focusedWindowSource` | ax 分支 ~1.5s / yabai 分支 ~648ms 是已知代价（副屏 WindowServer 阻塞），命中 cgwindowlist 应 ~5ms |
 | 退出后不自动拉起 | `/tmp/vibefocus-keepalive.log` | 决策行区分「崩溃延迟 60s 拉起」与「用户 Quit 不复活」（设计行为） |
 | 部署卡住/互踩 | `ls /tmp/vibefocus-deploy.lock` | 部署锁；>10min 陈锁自动回收，确认无部署在跑可手动 rm -rf |
