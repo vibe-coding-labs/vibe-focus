@@ -4262,6 +4262,50 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               YabaiErrorClassifier.classify(stderr: "mission-control blocked; scripting-addition missing") == .scriptingAdditionMissing)
     }
 
+    // MARK: 终端使用量表（真实实现——B23：record 幂等累加/lastAt 单调/半衰排序穷尽锁定）
+
+    do {
+        var table = TerminalUsageTable()
+        let d0 = Date(timeIntervalSince1970: 1_000_000)
+        // record：新条目 / 累加 / lastAt 只前进不后退（实测踩坑的乱序保护）
+        table.record(bundleID: "a", at: d0)
+        check("usage: 新条目 count=1", table.entries["a"]?.count == 1)
+        table.record(bundleID: "a", at: d0.addingTimeInterval(100))
+        table.record(bundleID: "a", at: d0.addingTimeInterval(50))
+        check("usage: 累加且 lastAt 单调（旧日期不回拖）",
+              table.entries["a"]?.count == 3
+              && table.entries["a"]?.lastAt == d0.addingTimeInterval(100))
+
+        // ranked：minCount 过滤（噪声=低频条目被滤掉；用新表隔离计数）
+        var filtered = TerminalUsageTable()
+        filtered.record(bundleID: "hot", at: d0)
+        filtered.record(bundleID: "hot", at: d0)
+        filtered.record(bundleID: "hot", at: d0)
+        filtered.record(bundleID: "noise", at: d0)
+        check("usage: minCount 过滤噪声（hot=3 留，noise=1 滤）",
+              table.ranked(minCount: 3, now: d0).contains { $0.bundleID == "a" }
+              && filtered.ranked(minCount: 3, now: d0).map { $0.bundleID } == ["hot"])
+
+        // ranked：半衰衰减——14 天半衰下，60 天前的旧条目权重 ≈ 0.1×，被新条目反超
+        var mixed = TerminalUsageTable()
+        let now = d0.addingTimeInterval(60 * 24 * 3600)
+        mixed.record(bundleID: "old-heavy", at: d0)
+        mixed.entries["old-heavy"]?.count = 2
+        mixed.entries["old-heavy"]?.lastAt = d0
+        mixed.record(bundleID: "new-light", at: now)
+        mixed.entries["new-light"]?.count = 1
+        let ranked = mixed.ranked(now: now)
+        check("usage: 半衰衰减——近期轻用反超陈年重用", ranked.first?.bundleID == "new-light")
+        check("usage: ranked 的 count 仍为原始累计（展示用）",
+              ranked.first { $0.bundleID == "old-heavy" }?.count == 2)
+
+        // 编解码回环
+        let data = mixed.encoded()
+        check("usage: encode→decode 回环一致", data != nil && TerminalUsageTable.decode(data!) == mixed)
+        check("usage: 坏数据 → nil（loadTable 回退空表）",
+              TerminalUsageTable.decode(Data("junk".utf8)) == nil)
+    }
+
     // MARK: Codex 安装状态展示映射（真实实现——B21：三处三元收敛为单一事实源）
 
     do {
