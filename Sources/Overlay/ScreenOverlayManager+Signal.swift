@@ -79,7 +79,8 @@ extension ScreenOverlayManager {
             return
         }
         let now = Date()
-        if now.timeIntervalSince(lastForceRefreshTriggerAt) < minForceRefreshTriggerInterval {
+        // Batch 12：去重判定提纯为 OverlayRefreshPolicy.isDuplicateForceTrigger（语义不变）。
+        if OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: lastForceRefreshTriggerAt, now: now, minInterval: minForceRefreshTriggerInterval) {
             log("[FORCE_REFRESH] Skip duplicated trigger reason=\(reason)")
             return
         }
