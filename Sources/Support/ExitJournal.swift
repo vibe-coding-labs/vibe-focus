@@ -161,3 +161,14 @@ enum ExitJournal {
         recordExit(reason: "clean")
     }
 }
+
+/// AppEntry（--crash-test-signal）跨模块入口：安装信号处理器 + 写启动审计。
+public enum VibeFocusCrashPipeline {
+    public static func installHandlers() {
+        installCrashSignalHandlers()
+    }
+
+    public static func recordTestLaunch(bundleID: String, version: String, exePath: String) {
+        ExitJournal.recordLaunch(bundleID: bundleID, version: version, exePath: exePath)
+    }
+}

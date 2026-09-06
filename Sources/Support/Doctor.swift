@@ -113,6 +113,20 @@ enum Doctor {
             }
         }
 
+        // 最近一次死亡（排查时最想知道的第一件事）
+        if let lastExit = events.last(where: { $0.kind == "exit" }) {
+            var line = "pid=\(lastExit.pid) reason=\(lastExit.reason ?? "?")"
+            if let sig = lastExit.signalName { line += " signal=\(sig)" }
+            if let age = ageSeconds(fromISO: lastExit.at, now: now) {
+                line += String(format: "（%.0f 分钟前）", age / 60)
+            }
+            out.append("")
+            out.append("[最近一次死亡] \(line)")
+        } else {
+            out.append("")
+            out.append("[最近一次死亡] 无退出记录")
+        }
+
         // 疑似外部击杀（排除还活着的 pid：运行中的实例本来就没有 exit 记录）
         let unmatched = unmatchedLaunches(events: events)
         let alive = unmatched.filter { kill($0.pid, 0) == 0 }
@@ -173,6 +187,14 @@ enum Doctor {
             out.append("  下一步：比对上方 .ips/归档 mtime 与 launch 时刻；再看 keepalive 决策行。")
         }
         return out.joined(separator: "\n")
+    }
+
+    /// ISO8601 审计时间 → 距 now 的秒数；解析失败（如信号审计行的 "-"）返回 nil。
+    private static func ageSeconds(fromISO: String, now: Date) -> TimeInterval? {
+        let df = ISO8601DateFormatter()
+        df.formatOptions = [.withInternetDateTime]
+        guard let date = df.date(from: fromISO) else { return nil }
+        return max(0, now.timeIntervalSince(date))
     }
 
     // MARK: - IO 辅助
