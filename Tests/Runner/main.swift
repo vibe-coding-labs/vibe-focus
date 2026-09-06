@@ -3759,6 +3759,60 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               decide(Args(5, 5, 1, nil, true, nil)) == .deliverCrossDisplay)
     }
 
+    // MARK: SessionWindowRegistry 查找级联（真实实现 + 隔离 DB——B10：绑定查找唯一事实源）
+    // 仅 VIBEFOCUS_REGISTRY_E2E=1 时运行（须配 VIBEFOCUS_DB_PATH 隔离库；E2E 互斥锁自动生效）。
+
+    if ProcessInfo.processInfo.environment["VIBEFOCUS_REGISTRY_E2E"] == "1" {
+        let registry = SessionWindowRegistry.shared
+        // 取一个真实终端 app 的 pid（查找级联按「pid 仍是终端进程」判有效）
+        let terminalPID = NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == "com.googlecode.iterm2" || $0.bundleIdentifier == "com.apple.Terminal" }?
+            .processIdentifier ?? ProcessInfo.processInfo.processIdentifier
+
+        func state(_ wid: UInt32, pid: Int32, session: String?) -> WindowState {
+            var ws = WindowState(
+                windowID: wid, pid: pid, tty: nil,
+                axWindowNumber: nil, appName: "TestTerminal", bundleIdentifier: nil, title: nil,
+                termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                envWindowID: nil, sessionID: session, cwd: nil, model: nil,
+                isCompleted: false, createdAt: Date(), updatedAt: Date()
+            )
+            return ws
+        }
+
+        // 直命中：sessionID 精确匹配
+        registry.windowStates[9001] = state(9001, pid: terminalPID, session: "sess-A")
+        check("registry: 直命中 sessionID", registry.binding(for: "sess-A")?.windowID == 9001)
+
+        // 有效 pid 优先：同 session 两条（一条 pid 已死），返回 pid 有效者
+        registry.windowStates[9002] = state(9002, pid: 999_999_999, session: "sess-B")
+        registry.windowStates[9003] = state(9003, pid: terminalPID, session: "sess-B")
+        check("registry: 同会话多绑定优先 pid 有效者", registry.binding(for: "sess-B")?.windowID == 9003)
+
+        // 别名通道：主表无、别名表有
+        registry.sessionAliasWindowID["alias-sess"] = 9001
+        check("registry: 别名通道命中", registry.binding(for: "alias-sess")?.windowID == 9001)
+
+        // 未注册会话 → nil
+        check("registry: 未注册会话 → nil", registry.binding(for: "nope") == nil)
+
+        // markCompleted 联动（State 扩展唯一入口）
+        registry.markCompleted(sessionID: "sess-A")
+        check("registry: markCompleted 后绑定仍可查",
+              registry.binding(for: "sess-A")?.windowID == 9001)
+
+        // 清理：markCompleted 已持久化，仅删内存不够——查找级联第三层是 DB 兜底
+        // （findWindowStateBySession），隔离库行须一并删除（本轮实测验证了该层真实存在）。
+        registry.windowStates.removeValue(forKey: 9001)
+        registry.windowStates.removeValue(forKey: 9002)
+        registry.windowStates.removeValue(forKey: 9003)
+        registry.sessionAliasWindowID.removeValue(forKey: "alias-sess")
+        for wid in [UInt32(9001), 9002, 9003] {
+            WindowStateStore.shared.deleteWindowState(windowID: wid)
+        }
+        check("registry: 内存+DB 双清后 → nil", registry.binding(for: "sess-A") == nil)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

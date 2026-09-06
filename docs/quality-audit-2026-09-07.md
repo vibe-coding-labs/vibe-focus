@@ -48,4 +48,5 @@
 | B7 | Hook 窗移决策树 Runner 直测 20 断言（守护顺序逐条+边界：超龄阈值/pidMatches nil 容错；httpResponse 映射表 8+1）——路由唯一事实源消镜像漂移 | ✅ 2026-09-07 |
 | B8 | Space 投递七分支决策表 Runner 直测 9 断言（含 nil 查询失败容错两分支）——+SpaceDelivery 文件从 0% 抬升 | ✅ 2026-09-07 |
 | B9 | SettingsView+SoundSection 318→3 文件（85/119/110）+ SoundSectionText/规则兜底音效提纯 6 断言 | ✅ 2026-09-07 |
+| B10 | SessionWindowRegistry 查找级联隔离库直测 6 断言（直命中/pid 有效者优先/别名通道/DB 兜底层实证/markCompleted 联动）——新 env 门控 VIBEFOCUS_REGISTRY_E2E=1（须配隔离 DB）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
