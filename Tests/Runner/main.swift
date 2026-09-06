@@ -4153,6 +4153,80 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         try? FileManager.default.removeItem(atPath: dir)
     }
 
+    // MARK: 进程树行走 + 终端注册表（真实实现——B16：walkToTerminalPID 谓词注入直测）
+
+    do {
+        // 场景 1：起始 pid 即终端
+        let immediate = TerminalRegistry.walkToTerminalPID(
+            startPID: 500, parentPID: { _ in nil }, isTerminal: { $0 == 500 })
+        check("walk: 起始即终端 (pid=500, depth=1)",
+              immediate.pid == 500 && immediate.depth == 1)
+        // 场景 2：沿父链上溯两级命中
+        let chain: [Int32: Int32] = [900: 800, 800: 700]  // pid → parent
+        let walked = TerminalRegistry.walkToTerminalPID(
+            startPID: 900,
+            parentPID: { chain[$0] },
+            isTerminal: { $0 == 700 })
+        check("walk: 父链上溯两级命中 (depth=3)",
+              walked.pid == 700 && walked.depth == 3)
+        // 场景 3：深度上限保护
+        let infinite: (Int32) -> Int32? = { $0 - 1 }
+        let capped = TerminalRegistry.walkToTerminalPID(
+            startPID: 100, parentPID: infinite, isTerminal: { _ in false }, maxDepth: 4)
+        check("walk: 深度上限 4 步止步", capped.pid == nil && capped.depth == 4)
+        // 场景 4：ppid<=1（launchd）断链
+        let launchd = TerminalRegistry.walkToTerminalPID(
+            startPID: 50, parentPID: { _ in 1 }, isTerminal: { _ in false })
+        check("walk: ppid=1 断链不进 init 进程", launchd.pid == nil)
+        // 场景 5：自环防护（父=自身）
+        let selfLoop = TerminalRegistry.walkToTerminalPID(
+            startPID: 60, parentPID: { _ in 60 }, isTerminal: { _ in false })
+        check("walk: 自环防护", selfLoop.pid == nil)
+        // 场景 6：maxDepth<1 防御为至少 1 步
+        let minDepth = TerminalRegistry.walkToTerminalPID(
+            startPID: 70, parentPID: { _ in nil }, isTerminal: { _ in false }, maxDepth: 0)
+        check("walk: maxDepth<1 防御为 1 步", minDepth.depth == 1 && minDepth.pid == nil)
+
+        // 终端注册表静态集合
+        check("registry: Terminal/iTerm2 bundleID 认可",
+              TerminalRegistry.isTerminalBundleID("com.apple.Terminal")
+              && TerminalRegistry.isTerminalBundleID("com.googlecode.iterm2"))
+        check("registry: 陌生 bundleID 不认可", !TerminalRegistry.isTerminalBundleID("com.example.unknown"))
+        check("registry: IDE 识别 VS Code",
+              TerminalRegistry.isTerminalOrIDEApp(appName: "Code", bundleIdentifier: "com.microsoft.VSCode"))
+    }
+
+    // MARK: Hook 脚本生成器（真实实现——B17：hooks JSON 合法性/事件注册/远程安装脚本不变量）
+
+    do {
+        // hooks JSON：可解析 + SessionStart/Stop 恒注册 + 条目结构
+        let hooksJSON = ClaudeHookPreferences.generateHooksJSON()
+        let obj = (try? JSONSerialization.jsonObject(with: Data(hooksJSON.utf8))) as? [String: Any]
+        check("hooksJSON: 合法 JSON 且含 hooks 键", obj?["hooks"] != nil)
+        let hooks = obj?["hooks"] as? [String: Any]
+        check("hooksJSON: SessionStart 恒注册", hooks?["SessionStart"] != nil)
+        check("hooksJSON: Stop 恒注册（remoteOnly 分流在服务端）", hooks?["Stop"] != nil)
+        let entry = (hooks?["SessionStart"] as? [[String: Any]])?.first
+        let hookList = entry?["hooks"] as? [[String: Any]]
+        check("hooksJSON: 条目含 command+timeout=10",
+              hookList?.first?["type"] as? String == "command"
+              && (hookList?.first?["timeout"] as? Int) == 10
+              && (hookList?.first?["command"] as? String)?.contains("bash") == true)
+
+        // 远程安装脚本不变量：host 插值 + machine_label 点号转连字符 + 严格模式
+        let remote = ClaudeHookPreferences.generateRemoteInstallScript(host: "192.168.1.83")
+        check("remoteScript: shebang + 严格模式", remote.contains("#!/bin/bash") && remote.contains("set -euo pipefail"))
+        check("remoteScript: host 插值", remote.contains("192.168.1.83"))
+        check("remoteScript: machine_label 点号转连字符", remote.contains("remote-192-168-1-83"))
+
+        // helper 脚本不变量：端口默认值 + 上下文采集环境变量
+        let helper = ClaudeHookPreferences.generateHelperScriptContent()
+        check("helperScript: 默认端口 39277", helper.contains("39277"))
+        check("helperScript: 采集 terminal_ctx 环境变量",
+              helper.contains("TERM_SESSION_ID") && helper.contains("CLAUDE_PROJECT_DIR")
+              && helper.contains("terminal_ctx"))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
