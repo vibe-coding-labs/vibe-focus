@@ -190,13 +190,17 @@ cat > "$PLIST_PATH" <<PLIST
 PLIST
 
 # Code sign the .app bundle
+# 签名策略「证书或拒绝」（2026-09-07）：ad-hoc 二进制一旦请求 AX 会以自身 cdhash 抢建/钉死
+# TCC 行 csreq，之后正式证书构建全部 accessibility denied 且系统设置勾选显示正常——
+# 「已授权却不工作」的根因（详见 docs/bug-patterns/tcc-permission-breakage.md）。
 echo "签名 .app bundle..."
 if security find-identity -v -p codesigning 2>/dev/null | grep -F "$CERT_NAME" >/dev/null 2>&1; then
   codesign --force --deep --sign "$CERT_NAME" "$INSTALL_PATH" >/dev/null 2>&1
   echo "  使用证书: $CERT_NAME"
 else
-  codesign --force --deep --sign - "$INSTALL_PATH" >/dev/null 2>&1
-  echo "  使用 ad-hoc 签名"
+  echo "ERROR: 找不到签名证书 '$CERT_NAME'，拒绝以 ad-hoc 签名装机（会毒化辅助功能授权）。" >&2
+  echo "创建证书：bash scripts/setup_local_codesign.sh" >&2
+  exit 1
 fi
 
 # Remove quarantine attribute
