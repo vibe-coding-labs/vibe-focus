@@ -3386,6 +3386,52 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               SpaceController.saProbeVerdict(exitCode: 2, stderr: "yabai: unknown command"))
     }
 
+    // MARK: 语音播报插值与队列策略（真实实现——B5：消镜像漂移，直测 Sources）
+
+    do {
+        func payload(cwd: String?, projectDir: String?, model: String?, sessionID: String) -> ClaudeHookPayload {
+            ClaudeHookPayload(
+                event: .stop, sessionID: sessionID, source: "test", timestamp: nil,
+                cwd: cwd,
+                model: model,
+                terminalCtx: TerminalContext(
+                    termSessionID: nil, itermSessionID: nil, kittyWindowID: nil,
+                    weztermPane: nil, tty: nil, ppid: nil,
+                    claudeProjectDir: projectDir, windowID: nil, machineLabel: nil
+                ),
+                lastAssistantMessage: nil, transcriptPath: nil
+            )
+        }
+        let p = payload(cwd: "/tmp/repo", projectDir: "/Users/u/github/vibe-coding-labs/", model: "GLM", sessionID: "sess-1")
+        check("interpolate: 四变量全替换",
+              VoiceAnnouncementTemplate.interpolate("{project_name}/{model}@{cwd}#{session_id}", payload: p)
+              == "vibe-coding-labs/GLM@/tmp/repo#sess-1")
+        check("interpolate: projectDir 去首尾斜杠取末段", !VoiceAnnouncementTemplate.interpolate("{project_name}", payload: p).contains("/"))
+        let noCtx = payload(cwd: nil, projectDir: nil, model: nil, sessionID: "s2")
+        check("interpolate: 缺 ctx → 未知项目/未知模型/cwd 空串",
+              VoiceAnnouncementTemplate.interpolate("{project_name}|{model}|{cwd}", payload: noCtx) == "未知项目|未知模型|")
+        check("interpolate: sessionID 原样保留（无兜底）",
+              VoiceAnnouncementTemplate.interpolate("{session_id}", payload: noCtx) == "s2")
+        check("interpolate: 无变量模板原样返回",
+              VoiceAnnouncementTemplate.interpolate("对话完成", payload: p) == "对话完成")
+
+        // 队列策略：容量边界与丢最旧顺序
+        func q(_ items: [Int]) -> [QueuedAnnouncement] {
+            items.map { .text("t\($0)") }
+        }
+        func ids(_ items: [QueuedAnnouncement]) -> [String] {
+            items.map { if case .text(let s) = $0 { return s } ; return "?" }
+        }
+        var queue = VoiceAnnouncementQueuePolicy.appendedQueue([], appending: .text("t1"), capacity: 3)
+        queue = VoiceAnnouncementQueuePolicy.appendedQueue(queue, appending: .text("t2"), capacity: 3)
+        queue = VoiceAnnouncementQueuePolicy.appendedQueue(queue, appending: .text("t3"), capacity: 3)
+        check("queue: 未满按序保留", ids(queue) == ["t1", "t2", "t3"])
+        queue = VoiceAnnouncementQueuePolicy.appendedQueue(queue, appending: .text("t4"), capacity: 3)
+        check("queue: 满则丢最旧", ids(queue) == ["t2", "t3", "t4"])
+        let defensive = VoiceAnnouncementQueuePolicy.appendedQueue(q([1]), appending: .text("x"), capacity: 0)
+        check("queue: capacity<1 防御为 1（新条目总在）", ids(defensive) == ["x"])
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

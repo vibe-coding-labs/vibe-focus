@@ -43,4 +43,5 @@
 | B2 | SoundManager 模型块拆出 SoundPreferencesModels（515→393）+ **实锤并修复 volume 必填解码潜伏 bug**（旧 JSON 静默重置用户偏好）+ 真实实现兼容解码 15 断言 | ✅ 2026-09-07 |
 | B3 | SettingsView+TerminalGridSection 拆四文件（536→137/214/87/99）+ summaryText/selectionDetailText/steppedGap 提纯 + 13 断言 | ✅ 2026-09-07 |
 | B4 | SA 恢复状态机真实实现测试补齐（recoveryVerdict 6 + autoRecoveryAllowed 冷静期矩阵 6 + saProbeVerdict 4 = 16 断言，Runner 直测优于镜像）| ✅ 2026-09-07 |
-| B5 | AppDelegate+MenuAndInstance / VoiceAnnouncementManager | 待开工 |
+| B5 | VoiceAnnouncement 模板插值/队列策略转 Runner 直测（消镜像漂移，8 断言）；AppDelegate+MenuAndInstance 审计结论=纯菜单粘合无需拆分 | ✅ 2026-09-07 |
+| 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
