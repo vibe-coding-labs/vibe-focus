@@ -27,10 +27,15 @@ extension TitleEditorService {
     /// - applyTitle 三路写之一；NSAppleScript 执行为同步 fork，可阻塞 100-500ms。
     /// - Terminal：设 tab custom title 并关掉 device name/path/size 等干扰显示项；
     ///   成功后附带一次诊断 readback（排查 title 显示项被重置的历史问题遗留）。
-    /// - iTerm2：设 current session name（session 级名称会覆盖 OSC 序列，
-    ///   编排层据此跳过 TTY 写避免闪烁）。
+    /// - iTerm2：设 session name（session 级名称会覆盖 OSC 序列，编排层据此跳过 TTY 写
+    ///   避免闪烁）。
+    /// - 定向写入（2026-09-07 v2）：targetTTY（弹框前捕获的会话 tty）为两终端统一的
+    ///   寻址键——tab/session 的 tty 是唯一稳定身份。**禁止用 AppleScript window id 或
+    ///   current window 定位**：window id 与 CGWindowNumber 不同源（真机实测 5576 vs
+    ///   5584），current window 在弹框后会被焦点切换污染（用户实测「设置名字」落空）。
+    ///   targetTTY 为 nil 时回退 front window 旧语义（capture 失败的保守路径，日志可见）。
     /// - Automation 权限被拒（error -1743）时弹系统设置引导（showAutomationPermissionAlert）。
-    func applyViaAppleScript(_ title: String, bundleID: String) -> Bool {
+    func applyViaAppleScript(_ title: String, bundleID: String, targetTTY: String? = nil) -> Bool {
         // P-INST-48: AppleScript title 写入耗时（NSAppleScript fork，可阻塞 100-500ms；Terminal 还有 diagnostic readback 二次 fork；applyTitle P-INST-40 总耗时无法区分哪一路，此埋点归因 AppleScript 路）。
         let appleScriptStart = Date()
         var scriptOutcome = "default_skip"
@@ -45,21 +50,62 @@ extension TitleEditorService {
         switch bundleID {
         case "com.apple.Terminal":
             let escaped = Self.escapingAppleScriptString(title)
-            script = """
-                tell application "Terminal"
-                    set custom title of selected tab of front window to "\(escaped)"
-                    tell current settings of front window
-                        set title displays custom title to true
-                        set title displays device name to false
-                        set title displays shell path to false
-                        set title displays window size to false
-                        set title displays settings name to false
+            if let tty = targetTTY {
+                script = """
+                    tell application "Terminal"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if tty of t = "\(tty)" then
+                                    set custom title of t to "\(escaped)"
+                                    tell current settings of w
+                                        set title displays custom title to true
+                                        set title displays device name to false
+                                        set title displays shell path to false
+                                        set title displays window size to false
+                                        set title displays settings name to false
+                                    end tell
+                                    return "matched"
+                                end if
+                            end repeat
+                        end repeat
+                        return "not_found"
                     end tell
-                end tell
-                """
+                    """
+            } else {
+                script = """
+                    tell application "Terminal"
+                        set custom title of selected tab of front window to "\(escaped)"
+                        tell current settings of front window
+                            set title displays custom title to true
+                            set title displays device name to false
+                            set title displays shell path to false
+                            set title displays window size to false
+                            set title displays settings name to false
+                        end tell
+                    end tell
+                    """
+            }
         case "com.googlecode.iterm2":
             let escaped = Self.escapingAppleScriptString(title)
-            script = "tell application \"iTerm2\" to set name of current session of current window to \"\(escaped)\""
+            if let tty = targetTTY {
+                script = """
+                    tell application "iTerm2"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                repeat with s in sessions of t
+                                    if tty of s = "\(tty)" then
+                                        set name of s to "\(escaped)"
+                                        return "matched"
+                                    end if
+                                end repeat
+                            end repeat
+                        end repeat
+                        return "not_found"
+                    end tell
+                    """
+            } else {
+                script = "tell application \"iTerm2\" to set name of current session of current window to \"\(escaped)\""
+            }
         default:
             scriptOutcome = "unsupported_bundle"
             return false
@@ -72,7 +118,23 @@ extension TitleEditorService {
 
         let appleScript = NSAppleScript(source: script)
         var error: NSDictionary?
-        appleScript?.executeAndReturnError(&error)
+        let result = appleScript?.executeAndReturnError(&error)
+
+        // 定向路径：脚本返回 "matched"/"not_found" 区分命中——repeat 走完没命中在
+        // AppleScript 层不算错误，必须显式识别为失败，否则会重演
+        // 「success 但没落进窗口」（2026-09-07 用户实测「设置名字」落空）。
+        if targetTTY != nil {
+            let verdict = result?.stringValue
+            if verdict != "matched" {
+                scriptOutcome = "tty_session_not_found"
+                log(
+                    "[TitleEditorService] applyViaAppleScript: targeted session not found by tty",
+                    level: .warn,
+                    fields: ["bundleID": bundleID, "verdict": verdict ?? "nil"]
+                )
+                return false
+            }
+        }
 
         if let error {
             let errorMsg = error[NSAppleScript.errorMessage] as? String ?? "unknown"
@@ -92,18 +154,31 @@ extension TitleEditorService {
         scriptOutcome = "success"
         log("[TitleEditorService] applyViaAppleScript: success")
 
-        // Diagnostic: read back Terminal.app title state after setting
+        // Diagnostic: read back Terminal.app title state after setting（best-effort，跟随 tty 定向目标）
         if bundleID == "com.apple.Terminal" {
-            let diagScript = """
-                tell application "Terminal"
-                    set ct to custom title of selected tab of front window
-                    set s to current settings of front window
-                    set ws to title displays window size of s
-                    set dvc to title displays device name of s
-                    set c to title displays custom title of s
-                    return ct & "|" & ws & "|" & dvc & "|" & c
-                end tell
-                """
+            let diagScript: String
+            if let tty = targetTTY {
+                diagScript = """
+                    tell application "Terminal"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if tty of t = "\(tty)" then
+                                    set s to current settings of w
+                                    return (custom title of t) & "|" & (title displays custom title of s)
+                                end if
+                            end repeat
+                        end repeat
+                        return "target_gone"
+                    end tell
+                    """
+            } else {
+                diagScript = """
+                    tell application "Terminal"
+                        set s to current settings of front window
+                        return (custom title of selected tab of front window) & "|" & (title displays custom title of s)
+                    end tell
+                    """
+            }
             let diagAS = NSAppleScript(source: diagScript)
             var diagErr: NSDictionary?
             if let result = diagAS?.executeAndReturnError(&diagErr), let desc = result.stringValue {
@@ -112,15 +187,66 @@ extension TitleEditorService {
                     "[TitleEditorService] applyViaAppleScript: diagnostic readback",
                     fields: [
                         "customTitle": parts.count > 0 ? parts[0] : "?",
-                        "windowSizeEnabled": parts.count > 1 ? parts[1] : "?",
-                        "deviceNameEnabled": parts.count > 2 ? parts[2] : "?",
-                        "customTitleEnabled": parts.count > 3 ? parts[3] : "?"
+                        "customTitleEnabled": parts.count > 1 ? parts[1] : "?"
                     ]
                 )
             }
         }
 
         return true
+    }
+
+    /// 弹框前捕获 iTerm2 焦点会话的 tty（定向写入的寻址键）。
+    ///
+    /// ## 场景
+    /// - 仅 editTitle 弹框前调用——此刻终端仍在前台持焦，`current window` 语义与用户
+    ///   所见一致；弹框后再取即被 VibeFocus 污染。
+    /// - 失败返回 nil（调用方回退 front window 旧语义，日志可见）。
+    static func captureCurrentSessionTTY() -> String? {
+        let script = "tell application \"iTerm2\" to get tty of current session of current window"
+        let appleScript = NSAppleScript(source: script)
+        var error: NSDictionary?
+        let result = appleScript?.executeAndReturnError(&error)
+        if let error {
+            log(
+                "[TitleEditorService] captureCurrentSessionTTY: FAILED",
+                level: .warn,
+                fields: ["errorNum": String(error[NSAppleScript.errorNumber] as? Int ?? -1)]
+            )
+            return nil
+        }
+        guard let tty = result?.stringValue, !tty.isEmpty else { return nil }
+        log("[TitleEditorService] captureCurrentSessionTTY", fields: ["tty": tty])
+        return tty
+    }
+
+    /// 弹框前捕获 Terminal 前窗选中 tab 的 tty（定向写入的寻址键）。
+    ///
+    /// ## 场景
+    /// - 仅 editTitle 弹框前调用——此刻终端仍在前台持焦，`front window` 语义与用户
+    ///   所见一致；弹框后再取即被 VibeFocus 污染。
+    /// - **不要改回 AppleScript window id 定位**：它与 CGWindowNumber 不同源
+    ///   （真机实测 AppleScript 5576 vs CG 5584），且只在窗口关闭前后漂移，无交叉校验价值。
+    /// - 失败返回 nil（调用方回退 front window 旧语义，日志可见）。
+    static func captureTerminalFrontTabTTY() -> String? {
+        let script = "tell application \"Terminal\" to get tty of selected tab of front window"
+        let appleScript = NSAppleScript(source: script)
+        var error: NSDictionary?
+        let result = appleScript?.executeAndReturnError(&error)
+        if let error {
+            log(
+                "[TitleEditorService] captureTerminalFrontTabTTY: FAILED",
+                level: .warn,
+                fields: ["errorNum": String(error[NSAppleScript.errorNumber] as? Int ?? -1)]
+            )
+            return nil
+        }
+        guard let tty = result?.stringValue, !tty.isEmpty else {
+            log("[TitleEditorService] captureTerminalFrontTabTTY: empty tty", level: .warn)
+            return nil
+        }
+        log("[TitleEditorService] captureTerminalFrontTabTTY", fields: ["tty": tty])
+        return tty
     }
 
     /// 经 AX kAXTitleAttribute 写标题（所有支持 AX title 的终端通用）。

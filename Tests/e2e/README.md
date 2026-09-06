@@ -12,6 +12,7 @@
 | `VIBEFOCUS_GRID_SPACE_E2E=1` | 网格 Space 定向投递（跨屏往返送达目标 space） | 双屏 + 多 space、iTerm2、yabai |
 | `VIBEFOCUS_GRID_TARGET_E2E=1` | 网格目标屏编排 | 双屏、iTerm2/Terminal |
 | `VIBEFOCUS_GRID_E2E=1` | Terminal 网格全流程（真实建窗 + claude 会话） | 主屏有带存活 claude 会话的终端窗口 |
+| `VIBEFOCUS_TITLE_E2E=1` | 终端标题定向改名（Ctrl+T 链路）：tty 寻址命中自建会话、写入生效、双端自关清理 | iTerm2、Terminal、yabai |
 
 ## 标准跑法
 

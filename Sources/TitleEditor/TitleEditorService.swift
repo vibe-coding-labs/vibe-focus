@@ -79,23 +79,51 @@ final class TitleEditorService {
         }
 
         let currentTitle = WindowManager.shared.title(of: window) ?? ""
+        let capturedWindowID = WindowManager.shared.windowHandle(for: window)
+
+        // 弹框前捕获「可寻址目标身份」（2026-09-07 定向修复 v2）。此刻终端仍在前台持焦，
+        // iTerm2 的 current window / Terminal 的 front window 语义与用户所见一致；弹框
+        // （NSApp.activate + 模态）之后前台已被 VibeFocus 劫走，再按 current window 取
+        // 就会盲射——用户实测「设置名字」applyViaAppleScript 报 success 却没落进任何
+        // 窗口（窗口表全量核对无此标题）。两终端统一用会话 tty 寻址（唯一稳定身份，
+        // AppleScript window id 与 CGWindowNumber 不同源、不可用，真机实测 5576 vs 5584）。
+        var targetTTY: String?
+        switch bundleID {
+        case "com.googlecode.iterm2":
+            targetTTY = Self.captureCurrentSessionTTY()
+        case "com.apple.Terminal":
+            targetTTY = Self.captureTerminalFrontTabTTY()
+        default:
+            break
+        }
 
         log(
             "[TitleEditorService] editTitle: showing native alert",
             fields: [
                 "bundleID": bundleID,
                 "currentTitle": truncateForLog(currentTitle, limit: 60),
-                "pid": String(pid)
+                "pid": String(pid),
+                "capturedWindowID": capturedWindowID.map(String.init) ?? "nil",
+                "targetTTY": targetTTY ?? "nil"
             ]
         )
 
         isEditing = true
 
+        // 设置窗开着时，NSApp.activate 会把它顶到前台——用户看到的就是「按快捷键弹出
+        // 设置界面、焦点全乱了」。模态期间临时隐藏，结束后原样恢复（恢复的只是可见性，
+        // 焦点随后由终端 reactivation 抢回）。
+        let settingsWindow = SettingsWindowController.shared.window
+        let settingsWasVisible = settingsWindow?.isVisible ?? false
+        if settingsWasVisible {
+            settingsWindow?.orderOut(nil)
+        }
+
         NSApp.activate(ignoringOtherApps: true)
 
         let alert = NSAlert()
         alert.messageText = "Edit Terminal Title"
-        alert.informativeText = "Enter the new title for the terminal window"
+        alert.informativeText = "Enter the new title for the terminal window.\n\nNote: 若 shell 会自动设标题（如 macOS 默认 zsh 每次画提示符重设 user—host），回车后 shell 会把标题改回去。Claude 会话窗口不受影响。"
         alert.alertStyle = .informational
 
         let inputField = NSTextField(string: currentTitle)
@@ -132,12 +160,24 @@ final class TitleEditorService {
                     userRenamedWindowIDs.insert(windowID)
                     log("[TitleEditorService] marked window as user-renamed", fields: ["windowID": String(windowID)])
                 }
-                applyTitle(newTitle, to: window, pid: pid, bundleID: bundleID)
+                applyTitle(
+                    newTitle,
+                    to: window,
+                    pid: pid,
+                    bundleID: bundleID,
+                    targetTTY: targetTTY
+                )
             }
         }
 
         // Re-activate terminal after applyTitle (AppleScript/AX calls may steal focus)
         _ = frontApp.activate(options: .activateIgnoringOtherApps)
+
+        // 恢复设置窗可见性放在最后：终端 reactivation 已把焦点还回去，设置窗回到
+        // 「可见但不在前台」的原状态。
+        if settingsWasVisible {
+            settingsWindow?.orderFront(nil)
+        }
     }
 
     // MARK: - Auto Title
@@ -196,7 +236,15 @@ final class TitleEditorService {
     ///   写，避免 OSC 先落屏、session name 后到造成的标题闪烁；
     /// - 其他终端 TTY 是主（或唯一）通道，正常执行；
     /// - 三路独立成功/失败，全量结果落一行日志便于归因哪一路失效。
-    private func applyTitle(_ newTitle: String, to window: AXUIElement, pid: pid_t, bundleID: String) {
+    /// - 定向写入（2026-09-07 v2）：targetTTY（弹框前捕获的会话 tty）为两终端统一寻址键；
+    ///   nil 时回退 front window 旧语义（capture 失败的保守路径，日志可见）。
+    private func applyTitle(
+        _ newTitle: String,
+        to window: AXUIElement,
+        pid: pid_t,
+        bundleID: String,
+        targetTTY: String? = nil
+    ) {
         // P-INST-40: applyTitle 耗时（AX write + AppleScript fork + TTY fork 三路写；SessionStart autoSetTitle 隐含阻塞，归因 handleSessionStart 的 title 阶段）。
         let applyTitleStart = Date()
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,7 +254,7 @@ final class TitleEditorService {
         }
 
         let axSuccess = applyViaAX(trimmed, to: window)
-        let scriptSuccess = applyViaAppleScript(trimmed, bundleID: bundleID)
+        let scriptSuccess = applyViaAppleScript(trimmed, bundleID: bundleID, targetTTY: targetTTY)
 
         // For iTerm2, AppleScript sets session-level name which overrides OSC sequences —
         // skip TTY to avoid a brief flash where OSC overwrites before iTerm2 applies the session name.
