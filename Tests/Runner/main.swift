@@ -4496,6 +4496,27 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                                               titleEditorEnabledAndMatched: false, layoutMatch: nil) == .ignore)
     }
 
+    // MARK: CGEventTap 路由（真实实现——tapDisabled 自愈/连发/命中消费，Batch 17）
+
+    do {
+        check("cgRoute: timeout 失能 → 自愈（timeout）",
+              ToggleTriggerGate.cgEventRoute(type: .tapDisabledByTimeout, isAutorepeat: false, primaryMatch: true, layoutMatch: nil) == .reenableTap(.timeout))
+        check("cgRoute: user_input 失能 → 自愈（user_input）",
+              ToggleTriggerGate.cgEventRoute(type: .tapDisabledByUserInput, isAutorepeat: false, primaryMatch: false, layoutMatch: nil) == .reenableTap(.userInput))
+        check("cgRoute: 非 keyDown（flagsChanged）→ 放行",
+              ToggleTriggerGate.cgEventRoute(type: .flagsChanged, isAutorepeat: false, primaryMatch: true, layoutMatch: nil) == .ignore)
+        check("cgRoute: 自动连发 → 放行",
+              ToggleTriggerGate.cgEventRoute(type: .keyDown, isAutorepeat: true, primaryMatch: true, layoutMatch: nil) == .ignore)
+        check("cgRoute: 主热键命中 → 消费（toggle）",
+              ToggleTriggerGate.cgEventRoute(type: .keyDown, isAutorepeat: false, primaryMatch: true, layoutMatch: nil) == .toggle)
+        check("cgRoute: 主键未中摆位命中 → 消费（layout）",
+              ToggleTriggerGate.cgEventRoute(type: .keyDown, isAutorepeat: false, primaryMatch: false, layoutMatch: .leftHalf) == .layout(.leftHalf))
+        check("cgRoute: 全未命中 → 原样放行给系统",
+              ToggleTriggerGate.cgEventRoute(type: .keyDown, isAutorepeat: false, primaryMatch: false, layoutMatch: nil) == .passThrough)
+        check("cgRoute: 开关关闭（layoutMatch=nil）时不消费摆位键",
+              ToggleTriggerGate.cgEventRoute(type: .keyDown, isAutorepeat: false, primaryMatch: false, layoutMatch: nil) == .passThrough)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
