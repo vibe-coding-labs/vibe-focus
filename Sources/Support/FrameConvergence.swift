@@ -44,6 +44,22 @@ enum FrameWriteOrder: Equatable {
     case moveThenResize
 }
 
+/// 两段写入的段标识（move=原点写、resize=尺寸写）。
+enum FrameSegment: Equatable {
+    case move
+    case resize
+}
+
+/// 当前 frame 相对目标 frame 的偏差维集合（FrameConvergence.shortfalls 产出）。
+///
+/// 语义唯一事实源：某维漂移 ≤ tolerance = 未偏差。「current 读不到」按最坏情况
+/// 处理（两维全偏差）——与历史 `?? false` 防御语义一致。
+struct FrameShortfall: OptionSet, Equatable {
+    let rawValue: UInt8
+    static let origin = FrameShortfall(rawValue: 1 << 0)
+    static let size = FrameShortfall(rawValue: 1 << 1)
+}
+
 /// 帧写入收敛循环唯一骨架。
 ///
 /// ## 语义契约（FrameConvergenceLoopTests 锁定）
@@ -132,6 +148,45 @@ enum FrameConvergence {
             return .resizeThenMove
         }
         return .moveThenResize
+    }
+
+    /// 偏差维判定唯一事实源：当前 frame 相对目标的偏差维集合。
+    /// current=nil（CGWindowList 偶发读失败）→ 两维全偏差（最坏情况，与历史上
+    /// 调用点 `?? false` 的防御语义一致）。
+    ///
+    /// 漂移公式与 CoordinateKit.originDrift/sizeDrift 逐字一致（|Δ| 求和；本模块
+    /// 保持非隔离纯函数不直连 @MainActor 的 CoordinateKit）——Runner 以真实
+    /// CoordinateKit 对拍锁定，公式单边漂移会被交叉验证抓出。
+    static func shortfalls(
+        current: CGRect?,
+        target: CGRect,
+        tolerance: CGFloat
+    ) -> FrameShortfall {
+        guard let current else { return [.origin, .size] }
+        var shortfall: FrameShortfall = []
+        if abs(current.origin.x - target.origin.x) + abs(current.origin.y - target.origin.y) > tolerance { shortfall.insert(.origin) }
+        if abs(current.size.width - target.size.width) + abs(current.size.height - target.size.height) > tolerance { shortfall.insert(.size) }
+        return shortfall
+    }
+
+    /// 补发段序列：按偏差维与写序决定「本轮补写哪些段、什么顺序」。
+    /// - 仅 origin 缺 → [.move]；仅 size 缺 → [.resize]；
+    /// - 全缺 → 按写序两段全发（resizeThenMove = resize→move，否则 move→resize）；
+    /// - 无偏差 → []（防御分支，轮询会立即判收敛返回）。
+    ///
+    /// 注意：执行器由调用点注入——单 .resize 走 AX/yabai 择优通道，全缺时两段走
+    /// 纯 yabai（大漂移用最稳通道，历史行为）；本函数只产出计划，不做 IO。
+    static func resendSegments(
+        shortfall: FrameShortfall,
+        order: FrameWriteOrder
+    ) -> [FrameSegment] {
+        switch shortfall {
+        case []: return []
+        case .origin: return [.move]
+        case .size: return [.resize]
+        default:
+            return order == .resizeThenMove ? [.resize, .move] : [.move, .resize]
+        }
     }
 
     static func convergeFrame(

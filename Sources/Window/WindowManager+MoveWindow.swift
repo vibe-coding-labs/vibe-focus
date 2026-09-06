@@ -148,24 +148,24 @@ extension WindowManager {
         case .resizeThenMove:
             applyResizeBestChannel()
             waitForPhase("resize", observed: {
-                guard let current = cgWindowBounds(for: windowID) else { return false }
-                return CoordinateKit.isSizeConverged(actual: current.size, target: frame.size, tolerance: frameTolerance)
+                !FrameConvergence.shortfalls(current: cgWindowBounds(for: windowID), target: frame, tolerance: frameTolerance).contains(.size)
             })
             applyMove()
         case .moveThenResize:
             applyMove()
             waitForPhase("move", observed: {
-                guard let current = cgWindowBounds(for: windowID) else { return false }
-                return CoordinateKit.originDrift(current.origin, frame.origin) <= frameTolerance
+                !FrameConvergence.shortfalls(current: cgWindowBounds(for: windowID), target: frame, tolerance: frameTolerance).contains(.origin)
             })
             applyResizeBestChannel()
         }
         let phase1Elapsed = elapsedMilliseconds(since: phase1Start)
         // 段二 + 全帧收敛验证（轮询版：写→每 25ms 读，一收敛即返回，400ms 预算兜底）。
-        // 重写按偏差补发缺的那段（origin✓size✗→resize / origin✗size✓→move / 全✗按写序），
-        // 使 clamp 在窗口落目标屏后自愈。停滞重发（连续 4 读不变）在轮询内幂等补发，
-        // 写丢失不再干等整轮预算。注：轮询读不逐次记 mismatch 日志（25ms 节拍会刷屏），
-        // 只在整轮耗尽时记一次。
+        // 重写补发计划由 FrameConvergence 唯一事实源产出（shortfalls 判缺哪维 +
+        // resendSegments 按写序定补发顺序），使 clamp 在窗口落目标屏后自愈。
+        // 执行器差异保留历史行为：单 .resize 走 AX/yabai 择优通道；全缺（两段都在
+        // 计划里）走纯 yabai 最稳通道。停滞重发（连续 4 读不变）在轮询内幂等补发，
+        // 写丢失不再干等整轮预算。注：轮询读不逐次记 mismatch 日志（25ms 节拍会
+        // 刷屏），只在整轮耗尽时记一次。
         let phase2Start = Date()
         let outcome = FrameConvergence.convergeFramePolling(
             attempts: 2,
@@ -173,30 +173,23 @@ extension WindowManager {
             budgetMs: WindowSettle.frameVerifyBudgetMs,
             write: {
                 attemptNo += 1
-                let current = cgWindowBounds(for: windowID)
-                let originOK = current.map { CoordinateKit.originDrift($0.origin, frame.origin) <= frameTolerance } ?? false
-                let sizeOK = current.map { CoordinateKit.isSizeConverged(actual: $0.size, target: frame.size, tolerance: frameTolerance) } ?? false
-                switch (originOK, sizeOK) {
-                case (true, false):
-                    applyResizeBestChannel()
-                case (false, true):
-                    applyMove()
-                case (false, false):
-                    if writeOrder == .resizeThenMove {
-                        applyResize()
+                let shortfall = FrameConvergence.shortfalls(current: cgWindowBounds(for: windowID), target: frame, tolerance: frameTolerance)
+                let segments = FrameConvergence.resendSegments(shortfall: shortfall, order: writeOrder)
+                for segment in segments {
+                    switch segment {
+                    case .move:
                         applyMove()
-                    } else {
-                        applyMove()
-                        applyResize()
+                    case .resize:
+                        // 全缺（两段计划）= 大漂移，历史行为走纯 yabai 最稳通道；
+                        // 仅 size 缺才用 AX/yabai 择优（AX 写一轮不收敛自动降级）。
+                        if segments.count == 2 { applyResize() } else { applyResizeBestChannel() }
                     }
-                case (true, true):
-                    break // 已收敛，无需写（防御分支，轮询会立即判收敛返回）
                 }
                 // yabai 写不返回硬失败（exit code 吞掉，最终以读回判据为准）。
                 return true
             },
             read: { cgWindowBounds(for: windowID) },
-            isConverged: { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: frameTolerance) },
+            isConverged: { FrameConvergence.shortfalls(current: $0, target: frame, tolerance: frameTolerance).isEmpty },
             stallResendReads: 4
         )
         let phase2Elapsed = elapsedMilliseconds(since: phase2Start)

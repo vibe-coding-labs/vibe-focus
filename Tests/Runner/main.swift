@@ -2190,6 +2190,58 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("E2E: 检测到 claude --resume <session> 进程", !isTerminalApp || resumeProcessSeen)
     }
 
+    // MARK: FrameConvergence.shortfalls/resendSegments（真实实现——补发计划唯一事实源）
+
+    do {
+        let target = CGRect(x: 75, y: 38, width: 1653, height: 1079)
+        let tol: CGFloat = 20
+        // 与真实 CoordinateKit 交叉验证：shortfalls 空集 ⇔ isFrameConverged。
+        let converged = CGRect(x: 80, y: 40, width: 1650, height: 1075)
+        check("shortfalls: 双维容差内 → 空集（与 isFrameConverged 对拍）",
+              FrameConvergence.shortfalls(current: converged, target: target, tolerance: tol).isEmpty
+              && CoordinateKit.isFrameConverged(actual: converged, target: target, tolerance: tol))
+        let driftedOrigin = CGRect(x: 200, y: 38, width: 1653, height: 1079)
+        check("shortfalls: 仅 origin 超 20 → [.origin]",
+              FrameConvergence.shortfalls(current: driftedOrigin, target: target, tolerance: tol) == [.origin])
+        let driftedSize = CGRect(x: 75, y: 38, width: 1653, height: 900)
+        check("shortfalls: 仅 size 超 20 → [.size]",
+              FrameConvergence.shortfalls(current: driftedSize, target: target, tolerance: tol) == [.size])
+        check("shortfalls: 双维超 → [.origin, .size]",
+              FrameConvergence.shortfalls(current: CGRect(x: 500, y: 500, width: 800, height: 600), target: target, tolerance: tol) == [.origin, .size])
+        check("shortfalls: 恰在容差边界（=20）→ 空集（≤ 判定）",
+              FrameConvergence.shortfalls(current: CGRect(x: 95, y: 38, width: 1653, height: 1079), target: target, tolerance: tol).isEmpty)
+        check("shortfalls: current=nil → 全缺（最坏防御，历史 ?? false 语义）",
+              FrameConvergence.shortfalls(current: nil, target: target, tolerance: tol) == [.origin, .size])
+
+        // resendSegments：四分支 × 两写序。
+        check("resend: 无偏差 → 空计划",
+              FrameConvergence.resendSegments(shortfall: [], order: .resizeThenMove).isEmpty)
+        check("resend: 仅 origin 缺 → [.move]（两写序同）",
+              FrameConvergence.resendSegments(shortfall: [.origin], order: .resizeThenMove) == [.move]
+              && FrameConvergence.resendSegments(shortfall: [.origin], order: .moveThenResize) == [.move])
+        check("resend: 仅 size 缺 → [.resize]（两写序同）",
+              FrameConvergence.resendSegments(shortfall: [.size], order: .moveThenResize) == [.resize]
+              && FrameConvergence.resendSegments(shortfall: [.size], order: .resizeThenMove) == [.resize])
+        check("resend: 全缺 × resizeThenMove → resize→move（源屏先行序）",
+              FrameConvergence.resendSegments(shortfall: [.origin, .size], order: .resizeThenMove) == [.resize, .move])
+        check("resend: 全缺 × moveThenResize → move→resize（历史序）",
+              FrameConvergence.resendSegments(shortfall: [.origin, .size], order: .moveThenResize) == [.move, .resize])
+
+        // 交叉验证（防公式单边漂移）：shortfalls 与真实 CoordinateKit 在漂移样本上一致。
+        let samples: [(CGRect, Bool)] = [
+            (CGRect(x: 75, y: 38, width: 1653, height: 1079), true),
+            (CGRect(x: 80, y: 48, width: 1643, height: 1069), true),
+            (CGRect(x: 96, y: 59, width: 1632, height: 1057), false),
+            (CGRect(x: 97, y: 38, width: 1653, height: 1079), false),
+        ]
+        var crossOK = true
+        for (sample, expectConverged) in samples {
+            let short = FrameConvergence.shortfalls(current: sample, target: target, tolerance: tol)
+            if short.isEmpty != (expectConverged && CoordinateKit.isFrameConverged(actual: sample, target: target, tolerance: tol)) { crossOK = false }
+        }
+        check("shortfalls × CoordinateKit 交叉验证 4 样本一致", crossOK)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
