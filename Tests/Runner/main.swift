@@ -3997,6 +3997,32 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && !RestoreAnnouncementPlan.failedPermanent.isSuccessful)
     }
 
+    // MARK: 坐标换算与移动冷却（真实实现——B15：Quartz/Cocoa 互转 + 冷却纯决策）
+
+    do {
+        // Quartz ↔ Cocoa y 互转（主屏高度 = 两侧和恒等）
+        check("coord: quartzY = primaryMaxY - appKitMaxY",
+              CoordinateKit.quartzY(appKitRectMaxY: 300, primaryMaxY: 1117) == 817)
+        check("coord: cocoaY/fromQuartzY 互逆",
+              CoordinateKit.cocoaY(fromQuartzY: 500) == CoordinateKit.mainScreenHeight - 500
+              && CoordinateKit.quartzY(fromCocoaY: CoordinateKit.mainScreenHeight - 500) == 500)
+
+        // MoveCooldownRegistry：静态纯决策
+        let now = Date()
+        check("cooldown: 从未移动 → 不在冷却",
+              !MoveCooldownRegistry.isInCooldown(lastMove: nil, now: now, cooldownSeconds: 3))
+        check("cooldown: 2s 前 < 3s → 冷却中",
+              MoveCooldownRegistry.isInCooldown(lastMove: now.addingTimeInterval(-2), now: now, cooldownSeconds: 3))
+        check("cooldown: 4s 前 > 3s → 冷却结束",
+              !MoveCooldownRegistry.isInCooldown(lastMove: now.addingTimeInterval(-4), now: now, cooldownSeconds: 3))
+        check("cooldown: remainingSeconds 无记录 → 0（无冷却需求）",
+              MoveCooldownRegistry.remainingSeconds(lastMove: nil, now: now, cooldownSeconds: 3) == 0)
+        check("cooldown: remainingSeconds 边界取整向上",
+              MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-2.2), now: now, cooldownSeconds: 3) == 1)
+        check("cooldown: 冷却结束 remaining 归零",
+              MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-5), now: now, cooldownSeconds: 3) == 0)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
