@@ -113,12 +113,17 @@ enum Doctor {
             }
         }
 
-        // 疑似外部击杀
+        // 疑似外部击杀（排除还活着的 pid：运行中的实例本来就没有 exit 记录）
         let unmatched = unmatchedLaunches(events: events)
+        let alive = unmatched.filter { kill($0.pid, 0) == 0 }
+        let deadUnmatched = unmatched.filter { kill($0.pid, 0) != 0 }
         out.append("")
-        out.append("[疑似外部击杀（launch 无配对 exit，SIGKILL 类）] \(unmatched.count) 个")
-        for e in unmatched.suffix(5) {
+        out.append("[疑似外部击杀（launch 无配对 exit，SIGKILL 类）] \(deadUnmatched.count) 个")
+        for e in deadUnmatched.suffix(5) {
             out.append("  pid=\(e.pid) launchedAt=\(e.at) exe=\(e.exe ?? "?")")
+        }
+        if !alive.isEmpty {
+            out.append("  （另有 \(alive.count) 个存活实例尚无退出记录，属正常运行中）")
         }
 
         // /tmp 现场 + fatal 归档
@@ -161,10 +166,10 @@ enum Doctor {
         }
 
         out.append("")
-        if unmatched.isEmpty {
+        if deadUnmatched.isEmpty {
             out.append("[结论] 无未配对退出记录；结合上方 fatal/ips 段定位历史崩溃。")
         } else {
-            out.append("[结论] 存在 \(unmatched.count) 个未配对退出（SIGKILL 类击杀）——")
+            out.append("[结论] 存在 \(deadUnmatched.count) 个未配对退出（SIGKILL 类击杀）——")
             out.append("  下一步：比对上方 .ips/归档 mtime 与 launch 时刻；再看 keepalive 决策行。")
         }
         return out.joined(separator: "\n")
