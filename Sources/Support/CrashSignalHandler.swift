@@ -46,6 +46,18 @@ nonisolated(unsafe) private var fatalSignalJournalLines: [Int32: [CChar]] = [:]
 // handler 内不可用 ProcessInfo（非 async-signal-safe），进程名安装期取一次。
 private let signalTimeProcessName = ProcessInfo.processInfo.processName
 
+// MARK: - 崩溃堆栈抓取（execinfo）
+//
+// SIGTRAP 类死亡在 CrashReporter 侧反复无 .ips（2026-09-06 多实例实证），
+// backtrace_symbols_fd 是崩溃现场唯一的堆栈来源。其内部 malloc 在堆损坏时
+// 可能失效——失败即退化为无堆栈，与现状持平，无回退风险。execinfo 未桥接进
+// Swift 的 Darwin 模块，用 @_silgen_name 直连 libsystem 符号。
+@_silgen_name("backtrace")
+private func crash_backtrace(_ addrs: UnsafeMutablePointer<UnsafeMutableRawPointer?>, _ size: Int32) -> Int32
+
+@_silgen_name("backtrace_symbols_fd")
+private func crash_backtrace_symbols_fd(_ addrs: UnsafeMutablePointer<UnsafeMutableRawPointer?>, _ size: Int32, _ fd: Int32)
+
 // MARK: - 双缓冲快照
 
 /// async-signal-safe 的 PRE-CRASH STATE 双缓冲。
@@ -194,6 +206,22 @@ private func crashSignalHandler(_ sig: Int32) {
                     if let base = buf.baseAddress {
                         _ = write(exitJournalFD, base, strlen(base))
                     }
+                }
+            }
+            // 崩溃堆栈：SIGTRAP 类死亡无 .ips 时的唯一堆栈来源（见文件头 execinfo 注释）。
+            var stackAddrs = [UnsafeMutableRawPointer?](repeating: nil, count: 64)
+            let frameCount = crash_backtrace(&stackAddrs, 64)
+            if frameCount > 0 {
+                let btHeader = "\n=== BACKTRACE (frames=\(frameCount)) ===\n"
+                btHeader.withCString { ptr in
+                    _ = write(crashSnapshotFD, ptr, strlen(ptr))
+                    if crashFatalFD >= 0 {
+                        _ = write(crashFatalFD, ptr, strlen(ptr))
+                    }
+                }
+                crash_backtrace_symbols_fd(&stackAddrs, frameCount, crashSnapshotFD)
+                if crashFatalFD >= 0 {
+                    crash_backtrace_symbols_fd(&stackAddrs, frameCount, crashFatalFD)
                 }
             }
         }

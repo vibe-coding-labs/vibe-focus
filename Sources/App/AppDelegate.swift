@@ -42,7 +42,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             exePath: Bundle.main.executableURL?.path ?? "?"
         )
         log("=== SESSION START ===", fields: [
-            "pid": String(ProcessInfo.processInfo.processIdentifier)
+            "pid": String(ProcessInfo.processInfo.processIdentifier),
+            "axTrusted": String(AXIsProcessTrusted()),
+            "screens": String(NSScreen.screens.count)
         ])
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
         logDiagnostics("launch")

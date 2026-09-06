@@ -155,6 +155,25 @@ report += "[实例生命周期] 共 \(parsed.count) 条事件\n"
 for e in parsed.suffix(12) {
     report += e.kind == "launch" ? "  launch pid=\(e.pid) exe=\(e.exe ?? "?")\n" : "  exit    pid=\(e.pid) reason=\(e.reason ?? "?")\n"
 }
+
+// 最近一次死亡（mirror Doctor.ageSeconds：ISO 解析失败返回 nil）
+func ageSeconds(fromISO: String, now: Date) -> TimeInterval? {
+    let df = ISO8601DateFormatter()
+    df.formatOptions = [.withInternetDateTime]
+    guard let date = df.date(from: fromISO) else { return nil }
+    return max(0, now.timeIntervalSince(date))
+}
+if let lastExit = parsed.last(where: { $0.kind == "exit" }) {
+    var line = "pid=\(lastExit.pid) reason=\(lastExit.reason ?? "?")"
+    if let sig = lastExit.signalName { line += " signal=\(sig)" }
+    if let age = ageSeconds(fromISO: lastExit.at, now: Date()) {
+        line += String(format: "（%.0f 分钟前）", age / 60)
+    }
+    report += "[最近一次死亡] \(line)\n"
+} else {
+    report += "[最近一次死亡] 无退出记录\n"
+}
+
 let unmatched2 = unmatchedLaunches(events: parsed)
 report += "[疑似外部击杀] \(unmatched2.count) 个\n"
 for e in unmatched2 { report += "  pid=\(e.pid) launchedAt=\(e.at)\n" }
@@ -168,11 +187,16 @@ let errs = tailLines(paths.appLogPath, maxBytes: 262_144, count: 200).filter { $
 report += "[应用日志] ERROR \(errs.count) 条\n"
 
 check(report.contains("共 3 条事件"), "审计共 3 条有效事件（坏行被容错跳过）")
+check(report.contains("[最近一次死亡] pid=100 reason=clean"), "最近一次死亡段输出 reason")
+check(report.contains("分钟前）"), "ISO 时间解析出相对分钟数")
 check(report.contains("pid=41369") && report.contains("[疑似外部击杀] 1 个"), "秒死实例被审计点名")
 check(report.contains("crash-fatal-20260906-084340.log"), "fatal 归档出现在报告中")
 check(report.contains("VibeFocusHotkeys-2026-09-06-084340.ips"), ".ips 出现在报告中")
 check(report.contains("bin=REPLACED"), "keepalive 二进制替换指纹进入报告")
 check(report.contains("ERROR 1 条"), "应用日志错误行被采集")
+
+// ageSeconds 容错：信号审计行的 "-" 时间戳不参与分钟数计算
+check(ageSeconds(fromISO: "-", now: Date()) == nil, "非法时间戳返回 nil（不误算年龄）")
 
 try? FileManager.default.removeItem(atPath: tmp)
 
