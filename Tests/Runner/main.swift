@@ -125,7 +125,7 @@ final class FakeWindows: RestoreWindowOperating {
 
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? { findResult }
 
-    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleSize: CGSize?) -> Bool {
+    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleFrame: CGRect?) -> Bool {
         moveCalls.append((windowID, stage))
         return moveResult
     }
@@ -565,6 +565,123 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             sourceVisibleSize: CGSize(width: 1646, height: 1079))
         check("writeOrder: restore 收窄且目标不超源屏可见区 → 维持 resizeThenMove",
               order == .resizeThenMove)
+    }
+
+    // MARK: FrameConvergence.convergeFramePolling 停滞重发（真实实现——写丢失不干等整轮预算）
+
+    do {
+        // 4 次读到同一非收敛 frame → 轮询内重发 write 一次；第 6 读收敛。
+        var writes = 0
+        var reads = 0
+        let outcome = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 25, budgetMs: 400,
+            write: { writes += 1; return true },
+            read: {
+                reads += 1
+                // 读序列：x=1 ×5（第 5 读触发补发）、x=2（第 6 读收敛）
+                return CGRect(x: reads >= 6 ? 2 : 1, y: 0, width: 10, height: 10)
+            },
+            isConverged: { $0.origin.x >= 2 },
+            stallResendReads: 4,
+            sleep: { _ in })
+        check("停滞重发: 连续 4 读不变 → 轮询内补发一次，重发后收敛(attempt:1)",
+              outcome == .converged(attempt: 1, frame: CGRect(x: 2, y: 0, width: 10, height: 10)) && writes == 2)
+    }
+    do {
+        // 停滞未达阈值即收敛 → 不补发（writes 保持 1）
+        var writes = 0
+        var reads = 0
+        _ = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 25, budgetMs: 400,
+            write: { writes += 1; return true },
+            read: { reads += 1; return CGRect(x: reads >= 2 ? 9 : 8, y: 0, width: 10, height: 10) },
+            isConverged: { $0.origin.x >= 9 },
+            stallResendReads: 4,
+            sleep: { _ in })
+        check("停滞重发: 未达阈值先收敛 → 零补发", writes == 1)
+    }
+    do {
+        // 读到的 frame 持续变化（逼近目标）→ 不视为停滞，不补发
+        var writes = 0
+        var reads = 0
+        _ = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 25, budgetMs: 200,
+            write: { writes += 1; return true },
+            read: { reads += 1; return CGRect(x: reads, y: 0, width: 10, height: 10) },
+            isConverged: { $0.origin.x >= 7 },
+            stallResendReads: 2,
+            sleep: { _ in })
+        check("停滞重发: frame 持续变化不算停滞 → 零补发", writes == 1)
+    }
+    do {
+        // 持续读到同一非收敛 frame：每达阈值补发一次（预算 200/间隔 25=8 读 → 2 次补发）
+        var writes = 0
+        _ = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 25, budgetMs: 200,
+            write: { writes += 1; return true },
+            read: { CGRect(x: 1, y: 0, width: 10, height: 10) },
+            isConverged: { _ in false },
+            stallResendReads: 3,
+            sleep: { _ in })
+        check("停滞重发: 持续不收敛按阈值周期性补发（补发数 = 写调用 − 轮数）",
+              writes == 1 + 2)
+    }
+    do {
+        // stallResendReads=nil（默认）→ 既有语义零补发
+        var writes = 0
+        _ = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 25, budgetMs: 100,
+            write: { writes += 1; return true },
+            read: { CGRect(x: 1, y: 0, width: 10, height: 10) },
+            isConverged: { _ in false },
+            sleep: { _ in })
+        check("停滞重发: 默认关闭 → 单轮仅 1 次写（行为兼容）", writes == 1)
+    }
+
+    // MARK: FrameConvergence.writeOrder 放大序源屏先行（真实实现——2026-09-06 水波修复）
+
+    do {
+        // 真机 fixture（2026-09-06 toggle-00001276）：副屏小窗 1145×705@(-814,-1415) →
+        // 主屏 1653×1079@(75,38)；副屏可视区 (-856,-1415,3440,1415)。
+        let order = FrameConvergence.writeOrder(
+            currentSize: CGSize(width: 1145, height: 705),
+            targetSize: CGSize(width: 1653, height: 1079),
+            sourceVisibleSize: CGSize(width: 3440, height: 1415),
+            currentFrame: CGRect(x: -814, y: -1415, width: 1145, height: 705),
+            sourceVisibleFrame: CGRect(x: -856, y: -1415, width: 3440, height: 1415))
+        check("writeOrder: 副→主小窗放大+中间态在源屏内 → resizeThenMove（终态落地）",
+              order == .resizeThenMove)
+    }
+    do {
+        // restore 主→副全屏放大：目标 3440×1415 超源屏（主屏）可视区 → clamp 风险 → 维持旧序
+        let order = FrameConvergence.writeOrder(
+            currentSize: CGSize(width: 1653, height: 1079),
+            targetSize: CGSize(width: 3440, height: 1415),
+            sourceVisibleSize: CGSize(width: 1728, height: 1079),
+            currentFrame: CGRect(x: 75, y: 0, width: 1653, height: 1079),
+            sourceVisibleFrame: CGRect(x: 0, y: 38, width: 1728, height: 1079))
+        check("writeOrder: 主→副全屏放大目标超源屏可视区 → moveThenResize（clamp 规避）",
+              order == .moveThenResize)
+    }
+    do {
+        // 中间态（旧 origin + 目标尺寸） poking 出源屏可视区 → 不满足先行条件 → 维持旧序
+        let order = FrameConvergence.writeOrder(
+            currentSize: CGSize(width: 600, height: 400),
+            targetSize: CGSize(width: 1653, height: 1079),
+            sourceVisibleSize: CGSize(width: 3440, height: 1415),
+            currentFrame: CGRect(x: 3000, y: -1400, width: 600, height: 400),
+            sourceVisibleFrame: CGRect(x: -856, y: -1415, width: 3440, height: 1415))
+        check("writeOrder: 放大但中间态越出源屏右缘 → moveThenResize（归属漂移规避）",
+              order == .moveThenResize)
+    }
+    do {
+        // 新参数缺省（nil）→ 历史行为：放大走 moveThenResize
+        let order = FrameConvergence.writeOrder(
+            currentSize: CGSize(width: 640, height: 527),
+            targetSize: CGSize(width: 1649, height: 1079),
+            sourceVisibleSize: CGSize(width: 3440, height: 1415))
+        check("writeOrder: 放大但 currentFrame/sourceVisibleFrame 未传 → moveThenResize（行为兼容）",
+              order == .moveThenResize)
     }
 
     // MARK: FrameConvergence.waitForRelayout（float 重摆等稳定，真实实现——流畅度第二刀）

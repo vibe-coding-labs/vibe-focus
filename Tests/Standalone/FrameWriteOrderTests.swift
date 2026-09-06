@@ -1,9 +1,11 @@
 // Tests/Standalone/FrameWriteOrderTests.swift
-// Verification: move/resize 两段写入顺序决策（收窄先 resize 后 move，放大先 move 后 resize）
+// Verification: move/resize 两段写入顺序决策（收窄先 resize 后 move；放大无 clamp+包含时
+// 源屏先行，否则 move 后 resize——2026-09-06 水波修复）
 // Mirrors: Sources/Support/FrameConvergence.swift (FrameConvergence.writeOrder / FrameWriteOrder)
 // Run: swift Tests/Standalone/FrameWriteOrderTests.swift
 
 import Foundation
+import CoreGraphics
 
 // MARK: - Mirrored type
 
@@ -16,16 +18,28 @@ enum FrameConvergence {
     static func writeOrder(
         currentSize: CGSize?,
         targetSize: CGSize,
-        sourceVisibleSize: CGSize? = nil
+        sourceVisibleSize: CGSize? = nil,
+        currentFrame: CGRect? = nil,
+        sourceVisibleFrame: CGRect? = nil
     ) -> FrameWriteOrder {
         guard let current = currentSize else { return .moveThenResize }
         let shrinking = current.width > targetSize.width || current.height > targetSize.height
-        guard shrinking else { return .moveThenResize }
-        if let vis = sourceVisibleSize,
-           targetSize.width > vis.width || targetSize.height > vis.height {
-            return .moveThenResize
+        if shrinking {
+            if let vis = sourceVisibleSize,
+               targetSize.width > vis.width || targetSize.height > vis.height {
+                return .moveThenResize
+            }
+            return .resizeThenMove
         }
-        return .resizeThenMove
+        // 放大/持平：源屏安全先行（终态落地，目的地无生长水波）；中间态必须同时
+        // 无 clamp（尺寸 fits 源屏可视区）与无归属漂移（整框仍在源屏可视区内）。
+        if let frame = currentFrame,
+           let visFrame = sourceVisibleFrame,
+           targetSize.width <= visFrame.width, targetSize.height <= visFrame.height,
+           visFrame.contains(CGRect(origin: frame.origin, size: targetSize)) {
+            return .resizeThenMove
+        }
+        return .moveThenResize
     }
 }
 
@@ -58,7 +72,7 @@ do {
                                       targetSize: CGSize(width: 640, height: 527)) == .resizeThenMove)
 }
 
-print("3. 放大/持平分支（先 move 后 resize）")
+print("3. 放大/持平分支（新参数未传 → 历史顺序 move 后 resize）")
 do {
     check("宽高都小于 → moveThenResize",
           FrameConvergence.writeOrder(currentSize: CGSize(width: 640, height: 527),
@@ -74,7 +88,7 @@ do {
     check("restore 主→副（1649×1079 → 640×527）→ resizeThenMove",
           FrameConvergence.writeOrder(currentSize: CGSize(width: 1649, height: 1079),
                                       targetSize: CGSize(width: 640, height: 527)) == .resizeThenMove)
-    // 副→主 toggle：小窗到主屏放大
+    // 副→主 toggle：小窗到主屏放大（新参数未传，历史行为兼容）
     check("toggle 副→主（640×527 → 1649×1079）→ moveThenResize",
           FrameConvergence.writeOrder(currentSize: CGSize(width: 640, height: 527),
                                       targetSize: CGSize(width: 1649, height: 1079)) == .moveThenResize)
@@ -102,6 +116,45 @@ do {
           FrameConvergence.writeOrder(currentSize: CGSize(width: 1000, height: 400),
                                       targetSize: CGSize(width: 2000, height: 300),
                                       sourceVisibleSize: CGSize(width: 1646, height: 1079)) == .moveThenResize)
+}
+
+print("6. 放大序源屏先行（2026-09-06：副→主终态落地，目的地无生长水波）")
+do {
+    // 真机 fixture（2026-09-06 toggle-00001276）：副屏小窗 1145×705@(-814,-1415) →
+    // 主屏 1653×1079@(75,38)；副屏可视区 (-856,-1415,3440,1415)。中间态
+    // (-814,-1415,1653,1079) 完整落在副屏可视区内 → resize 先行安全。
+    check("副→主小窗放大+中间态在源屏内 → resizeThenMove（终态落地）",
+          FrameConvergence.writeOrder(currentSize: CGSize(width: 1145, height: 705),
+                                      targetSize: CGSize(width: 1653, height: 1079),
+                                      sourceVisibleSize: CGSize(width: 3440, height: 1415),
+                                      currentFrame: CGRect(x: -814, y: -1415, width: 1145, height: 705),
+                                      sourceVisibleFrame: CGRect(x: -856, y: -1415, width: 3440, height: 1415)) == .resizeThenMove)
+    // restore 主→副全屏放大：目标 3440×1415 超源屏（主屏）可视区 → clamp 风险 → 维持旧序
+    check("主→副全屏放大目标超源屏可视区 → moveThenResize（clamp 规避）",
+          FrameConvergence.writeOrder(currentSize: CGSize(width: 1653, height: 1079),
+                                      targetSize: CGSize(width: 3440, height: 1415),
+                                      sourceVisibleSize: CGSize(width: 1728, height: 1079),
+                                      currentFrame: CGRect(x: 75, y: 0, width: 1653, height: 1079),
+                                      sourceVisibleFrame: CGRect(x: 0, y: 38, width: 1728, height: 1079)) == .moveThenResize)
+    // 中间态（旧 origin + 目标尺寸）越出源屏可视区右缘 → 归属漂移风险 → 维持旧序
+    check("放大但中间态越出源屏右缘 → moveThenResize（归属漂移规避）",
+          FrameConvergence.writeOrder(currentSize: CGSize(width: 600, height: 400),
+                                      targetSize: CGSize(width: 1653, height: 1079),
+                                      sourceVisibleSize: CGSize(width: 3440, height: 1415),
+                                      currentFrame: CGRect(x: 3000, y: -1400, width: 600, height: 400),
+                                      sourceVisibleFrame: CGRect(x: -856, y: -1415, width: 3440, height: 1415)) == .moveThenResize)
+    // 尺寸 fits 但缺 currentFrame/sourceVisibleFrame → 历史行为
+    check("放大但新参数未传（仅 sourceVisibleSize）→ moveThenResize（行为兼容）",
+          FrameConvergence.writeOrder(currentSize: CGSize(width: 640, height: 527),
+                                      targetSize: CGSize(width: 1649, height: 1079),
+                                      sourceVisibleSize: CGSize(width: 3440, height: 1415)) == .moveThenResize)
+    // 中间态恰好完全贴合源屏可视区（边界相等算包含）→ 允许先行
+    check("放大中间态贴合源屏可视区边界 → resizeThenMove（边界包含成立）",
+          FrameConvergence.writeOrder(currentSize: CGSize(width: 600, height: 400),
+                                      targetSize: CGSize(width: 3440, height: 1415),
+                                      sourceVisibleSize: CGSize(width: 3440, height: 1415),
+                                      currentFrame: CGRect(x: -856, y: -1415, width: 600, height: 400),
+                                      sourceVisibleFrame: CGRect(x: -856, y: -1415, width: 3440, height: 1415)) == .resizeThenMove)
 }
 
 print("\n--- Results: \(passed) passed, \(failed) failed ---")

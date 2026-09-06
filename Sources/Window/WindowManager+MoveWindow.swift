@@ -51,22 +51,32 @@ extension WindowManager {
     /// - 按偏差补发（2026-09-03 clamp 修复）：收敛循环的每次重写读当前 bounds，origin
     ///   已达标只补 resize、size 已达标只补 move、全不达标按写序两段——重写发「缺的那段」
     ///   而非固定第二段，使 clamp（如先 resize 被钳到源屏可视高）在窗口落目标屏后自愈。
-    /// - sourceVisibleSize：窗口当前所在 display 的可视区（供顺序判定避开 clamp，见
-    ///   FrameConvergence.writeOrder）；nil 时退回纯收窄/放大判定。
+    /// - sourceVisibleFrame：窗口当前所在 display 的可视区（供顺序判定避开 clamp + 放大序
+    ///   源屏先行判定，见 FrameConvergence.writeOrder）；nil 时退回纯收窄/放大判定。
+    /// - 停滞重发 + AX 失败降级（2026-09-06 水波/慢修复）：收敛轮询内连续 4 读不变即幂等
+    ///   补发缺失段（写丢失不再干等整轮 400ms）；AX resize 一轮不收敛后，后续补发改走
+    ///   yabai 通道（不再对吞写的 app 撞死胡同）。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(
         windowID: UInt32,
         frame: CGRect,
         op: String,
         stage: String,
-        sourceVisibleSize: CGSize?
+        sourceVisibleFrame: CGRect?
     ) -> Bool {
+        let segStart = Date()
+        var axResizeWriteMs = 0
+        var axResizeSendCount = 0
+        var yabaiSendCount = 0
         var attemptNo = 0
-        // 写前尺寸快照：顺序判定依据（查询失败走历史顺序，见 FrameConvergence.writeOrder）。
+        // 写前 frame 快照：顺序判定依据（查询失败走历史顺序，见 FrameConvergence.writeOrder）。
+        let preWriteBounds = cgWindowBounds(for: windowID)
         let writeOrder = FrameConvergence.writeOrder(
-            currentSize: cgWindowBounds(for: windowID)?.size,
+            currentSize: preWriteBounds?.size,
             targetSize: frame.size,
-            sourceVisibleSize: sourceVisibleSize
+            sourceVisibleSize: sourceVisibleFrame?.size,
+            currentFrame: preWriteBounds,
+            sourceVisibleFrame: sourceVisibleFrame
         )
         log("[WindowManager] moveWindowToFrameViaYabai: write order", level: .debug, fields: [
             "op": op, "stage": stage, "windowID": String(windowID),
@@ -74,6 +84,7 @@ extension WindowManager {
             "target": QuartzRect(frame).description
         ])
         let applyMove = {
+            yabaiSendCount += 1
             _ = self.spaceController.runYabai(
                 arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
                 operation: "\(stage).move(windowID=\(windowID))",
@@ -81,6 +92,7 @@ extension WindowManager {
             )
         }
         let applyResize = {
+            yabaiSendCount += 1
             _ = self.spaceController.runYabai(
                 arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
                 operation: "\(stage).resize(windowID=\(windowID))",
@@ -117,13 +129,21 @@ extension WindowManager {
             "channel": axWindow != nil ? "ax" : "yabai"
         ])
         // AX size 写（同屏有效）+ CGWindowList 读回；AX 不可写时 yabai resize。
+        // axResizeUnreliable：AX 写一轮读回未确认生效（写被 busy app 吞/延迟）后置位，
+        // 后续补发改走 yabai——不对已证明吞写的通道反复重试（2026-09-06）。
+        var axResizeUnreliable = axWindow == nil
         func applyResizeBestChannel() {
-            if let ax = axWindow {
-                _ = resizeViaAX(targetFrame: frame, window: ax, windowID: windowID, op: op, stage: stage)
+            if let ax = axWindow, !axResizeUnreliable {
+                axResizeSendCount += 1
+                let writeStart = Date()
+                let axOK = resizeViaAX(targetFrame: frame, window: ax, windowID: windowID, op: op, stage: stage)
+                axResizeWriteMs += elapsedMilliseconds(since: writeStart)
+                if !axOK { axResizeUnreliable = true }
             } else {
                 applyResize()
             }
         }
+        let phase1Start = Date()
         switch writeOrder {
         case .resizeThenMove:
             applyResizeBestChannel()
@@ -140,10 +160,13 @@ extension WindowManager {
             })
             applyResizeBestChannel()
         }
+        let phase1Elapsed = elapsedMilliseconds(since: phase1Start)
         // 段二 + 全帧收敛验证（轮询版：写→每 25ms 读，一收敛即返回，400ms 预算兜底）。
         // 重写按偏差补发缺的那段（origin✓size✗→resize / origin✗size✓→move / 全✗按写序），
-        // 使 clamp 在窗口落目标屏后自愈。注：轮询读不逐次记 mismatch 日志（25ms 节拍
-        // 会刷屏），只在整轮耗尽时记一次。
+        // 使 clamp 在窗口落目标屏后自愈。停滞重发（连续 4 读不变）在轮询内幂等补发，
+        // 写丢失不再干等整轮预算。注：轮询读不逐次记 mismatch 日志（25ms 节拍会刷屏），
+        // 只在整轮耗尽时记一次。
+        let phase2Start = Date()
         let outcome = FrameConvergence.convergeFramePolling(
             attempts: 2,
             intervalMs: WindowSettle.frameVerifyPollIntervalMs,
@@ -173,8 +196,36 @@ extension WindowManager {
                 return true
             },
             read: { cgWindowBounds(for: windowID) },
-            isConverged: { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: frameTolerance) }
+            isConverged: { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: frameTolerance) },
+            stallResendReads: 4
         )
+        let phase2Elapsed = elapsedMilliseconds(since: phase2Start)
+        // 停滞重发次数 = write 闭包总调用数 − 收敛轮数（重发发生在轮询内，不换轮）。
+        let convergedRounds: Int
+        switch outcome {
+        case .converged(let attempt, _):
+            convergedRounds = attempt
+        case .mismatched(let attempts, _):
+            convergedRounds = attempts
+        case .writeFailed(let attempt):
+            convergedRounds = attempt
+        }
+        let resendCount = max(0, attemptNo - convergedRounds)
+        // 段级计时汇总（INFO 恒开）：下次「副→主慢」投诉可直接按 op 抽本行归因，
+        // 不再需要猜测负载或加埋点重编（2026-09-06 排查教训：段内无数据干猜 5 小时）。
+        log("[WindowManager] moveWindowToFrameViaYabai: segment timing", level: .info, fields: [
+            "op": op, "stage": stage, "windowID": String(windowID),
+            "order": writeOrder == .resizeThenMove ? "resize_then_move" : "move_then_resize",
+            "phase1Ms": String(phase1Elapsed),
+            "phase2ConvergeMs": String(phase2Elapsed),
+            "totalMs": String(elapsedMilliseconds(since: segStart)),
+            "axResizeSendCount": String(axResizeSendCount),
+            "axResizeWriteMs": String(axResizeWriteMs),
+            "axResizeUnreliable": String(axResizeUnreliable),
+            "yabaiSendCount": String(yabaiSendCount),
+            "convergeRounds": String(convergedRounds),
+            "stallResendCount": String(resendCount)
+        ])
         switch outcome {
         case .converged(let attempt, _):
             log("[WindowManager] moveWindowToFrameViaYabai: verified", level: .debug, fields: [
@@ -419,12 +470,13 @@ extension WindowManager {
             // P2 路径：float 已在 resolve 前完成（见上方"float + settle"注释）。
             // 跨屏移动用 yabai --move abs/--resize abs 直写主屏目标 frame（T3 断言验证：
             // 裸 AX position 写会被 WindowServer clamp 在源屏，只有 yabai 的 frame 写能跨 display）。
-            // sourceVisibleSize：窗口当前所在副屏的可视区——副→主放大混合场景（宽缩高放）
-            // 走收窄序会被 clamp 到副屏可见高（实测卡 1055 不收敛），需让顺序判定规避。
-            let sourceVisibleSize = windowInfo?.display
+            // sourceVisibleFrame：窗口当前所在副屏的可视区——供写序判定避开 clamp +
+            // 放大序源屏先行判定（副→主：目标尺寸必 ≤ 副屏可视区，resize 在源屏先行
+            // 完成，窗口以终态落主屏，2026-09-06 水波修复）。
+            let sourceVisibleFrame = windowInfo?.display
                 .flatMap { CoordinateKit.nsScreen(forYabaiDisplayIndex: $0) }
-                .map { CoordinateKit.quartzVisibleFrame(of: $0).size }
-            guard moveWindowToFrameViaYabai(windowID: identity.windowID, frame: targetFrame, op: op, stage: "move_to_main", sourceVisibleSize: sourceVisibleSize) else {
+                .map { CoordinateKit.quartzVisibleFrame(of: $0) }
+            guard moveWindowToFrameViaYabai(windowID: identity.windowID, frame: targetFrame, op: op, stage: "move_to_main", sourceVisibleFrame: sourceVisibleFrame) else {
                 log("moveWindowToMainScreen failed: yabai frame move did not converge", level: .error, fields: [
                     "op": op, "targetFrame": String(describing: targetFrame)
                 ])

@@ -31,6 +31,14 @@ enum FrameWriteOutcome: Equatable {
 ///   仍被源屏当前位置包含；
 /// - 放大/持平：先 move 再 resize——move 后的中间态小于目标，被目标 frame 包含
 ///   （目标 frame 本身完整落在目标屏内）。
+///
+/// ## 场景（2026-09-06 副→主「落地后水波」修复：放大优先源屏先行）
+/// 放大序把尺寸变化留在了**目的地屏**：小窗先落到目标屏，再在用户眼前 AX resize
+/// 慢慢长大（busy app 的 AX 应用延迟 + 终端渐进 reflow，实测可达数百 ms——用户
+/// 主诉的「水波一样慢慢的」）。若放大可在源屏安全先行（目标尺寸不超源屏可视区
+/// → 无 clamp；旧 origin + 目标尺寸的中间态完整落在源屏可视区内 → 无第三方屏
+/// 归属漂移），改走 resizeThenMove：窗口以**最终尺寸**一次性落到目标屏，目的地
+/// 只见一次原子跳变。条件不满足回退 moveThenResize（行为不比旧版差）。
 enum FrameWriteOrder: Equatable {
     case resizeThenMove
     case moveThenResize
@@ -93,19 +101,37 @@ enum FrameConvergence {
     /// 先行）在「目标任一维超源屏可见区」时必被钳住（实测副→主 move_to_main：1079 高
     /// 被钳到副屏可见 1055，且后续重写只补发 move，永不收敛，MOVE FAILED 走满 2s）。
     /// 此类场景改走 moveThenResize，resize 在窗口落目标屏后补发，clamp 不触发。
+    ///
+    /// currentFrame + sourceVisibleFrame = 放大序源屏先行判定（2026-09-06 水波修复）：
+    /// 放大/持平时若「目标尺寸 ≤ 源屏可视区（无 clamp）」且「旧 origin + 目标尺寸的
+    /// 中间态完整落在源屏可视区内（无归属漂移）」，改走 resizeThenMove——resize 在
+    /// 源屏先行完成，窗口以终态落地目标屏。任一参数缺失或条件不满足 → 维持
+    /// moveThenResize（历史行为）。
     static func writeOrder(
         currentSize: CGSize?,
         targetSize: CGSize,
-        sourceVisibleSize: CGSize? = nil
+        sourceVisibleSize: CGSize? = nil,
+        currentFrame: CGRect? = nil,
+        sourceVisibleFrame: CGRect? = nil
     ) -> FrameWriteOrder {
         guard let current = currentSize else { return .moveThenResize }
         let shrinking = current.width > targetSize.width || current.height > targetSize.height
-        guard shrinking else { return .moveThenResize }
-        if let vis = sourceVisibleSize,
-           targetSize.width > vis.width || targetSize.height > vis.height {
-            return .moveThenResize
+        if shrinking {
+            if let vis = sourceVisibleSize,
+               targetSize.width > vis.width || targetSize.height > vis.height {
+                return .moveThenResize
+            }
+            return .resizeThenMove
         }
-        return .resizeThenMove
+        // 放大/持平：源屏安全先行（终态落地，目的地无生长水波）；中间态必须同时
+        // 无 clamp（尺寸 fits 源屏可视区）与无归属漂移（整框仍在源屏可视区内）。
+        if let frame = currentFrame,
+           let visFrame = sourceVisibleFrame,
+           targetSize.width <= visFrame.width, targetSize.height <= visFrame.height,
+           visFrame.contains(CGRect(origin: frame.origin, size: targetSize)) {
+            return .resizeThenMove
+        }
+        return .moveThenResize
     }
 
     static func convergeFrame(
@@ -138,10 +164,18 @@ enum FrameConvergence {
     /// 的延迟上界才是 400ms，实际多数几十 ms 即落定。轮询版每 intervalMs 读一次，
     /// 一收敛立即返回，预算兜底不变；yabai 路径实测 move 阶段 550ms → ~250ms。
     ///
+    /// ## 场景（2026-09-06 停滞重发：写丢失不再干等整轮预算）
+    /// 写（尤其 busy app 的 AX size 写）偶发被吞/延迟应用——旧版轮询被动干等满
+    /// budgetMs 才在下一次 attempt 重写，单次丢失浪费 ~400ms（副→主 applyMs 500-800
+    /// 的主要构成）。stallResendReads 开启后：**同轮内**连续 N 次读到同一非收敛 frame
+    /// 即重发 write（写幂等——重发的是同一段目标值，不产生新视觉状态），计数清零。
+    /// nil（默认）关闭，既有调用方语义不变。
+    ///
     /// ## 语义契约（Tests/Runner 分支穷尽锁定）
     /// - 首查在首睡之前（写后立即读，零等待收敛路径不付任何睡眠）；
-    /// - 读失败（nil）视为未收敛继续轮询，不终止本轮；
+    /// - 读失败（nil）视为未收敛继续轮询，不终止本轮，且重置停滞计数（读失败≠写丢失证据）；
     /// - 预算内收敛 → .converged(attempt:)；预算耗尽 → 重写（下一 attempt）；
+    /// - 停滞重发发生在轮询读之后、判定非收敛时；重发不换轮（attempt 计数不变）；
     /// - 写硬失败短路 .writeFailed(attempt:)；attempts 归一 max(1, attempts)；
     /// - 轮询耗尽全程未读到 → .mismatched 携带 nil frame。
     static func convergeFramePolling(
@@ -151,19 +185,38 @@ enum FrameConvergence {
         write: () -> Bool,
         read: () -> CGRect?,
         isConverged: (CGRect) -> Bool,
+        stallResendReads: Int? = nil,
         sleep: (UInt32) -> Void = { usleep(useconds_t($0) * 1_000) }
     ) -> FrameWriteOutcome {
         let totalAttempts = max(1, attempts)
+        let stallThreshold = max(1, stallResendReads ?? Int.max)
         var lastFrame: CGRect? = nil
         for attempt in 1...totalAttempts {
             guard write() else { return .writeFailed(attempt: attempt) }
             var waitedMs: UInt32 = 0
+            var stalledReads = 0
+            var lastUnconverged: CGRect? = nil
             while true {
                 if let actual = read() {
                     lastFrame = actual
                     if isConverged(actual) {
                         return .converged(attempt: attempt, frame: actual)
                     }
+                    if let prev = lastUnconverged, prev == actual {
+                        stalledReads += 1
+                    } else {
+                        stalledReads = 0
+                    }
+                    lastUnconverged = actual
+                    if stalledReads >= stallThreshold {
+                        // 幂等补发（写闭包按当前偏差发缺失段）；重发不算新一轮。
+                        guard write() else { return .writeFailed(attempt: attempt) }
+                        stalledReads = 0
+                        lastUnconverged = nil
+                    }
+                } else {
+                    lastUnconverged = nil
+                    stalledReads = 0
                 }
                 if waitedMs >= budgetMs { break }
                 let nap = min(intervalMs, budgetMs - waitedMs)

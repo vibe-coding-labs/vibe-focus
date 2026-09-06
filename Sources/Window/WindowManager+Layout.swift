@@ -160,7 +160,7 @@ extension WindowManager {
             windowID: windowID,
             targetFrame: frame,
             op: operationID,
-            sourceVisibleSize: nil
+            sourceVisibleFrame: nil
         )
     }
 
@@ -173,12 +173,12 @@ extension WindowManager {
         targetFrame: CGRect,
         op: String
     ) -> Bool {
-        let sourceVisibleSize = CoordinateKit.quartzVisibleFrame(of: sourceScreen).size
+        let sourceVisibleFrame = CoordinateKit.quartzVisibleFrame(of: sourceScreen)
         return floatAndWriteFrame(
             windowID: windowID,
             targetFrame: targetFrame,
             op: op,
-            sourceVisibleSize: sourceVisibleSize
+            sourceVisibleFrame: sourceVisibleFrame
         )
     }
 
@@ -186,7 +186,7 @@ extension WindowManager {
         windowID: UInt32,
         targetFrame: CGRect,
         op: String,
-        sourceVisibleSize: CGSize?
+        sourceVisibleFrame: CGRect?
     ) -> Bool {
         var floatToggled = false
         if let info = spaceController.queryWindow(windowID: windowID), !info.isFloating {
@@ -209,7 +209,7 @@ extension WindowManager {
             frame: targetFrame,
             op: op,
             stage: "frame_direct",
-            sourceVisibleSize: sourceVisibleSize
+            sourceVisibleFrame: sourceVisibleFrame
         )
     }
 

@@ -306,14 +306,14 @@ extension ToggleEngine {
         // 4b. yabai --move abs + --resize abs 直写 origFrame（窗口归属跟随物理位置）。
         // sourceSpace=0（无 space 信息）时 origFrame 坐标仍有效——frame 直写不依赖 space 编号。
         let moveStart = Date()
-        // sourceVisibleSize=nil：restore 的窗口在主屏，resize 目标（源窗尺寸）≤ 主屏
+        // sourceVisibleFrame=nil：restore 的窗口在主屏，resize 目标（源窗尺寸）≤ 主屏
         // 可视区，无 clamp 风险；若未来目标超源屏可见区需传当前 display 可视区。
         let frameOK = windows.moveWindowToFrameViaYabai(
             windowID: windowID,
             frame: record.origFrame,
             op: trace,
             stage: "restore",
-            sourceVisibleSize: nil
+            sourceVisibleFrame: nil
         )
         moveMs += elapsedMilliseconds(since: moveStart)
         log("[ToggleEngine] restore: frame move result", fields: [
