@@ -3432,6 +3432,25 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("queue: capacity<1 防御为 1（新条目总在）", ids(defensive) == ["x"])
     }
 
+    // MARK: 提示音设置页提纯（真实实现——B9：节流/免打扰文案 + 规则兜底音效）
+
+    do {
+        check("throttleLabel: 0 → 关闭", SoundSectionText.throttleLabel(seconds: 0) == "关闭")
+        check("throttleLabel: 7 → 7 秒", SoundSectionText.throttleLabel(seconds: 7) == "7 秒")
+        check("quietHoursDetail: 开启 → 静音说明",
+              SoundSectionText.quietHoursDetail(enabled: true).contains("保持静音"))
+        check("quietHoursDetail: 关闭 → 设定说明",
+              SoundSectionText.quietHoursDetail(enabled: false).contains("设定静音时间段"))
+
+        let ruleWithSound = ProjectSoundRule(projectName: "p", soundType: .builtinPing)
+        check("ruleSound: 显式音效生效", ruleWithSound.effectiveSoundType == .builtinPing)
+        let ruleRaw = ProjectSoundRule(projectName: "p2", soundType: .builtinComplete)
+        var ruleEmpty = ruleRaw
+        ruleEmpty.soundRawValue = "not-a-sound"
+        check("ruleSound: 非法 rawValue → 兜底 builtinComplete",
+              ruleEmpty.effectiveSoundType == .builtinComplete)
+    }
+
     // MARK: Hook 数据契约（真实实现——B6：ClaudeHookPayload 容错解码/TerminalContext 绑定判据穷尽锁定）
 
     do {

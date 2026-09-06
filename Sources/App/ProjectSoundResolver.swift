@@ -18,6 +18,11 @@ struct ProjectSoundRule: Codable, Equatable {
         CompletionSoundType(rawValue: soundRawValue)
     }
 
+    /// 规则未显式选音效时的兜底（UI Picker 与迷你试听共用同一事实源；Runner 直测）
+    var effectiveSoundType: CompletionSoundType {
+        soundType ?? .builtinComplete
+    }
+
     init(projectName: String, soundType: CompletionSoundType) {
         self.projectName = projectName
         self.soundRawValue = soundType.rawValue
