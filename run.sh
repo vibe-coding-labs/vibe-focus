@@ -68,9 +68,23 @@ swift build -c release --product VibeFocusHotkeys
 
 echo "停止旧进程..."
 pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
-sleep 1
+# 必须等旧进程真正退出才能替换 bundle：SIGTERM 后 SwiftUI/AppKit 撕卸可能超过 1s，
+# 若此刻 cp 就地覆盖运行中的可执行文件，旧进程随后缺页读到哈希不匹配的新内容，
+# 内核直接 SIGKILL（CODESIGNING Invalid Page）——即「莫名其妙的崩溃退出」。
+for i in {1..50}; do
+  pgrep -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || break
+  sleep 0.1
+done
+if pgrep -x "$EXECUTABLE_NAME" >/dev/null 2>&1; then
+  echo "  旧进程 5s 未退出，SIGKILL 兜底..."
+  pkill -9 -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+  sleep 0.5
+fi
 
 echo "创建 .app bundle..."
+# rm 掉旧 bundle 再建：保证可执行文件落在全新 inode 上。即使残留竞态下旧进程尚存，
+# 它的代码映射仍指向已 unlink 的旧 inode（内容完整），不会因磁盘内容被替换而被击杀。
+rm -rf "$INSTALL_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$SCRIPT_DIR/.build/release/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
