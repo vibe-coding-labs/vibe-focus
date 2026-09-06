@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// 热键触发去重 + fallback 事件路由的纯判定（Batch 17，从
 /// HotKeyManager+Monitors 的内联守卫提取——「⌃Q 死键/连发重复触发」是历史
@@ -39,6 +40,35 @@ enum ToggleTriggerGate {
         case toggle
         case titleEditor
         case layout(LayoutAction)
+    }
+
+    /// CGEventTap 事件路由。tapDisabled 双形态触发自恢复（「热键失灵」事故类
+    /// 的自愈决策）；非 keyDown / 自动连发放行给系统；命中主热键或摆位表则消费
+    /// 事件（返回 nil 语义）；其余原样放行。layoutMatch 由调用方按开关扫描摆位
+    /// 表得出（关闭/未命中传 nil）。
+    enum CGTapDisableReason: Equatable { case timeout, userInput }
+
+    enum CGHotkeyRoute: Equatable {
+        case reenableTap(CGTapDisableReason)
+        case ignore
+        case toggle
+        case layout(LayoutAction)
+        case passThrough
+    }
+
+    static func cgEventRoute(
+        type: CGEventType,
+        isAutorepeat: Bool,
+        primaryMatch: Bool,
+        layoutMatch: LayoutAction?
+    ) -> CGHotkeyRoute {
+        if type == .tapDisabledByTimeout { return .reenableTap(.timeout) }
+        if type == .tapDisabledByUserInput { return .reenableTap(.userInput) }
+        guard type == .keyDown else { return .ignore }
+        if isAutorepeat { return .ignore }
+        if primaryMatch { return .toggle }
+        if let layoutMatch { return .layout(layoutMatch) }
+        return .passThrough
     }
 
     /// fallback 路由判定。layoutMatch 由调用方先行扫描摆位表得出（表内容随

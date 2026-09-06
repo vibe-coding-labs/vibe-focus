@@ -97,21 +97,12 @@ extension HotKeyManager {
                 ])
             }
         }
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            let reason = type == .tapDisabledByTimeout ? "timeout" : "user_input"
-            log("[CGEventTap] Disabled by \(reason), attempting re-enable")
-            reenableEventTap(reason: reason)
+        guard type == .keyDown || type == .tapDisabledByTimeout || type == .tapDisabledByUserInput else {
             return Unmanaged.passUnretained(event)
         }
 
-        guard type == .keyDown else {
-            return Unmanaged.passUnretained(event)
-        }
-
-        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
-            return Unmanaged.passUnretained(event)
-        }
-
+        let isAutorepeat = type == .keyDown
+            && event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
@@ -121,7 +112,31 @@ extension HotKeyManager {
         if flags.contains(.maskAlternate) { modifiers |= UInt32(optionKey) }
         if flags.contains(.maskShift) { modifiers |= UInt32(shiftKey) }
 
-        if keyCode == currentHotKey.keyCode && modifiers == currentHotKey.modifiers {
+        let primaryMatch = keyCode == currentHotKey.keyCode && modifiers == currentHotKey.modifiers
+        // 摆位热键表匹配（总开关关闭时不拦截）
+        var layoutMatch: LayoutAction?
+        if LayoutPreferences.isEnabled {
+            layoutMatch = LayoutAction.allCases.first { action in
+                guard let hotKey = layoutTable.hotKey(for: action) else { return false }
+                return keyCode == hotKey.keyCode && modifiers == hotKey.modifiers
+            }
+        }
+
+        // Batch 17：事件路由判定提纯为 ToggleTriggerGate.cgEventRoute
+        //（tapDisabled 自愈 / 连发与非 keyDown 放行 / 主键与摆位命中消费，优先级与拆分前一致）。
+        switch ToggleTriggerGate.cgEventRoute(
+            type: type,
+            isAutorepeat: isAutorepeat,
+            primaryMatch: primaryMatch,
+            layoutMatch: layoutMatch
+        ) {
+        case .reenableTap(let reason):
+            log("[CGEventTap] Disabled by \(reason == .timeout ? "timeout" : "user_input"), attempting re-enable")
+            reenableEventTap(reason: reason == .timeout ? "timeout" : "user_input")
+            return Unmanaged.passUnretained(event)
+        case .ignore, .passThrough:
+            return Unmanaged.passUnretained(event)
+        case .toggle:
             hotkeyMatched = true
             log(
                 "[HotKey] CGEventTap hotkey match",
@@ -131,27 +146,17 @@ extension HotKeyManager {
                 self?.triggerToggleIfNeeded(source: "cg_event_tap")
             }
             return nil
-        }
-
-        // 摆位热键表匹配（总开关关闭时不拦截）
-        if LayoutPreferences.isEnabled {
-            for action in LayoutAction.allCases {
-                guard let hotKey = layoutTable.hotKey(for: action) else { continue }
-                if keyCode == hotKey.keyCode && modifiers == hotKey.modifiers {
-                    hotkeyMatched = true
-                    log("[HotKey] CGEventTap layout hotkey match", fields: [
-                        "action": action.rawValue,
-                        "displayString": hotKey.displayString
-                    ])
-                    DispatchQueue.main.async { [weak self] in
-                        self?.triggerLayoutActionIfNeeded(action, source: "cg_event_tap")
-                    }
-                    return nil
-                }
+        case .layout(let action):
+            hotkeyMatched = true
+            log("[HotKey] CGEventTap layout hotkey match", fields: [
+                "action": action.rawValue,
+                "displayString": layoutTable.hotKey(for: action)?.displayString ?? "?"
+            ])
+            DispatchQueue.main.async { [weak self] in
+                self?.triggerLayoutActionIfNeeded(action, source: "cg_event_tap")
             }
+            return nil
         }
-
-        return Unmanaged.passUnretained(event)
     }
 
     func reenableEventTap(reason: String) {
