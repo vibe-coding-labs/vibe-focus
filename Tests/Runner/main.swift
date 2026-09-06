@@ -3543,6 +3543,46 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               D.proceedToMove(source: "binding").logDescription == "proceed_to_move(source=binding)")
     }
 
+    // MARK: Space 投递决策（真实实现——B8：七分支决策表从镜像转 Runner 直测）
+
+    do {
+        typealias Dec = TerminalGridController.SpaceDeliveryDecision
+        typealias Args = (
+            targetSpaceIndex: Int?, targetDisplayVisibleSpace: Int?,
+            targetDisplayIndex: Int?, windowDisplayIndex: Int?,
+            hasParkingDisplay: Bool, windowSpaceIndex: Int?
+        )
+        func decide(_ a: Args) -> TerminalGridController.SpaceDeliveryDecision {
+            TerminalGridController.spaceDeliveryDecision(
+                targetSpaceIndex: a.targetSpaceIndex,
+                targetDisplayVisibleSpace: a.targetDisplayVisibleSpace,
+                targetDisplayIndex: a.targetDisplayIndex,
+                windowDisplayIndex: a.windowDisplayIndex,
+                hasParkingDisplay: a.hasParkingDisplay,
+                windowSpaceIndex: a.windowSpaceIndex
+            )
+        }
+        // 全参便利：显式目标 Space 5 / 目标屏 display 1 / 双屏
+        let base = Args(5, 5, 1, 1, true, 5)
+        check("delivery: 窗已在目标 space → notNeeded", decide(base) == .notNeeded)
+        check("delivery: 非显式 space 目标 → notApplicable",
+              decide(Args(nil, 5, 1, 1, true, 5)) == .notApplicable)
+        check("delivery: yabai 不可用（可见 space nil）→ skipNoYabai",
+              decide(Args(5, nil, 1, 1, true, 5)) == .skipNoYabai)
+        check("delivery: 目标屏视角未在目标 space → skipViewNotOnTarget",
+              decide(Args(5, 4, 1, 1, true, 5)) == .skipViewNotOnTarget)
+        check("delivery: 跨屏窗 + 有泊位屏 → deliverCrossDisplay",
+              decide(Args(5, 5, 1, 2, true, nil)) == .deliverCrossDisplay)
+        check("delivery: 同屏错位 + 有泊位屏 → deliverRoundTrip",
+              decide(Args(5, 5, 1, 1, true, 3)) == .deliverRoundTrip)
+        check("delivery: 同屏错位 + 单屏无泊位 → skipNoParkingDisplay",
+              decide(Args(5, 5, 1, 1, false, 3)) == .skipNoParkingDisplay)
+        check("delivery: 窗 space 查询失败（nil）按需投递（同屏）",
+              decide(Args(5, 5, 1, 1, true, nil)) == .deliverRoundTrip)
+        check("delivery: 窗 display 查询失败（nil）≠ 目标屏 → 跨屏",
+              decide(Args(5, 5, 1, nil, true, nil)) == .deliverCrossDisplay)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
