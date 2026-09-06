@@ -3900,6 +3900,73 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("selection: 无候选回落 Terminal.app", empty.bundleID == "com.apple.Terminal")
     }
 
+    // MARK: float 脱管/恢复链路纯决策（真实实现——B13：FloatToggle/RestoreGuard/RefocusCandidate 镜像转直测）
+
+    do {
+        // floatToggleDecision：决策序 disabled → query_nil → already_floating → unmanaged → toggled
+        func info(float: Bool, ax: Bool) -> YabaiWindowInfo {
+            YabaiWindowInfo(id: 7, pid: 100, app: "T", title: "t", space: 1, display: 1,
+                            frame: nil, isFloatingRaw: float, hasAXReferenceRaw: ax,
+                            isMinimizedRaw: false, hasFocusRaw: false)
+        }
+        var lazyTouched = false
+        let disabled = SpaceController.floatToggleDecision(isEnabled: false, info: { lazyTouched = true; return info(float: false, ax: true) }())
+        check("floatToggle: disabled → skip 且惰性不触查询",
+              disabled.outcome == .skippedNoOp && disabled.skipReason == "disabled" && !lazyTouched)
+        check("floatToggle: 查询 nil → query_nil",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { nil }()).skipReason == "query_nil")
+        check("floatToggle: 已 float → already_floating",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: true, ax: true) }()).skipReason == "already_floating")
+        check("floatToggle: 无 AX 引用 → unmanaged",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: false, ax: false) }()).skipReason == "unmanaged")
+        check("floatToggle: 可脱管 → toggled",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: false, ax: true) }()).outcome == .toggled)
+
+        // selectRefocusCandidate：space/可管理/排除过滤 + 非最小化优先
+        func win(_ id: Int, space: Int, ax: Bool, minimized: Bool) -> YabaiWindowInfo {
+            YabaiWindowInfo(id: id, pid: 100, app: "T", title: "w\(id)", space: space, display: 1,
+                            frame: nil, isFloatingRaw: false, hasAXReferenceRaw: ax,
+                            isMinimizedRaw: minimized, hasFocusRaw: false)
+        }
+        let wins = [win(1, space: 5, ax: true, minimized: false),
+                    win(2, space: 4, ax: true, minimized: false),
+                    win(3, space: 5, ax: true, minimized: true),
+                    win(4, space: 5, ax: false, minimized: false)]
+        check("refocus: 过滤 space/可管理，非最小化优先",
+              SpaceController.selectRefocusCandidate(windows: wins, spaceIndex: 5, excludingWindowID: nil)?.id == 1)
+        check("refocus: 排除窗不入选",
+              SpaceController.selectRefocusCandidate(windows: wins, spaceIndex: 5, excludingWindowID: 1)?.id == 3)
+        check("refocus: 全最小化回落首个可管理",
+              SpaceController.selectRefocusCandidate(
+                windows: [win(3, space: 5, ax: true, minimized: true), win(6, space: 5, ax: true, minimized: true)],
+                spaceIndex: 5, excludingWindowID: nil)?.id == 3)
+
+        // RestoreOutcome.outcomeLabel：四分支机器可读标签
+        check("outcomeLabel: restored(spaceExact=nil)",
+              ToggleEngine.RestoreOutcome.restored(spaceExact: nil).outcomeLabel == "restored(spaceExact=nil)")
+        check("outcomeLabel: aborted_reason",
+              ToggleEngine.RestoreOutcome.aborted(reason: "no_window").outcomeLabel == "aborted_no_window")
+        check("outcomeLabel: 可重试标签",
+              ToggleEngine.RestoreOutcome.moveFailedRetryable.outcomeLabel == "move_failed_retryable_record_kept")
+        check("outcomeLabel: 永久失败标签",
+              ToggleEngine.RestoreOutcome.moveFailedPermanent.outcomeLabel == "move_failed_permanent_record_cleared")
+
+        // isMoveFailureRetryable：origFrame 在屏与否
+        check("retryable: 在屏 → 保留 record", ToggleEngine.isMoveFailureRetryable(origFrameOnAnyDisplay: true))
+        check("retryable: 不在任何屏 → 清除 record", !ToggleEngine.isMoveFailureRetryable(origFrameOnAnyDisplay: false))
+
+        // sourceSpacePreSwitch：三态决策
+        check("preSwitch: 无上下文（0 值）→ noContext",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 0, sourceYabaiDisp: 0, visibleSpaceOnSourceDisplay: 5) == .noContext)
+        check("preSwitch: 可见性查询失败 → notNeeded（不盲切）",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 5, sourceYabaiDisp: 1, visibleSpaceOnSourceDisplay: nil) == .notNeeded)
+        check("preSwitch: 已在源 space → notNeeded",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 5, sourceYabaiDisp: 1, visibleSpaceOnSourceDisplay: 5) == .notNeeded)
+        check("preSwitch: 停在别 space → switchNeeded",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 5, sourceYabaiDisp: 1, visibleSpaceOnSourceDisplay: 2)
+              == .switchNeeded(visibleSpace: 2))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
