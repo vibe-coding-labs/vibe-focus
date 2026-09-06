@@ -127,6 +127,20 @@
 - 测试：镜像 OverlayRefreshPolicyTests 16 断言（门矩阵 8 组合穷举 + 去重边界
   + 热插拔矩阵）+ Runner 真身 13 断言（含 parseJSONArray 形状不符防御）。
 
+## Batch 13 度量（test/store-db-lock）
+
+- 记录持久层真身锁定：`WindowStateStore+Database` 的 PK 迁移（约 106 行）此前
+  0 覆盖——它是「老用户首次启动新版本」才执行的代码，恰恰是出问题最疼、
+  测试环境最不容易撞上的类型。夹具用 sqlite3 CLI 预建旧 schema（PK=(pid,tty)、
+  允许 window_id 重复）+ 种子行，init 触发迁移后断言：
+  - 新 PK 恰为 window_id 一列（PRAGMA 逐行解析 pk 标志）；
+  - INSERT OR IGNORE 去重（同 window_id 双行留一）；
+  - 行数据完整、三索引重建。
+  另补新库免迁移路径与 preferences KV 往返（save→load→upsert→missing nil）；
+- 全流程文件级隔离（临时目录 + sqlite3 CLI 夹具），不触碰真实 ~/.vibefocus 库；
+- 至此覆盖率报告中的手工可测缺口（纯判定/可注入层）全部收口，剩余为编排
+  编译层（E2E 域）与 HotKey（未入 llvm-cov 报告，单独评估）。
+
 ## 当前热点（后续批次目标，按优先级）
 
 1. `WindowManager+MoveWindow.swift` 547 行——仍是编排+段执行+日志混合体；
