@@ -2348,6 +2348,45 @@ if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1"
     }
 }
 
+// MARK: - E2E 同机互斥锁（quality-plan P5，2026-09-06）
+// toggle 类真机 E2E 同机并行必互撞（对方 yabai re-tile 把 float 测试窗弹回原位、焦点被
+// 抢走，表现为用例间歇 FAIL、重跑即绿——Tests/e2e/README 红线 1 实测）。P3 部署锁同款
+// 机制推广到测试：任一 *_E2E=1 模式启动先取 /tmp/vibefocus-e2e.lock（mkdir 原子），
+// 被持有则拒跑；>10min 视为陈锁回收（持有进程已死/僵死）。
+// 释放走 atexit——E2E 汇总路径以 exit() 结束，defer 不会执行。
+
+private let e2eLockPath = "/tmp/vibefocus-e2e.lock"
+
+/// 本进程是否处于任一真机 E2E 模式（环境变量名以 _E2E 结尾且值为 1——新模式自动纳入）。
+private func isE2EMode() -> Bool {
+    ProcessInfo.processInfo.environment.contains { $0.key.hasSuffix("_E2E") && $0.value == "1" }
+}
+
+/// 取 E2E 互斥锁；被占用且非陈锁时终止（退出码 3，与测试 FAIL 的 1、构建失败的 2 区分）。
+private func acquireE2ELockOrExit() {
+    guard isE2EMode() else { return }
+    while true {
+        if mkdir(e2eLockPath, 0o755) == 0 { break }
+        guard errno == EEXIST else {
+            fatalError("E2E 锁创建失败：\(String(cString: strerror(errno)))")
+        }
+        let attrs = try? FileManager.default.attributesOfItem(atPath: e2eLockPath)
+        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        if Date().timeIntervalSince1970 - mtime > 600 {
+            _ = rmdir(e2eLockPath)   // 陈锁回收后重试竞争（被别人抢先则下轮拒跑）
+            continue
+        }
+        fputs("""
+        ⛔ 另一个真机 E2E 正在运行（锁: \(e2eLockPath)）。同机并行 E2E 会互撞（yabai re-tile 弹回 float 窗、焦点抢夺），禁止并发。
+           如确认无 E2E 在跑：rm -rf \(e2eLockPath) 后重试。
+        """, stderr)
+        exit(3)
+    }
+    atexit { _ = rmdir("/tmp/vibefocus-e2e.lock") }
+}
+
+acquireE2ELockOrExit()
+
 MainActor.assumeIsolated {
     runAllTests()
 }
