@@ -3813,6 +3813,62 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("registry: 内存+DB 双清后 → nil", registry.binding(for: "sess-A") == nil)
     }
 
+    // MARK: 终端上下文匹配族 + Claude 窗口定位（真实实现——B11：镜像转直测）
+
+    do {
+        // fullDevicePath / normalizeTTY
+        check("tty: fullDevicePath 补前缀", WindowManager.fullDevicePath("ttys003") == "/dev/ttys003")
+        check("tty: fullDevicePath 已带前缀原样", WindowManager.fullDevicePath("/dev/ttys003") == "/dev/ttys003")
+        check("tty: normalize nil/空/not-a-tty → nil",
+              WindowManager.normalizeTTY(nil) == nil
+              && WindowManager.normalizeTTY("") == nil
+              && WindowManager.normalizeTTY("not a tty") == nil)
+        check("tty: normalize 正常补全", WindowManager.normalizeTTY("ttys009") == "/dev/ttys009")
+
+        // matchCommandToWindowTitle：倒序命令优先 + em-dash contains + 大小写
+        let wins = [
+            WindowIdentity(windowID: 1, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 1, title: "user — Zsh"),
+            WindowIdentity(windowID: 2, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 2, title: "repo — claude"),
+        ]
+        check("cmdMatch: 命中 em-dash 标题",
+              WindowManager.matchCommandToWindowTitle(commands: ["claude"], windows: wins)?.windowID == 2)
+        check("cmdMatch: 倒序遍历（后者优先）",
+              WindowManager.matchCommandToWindowTitle(commands: ["zsh", "claude"], windows: wins)?.windowID == 2)
+        check("cmdMatch: 大小写敏感命令不命中小写标题",
+              WindowManager.matchCommandToWindowTitle(commands: ["CLAUDE"], windows: wins) == nil)
+
+        // parseCommandBasename：路径取 basename、空行跳过
+        let basenames = WindowManager.parseCommandBasename(from: "/usr/bin/claude\n\n  /opt/homebrew/bin/nvim ")
+        check("cmdBasename: 取末段 + 空行跳过", basenames == ["claude", "nvim"])
+
+        // parseItermSessionUUID / UUID / TTY 校验（注入防御 allowlist）
+        check("itermUUID: 冒号后取段", WindowManager.parseItermSessionUUID("iTerm:ABC-123") == "ABC-123")
+        check("itermUUID: 无冒号原样", WindowManager.parseItermSessionUUID("ABC") == "ABC")
+        check("itermUUID: 冒号后空 → nil", WindowManager.parseItermSessionUUID("iTerm:") == nil)
+        check("uuidAllow: hex+连字符通过", WindowManager.isValidUUIDPart("ABC-def-0123"))
+        check("uuidAllow: 元字符拒绝", !WindowManager.isValidUUIDPart("abc\"; rm"))
+        check("ttyAllow: /dev/ttys### 通过", WindowManager.isValidTTYPath("/dev/ttys004"))
+        check("ttyAllow: /dev/pty### 通过", WindowManager.isValidTTYPath("/dev/pty3"))
+        check("ttyAllow: 非设备路径拒绝", !WindowManager.isValidTTYPath("/dev/tty; rm -rf"))
+
+        // Claude 窗口定位：两级策略
+        typealias Cand = WindowManager.WindowCandidate
+        let candidates = [
+            Cand(windowID: 11, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "proj — zsh"),
+            Cand(windowID: 12, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "Claude Code — proj"),
+        ]
+        let isHost: (Cand) -> Bool = { $0.appName == "iTerm2" }
+        let m1 = WindowManager.matchClaudeCodeCandidate(candidates, projectName: "proj", isHostApp: isHost)
+        check("claudeMatch: 策略1 项目名命中前者",
+              m1?.strategy == .hostAppProjectName && m1?.candidate.windowID == 11)
+        let m2 = WindowManager.matchClaudeCodeCandidate(candidates, projectName: nil, isHostApp: isHost)
+        check("claudeMatch: 策略2 无项目名回落标题", m2?.strategy == .hostAppClaudeCodeTitle && m2?.candidate.windowID == 12)
+        let m3 = WindowManager.matchClaudeCodeCandidate(candidates, projectName: "nomatch", isHostApp: isHost)
+        check("claudeMatch: 项目名未命中回落策略2", m3?.strategy == .hostAppClaudeCodeTitle && m3?.candidate.windowID == 12)
+        let noHost = WindowManager.matchClaudeCodeCandidate(candidates, projectName: "proj", isHostApp: { _ in false })
+        check("claudeMatch: 无 hostApp 候选 → nil", noHost == nil)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
