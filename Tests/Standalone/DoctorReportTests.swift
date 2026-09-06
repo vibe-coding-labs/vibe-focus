@@ -26,13 +26,14 @@ func parseJournalLine(_ line: String) -> JournalEvent? {
           let obj = try? JSONSerialization.jsonObject(with: data),
           let dict = obj as? [String: Any],
           let kind = dict["kind"] as? String,
-          let pidNum = dict["pid"] as? NSNumber,
-          kind == "launch" || kind == "exit" else {
+          kind == "launch" || kind == "exit" || kind == "install" else {
         return nil
     }
+    // install 行（run.sh 写入）无 pid，占位 -1
+    let pidValue = (dict["pid"] as? NSNumber)?.int32Value ?? -1
     return JournalEvent(
         kind: kind,
-        pid: pidNum.int32Value,
+        pid: pidValue,
         at: dict["at"] as? String ?? "-",
         reason: dict["reason"] as? String,
         signalName: dict["name"] as? String,
@@ -123,6 +124,7 @@ let journalLines = [
     "{\"kind\":\"launch\",\"pid\":100,\"at\":\"2026-09-06T01:00:00Z\",\"exe\":\"/a\",\"ax\":true}",
     "{\"kind\":\"exit\",\"pid\":100,\"at\":\"2026-09-06T01:10:00Z\",\"reason\":\"clean\"}",
     "{\"kind\":\"launch\",\"pid\":41369,\"at\":\"2026-09-06T08:43:39Z\",\"exe\":\"/x/VibeFocusHotkeys\",\"ax\":false}",
+    "{\"kind\":\"install\",\"at\":\"2026-09-06T09:00:00Z\",\"reason\":\"install:replaced\",\"sha256\":\"cc4c\"}",
     "坏行故意",
 ]
 try? journalLines.joined(separator: "\n").write(toFile: logDir + "/exits.jsonl", atomically: true, encoding: .utf8)
@@ -183,7 +185,11 @@ let allLines = (try? String(contentsOfFile: paths.journalPath, encoding: .utf8))
 let parsed = allLines.split(separator: "\n").compactMap { parseJournalLine(String($0)) }
 report += "[实例生命周期] 共 \(parsed.count) 条事件\n"
 for e in parsed.suffix(12) {
-    report += e.kind == "launch" ? "  launch pid=\(e.pid) exe=\(e.exe ?? "?")\n" : "  exit    pid=\(e.pid) reason=\(e.reason ?? "?")\n"
+    switch e.kind {
+    case "launch": report += "  launch pid=\(e.pid) exe=\(e.exe ?? "?")\n"
+    case "install": report += "  install    reason=\(e.reason ?? "?")\n"
+    default: report += "  exit    pid=\(e.pid) reason=\(e.reason ?? "?")\n"
+    }
 }
 
 // 最近一次死亡（mirror Doctor.ageSeconds：ISO 解析失败返回 nil）
@@ -231,14 +237,20 @@ report += "[keepalive 决策] \(klines.first ?? "无")\n"
 let errs = tailLines(paths.appLogPath, maxBytes: 262_144, count: 200).filter { $0.contains("[ERROR]") }
 report += "[应用日志] ERROR \(errs.count) 条\n"
 
-check(report.contains("共 3 条事件"), "审计共 3 条有效事件（坏行被容错跳过）")
+check(report.contains("共 4 条事件"), "审计共 4 条有效事件（坏行被容错跳过）")
 check(report.contains("[最近一次死亡] pid=100 reason=clean"), "最近一次死亡段输出 reason")
 check(report.contains("分钟前）"), "ISO 时间解析出相对分钟数")
 check(report.contains("pid=41369") && report.contains("[疑似外部击杀] 1 个"), "秒死实例被审计点名")
+check(report.contains("install    reason=install:replaced"), "安装事件进入时间线展示")
 check(report.contains("crash-fatal-20260906-084340.log"), "fatal 归档出现在报告中")
 check(report.contains("VibeFocusHotkeys-2026-09-06-084340.ips"), ".ips 出现在报告中")
 check(report.contains("bin=REPLACED"), "keepalive 二进制替换指纹进入报告")
 check(report.contains("ERROR 1 条"), "应用日志错误行被采集")
+check(report.contains("[辅助功能授权] 当前：未授权"), "AX 当前状态进入报告（fixture 最新 launch ax=false）")
+check(report.contains("检测到 1 次翻转") && report.contains("true→false（授权失效"), "ax true→false 翻转被检测")
+// install 行无 pid：unmatched 配对不受影响（41369 仍是唯一未配对 launch）
+let installParsed = parseJournalLine("{\"kind\":\"install\",\"at\":\"-\",\"reason\":\"install:replaced\"}")
+check(installParsed?.kind == "install" && installParsed?.pid == -1, "install 行解析（无 pid 占位 -1）")
 check(report.contains("[辅助功能授权] 当前：未授权"), "AX 当前状态进入报告（fixture 最新 launch ax=false）")
 check(report.contains("检测到 1 次翻转") && report.contains("true→false（授权失效"), "ax true→false 翻转被检测")
 

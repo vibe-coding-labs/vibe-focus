@@ -58,13 +58,14 @@ enum Doctor {
               let obj = try? JSONSerialization.jsonObject(with: data),
               let dict = obj as? [String: Any],
               let kind = dict["kind"] as? String,
-              let pidNum = dict["pid"] as? NSNumber,
-              kind == "launch" || kind == "exit" else {
+              kind == "launch" || kind == "exit" || kind == "install" else {
             return nil
         }
+        // install 行由 run.sh 写入（无 pid）：pid 用 -1 占位，展示层按 kind 区分。
+        let pidValue = (dict["pid"] as? NSNumber)?.int32Value ?? -1
         return JournalEvent(
             kind: kind,
-            pid: pidNum.int32Value,
+            pid: pidValue,
             at: dict["at"] as? String ?? "-",
             reason: dict["reason"] as? String,
             signalName: dict["name"] as? String,
@@ -132,9 +133,13 @@ enum Doctor {
         } else {
             out.append("  共 \(events.count) 条事件，最近 \(min(12, events.count)) 条：")
             for e in events.suffix(12) {
-                if e.kind == "launch" {
-                    out.append("  launch pid=\(e.pid) at=\(e.at) exe=\(e.exe ?? "?")")
-                } else {
+                switch e.kind {
+                case "launch":
+                    let axTag = e.ax.map { " ax=\($0)" } ?? ""
+                    out.append("  launch pid=\(e.pid) at=\(e.at) exe=\(e.exe ?? "?")\(axTag)")
+                case "install":
+                    out.append("  install    at=\(e.at) \(e.reason ?? "?")")
+                default:
                     let sig = e.signalName.map { " signal=\($0)" } ?? ""
                     out.append("  exit    pid=\(e.pid) at=\(e.at) reason=\(e.reason ?? "?")\(sig)")
                 }

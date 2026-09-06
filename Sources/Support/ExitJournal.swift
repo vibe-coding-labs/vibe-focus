@@ -4,7 +4,9 @@ import ApplicationServices
 // MARK: - 退出审计日志（exits.jsonl，append-only）
 //
 // 每个 VibeFocus 实例启动写一条 launch、退出写一条 exit；致命信号由
-// CrashSignalHandler 写 fatal-signal（async-signal-safe 的预编码行）。
+// CrashSignalHandler 写 fatal-signal（async-signal-safe 的预编码行）；
+// run.sh 的安装事件（install，无 pid）也追加进同一审计流——AX 授权失效与
+// 安装替换二进制的相关性在 --diagnose 时间线里直接可见（P3）。
 // **SIGKILL / 外部击杀不会留下任何记录** —— 审计上「launch 无配对 exit」
 // 即外部击杀实证（2026-09-06 排查 83091/84552/41369 秒死时最大的取证缺口：
 // 进程怎么死的完全无痕）。

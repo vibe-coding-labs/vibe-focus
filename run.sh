@@ -63,6 +63,35 @@ fi
 echo -e "${BLUE}=== VibeFocus 安装运行 ===${NC}"
 echo ""
 
+# P3 部署锁：同机并发部署互斥（mkdir 原子锁 + 10 分钟陈锁自动回收）。
+# 背景：多会话并行开发，两个 run.sh 同时跑会交叉替换 bundle/交叉重启实例，
+# 把「部署=一次 AX 失效 + 一次重启扰动」翻倍（2026-09-06 实测多起部署互踩）。
+DEPLOY_LOCK="/tmp/vibefocus-deploy.lock"
+if ! mkdir "$DEPLOY_LOCK" 2>/dev/null; then
+  LOCK_AGE=$(( $(date +%s) - $(stat -f %m "$DEPLOY_LOCK" 2>/dev/null || echo 0) ))
+  if [ "$LOCK_AGE" -lt 600 ]; then
+    echo -e "${RED}⛔ 另一个部署正在进行（锁: $DEPLOY_LOCK，${LOCK_AGE}s 前取得）。${NC}"
+    echo -e "${RED}   如确认无部署在跑：rm -rf $DEPLOY_LOCK 后重试。${NC}"
+    exit 1
+  fi
+  echo "部署锁超过 10 分钟未释放，按陈锁回收..."
+  rm -rf "$DEPLOY_LOCK"
+  mkdir "$DEPLOY_LOCK" || { echo "部署锁重建失败"; exit 1; }
+fi
+trap 'rmdir "$DEPLOY_LOCK" 2>/dev/null' EXIT
+
+# P3 安装审计：安装/跳过事件追加进 exits.jsonl，与退出审计同流——
+# --diagnose 的时间线可把「AX 授权失效」与「安装替换二进制」直接对齐。
+AUDIT_JSONL="$HOME/Library/Logs/VibeFocus/exits.jsonl"
+audit_install() {
+  # $1 = action（replaced / skipped-unchanged）
+  local dir
+  dir=$(dirname "$AUDIT_JSONL")
+  mkdir -p "$dir" 2>/dev/null || true
+  printf '{"kind":"install","at":"%s","reason":"%s","sha256":"%s"}\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" "${NEW_HASH:-unknown}" >> "$AUDIT_JSONL" 2>/dev/null || true
+}
+
 echo "构建 release 二进制..."
 swift build -c release --product VibeFocusHotkeys
 
@@ -79,6 +108,7 @@ LAST_HASH_FILE="$HOME/Library/Application Support/VibeFocus/last-install.sha256"
 LAST_HASH=$(cat "$LAST_HASH_FILE" 2>/dev/null || echo "")
 if [ -f "$INSTALL_PATH/Contents/MacOS/$EXECUTABLE_NAME" ] && [ -n "$NEW_HASH" ] && [ "$NEW_HASH" = "$LAST_HASH" ]; then
   echo "二进制无变化（hash ${NEW_HASH:0:12}…），跳过替换——保留 TCC 授权。"
+  audit_install "skipped-unchanged"
   open "$INSTALL_PATH"
   echo ""
   echo -e "${GREEN}✅ 已是最新（未替换 bundle）${NC}"
@@ -177,6 +207,9 @@ if [ -n "$NEW_HASH" ]; then
   mkdir -p "$(dirname "$HOME/Library/Application Support/VibeFocus/last-install.sha256")"
   echo "$NEW_HASH" > "$LAST_HASH_FILE"
 fi
+
+# P3 安装审计：真替换事件入审计流（与退出审计同 JSONL）
+audit_install "replaced"
 
 echo "启动应用..."
 open "$INSTALL_PATH"

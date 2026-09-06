@@ -1995,6 +1995,40 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             check("SizeE2E clampCase: 读取夹取还原后帧", false)
         }
 
+        // Case F：move_to_main 路由直呼（P2 补用例）。副屏窗口直接调公开路由
+        // moveToMainScreen（与热键同路径，区别于 Case C 的 toggle 决策入口），
+        // 断言：窗口落主屏可视区（1653x1079 ±40）+ toggle record 落库（还原可用）。
+        let f1Sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            yabaiPlace(wid, frame: CGRect(x: -814, y: -1415, width: 1146, height: 707))
+            f1Sem.signal()
+        }
+        while f1Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 0.6)
+        _ = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "window", "\(wid)", "--focus"], timeout: 30)
+        Thread.sleep(forTimeInterval: 0.5)
+        let f2Sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            WindowManager.shared.moveToMainScreen(operationID: "size-e2e-move-to-main", triggerSource: "size_e2e")
+            f2Sem.signal()
+        }
+        while f2Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 1.2)
+        if let movedFrame = yabaiWindowFrame(wid) {
+            print("    [诊断] moveToMainCase 终帧=\(movedFrame)（期望主屏可视区 75,38 1653x1079 ±40）")
+            let onMain = movedFrame.origin.x >= 0
+            let sizeOK = abs(movedFrame.width - 1653) <= 40 && abs(movedFrame.height - 1079) <= 40
+            check("SizeE2E moveToMainCase: 路由直呼落主屏可视区（±40）", onMain && sizeOK)
+            let recordSaved = ToggleEngine.shared.load(windowID: wid) != nil
+            check("SizeE2E moveToMainCase: toggle record 已落库（还原可用）", recordSaved)
+        } else {
+            check("SizeE2E moveToMainCase: 读取移主屏后帧", false)
+        }
+
         // 清理：向两个测试窗口的 session 写 exit 结束 shell，窗口随会话关闭（best-effort）
         let exitScript = """
         tell application id "com.googlecode.iterm2"
