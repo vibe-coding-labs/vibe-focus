@@ -4158,6 +4158,20 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && helper.contains("terminal_ctx"))
     }
 
+    // MARK: yabai 错误分类器（真实实现——B18：六类别 + 优先级 + 大小写不敏感穷尽锁定）
+
+    do {
+        check("errClass: 空 stderr → none", YabaiErrorClassifier.classify(stderr: "") == .none)
+        check("errClass: SA 缺失特征", YabaiErrorClassifier.classify(stderr: "yabai: error with the scripting-addition") == .scriptingAdditionMissing)
+        check("errClass: mission-control 阻断", YabaiErrorClassifier.classify(stderr: "cannot focus space: mission-control is active!") == .missionControlBlocking)
+        check("errClass: 无焦点窗口（预期）", YabaiErrorClassifier.classify(stderr: "could not retrieve window details") == .noFocusedWindow)
+        check("errClass: 窗口已关闭（预期）", YabaiErrorClassifier.classify(stderr: "could not locate window") == .windowNotFound)
+        check("errClass: 未识别非空 → unrecognized", YabaiErrorClassifier.classify(stderr: "segfault somewhere") == .unrecognized)
+        check("errClass: 大小写不敏感", YabaiErrorClassifier.classify(stderr: "Scripting-Addition Is Missing") == .scriptingAdditionMissing)
+        check("errClass: 多类命中取最前（SA 优先于 MC）",
+              YabaiErrorClassifier.classify(stderr: "mission-control blocked; scripting-addition missing") == .scriptingAdditionMissing)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
