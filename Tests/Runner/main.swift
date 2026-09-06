@@ -4241,6 +4241,19 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               YabaiErrorClassifier.classify(stderr: "mission-control blocked; scripting-addition missing") == .scriptingAdditionMissing)
     }
 
+    // MARK: Codex 安装状态展示映射（真实实现——B21：三处三元收敛为单一事实源）
+
+    do {
+        check("codexStatus: 已安装 pill", SettingsView.CodexInstallPresentation.pillTitle(installed: true) == "已安装")
+        check("codexStatus: 未安装 pill", SettingsView.CodexInstallPresentation.pillTitle(installed: false) == "未安装")
+        check("codexStatus: 已安装 detail 指向 hooks.json",
+              SettingsView.CodexInstallPresentation.detailText(installed: true).contains("hooks.json"))
+        check("codexStatus: 未安装 detail", SettingsView.CodexInstallPresentation.detailText(installed: false) == "尚未安装")
+        check("codexStatus: tint 成功/警示分派",
+              SettingsView.CodexInstallPresentation.pillTintName(installed: true) == "success"
+              && SettingsView.CodexInstallPresentation.pillTintName(installed: false) == "warning")
+    }
+
     // MARK: PromptMoveDecision + UPSRateLimiter（真实实现——UPS 搬窗决策链与防循环限流，Batch 14）
 
     do {
