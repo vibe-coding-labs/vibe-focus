@@ -3589,6 +3589,157 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("queue: capacity<1 防御为 1（新条目总在）", ids(defensive) == ["x"])
     }
 
+    // MARK: Hook 数据契约（真实实现——B6：ClaudeHookPayload 容错解码/TerminalContext 绑定判据穷尽锁定）
+
+    do {
+        func decode(_ json: String) throws -> ClaudeHookPayload {
+            try JSONDecoder().decode(ClaudeHookPayload.self, from: Data(json.utf8))
+        }
+        // 事件键双别名
+        check("payload: event 键", (try? decode(#"{"event":"Stop","session_id":"s1"}"#))?.event == .stop)
+        check("payload: hook_event_name 别名", (try? decode(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#))?.event == .sessionStart)
+        check("payload: 两键皆缺 → 抛错", (try? decode(#"{"session_id":"s1"}"#)) == nil)
+        check("payload: 未知事件值 → 抛错", (try? decode(#"{"event":"Nonsense","session_id":"s1"}"#)) == nil)
+        // 会话键别名 + trim + 空拒绝
+        check("payload: session_id 键", (try? decode(#"{"event":"Stop","session_id":"  abc  "}"#))?.sessionID == "abc")
+        check("payload: sessionId 别名", (try? decode(#"{"event":"Stop","sessionId":"abc"}"#))?.sessionID == "abc")
+        check("payload: 空白会话 → 抛错", (try? decode(#"{"event":"Stop","session_id":"   "}"#)) == nil)
+        check("payload: 缺会话 → 抛错", (try? decode(#"{"event":"Stop"}"#)) == nil)
+        // 可选字段缺省 nil
+        let minimal = try! decode(#"{"event":"Stop","session_id":"m1"}"#)
+        check("payload: 可选字段缺省 nil",
+              minimal.source == nil && minimal.cwd == nil && minimal.model == nil
+              && minimal.terminalCtx == nil && minimal.lastAssistantMessage == nil
+              && minimal.transcriptPath == nil)
+        // 嵌套 terminalCtx（snake_case 键）+ 文本字段
+        let rich = try! decode("""
+        {"event":"UserPromptSubmit","session_id":"r1","source":"cc","cwd":"/w",
+         "model":"m","transcript_path":"/t.jsonl","last_assistant_message":"hi",
+         "terminal_ctx":{"tty":"/dev/ttys004","claude_project_dir":"/repo","window_id":"42"}}
+        """)
+        check("payload: 嵌套 ctx 解码", rich.terminalCtx?.tty == "/dev/ttys004"
+              && rich.terminalCtx?.claudeProjectDir == "/repo" && rich.terminalCtx?.windowID == "42")
+        check("payload: 其余可选字段解码", rich.source == "cc" && rich.cwd == "/w"
+              && rich.model == "m" && rich.transcriptPath == "/t.jsonl"
+              && rich.lastAssistantMessage == "hi")
+
+        // TerminalContext.hasUsefulContext：五因子判定（绑定前置判据）
+        func ctx(tty: String? = nil, term: String? = nil, iterm: String? = nil,
+                 ppid: String? = nil, machine: String? = nil) -> TerminalContext {
+            TerminalContext(termSessionID: term, itermSessionID: iterm, kittyWindowID: nil,
+                            weztermPane: nil, tty: tty, ppid: ppid,
+                            claudeProjectDir: nil, windowID: nil, machineLabel: machine)
+        }
+        check("ctx: tty 单独即有用", ctx(tty: "/dev/ttys001").hasUsefulContext)
+        check("ctx: termSessionID 单独即有用", ctx(term: "t").hasUsefulContext)
+        check("ctx: itermSessionID 单独即有用", ctx(iterm: "i").hasUsefulContext)
+        check("ctx: 有效 ppid(>1) 即有用", ctx(ppid: "123").hasUsefulContext)
+        check("ctx: ppid=1 无用（init 进程排除）", !ctx(ppid: "1").hasUsefulContext)
+        check("ctx: ppid 非数字无用", !ctx(ppid: "abc").hasUsefulContext)
+        check("ctx: machineLabel 单独即有用", ctx(machine: "srv-1").hasUsefulContext)
+        check("ctx: 全空无用", !ctx(tty: "", term: "", iterm: "", ppid: "", machine: "").hasUsefulContext)
+        check("ctx: 全 nil 无用", !ctx().hasUsefulContext)
+        check("ctx: isRemote 有标签 true", ctx(machine: "srv").isRemote)
+        check("ctx: isRemote 空/nil 标签 false", !ctx(machine: "").isRemote && !ctx().isRemote)
+
+        // ClaudeHookResponse 编码：sessionID 走 snake_case
+        let respObj = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            ClaudeHookResponse(ok: true, code: "ok", message: "done", sessionID: "s9", handled: true)
+        ))) as? [String: Any]
+        check("response: session_id snake_case 键", respObj?["session_id"] as? String == "s9" && respObj?["ok"] as? Bool == true)
+    }
+
+    // MARK: Hook 窗移决策树（真实实现——B7：守护顺序契约从镜像转 Runner 直测，决策树唯一事实源）
+
+    do {
+        typealias D = HookEventHandler.WindowMoveDecision
+        // 守护顺序逐条锁定（顺序即生产契约：前一条满足时后条不可达）
+        check("decide: autoFocus 关闭最优先",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: false, hasBinding: false, bindingVerified: false, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: nil, isTerminalOrIDE: false) == .autoFocusDisabled)
+        check("decide: remoteOnly → localBindingSkip（跳过全部绑定语义）",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true, remoteOnly: true) == .localBindingSkip)
+        check("decide: 无绑定 → noBindingSkip",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: false, bindingVerified: false, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: nil, isTerminalOrIDE: false) == .noBindingSkip)
+        check("decide: 绑定未验证 → bindingVerificationFailed",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: false, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: nil, isTerminalOrIDE: false) == .bindingVerificationFailed)
+        check("decide: 已在主屏 → alreadyOnMainScreen",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: true, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true) == .alreadyOnMainScreen)
+        check("decide: 恢复冷却 → restoreCooldownActive",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: true, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true) == .restoreCooldownActive)
+        check("decide: 陈旧绑定+pid 失配 → staleBindingPIDMismatch",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 1801, pidMatches: false, isTerminalOrIDE: true) == .staleBindingPIDMismatch)
+        check("decide: pid 失配但未超龄 → 继续移动",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 1799, pidMatches: false, isTerminalOrIDE: true) == .proceedToMove(source: "binding"))
+        check("decide: 非终端窗 → nonTerminalWindow",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: false) == .nonTerminalWindow)
+        check("decide: 全绿 → proceedToMove(binding)",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 0, pidMatches: true, isTerminalOrIDE: true) == .proceedToMove(source: "binding"))
+        check("decide: pidMatches nil（查询失败）+ 超龄 → 不判死继续移动",
+              HookEventHandler.decideWindowMove(autoFocusEnabled: true, hasBinding: true, bindingVerified: true, isWindowOnMainScreen: false, isInCooldown: false, bindingAge: 1801, pidMatches: nil, isTerminalOrIDE: true) == .proceedToMove(source: "binding"))
+
+        // 决策 → HTTP 响应映射表：8 跳过类全部 200+handled=false+code 对应；proceed → nil
+        for (decision, code) in [(D.autoFocusDisabled, "auto_focus_disabled"),
+                                 (D.localBindingSkip, "trigger_disabled_skip"),
+                                 (D.noBindingSkip, "no_binding_skip"),
+                                 (D.bindingVerificationFailed, "binding_verification_failed"),
+                                 (D.alreadyOnMainScreen, "already_on_main_screen"),
+                                 (D.restoreCooldownActive, "restore_cooldown_active"),
+                                 (D.staleBindingPIDMismatch, "stale_binding_pid_mismatch"),
+                                 (D.nonTerminalWindow, "non_terminal_window")] as [(HookEventHandler.WindowMoveDecision, String)] {
+            guard let resp = HookEventHandler.httpResponse(for: decision, triggerName: "T", sessionID: "s") else {
+                check("httpResponse: \(code) 应有响应", false)
+                continue
+            }
+            check("httpResponse: \(code) → 200/handled=false/code 对应",
+                  resp.statusCode == 200 && resp.response.ok && !resp.response.handled
+                  && resp.response.code == code)
+        }
+        check("httpResponse: proceedToMove → nil（响应由执行器产生）",
+              HookEventHandler.httpResponse(for: .proceedToMove(source: "binding"), triggerName: "T", sessionID: "s") == nil)
+        check("logDescription: proceed 带源标注",
+              D.proceedToMove(source: "binding").logDescription == "proceed_to_move(source=binding)")
+    }
+
+    // MARK: Space 投递决策（真实实现——B8：七分支决策表从镜像转 Runner 直测）
+
+    do {
+        typealias Dec = TerminalGridController.SpaceDeliveryDecision
+        typealias Args = (
+            targetSpaceIndex: Int?, targetDisplayVisibleSpace: Int?,
+            targetDisplayIndex: Int?, windowDisplayIndex: Int?,
+            hasParkingDisplay: Bool, windowSpaceIndex: Int?
+        )
+        func decide(_ a: Args) -> TerminalGridController.SpaceDeliveryDecision {
+            TerminalGridController.spaceDeliveryDecision(
+                targetSpaceIndex: a.targetSpaceIndex,
+                targetDisplayVisibleSpace: a.targetDisplayVisibleSpace,
+                targetDisplayIndex: a.targetDisplayIndex,
+                windowDisplayIndex: a.windowDisplayIndex,
+                hasParkingDisplay: a.hasParkingDisplay,
+                windowSpaceIndex: a.windowSpaceIndex
+            )
+        }
+        // 全参便利：显式目标 Space 5 / 目标屏 display 1 / 双屏
+        let base = Args(5, 5, 1, 1, true, 5)
+        check("delivery: 窗已在目标 space → notNeeded", decide(base) == .notNeeded)
+        check("delivery: 非显式 space 目标 → notApplicable",
+              decide(Args(nil, 5, 1, 1, true, 5)) == .notApplicable)
+        check("delivery: yabai 不可用（可见 space nil）→ skipNoYabai",
+              decide(Args(5, nil, 1, 1, true, 5)) == .skipNoYabai)
+        check("delivery: 目标屏视角未在目标 space → skipViewNotOnTarget",
+              decide(Args(5, 4, 1, 1, true, 5)) == .skipViewNotOnTarget)
+        check("delivery: 跨屏窗 + 有泊位屏 → deliverCrossDisplay",
+              decide(Args(5, 5, 1, 2, true, nil)) == .deliverCrossDisplay)
+        check("delivery: 同屏错位 + 有泊位屏 → deliverRoundTrip",
+              decide(Args(5, 5, 1, 1, true, 3)) == .deliverRoundTrip)
+        check("delivery: 同屏错位 + 单屏无泊位 → skipNoParkingDisplay",
+              decide(Args(5, 5, 1, 1, false, 3)) == .skipNoParkingDisplay)
+        check("delivery: 窗 space 查询失败（nil）按需投递（同屏）",
+              decide(Args(5, 5, 1, 1, true, nil)) == .deliverRoundTrip)
+        check("delivery: 窗 display 查询失败（nil）≠ 目标屏 → 跨屏",
+              decide(Args(5, 5, 1, nil, true, nil)) == .deliverCrossDisplay)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
