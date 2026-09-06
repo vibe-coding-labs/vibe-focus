@@ -67,6 +67,20 @@ echo "构建 release 二进制..."
 swift build -c release --product VibeFocusHotkeys
 
 echo "停止旧进程..."
+# 哈希比对：构建产物与已装二进制完全一致时不动 bundle、不重启进程。替换二进制 =
+# 新 CDHash = 辅助功能等 TCC 授权失效（macOS 对本地签名 app 按 CDHash 校验），
+# 无谓重装会白白逼用户重新授权。仅在真升级（二进制有变化）时执行替换。
+NEW_BIN="$SCRIPT_DIR/.build/release/$EXECUTABLE_NAME"
+NEW_HASH=$(shasum -a 256 "$NEW_BIN" 2>/dev/null | awk '{print $1}')
+OLD_HASH=$(shasum -a 256 "$MACOS_DIR/$EXECUTABLE_NAME" 2>/dev/null | awk '{print $1}')
+if [ -f "$INSTALL_PATH/Contents/MacOS/$EXECUTABLE_NAME" ] && [ -n "$NEW_HASH" ] && [ "$NEW_HASH" = "$OLD_HASH" ]; then
+  echo "二进制无变化（hash ${NEW_HASH:0:12}…），跳过替换——保留 TCC 授权。"
+  open "$INSTALL_PATH"
+  echo ""
+  echo -e "${GREEN}✅ 已是最新（未替换 bundle）${NC}"
+  echo "安装路径: $INSTALL_PATH"
+  exit 0
+fi
 pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
 # 必须等旧进程真正退出才能替换 bundle：SIGTERM 后 SwiftUI/AppKit 撕卸可能超过 1s，
 # 若此刻 cp 就地覆盖运行中的可执行文件，旧进程随后缺页读到哈希不匹配的新内容，
@@ -86,7 +100,7 @@ echo "创建 .app bundle..."
 # 它的代码映射仍指向已 unlink 的旧 inode（内容完整），不会因磁盘内容被替换而被击杀。
 rm -rf "$INSTALL_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$SCRIPT_DIR/.build/release/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
+cp "$NEW_BIN" "$MACOS_DIR/$EXECUTABLE_NAME"
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
 
 # Copy icon resources
