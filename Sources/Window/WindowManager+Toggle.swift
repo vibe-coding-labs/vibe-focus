@@ -77,11 +77,22 @@ extension WindowManager {
         // 三级焦点窗口解析（CGWindowList→yabai→AX），详见 +Toggle+FocusResolution.swift。
         // P2: yabai query focused window（非 AX）消除了 move_to_main 路径 toggle 入口的
         // focusedWindow(for:) 副屏阻塞 1.5s（toggle-00000541 ctxMs=1501）。
-        let resolution = resolveFocusedWindowForToggle(
+        var resolution = resolveFocusedWindowForToggle(
             frontApp: NSWorkspace.shared.frontmostApplication,
             cachedMainScreen: cachedMainScreen,
             toggleContext: &toggleContext
         )
+        // 无窗口前台兜底：SystemUIServer 等系统表面持焦时三级解析必然全空（candidatesCount==0），
+        // 直接路由只会死在 "focused window identity missing"（2026-09-06 toggle-00000182 真机实证，
+        // 用户视角 = ⌃Q 死键）。改取 z-order 最前普通窗口继续正常决策。
+        // 仅限 candidatesCount==0（前台无窗口）；正常 app 解析失败不走此路（z-order≠AX focus，会翻错窗口）。
+        if resolution.identity == nil, toggleContext["candidatesCount"] == "0",
+           let fallback = resolveFallbackWindowForToggle(
+            cachedMainScreen: cachedMainScreen,
+            toggleContext: &toggleContext
+           ) {
+            resolution = fallback
+        }
         let resolvedWindowID: UInt32? = resolution.windowID
         let resolvedWindowAX: AXUIElement? = resolution.windowAX
         let resolvedIdentity: WindowIdentity? = resolution.identity
