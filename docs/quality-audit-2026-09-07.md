@@ -52,4 +52,5 @@
 | B11 | 终端上下文匹配族（tty 归一/命令-标题匹配/ps basename/iTerm UUID/注入防御 allowlist）+ Claude 窗口定位两级策略，Runner 直测 18 断言 | ✅ 2026-09-07 |
 | B12 | GridTargetCode.parse 全形态/非法输入 + TerminalSelectionResolver.resolve（手动优先/auto 频次/空回落）Runner 直测 9 断言 | ✅ 2026-09-07 |
 | B13 | float 脱管决策（含惰性不触查询不变量）/refocus 候选选择/outcomeLabel 四分支/retryable/源屏预切三态，Runner 直测 18 断言 | ✅ 2026-09-07 |
+| B14 | restore 结局→播报计划总映射 Runner 直测 10 断言（spaceExact 三态/文案 nil 语义/成败音效通道）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
