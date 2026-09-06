@@ -141,6 +141,25 @@
 - 至此覆盖率报告中的手工可测缺口（纯判定/可注入层）全部收口，剩余为编排
   编译层（E2E 域）与 HotKey（未入 llvm-cov 报告，单独评估）。
 
+## Batch 14~17 度量（prompt-move-decision / hook-settings-composition / hook-installer-lock / toggle-trigger-gate）
+
+- **Batch 14**：`HookEventHandler+PromptSubmit+Decision`——UPS 搬窗五重门
+  （disabled→无身份→限流→已在主屏→冷却→搬窗）收敛为 decidePromptMove 纯判定
+  + promptHttpResponse 响应表 + moveOutcomeResponse 二分；`UPSRateWindow` 内嵌
+  私有结构提取为 `UPSRateLimiter`（防自动化/循环会话无限搬窗的限流决策）；
+  Runner 真身 19 断言（守护顺序穷举 + 响应表 + 限流器 100% 分支）；
+- **Batch 15**：`HookSettingsComposition` 真身直测 9 断言（识别判据/摘除/组合
+  终态/畸形防御）——夹具按真实 Claude settings 形状（hooks[事件]=条目数组），
+  消除该文件真身 0% 的镜像盲区；
+- **Batch 16**：`ClaudeHookServer` 鉴权三纯函数真身直测 8 断言（大小写不敏感
+  header 查找/query 优先 token 解析/未配置放行+精确匹配）——LAN 访问 token 门
+  100% 分支；
+- **Batch 17**：`HotKey/ToggleTriggerGate`——热键去重门（in-flight 最优先→
+  双阈值→accept）与 fallback 路由（repeat 忽略→主热键→TitleEditor→摆位表）
+  提纯 + Runner 10 断言（阈值 < 边界 + 优先级矩阵穷尽）；
+- Batch 10 的 E2E 回归扫 + Batch 13 的迁移真身测试 + 本四批覆盖收口后，
+  覆盖率报告中手工可测缺口（纯判定/可注入层）已全部清完。
+
 ## 当前热点（后续批次目标，按优先级）
 
 1. `WindowManager+MoveWindow.swift` 547 行——仍是编排+段执行+日志混合体；
