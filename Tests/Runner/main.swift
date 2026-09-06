@@ -4084,6 +4084,75 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-5), now: now, cooldownSeconds: 3) == 0)
     }
 
+    // MARK: WindowStateStore 记录持久层（真实 SQLite——老库 PK 迁移/KV 往返，Batch 13）
+
+    do {
+        // 迁移是「老用户首次启动新版本」才跑的代码，此前 0 覆盖。
+        // 夹具：sqlite3 CLI 预建旧 schema（PK=(pid,tty)，允许 window_id 重复）+ 种子行；
+        // init 触发 migrateWindowsPKIfNeeded → 断言新 PK + 去重保留 + 数据完整。
+        func cli(_ sql: String, _ db: String) -> String? {
+            ShellRunner.run(executable: "/usr/bin/sqlite3", arguments: [db, sql], timeout: 30)?.stdout
+        }
+        let dir = "/tmp/vibefocus-dbtest-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let dbPath = dir + "/old.db"
+        let oldSchema = """
+            CREATE TABLE windows (
+                window_id INTEGER, pid INTEGER NOT NULL, tty TEXT NOT NULL DEFAULT '',
+                ax_window_number INTEGER, app_name TEXT, bundle_id TEXT, title TEXT,
+                term_session_id TEXT, iterm_session_id TEXT, kitty_window_id TEXT,
+                wezterm_pane TEXT, env_window_id TEXT, session_id TEXT, cwd TEXT, model TEXT,
+                orig_x REAL, orig_y REAL, orig_w REAL, orig_h REAL,
+                target_x REAL, target_y REAL, target_w REAL, target_h REAL,
+                source_space INTEGER, source_display INTEGER, source_yabai_disp INTEGER,
+                source_disp_space INTEGER, target_display INTEGER, toggle_reason TEXT,
+                toggled_at REAL, is_completed INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL, updated_at REAL NOT NULL, completed_at REAL,
+                PRIMARY KEY(pid, tty)
+            );
+            INSERT INTO windows (window_id, pid, tty, session_id, cwd, created_at, updated_at)
+                VALUES (1, 100, '/dev/ttys001', 'sess-A', '/tmp/a', 100.0, 100.0);
+            INSERT INTO windows (window_id, pid, tty, session_id, cwd, created_at, updated_at)
+                VALUES (1, 200, '/dev/ttys002', 'sess-B', '/tmp/b', 100.0, 100.0);
+            INSERT INTO windows (window_id, pid, tty, session_id, cwd, created_at, updated_at)
+                VALUES (2, 300, '/dev/ttys003', 'sess-C', '/tmp/c', 100.0, 100.0);
+            """
+        _ = ShellRunner.run(executable: "/usr/bin/sqlite3", arguments: [dbPath, oldSchema], timeout: 30)
+
+        // A. init 触发迁移：老 PK=(pid,tty) → 新 PK=(window_id)。
+        let storeA = WindowStateStore(dbPath: dbPath)
+        _ = storeA
+        let pkInfo = cli("PRAGMA table_info(windows);", dbPath) ?? ""
+        // 按 PRAGMA 行解析：每行末字段为 pk 标志，恰一行（window_id）pk=1。
+        let pkLines = pkInfo.split(separator: "\n").filter { !$0.isEmpty && $0.split(separator: "|").last == "1" }
+        check("store A: 迁移后 PK 恰为 window_id 一列",
+              pkLines.count == 1 && pkLines[0].contains("window_id"))
+        let count = cli("SELECT COUNT(*) FROM windows;", dbPath)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        check("store A: INSERT OR IGNORE 去重（同 window_id 双行留一，共 2 行）", count == "2")
+        let sessA = cli("SELECT session_id FROM windows WHERE window_id=1 AND pid=100;", dbPath)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        check("store A: 数据完整（pid=100 行的 session_id 保留）", sessA == "sess-A")
+        let idx = cli("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='windows';", dbPath) ?? ""
+        check("store A: 迁移后重建三索引",
+              idx.contains("idx_windows_session_id") && idx.contains("idx_windows_pid_tty") && idx.contains("idx_windows_last_seen"))
+
+        // B. 新库免迁移：fresh 路径直接是新 PK。
+        let freshPath = dir + "/fresh.db"
+        _ = WindowStateStore(dbPath: freshPath)
+        let freshPK = cli("PRAGMA table_info(windows);", freshPath) ?? ""
+        check("store B: 新库直接是 window_id PK", freshPK.contains("window_id|INTEGER|1||1"))
+
+        // C. preferences KV 往返：save→load→覆盖→missing nil。
+        let storeC = WindowStateStore(dbPath: dir + "/prefs.db")
+        storeC.savePreference(key: "gate", value: "v1")
+        check("store C: save→load 往返", storeC.loadPreference(key: "gate") == "v1")
+        storeC.savePreference(key: "gate", value: "v2")
+        check("store C: 同 key 覆盖 upsert", storeC.loadPreference(key: "gate") == "v2")
+        check("store C: 缺失 key → nil", storeC.loadPreference(key: "nope") == nil)
+
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
     // MARK: 进程树行走 + 终端注册表（真实实现——B16：walkToTerminalPID 谓词注入直测）
 
     do {
