@@ -86,7 +86,7 @@ let rules: [ConformanceRule] = [
             "RestoreSwitchOrchestration.swift",
             "WindowManager+Layout.swift",
             "ToggleEngine+Restore.swift",
-            "TerminalGridController.swift",
+            "TerminalGridController+SpaceDelivery.swift",
         ]
     ),
     ConformanceRule(
