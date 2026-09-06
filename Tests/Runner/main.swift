@@ -17,8 +17,16 @@ import Foundation
 
 // MARK: - 假通道（记录调用序列，RestoreSwitchOrchestration 分支穷尽锁定用）
 
+/// restore 阶段序列日志：跨四类假依赖统一记录调用顺序（Batch 8 序列锁）。
+@MainActor
+final class RestoreSeqLog {
+    var events: [String] = []
+    func add(_ e: String) { events.append(e) }
+}
+
 @MainActor
 final class FakeRestoreChannels: RestoreSpaceChanneling {
+    var seq: RestoreSeqLog?
     var canControlSpaces: Bool
     var currentSpace: Int?
     /// preMoveSpace 采集/守卫检查按调用顺序依次取值（模拟漂移时序）
@@ -51,12 +59,14 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
 
     func focusSpace(_ space: SpaceIdentifier, operationID: String?) -> Bool {
         calls.append("focus")
+        seq?.add("focus")
         focusReceived = space
         return focusResult
     }
 
     func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID: UInt32?, operationID: String?, prefetchedWindows: [YabaiWindowInfo]?) -> Bool {
         calls.append("refocus")
+        seq?.add("refocus")
         refocusReceivedSpace = spaceIndex
         refocusReceivedExcluded = excludingWindowID
         refocusReceivedPrefetched = prefetchedWindows
@@ -65,33 +75,39 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
 
     func currentSpaceIndex() -> Int? {
         calls.append("current")
+        seq?.add("current")
         guard !currentSpaceQueue.isEmpty else { return currentSpace }
         return currentSpaceQueue.removeFirst()
     }
 
     func clearQueryCache() {
         calls.append("clearCache")
+        seq?.add("clearCache")
         cacheCleared = true
     }
 
     func queryWindow(windowID: UInt32, ignoreCache: Bool) -> YabaiWindowInfo? {
         calls.append("query")
+        seq?.add("query")
         return queryResult
     }
 
     func visibleSpaceIndex(forDisplayIndex: Int?, spaces: [YabaiSpaceInfo]?, ignoreCache: Bool) -> SpaceIdentifier? {
         calls.append("visible")
+        seq?.add("visible")
         return ignoreCache ? visibleSpaceAfterSwitch : visibleSpace
     }
 
     func setWindowFloat(_ windowID: UInt32, operationID: String?, knownWindowInfo: YabaiWindowInfo?) -> SpaceController.FloatToggleOutcome {
         calls.append("float")
+        seq?.add("float")
         floatCalled = true
         return floatOutcome
     }
 
     func queryWindowsOnSpace(_ spaceIndex: Int, operationID: String?) -> [YabaiWindowInfo]? {
         calls.append("querySpaceWindows")
+        seq?.add("querySpaceWindows")
         return spaceWindows
     }
 }
@@ -102,13 +118,20 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
 final class FakeRecords: RestoreRecordStoring {
     let record: ToggleRecord?
     private(set) var clearCalls = 0
+    var seq: RestoreSeqLog?
 
     init(record: ToggleRecord?) {
         self.record = record
     }
 
-    func load(windowID: UInt32) -> ToggleRecord? { record }
-    func clear(windowID: UInt32) { clearCalls += 1 }
+    func load(windowID: UInt32) -> ToggleRecord? {
+        seq?.add("load")
+        return record
+    }
+    func clear(windowID: UInt32) {
+        seq?.add("clear")
+        clearCalls += 1
+    }
 }
 
 @MainActor
@@ -117,6 +140,7 @@ final class FakeWindows: RestoreWindowOperating {
     var moveResult = true
     var displayContextResult: (yabaiIndex: Int?, displayID: UInt32?) = (yabaiIndex: 2, displayID: nil)
     let frameTolerance: CGFloat = 20
+    var seq: RestoreSeqLog?
     private(set) var moveCalls: [(windowID: UInt32, stage: String)] = []
 
     init(findResult: AXUIElement?, moveResult: Bool = true) {
@@ -124,15 +148,20 @@ final class FakeWindows: RestoreWindowOperating {
         self.moveResult = moveResult
     }
 
-    func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? { findResult }
+    func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? {
+        seq?.add("lookup")
+        return findResult
+    }
 
     func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleFrame: CGRect?) -> Bool {
+        seq?.add("move:\(stage)")
         moveCalls.append((windowID, stage))
         return moveResult
     }
 
     func displayContext(for frame: CGRect) -> (yabaiIndex: Int?, displayID: UInt32?) {
-        displayContextResult
+        seq?.add("displayContext")
+        return displayContextResult
     }
 }
 
@@ -146,8 +175,10 @@ final class FakeAuditor: RestoreAuditing {
     }
 
     private(set) var events: [Event] = []
+    var seq: RestoreSeqLog?
 
     func record(eventType: String, windowID: UInt32, pid: Int32?, sessionID: String?, details: [String: String]) {
+        seq?.add("audit:\(eventType)")
         events.append(Event(eventType: eventType, windowID: windowID, pid: pid, details: details))
     }
 }
@@ -855,11 +886,18 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             record: ToggleRecord? = sampleRecord(),
             findOK: Bool = true,
             moveOK: Bool = true,
-            channels: FakeRestoreChannels
+            channels: FakeRestoreChannels,
+            seq: RestoreSeqLog? = nil
         ) -> (FakeRecords, FakeWindows, FakeRestoreChannels, FakeAuditor) {
             let ax = findOK ? AXUIElementCreateSystemWide() : nil
-            return (FakeRecords(record: record), FakeWindows(findResult: ax, moveResult: moveOK),
-                    channels, FakeAuditor())
+            let recs = FakeRecords(record: record)
+            let wins = FakeWindows(findResult: ax, moveResult: moveOK)
+            let aud = FakeAuditor()
+            recs.seq = seq
+            wins.seq = seq
+            channels.seq = seq
+            aud.seq = seq
+            return (recs, wins, channels, aud)
         }
         func run(
             _ rec: FakeRecords, _ win: FakeWindows, _ ch: FakeRestoreChannels, _ aud: FakeAuditor
@@ -1047,6 +1085,85 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                   outcome == .restored(spaceExact: true)
                   && ch2.calls.filter { $0 == "clearCache" }.count == 1
                   && aud.events[0].eventType == "restore_success")
+        }
+
+        // MARK: 阶段序列锁（Batch 8）——restore 主体的顺序契约由跨依赖调用序列断言锁定。
+        // 契约清单：load→lookup→query 先行；preMoveSpace(current) 必须先于 4-pre 判定
+        // （漏采会把切换后的 space 当基准，漏切回用户视角）；4-pre 双层（visible 判定→
+        // SA 直切→等到位轮询）先于守卫预取与 move；FloatSettle 恒清缓存紧跟 float；
+        // move 后守卫先行（成功/失败路径都是）再动 record；永久失败才清 record。
+
+        // S1. happy + 源屏 space 切回 + 视角逐卫成功：16 步全序锁定。
+        do {
+            let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
+            ch.currentSpaceQueue = [1, 5, 5]          // preMove=1；move 后守卫查询=5（漂移）
+            ch.queryResult = infoWindow()
+            ch.visibleSpace = .yabaiIndex(5)           // 源屏(disp2)可见 space 5 ≠ sourceSpace 3 → switchNeeded
+            ch.visibleSpaceAfterSwitch = .yabaiIndex(3) // 切回轮询确认落定 3
+            ch.focusResult = true                      // SA 直切两层（4-pre + 守卫）都成功
+            ch.spaceWindows = nil
+            ch.floatOutcome = .toggled                 // 4a 真 float（FloatSettle 真实等待一次）
+            let log = RestoreSeqLog()
+            let (rec, win, ch2, aud) = makeDeps(channels: ch, seq: log)
+            let outcome = run(rec, win, ch2, aud)
+            check("restoreSeq S1: 结局 restored(spaceExact=true)", outcome == .restored(spaceExact: true))
+            check("restoreSeq S1: 16 步全序（capture 先于 4-pre、float+清缓存先于 move、守卫先于 clear）",
+                  log.events == ["load", "lookup", "query", "current", "visible", "focus", "visible",
+                                 "querySpaceWindows", "float", "clearCache", "move:restore",
+                                 "current", "focus", "clearCache", "clear", "audit:restore_success"])
+            check("restoreSeq S1: record 在守卫成功后才清（clearCalls=1）", rec.clearCalls == 1)
+        }
+
+        // S2. 最小化快检失败：query 后立即短路（无 current/float/move/clear）。
+        do {
+            let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
+            ch.queryResult = infoWindow(minimized: true)
+            let log = RestoreSeqLog()
+            let (rec, win, ch2, aud) = makeDeps(channels: ch, seq: log)
+            let outcome = run(rec, win, ch2, aud)
+            check("restoreSeq S2: 最小化 → moveFailedRetryable", outcome == .moveFailedRetryable)
+            check("restoreSeq S2: 序列止于审计（preMoveSpace/float/move/clear 全部短路）",
+                  log.events == ["load", "lookup", "query", "audit:restore_move_failed"]
+                  && rec.clearCalls == 0)
+        }
+
+        // S3. move 失败 + origFrame 在屏内 → retryable：失败路径守卫先行，record 保留。
+        do {
+            let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
+            ch.currentSpaceQueue = [1, 5, 5]
+            ch.queryResult = infoWindow()
+            ch.visibleSpace = .yabaiIndex(3)           // == sourceSpace → notNeeded（聚焦 4-pre 序列外）
+            ch.focusResult = true
+            let log = RestoreSeqLog()
+            let (rec, win, ch2, aud) = makeDeps(moveOK: false, channels: ch, seq: log)
+            let outcome = run(rec, win, ch2, aud)
+            check("restoreSeq S3: move 失败屏内 → moveFailedRetryable", outcome == .moveFailedRetryable)
+            check("restoreSeq S3: 失败路径同样守卫先行（move→current→focus→clearCache→审计），record 保留",
+                  log.events == ["load", "lookup", "query", "current", "visible", "querySpaceWindows",
+                                 "float", "clearCache", "move:restore", "current", "focus", "clearCache",
+                                 "displayContext", "audit:restore_move_failed"]
+                  && rec.clearCalls == 0)
+        }
+
+        // S4. move 失败 + origFrame 在所有屏外 → clamp 重试仍失败 → permanent：clamp 写
+        //     发生在守卫之后、clear 之前（P1 保守退让的顺序契约）。
+        do {
+            let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 1)
+            ch.currentSpaceQueue = [1, 5, 5]
+            ch.queryResult = infoWindow()
+            ch.visibleSpace = .yabaiIndex(3)
+            let log = RestoreSeqLog()
+            let (rec, win, ch2, aud) = makeDeps(moveOK: false, channels: ch, seq: log)
+            win.displayContextResult = (yabaiIndex: nil, displayID: nil)  // 屏外 → clamp 退让
+            win.moveResult = false                                        // clamp 重试也失败
+            let outcome = run(rec, win, ch2, aud)
+            check("restoreSeq S4: 屏外且 clamp 失败 → moveFailedPermanent", outcome == .moveFailedPermanent)
+            check("restoreSeq S4: notNeeded 无 4-pre 切回；clamp 后守卫再判漂移再守卫；审计后才 clear",
+                  log.events == ["load", "lookup", "query", "current", "visible", "querySpaceWindows",
+                                 "float", "clearCache", "move:restore", "current", "refocus",
+                                 "displayContext", "move:restore_clamped", "current", "refocus",
+                                 "clear", "audit:restore_move_failed"])
+            check("restoreSeq S4: record 已清（永久失败唯一合法清除点之后）", rec.clearCalls == 1)
         }
 
         // 分支 14：生产入口组合根（真实 record store 只读路径）→ 无 record 即 aborted。
