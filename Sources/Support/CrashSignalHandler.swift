@@ -24,8 +24,9 @@ import Darwin
 // MARK: - Fatal 记录文件描述符
 
 private let crashSnapshotFD: Int32 = {
-    let path = "/tmp/vibefocus-crash-snapshot.log"
-    return open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+    // 路径按进程角色隔离（DiagnosticPath.swift）：TestRunner 等派生二进制写各自
+    // 后缀文件，不再与主应用共享 /tmp 现场（2026-09-06 僵尸记录污染实证）。
+    return open(diagnosticSnapshotLogPath(), O_WRONLY | O_CREAT | O_TRUNC, 0o644)
 }()
 
 // 致命信号记录的独立文件路径与 FD（O_APPEND 不截断）。
@@ -33,10 +34,17 @@ private let crashSnapshotFD: Int32 = {
 // 导致崩溃信号类型/时刻永久丢失（屏幕热插拔崩溃 bug 因此只能靠日志推断，拿不到信号类型）。
 // crashFatalFD 用 O_APPEND，下次启动不会覆盖；archivePreviousCrashFatalIfNeeded()
 // 在启动期读取非空 fatal 文件 → log + 归档到 ~/Library/Logs/VibeFocus/ → 清空。
-private let crashFatalPath = "/tmp/vibefocus-crash-fatal.log"
+private let crashFatalPath = diagnosticFatalLogPath()
 private let crashFatalFD: Int32 = {
     return open(crashFatalPath, O_WRONLY | O_CREAT | O_APPEND, 0o644)
 }()
+
+// 退出审计（ExitJournal/exits.jsonl）：handler 只做一次 write 落盘预编码行，
+// installCrashSignalHandlers 时打开 FD 并按本进程 pid 预生成各信号的行。
+nonisolated(unsafe) private var exitJournalFD: Int32 = -1
+nonisolated(unsafe) private var fatalSignalJournalLines: [Int32: [CChar]] = [:]
+// handler 内不可用 ProcessInfo（非 async-signal-safe），进程名安装期取一次。
+private let signalTimeProcessName = ProcessInfo.processInfo.processName
 
 // MARK: - 双缓冲快照
 
@@ -118,7 +126,7 @@ private func crashSignalHandler(_ sig: Int32) {
     case SIGTRAP: sigMsg += "SIGTRAP"
     default: sigMsg += "UNKNOWN"
     }
-    sigMsg += ") caught at "
+    sigMsg += ") proc=\(signalTimeProcessName) pid=\(getpid()) caught at "
     var now = time(nil)
     var tm = tm()
     localtime_r(&now, &tm)
@@ -178,6 +186,16 @@ private func crashSignalHandler(_ sig: Int32) {
             if crashFatalFD >= 0 {
                 emit(to: crashFatalFD)
             }
+            // 退出审计：预编码的 fatal-signal 行写入 exits.jsonl（install 期预生成，
+            // handler 内一次 write，async-signal-safe）。SIGKILL 无此行——审计上
+            // 「launch 无配对 exit」即外部击杀实证。
+            if exitJournalFD >= 0, let line = fatalSignalJournalLines[sig] {
+                line.withUnsafeBufferPointer { buf in
+                    if let base = buf.baseAddress {
+                        _ = write(exitJournalFD, base, strlen(base))
+                    }
+                }
+            }
         }
     }
 
@@ -204,6 +222,13 @@ func installCrashSignalHandlers() {
     // .capturePreviousCrashFatalDate()（fatal 文件 mtime 是崩溃循环熔断的判定输入）。
     archivePreviousCrashFatalIfNeeded()
     _ = crashFatalFD  // 触发 lazy open（O_CREAT | O_APPEND，不截断）
+    // 退出审计：打开 exits.jsonl 追加 FD + 预生成各信号的审计行（handler 内零构造）。
+    exitJournalFD = ExitJournal.openAppendFD()
+    let journalPID = getpid()
+    for (sig, name) in [(SIGSEGV, "SIGSEGV"), (SIGABRT, "SIGABRT"), (SIGBUS, "SIGBUS"),
+                        (SIGFPE, "SIGFPE"), (SIGILL, "SIGILL"), (SIGTRAP, "SIGTRAP")] {
+        fatalSignalJournalLines[sig] = ExitJournal.cCharLineForSignal(pid: journalPID, signal: sig, name: name)
+    }
     #if PERF_INSTRUMENT
     let icshStart = Date()
     defer {
@@ -229,12 +254,15 @@ func installAtExitHandler() {
     atexit {
         let msg = "VibeFocus exiting via atexit (likely normal termination)\n"
         msg.withCString { ptr in
-            let fd = open("/tmp/vibefocus-crash-snapshot.log", O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            let fd = open(diagnosticSnapshotLogPath(), O_WRONLY | O_CREAT | O_APPEND, 0o644)
             if fd != -1 {
                 write(fd, ptr, strlen(ptr))
                 close(fd)
             }
         }
+        // 退出审计兜底：显式 recordExit 的路径（lock 失败/复用已有实例）已写过专属
+        // reason，此处只补「正常 Quit / 正常 exit」的 clean 记录。
+        ExitJournal.recordCleanExitIfUnrecorded()
     }
 }
 

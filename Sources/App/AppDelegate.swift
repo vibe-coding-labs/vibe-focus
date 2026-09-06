@@ -33,6 +33,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         CrashContextRecorder.shared.capturePreviousCrashFatalDate()
         installCrashSignalHandlers()
         installAtExitHandler()
+        // 退出审计：本实例的存在证明（越早写，后续任何死法都能对上账；SIGKILL 类
+        // 外部击杀表现为「launch 无配对 exit」，--diagnose 报告可直接点名）。
+        ExitJournal.recordLaunch(
+            bundleID: Bundle.main.bundleIdentifier,
+            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+            exePath: Bundle.main.executableURL?.path ?? "?"
+        )
+        log("=== SESSION START ===", fields: [
+            "pid": String(ProcessInfo.processInfo.processIdentifier)
+        ])
         log("applicationDidFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "nil") path=\(Bundle.main.bundleURL.path)")
         logDiagnostics("launch")
         CrashContextRecorder.shared.bootstrap()
@@ -50,6 +60,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
                 CrashContextRecorder.shared.record("reuse_existing_instance pid=\(existing.app.processIdentifier)")
                 requestExistingInstanceOpenSettings()
                 existing.app.activate(options: [.activateAllWindows])
+                ExitJournal.recordExit(reason: "reuse-existing-activate")
                 NSApp.terminate(nil)
                 return
             }
@@ -72,6 +83,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             if !acquireExclusiveLock() {
                 log("Still cannot acquire lock, terminating self")
                 CrashContextRecorder.shared.record("lock_failed_terminate")
+                ExitJournal.recordExit(reason: "lock-failed-terminate")
                 NSApp.terminate(nil)
                 return
             }

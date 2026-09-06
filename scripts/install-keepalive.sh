@@ -46,23 +46,36 @@ mkdir -p "$(dirname "$WRAPPER_PATH")"
 cat > "$WRAPPER_PATH" <<WRAPPER
 #!/bin/bash
 # 由 scripts/install-keepalive.sh 生成，勿手改。
+# 每次拉起/退出都留痕：/tmp/vibefocus-keepalive.log 一行一个决策，
+# 含 fatal 文件与二进制身份的差分——取证时无需重放推理（2026-09-06 教训）。
 FATAL_LOG="/tmp/vibefocus-crash-fatal.log"
+APP_BIN="$APP_PATH/Contents/MacOS/VibeFocusHotkeys"
 COOLDOWN=60
+KLOG=/tmp/vibefocus-keepalive.log
 fatal_sig() { stat -f '%m_%z' "\$FATAL_LOG" 2>/dev/null || echo none; }
+bin_ident() { stat -f '%m_%i' "\$APP_BIN" 2>/dev/null || echo none; }
+echo "\$(date '+%F %T') wrapper start pid=\$\$ app=\$APP_PATH" >> "\$KLOG"
 while true; do
     fatal_before=\$(fatal_sig)
+    bin_before=\$(bin_ident)
     /usr/bin/open -W "$APP_PATH"
     # open -W 返回 = app 已退出。判定本次运行是否发生致命信号：
     # 本次拉起前后 fatal 文件 (mtime,size) 差分——只在本次运行期间被真实
     # 追加过才算崩溃（陈旧共享记录 mtime 复活不会误触发，见生成脚本注释）。
+    # 二进制身份差分：mtime_inode 变了 = 运行期间 bundle 被替换（安装竞态
+    # CODESIGNING 击杀的指纹，配合 DiagnosticReports/*.ips 归因）。
     fatal_after=\$(fatal_sig)
+    bin_after=\$(bin_ident)
     crashed=0
     [[ "\$fatal_before" != "\$fatal_after" ]] && crashed=1
+    binflag=same
+    [[ "\$bin_before" != "\$bin_after" ]] && binflag=REPLACED
     if (( crashed )); then
-        echo "\$(date '+%F %T') crash detected (fatal log changed: \$fatal_before -> \$fatal_after), respawn in \${COOLDOWN}s" >> /tmp/vibefocus-keepalive.log
+        echo "\$(date '+%F %T') app exited fatal=\$fatal_before->\$fatal_after bin=\$binflag decision=respawn-in-\${COOLDOWN}s" >> "\$KLOG"
         sleep "\$COOLDOWN"
         continue
     fi
+    echo "\$(date '+%F %T') app exited fatal=unchanged bin=\$binflag decision=no-respawn" >> "\$KLOG"
     break   # 正常退出（用户 Quit）：不再拉起
 done
 WRAPPER

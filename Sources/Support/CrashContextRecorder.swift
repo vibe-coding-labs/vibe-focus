@@ -47,7 +47,7 @@ final class CrashContextRecorder {
     ///   installCrashSignalHandlers()（其 archive 逻辑会把 fatal 文件 move 归档）；
     /// - 空文件视为无崩溃记录（O_APPEND 创建的空文件是正常启动痕迹）。
     func capturePreviousCrashFatalDate() {
-        let fatalPath = "/tmp/vibefocus-crash-fatal.log"
+        let fatalPath = diagnosticFatalLogPath()
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: fatalPath),
               let size = attrs[.size] as? Int, size > 0,
               let mtime = attrs[.modificationDate] as? Date else {
