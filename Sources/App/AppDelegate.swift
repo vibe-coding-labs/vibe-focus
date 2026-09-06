@@ -33,6 +33,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         CrashContextRecorder.shared.capturePreviousCrashFatalDate()
         installCrashSignalHandlers()
         installAtExitHandler()
+        installGracefulSigtermHandler()
         // 退出审计：本实例的存在证明（越早写，后续任何死法都能对上账；SIGKILL 类
         // 外部击杀表现为「launch 无配对 exit」，--diagnose 报告可直接点名）。
         ExitJournal.recordLaunch(
@@ -283,5 +284,28 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
         alert.runModal()
         NSApp.setActivationPolicy(.accessory)
+    }
+}
+
+// MARK: - 优雅 SIGTERM（退出审计语义闭合）
+//
+// pkill/安装脚本对默认 AppKit 进程发的 SIGTERM 是裸信号死亡：atexit 不运行，
+// 退出审计缺 exit 记录，--diagnose 会把每次安装重拉误报成「疑似外部击杀」，
+// 信号噪音淹没真击杀。改由 DispatchSource 收敛到主线程走 NSApp.terminate：
+// 完整 AppKit 退出流程 + 审计落 sigterm-graceful 专属 reason。
+private nonisolated(unsafe) var gracefulSigtermSource: DispatchSourceSignal?
+
+extension AppDelegate {
+    func installGracefulSigtermHandler() {
+        signal(SIGTERM, SIG_IGN)  // 阻断默认死亡行为，交给 DispatchSource
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            MainActor.assumeIsolated {
+                ExitJournal.recordExit(reason: "sigterm-graceful")
+                NSApp.terminate(nil)
+            }
+        }
+        source.resume()
+        gracefulSigtermSource = source
     }
 }
