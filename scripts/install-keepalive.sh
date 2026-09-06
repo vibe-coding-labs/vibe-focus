@@ -54,7 +54,7 @@ COOLDOWN=60
 KLOG=/tmp/vibefocus-keepalive.log
 fatal_sig() { stat -f '%m_%z' "\$FATAL_LOG" 2>/dev/null || echo none; }
 bin_ident() { stat -f '%m_%i' "\$APP_BIN" 2>/dev/null || echo none; }
-echo "\$(date '+%F %T') wrapper start pid=\$\$ app=\$APP_PATH" >> "\$KLOG"
+echo "\$(date '+%F %T') wrapper start pid=\$\$ app=$APP_PATH" >> "\$KLOG"
 while true; do
     fatal_before=\$(fatal_sig)
     bin_before=\$(bin_ident)
