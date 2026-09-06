@@ -2424,6 +2424,63 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         }
     }
 
+    // MARK: ToggleFocusBranching（真实实现——P6 三分支焦点决策纯内核，分支组合穷尽锁定）
+
+    do {
+        // CGWindowEntry 只有 init?(from dict:)（memberwise 被吞），测试经 dict 构造。
+        func win(_ id: UInt32, pid: pid_t = 100, layer: Int = 0, onScreen: Bool = true, withBounds: Bool = true) -> CGWindowEntry {
+            var dict: [String: Any] = [
+                kCGWindowNumber as String: id,
+                kCGWindowOwnerPID as String: pid,
+                kCGWindowLayer as String: layer,
+                kCGWindowIsOnscreen as String: onScreen,
+            ]
+            if withBounds {
+                dict[kCGWindowBounds as String] = ["X": CGFloat(10), "Y": CGFloat(20), "Width": CGFloat(800), "Height": CGFloat(600)]
+            }
+            return CGWindowEntry(from: dict)!
+        }
+
+        // 分支 1 候选集：三条件过滤（异 pid / layer≠0 / 离屏全排除）+ z-order 顺序保持。
+        let snapshot = [win(1), win(2, pid: 200), win(3, layer: -1), win(4, onScreen: false), win(5)]
+        check("branch1: 候选集只留前台普通可见窗（顺序保持）",
+              ToggleFocusBranching.cgListFocusCandidates(snapshot: snapshot, ownerPID: 100).map(\.windowID) == [1, 5])
+
+        // 分支 1 快速路径：恰好 1 个。
+        check("branch1: 单候选带 bounds → 命中",
+              ToggleFocusBranching.singleWindowFastPath([win(7)])?.windowID == 7)
+        check("branch1: 零候选 → nil（窗口在别的 space/最小化）",
+              ToggleFocusBranching.singleWindowFastPath([]) == nil)
+        check("branch1: 多候选 → nil（z-order ≠ AX focus，P0.3 教训）",
+              ToggleFocusBranching.singleWindowFastPath([win(7), win(8)]) == nil)
+        check("branch1: 单候选无 bounds → nil（落 yabai，拆分前同款边界）",
+              ToggleFocusBranching.singleWindowFastPath([win(7, withBounds: false)]) == nil)
+
+        // 分支 2 接受判定：id 可精确转 UInt32 + pid 与前台一致。
+        func yabaiInfo(_ id: Int?, pid: Int?) -> YabaiWindowInfo {
+            YabaiWindowInfo(id: id, pid: pid, app: "App", title: "t", space: 1, display: 1,
+                            frame: nil, isFloatingRaw: false, hasAXReferenceRaw: true,
+                            isMinimizedRaw: false, hasFocusRaw: true)
+        }
+        check("branch2: id+pid 全匹配 → winID",
+              ToggleFocusBranching.yabaiFocusCandidate(yabaiInfo(77, pid: 100), frontPID: 100)?.winID == 77)
+        check("branch2: yabai 无报告 → nil", ToggleFocusBranching.yabaiFocusCandidate(nil, frontPID: 100) == nil)
+        check("branch2: id 缺失 → nil",
+              ToggleFocusBranching.yabaiFocusCandidate(yabaiInfo(nil, pid: 100), frontPID: 100) == nil)
+        check("branch2: id 超出 UInt32 → nil（UInt32(exactly:) 失败）",
+              ToggleFocusBranching.yabaiFocusCandidate(yabaiInfo(4_294_967_296, pid: 100), frontPID: 100) == nil
+              && ToggleFocusBranching.yabaiFocusCandidate(yabaiInfo(-1, pid: 100), frontPID: 100) == nil)
+        check("branch2: pid 不一致 → nil（yabai/系统焦点不同步，回退 AX）",
+              ToggleFocusBranching.yabaiFocusCandidate(yabaiInfo(77, pid: 200), frontPID: 100) == nil)
+
+        // 分支 3 身份落位：全量快照按 windowID 查，不过滤 layer/onScreen（AX 认定不二次裁剪）。
+        let fullList = [win(1), win(9, layer: 5, onScreen: false)]
+        check("branch3: 按 windowID 命中（含离屏/高层窗口）",
+              ToggleFocusBranching.axIdentityEntry(cgList: fullList, winID: 9)?.windowID == 9)
+        check("branch3: 查不到 → nil（调用壳降位仅记 windowID/AX）",
+              ToggleFocusBranching.axIdentityEntry(cgList: fullList, winID: 42) == nil)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

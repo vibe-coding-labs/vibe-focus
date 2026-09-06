@@ -75,14 +75,17 @@ Runner 检测到任一 `*_E2E=1` 环境变量即取 `/tmp/vibefocus-e2e.lock`（
 
 | 焦点读取点 | 触发 | fallback | 保护状态 |
 |---|---|---|---|
-| `resolveFocusedWindowForToggle`（FocusResolution）三分支：CGWindowList(count==1) → yabai(pid 一致) → AX | 每次 toggle | 全空 → identity nil → stuck/identity-missing 路径 | 分支顺序按阻塞代价锁死（注释红线）；焦点禁缓存（P3.4 回归已回退）；**分支决策内嵌命令式代码，无纯函数核心、零自动化回归** ← 本阶段缺口 |
+| `resolveFocusedWindowForToggle`（FocusResolution）三分支：CGWindowList(count==1) → yabai(pid 一致) → AX | 每次 toggle | 全空 → identity nil → stuck/identity-missing 路径 | 分支顺序按阻塞代价锁死（注释红线）；焦点禁缓存（P3.4 回归已回退）；**分支决策已拆 `ToggleFocusBranching` 纯内核（步骤 1 ✅）+ Runner 直测 12 断言穷尽边界** |
 | `resolveFallbackWindowForToggle` + `pickFallbackFrontWindow`（FocusFallback） | identity nil 且前台无候选窗口 | 无合格窗 → 维持死终但 `fallbackRequested=false` 归因 | 540d007 真机修复；纯函数有镜像测试（ToggleFallbackWindowTests）；守卫齐备（ownPID 排除 / 仅 .regular / 非 1x1 / 无状态） |
 | `captureFocusedWindowIdentity`（Finding，hook 路径） | hook 触发采集 | nil 上抛 | P-INST-25 耗时埋点在岗 |
 | `frontmostAppDescriptor()`（Toggle 入口） | 每次 toggle | — | 仅日志字段 |
 
 **后续步骤（按序）**：
-1. Batch 式提取三分支决策纯函数核心（输入 candidatesCount / yabai 结果+pid 匹配 / AX
-   结果 → 选中 source 与窗口），行为零变更 + 镜像测试穷尽分支组合；
+1. ✅ 2026-09-07：`ToggleFocusBranching` 纯内核（Sources/Window/ToggleFocusBranching.swift）
+   ——四个无状态判定（候选集过滤 / 单窗口快速路径 / yabai 接受判定 / AX 身份落位）从
+   探测壳拆出，lazy 探测顺序与计时零变更；Runner 直测真实实现（无镜像漂移）12 断言
+   穷尽分支边界（含 count==1 无 bounds 落 yabai、id 超 UInt32、pid 不同步等）；
+   真机 SIZE_E2E 232/232 全绿（含 toggle 往返用例）；
 2. 评估 windowless-frontmost（540d007）真机回归用例的自动化触发可行性
    （伪造无窗口前台），可行则纳入 Tests/e2e 家族；
 3. 任何焦点分支行为变更，PR 附 SIZE_E2E 输出（P4 约定）。
@@ -102,8 +105,8 @@ FrameWriteExecutor / 阶段状态机（重构进度账本 Batch 3/4 热点）：
 | P3 | ✅ 2026-09-06 | 见本文件提交历史 | run.sh 部署文件锁（mkdir+陈锁回收）+ 安装事件（replaced/skipped-unchanged）写入 exits.jsonl，--diagnose 时间线可见 |
 | P4 | ✅ 2026-09-06 | 见本文件提交历史 | docs/troubleshooting-runbook.md 排查首站固化（--diagnose 六段读法 + 事件速查 + 症状对照） |
 | P5 | ✅ 2026-09-06 | 见本文件提交历史 | Runner 内建 E2E 同机互斥锁（mkdir + 陈锁回收 + atexit 释放，并发拒跑退出码 3） |
-| P6 | 立项 | 本文件 | 焦点链路清查表完成；缺口=三分支决策纯函数化 + windowless 回归用例评估 |
-| P7 | 立项 | 本文件 | 结构降耦接重构账本 Batch 3/4（FrameWriteExecutor / 阶段状态机） |
+| P6 | 步骤 1 ✅ 2026-09-07 | 见本文件提交历史 | 焦点链路清查表完成；ToggleFocusBranching 纯内核拆出 + Runner 直测 12 断言穷尽边界 + 真机 SIZE_E2E 全绿；余 windowless 回归用例评估 |
+| P7 | 立项 | 本文件 | 结构降耦接重构账本 Batch 3/4（FrameWriteExecutor / 阶段状态机；Batch 3/4 由重构线并行推进中，本计划不重复立项具体批次） |
 
 ## 运行注意事项（实测）
 
