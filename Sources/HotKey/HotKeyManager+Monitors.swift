@@ -64,18 +64,24 @@ extension HotKeyManager {
         let now = Date()
         let hotkey = currentHotKey.displayString
 
-        if isToggleInFlight {
+        // Batch 17：去重门提纯为 ToggleTriggerGate.dedupDecision（门序与阈值语义不变）。
+        switch ToggleTriggerGate.dedupDecision(
+            isInFlight: isToggleInFlight,
+            sinceLastTrigger: now.timeIntervalSince(lastToggleTriggeredAt),
+            sinceLastCompletion: now.timeIntervalSince(lastToggleCompletedAt),
+            dedupInterval: toggleDedupInterval,
+            cooldownInterval: toggleCooldownInterval
+        ) {
+        case .skipInFlight:
             log(
                 "[HotKey] Ignored trigger: toggle already in flight",
                 level: .warn,
                 fields: ["source": source, "key": hotkey]
             )
             return
-        }
-
-        let sinceLastTrigger = now.timeIntervalSince(lastToggleTriggeredAt)
-        let sinceLastCompletion = now.timeIntervalSince(lastToggleCompletedAt)
-        if sinceLastTrigger < toggleDedupInterval || sinceLastCompletion < toggleCooldownInterval {
+        case .skipDuplicate:
+            let sinceLastTrigger = now.timeIntervalSince(lastToggleTriggeredAt)
+            let sinceLastCompletion = now.timeIntervalSince(lastToggleCompletedAt)
             log(
                 "[HotKey] Ignored duplicate trigger",
                 level: .warn,
@@ -87,6 +93,8 @@ extension HotKeyManager {
                 ]
             )
             return
+        case .accept:
+            break
         }
 
         let operationID = makeOperationID(prefix: "toggle")
@@ -144,41 +152,49 @@ extension HotKeyManager {
             ]
         )
 
-        guard matches else {
+        // 各路由命中扫描（保持原扫描语义）；优先级裁决收敛到
+        // ToggleTriggerGate.fallbackRoute（Batch 17 纯判定，Runner 矩阵锁定）。
+        let titleEditorHit: Bool = {
             let titleEditorKeyCode: UInt32 = 17
             let titleEditorModifiers: UInt32 = UInt32(controlKey)
-            if eventKeyCode == titleEditorKeyCode && eventModifiers == titleEditorModifiers {
-                let enabled = TitleEditorPreferences.isEnabled
-                let hotKeyEnabled = TitleEditorPreferences.isHotKeyEnabled
-                guard enabled && hotKeyEnabled else { return false }
-                log("[HotKey] Title editor Ctrl+T matched in fallback handler")
-                DispatchQueue.main.async {
-                    TitleEditorService.shared.editTitle()
-                }
-                return true
+            guard eventKeyCode == titleEditorKeyCode && eventModifiers == titleEditorModifiers else { return false }
+            return TitleEditorPreferences.isEnabled && TitleEditorPreferences.isHotKeyEnabled
+        }()
+        var layoutHit: LayoutAction?
+        if LayoutPreferences.isEnabled, !matches, !titleEditorHit {
+            layoutHit = LayoutAction.allCases.first { action in
+                guard let hotKey = layoutTable.hotKey(for: action) else { return false }
+                return eventKeyCode == hotKey.keyCode && eventModifiers == hotKey.modifiers
             }
-
-            // 摆位热键表匹配（总开关关闭时跳过）
-            if LayoutPreferences.isEnabled {
-                for action in LayoutAction.allCases {
-                    guard let hotKey = layoutTable.hotKey(for: action) else { continue }
-                    if eventKeyCode == hotKey.keyCode && eventModifiers == hotKey.modifiers {
-                        log("[HotKey] Fallback layout hotkey matched", fields: [
-                            "action": action.rawValue,
-                            "key": hotKey.displayString,
-                            "source": source
-                        ])
-                        triggerLayoutActionIfNeeded(action, source: "fallback_\(source)")
-                        return true
-                    }
-                }
-            }
-            return false
         }
 
-        log("Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
-        triggerToggleIfNeeded(source: "fallback_\(source)")
-        return true
+        switch ToggleTriggerGate.fallbackRoute(
+            isARepeat: false,                        // repeat 已在入口短路
+            matchesPrimaryHotKey: matches,
+            titleEditorEnabledAndMatched: titleEditorHit,
+            layoutMatch: layoutHit
+        ) {
+        case .ignore:
+            return false
+        case .toggle:
+            log("Fallback hotkey \(currentHotKey.displayString) triggered from \(source)")
+            triggerToggleIfNeeded(source: "fallback_\(source)")
+            return true
+        case .titleEditor:
+            log("[HotKey] Title editor Ctrl+T matched in fallback handler")
+            DispatchQueue.main.async {
+                TitleEditorService.shared.editTitle()
+            }
+            return true
+        case .layout(let action):
+            log("[HotKey] Fallback layout hotkey matched", fields: [
+                "action": action.rawValue,
+                "key": layoutTable.hotKey(for: action)?.displayString ?? "?",
+                "source": source
+            ])
+            triggerLayoutActionIfNeeded(action, source: "fallback_\(source)")
+            return true
+        }
     }
 
     /// 摆位动作触发（去抖独立于 toggle；总开关关闭时 beep 拒绝——按下的组合键
