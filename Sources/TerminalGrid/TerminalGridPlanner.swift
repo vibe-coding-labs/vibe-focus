@@ -25,6 +25,11 @@ enum TerminalGridPlanner {
     /// 上限护栏在捕获与恢复两端同时拦截。
     static let maxSnapshotCells = 64
 
+    /// 间距滑杆的 2px 步进取整（0 = 无缝；Runner 穷尽锁定）
+    static func steppedGap(_ raw: Double) -> Double {
+        (raw / 2).rounded() * 2
+    }
+
     static func isValidSnapshotCellCount(_ count: Int) -> Bool {
         count >= 1 && count <= maxSnapshotCells
     }

@@ -3313,6 +3313,36 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("soundStatus: 文件删除后 → missing", CustomSoundStatus.evaluate(path: tmp) == .missing)
     }
 
+    // MARK: 编排页提纯单元（真实实现——B3：目标摘要/终端说明文案/间距步进）
+
+    do {
+        // GridTargetCode.summaryText：四分支
+        check("targetSummary: main", GridTargetCode.main.summaryText == "→ 主屏")
+        check("targetSummary: focused", GridTargetCode.focused.summaryText == "→ 焦点屏")
+        check("targetSummary: display", GridTargetCode.display(displayID: 7).summaryText == "→ #7 当前 Space")
+        check("targetSummary: displaySpace", GridTargetCode.displaySpace(displayID: 7, spaceIndex: 3).summaryText == "→ #7 · Space 3")
+        check("targetSummary: parse→summary 集成",
+              GridTargetCode.parse("d2s5")?.summaryText == "→ #2 · Space 5")
+
+        // AppPreference.selectionDetailText：三分支非空且互异
+        let details = [
+            TerminalGridPreferences.AppPreference.auto,
+            .terminal,
+            .iterm2
+        ].map { $0.selectionDetailText }
+        check("appPrefDetail: 三分支非空且互异",
+              details.allSatisfy { !$0.isEmpty } && Set(details).count == 3)
+        check("appPrefDetail: terminal 指明完整支持", details[1].contains("完整支持"))
+        check("appPrefDetail: iterm2 指明部分支持", details[2].contains("部分支持"))
+
+        // TerminalGridPlanner.steppedGap：2px 步进取整
+        check("steppedGap: 0 → 0（无缝）", TerminalGridPlanner.steppedGap(0) == 0)
+        check("steppedGap: 1.2 → 2（向上取档）", TerminalGridPlanner.steppedGap(1.2) == 2)
+        check("steppedGap: 3.9 → 4（恰档不动）", TerminalGridPlanner.steppedGap(3.9) == 4)
+        check("steppedGap: 24 → 24（上界）", TerminalGridPlanner.steppedGap(24) == 24)
+        check("steppedGap: 23 → 24（越上界取整）", TerminalGridPlanner.steppedGap(23) == 24)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
