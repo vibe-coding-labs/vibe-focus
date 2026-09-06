@@ -3869,6 +3869,37 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("claudeMatch: 无 hostApp 候选 → nil", noHost == nil)
     }
 
+    // MARK: 编排目标与终端选择解析（真实实现——B12：GridTargetCode.parse / TerminalSelectionResolver.resolve 直测）
+
+    do {
+        // GridTargetCode.parse：全形态 + 非法输入
+        check("gridParse: main/focused", GridTargetCode.parse("main") == .main && GridTargetCode.parse("focused") == .focused)
+        check("gridParse: 纯 display", GridTargetCode.parse("d42") == .display(displayID: 42))
+        check("gridParse: display+space", GridTargetCode.parse("d7s3") == .displaySpace(displayID: 7, spaceIndex: 3))
+        check("gridParse: 非法形态 → nil",
+              GridTargetCode.parse(nil) == nil && GridTargetCode.parse("") == nil
+              && GridTargetCode.parse("x1") == nil && GridTargetCode.parse("dx") == nil)
+        check("gridParse: space 非法（0/非数字）→ nil",
+              GridTargetCode.parse("d7s0") == nil && GridTargetCode.parse("d7sx") == nil)
+        check("gridParse: display 非数字 → nil", GridTargetCode.parse("d-1") == nil)
+
+        // TerminalSelectionResolver.resolve：手动优先 / auto 运行优先 / fallback
+        func candidate(_ bundleID: String, running: Bool, count: Int) -> TerminalSelectionCandidate {
+            TerminalSelectionCandidate(
+                bundleID: bundleID, name: bundleID, support: .full,
+                usageCount: count, lastUsedAt: nil, isRunning: running
+            )
+        }
+        let cands = [candidate("com.apple.Terminal", running: false, count: 3),
+                     candidate("com.googlecode.iterm2", running: true, count: 9)]
+        let manual = TerminalSelectionResolver.resolve(manualBundleID: "com.apple.Terminal", candidates: cands)
+        check("selection: 手动指定优先", manual.bundleID == "com.apple.Terminal")
+        let auto = TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: cands)
+        check("selection: auto 按使用频次排序取最常用", auto.bundleID == "com.googlecode.iterm2")
+        let empty = TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: [])
+        check("selection: 无候选回落 Terminal.app", empty.bundleID == "com.apple.Terminal")
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
