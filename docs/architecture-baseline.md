@@ -113,6 +113,20 @@
 - 经验入册：**新增纯函数内核时，Runner 真身直测与镜像测试同等必要**——镜像
   的价值是「无构建依赖快速跑」，真身直测的价值是「锁的就是生产代码」。
 
+## Batch 12 度量（refactor/overlay-refresh-policy）
+
+- 新增 `Overlay/OverlayRefreshPolicy.swift`：刷新防风暴门提纯——`refreshGate`
+  （suspend 先于 enabled、force 穿透 suspend 不穿透 disabled）与
+  `isDuplicateForceTrigger`（SIGUSR1 连发去重）从 +Refresh/+Signal 的内联守卫
+  提取，编排层只做门结果分派（行为逐分支保持，日志文本不变）；
+- Overlay 域真身锁定（此前全域 0%）：ScreenHotplugGuard 0→100%（热插拔集合
+  相等语义 + filterStale 防御过滤）、OverlayRefreshPolicy 100%、SpaceSnapshot
+  0→88%（Bool/Int 双形态防御解析、缺字段跳过、resolveScreenSpaceIndex 三级
+  位次判定）——刷新风暴与 overlay 编号错乱两类历史事故的判定层自此有锁；
+- 其余 Overlay 文件（GCD 调度/NSView/NSPanel 编排）按既定模型属行为验收域；
+- 测试：镜像 OverlayRefreshPolicyTests 16 断言（门矩阵 8 组合穷举 + 去重边界
+  + 热插拔矩阵）+ Runner 真身 13 断言（含 parseJSONArray 形状不符防御）。
+
 ## 当前热点（后续批次目标，按优先级）
 
 1. `WindowManager+MoveWindow.swift` 547 行——仍是编排+段执行+日志混合体；

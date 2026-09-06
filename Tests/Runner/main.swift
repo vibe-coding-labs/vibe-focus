@@ -3759,6 +3759,67 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               decide(Args(5, 5, 1, nil, true, nil)) == .deliverCrossDisplay)
     }
 
+    // MARK: Overlay 刷新域（真实实现——防风暴门/热插拔防护/Space 快照解析，Batch 12）
+
+    do {
+        // A. refreshGate 门矩阵真身（镜像 OverlayRefreshPolicyTests 同矩阵）。
+        check("overlayGate A1: suspend+非force → skipSuspended",
+              OverlayRefreshPolicy.refreshGate(suspended: true, enabled: true, force: false) == .skipSuspended)
+        check("overlayGate A2: suspend+force → proceed（debounce 补刷新穿透 suspend）",
+              OverlayRefreshPolicy.refreshGate(suspended: true, enabled: true, force: true) == .proceed)
+        check("overlayGate A3: disabled 恒 skip（force 不豁免）",
+              OverlayRefreshPolicy.refreshGate(suspended: true, enabled: false, force: true) == .skipDisabled
+              && OverlayRefreshPolicy.refreshGate(suspended: false, enabled: false, force: true) == .skipDisabled)
+        check("overlayGate A4: 常态 proceed",
+              OverlayRefreshPolicy.refreshGate(suspended: false, enabled: true, force: false) == .proceed)
+
+        // B. 去重判定真身。
+        let last = Date(timeIntervalSince1970: 1000)
+        check("overlayGate B: 连发丢弃 + 越阈放行",
+              OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: last, now: last.addingTimeInterval(0.29), minInterval: 0.3)
+              && !OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: last, now: last.addingTimeInterval(0.31), minInterval: 0.3))
+
+        // C. ScreenHotplugGuard 真身：集合相等语义 + 防御过滤。
+        let u1 = UUID(), u2 = UUID(), u3 = UUID()
+        check("overlayGate C: 热插拔集合相等（顺序无关）+ 插拔不一致",
+              ScreenHotplugGuard.identityMatches(preUUIDs: [u1, u2], currentUUIDs: [u2, u1])
+              && !ScreenHotplugGuard.identityMatches(preUUIDs: [u1], currentUUIDs: [u1, u2]))
+        check("overlayGate C: filterStale 剔除失效条目",
+              ScreenHotplugGuard.filterStale([(0, u1, 1, 1), (1, u3, 2, 3)], liveUUIDs: [u1]).count == 1)
+
+        // D. SpaceSnapshot / AllSpaceSnapshot 解析真身（Bool/Int 双形态防御 + 缺字段跳过）。
+        let mixed: [[String: Any]] = [
+            ["index": 1, "display": 1, "is-visible": true, "has-focus": 1],
+            ["index": 2, "display": 1, "is-visible": 0, "has-focus": 0],
+            ["display": 2, "is-visible": true],                    // 缺 index → 跳过
+            ["index": 3, "is-visible": true],                      // 缺 display → AllSpace 跳过
+        ]
+        let perScreen = SpaceSnapshot.parse(from: mixed)
+        check("overlayGate D: SpaceSnapshot 双形态防御解析（缺 index 跳过）",
+              perScreen.count == 3 && perScreen[0].isVisible && perScreen[1].hasFocus == false)
+        let all = AllSpaceSnapshot.parse(from: mixed)
+        check("overlayGate D: AllSpaceSnapshot 缺 display 跳过",
+              all.count == 2 && all[1].display == 1)
+        check("overlayGate D: parseJSONArray 形状不符 → nil / 合法数组解析",
+              AllSpaceSnapshot.parseJSONArray(Data(#"{"a":1}"#.utf8)) == nil
+              && AllSpaceSnapshot.parseJSONArray(Data(#"[{"index":1}]"#.utf8))?.count == 1)
+
+        // E. resolveScreenSpaceIndex 真身：focused 位次优先 → 可见位次 → nil。
+        let spaces = [
+            AllSpaceSnapshot(index: 3, display: 1, isVisible: false, hasFocus: false),
+            AllSpaceSnapshot(index: 1, display: 1, isVisible: true, hasFocus: false),
+            AllSpaceSnapshot(index: 2, display: 1, isVisible: true, hasFocus: true),
+        ]
+        check("overlayGate E: focused 命中 → 按升序位次（2）",
+              AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 2) == 2)
+        check("overlayGate E: focused 属别屏 → 首个可见位次（1）",
+              AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 9) == 1)
+        check("overlayGate E: 全不可见 → nil",
+              AllSpaceSnapshot.resolveScreenSpaceIndex(
+                from: [AllSpaceSnapshot(index: 2, display: 1, isVisible: false, hasFocus: false)],
+                focusedSpaceIndex: nil) == nil)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
