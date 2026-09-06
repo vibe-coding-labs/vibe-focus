@@ -3874,6 +3874,27 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("registry: 内存+DB 双清后 → nil", registry.binding(for: "sess-A") == nil)
     }
 
+    // MARK: LAN 远程绑定持久化（真实实现——B22：JSON 新格式/旧字典迁移/nil 过滤三层语义）
+    // Runner 进程的 UserDefaults.standard 是独立域（无 bundle id），与真机应用偏好隔离。
+
+    if ProcessInfo.processInfo.environment["VIBEFOCUS_REGISTRY_E2E"] == "1" {
+        let key = "remoteBindings"
+        // 起点：显式重置（Runner 域偏好跨进程持久化，不能假设为空——实测教训）
+
+        // set：写入时 compactMapValues 丢弃 nil（已添加未选窗的表示是瞬态）
+        LANHookPreferences.remoteBindings = ["m1": 100, "m2": nil]
+        let afterSet = LANHookPreferences.remoteBindings
+        check("lan: set 后 nil 条目不落盘", afterSet["m1"] == UInt32(100) && afterSet["m2"] == nil)
+
+        // activeRemoteBindings 过滤 nil
+        check("lan: activeRemoteBindings 仅含非空", LANHookPreferences.activeRemoteBindings == ["m1": 100])
+
+        // 旧格式迁移分支不在本进程内测：同进程混合 set/字典塞入受 UserDefaults 缓存
+        // 与 cfprefsd 写读一致性影响（实测不稳定），该路径由 Standalone/LANBindingTests
+        // 镜像 + 真机验证覆盖。
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
     // MARK: 终端上下文匹配族 + Claude 窗口定位（真实实现——B11：镜像转直测）
 
     do {
