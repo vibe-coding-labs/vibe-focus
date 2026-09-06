@@ -78,4 +78,5 @@
 | B23 | TerminalUsageTable 直测 7 断言（record 幂等累加/lastAt 单调/minCount 过滤/14 天半衰排序/编解码回环与坏数据回退）| ✅ 2026-09-07 |
 | B24 | 注册表状态操作隔离库直测 8 断言（markCompleted 置位+清别名/reactivate/touch 推进/空白消息拒覆盖/remap 迁移/clearAllBindings 清空）| ✅ 2026-09-07 |
 | B25 | shellQuoted 单引号转义直测 3 断言（惯用法四字符序列/原样包裹/空串）；cellCommand 分支已由并行会话直测覆盖，本批去重不重复添加 | ✅ 2026-09-07 |
+| B26 | IPS 崩溃报告解析直测 5 断言（首行头丢弃/多行 JSON 保留/非法与空输入回退）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
