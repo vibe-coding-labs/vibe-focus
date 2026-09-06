@@ -4560,6 +4560,61 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               ToggleTriggerGate.cgEventRoute(type: .keyDown, isAutorepeat: false, primaryMatch: false, layoutMatch: nil) == .passThrough)
     }
 
+    // MARK: SessionBind 决策（真实实现——SessionStart 双通道绑定裁决，Batch 19）
+
+    do {
+        func ident(_ id: UInt32) -> WindowIdentity {
+            WindowIdentity(windowID: id, pid: 100, bundleIdentifier: nil, appName: "App", windowNumber: nil, title: "t")
+        }
+        // A. remote 通道：解析成功 → bind(.remote)；失败 → remoteBindingFailed。
+        if case .bind(let identity, let bindingType) = HookEventHandler.decideSessionBind(
+            isRemote: true, machineLabel: "lab-1", localResolved: nil, remoteResolved: ident(7)) {
+            check("sessionBind A: remote 成功 → bind(.remote, windowID=7)",
+                  identity.windowID == 7 && bindingType == .remote)
+        } else {
+            check("sessionBind A: remote 成功 → bind(.remote, windowID=7)", false)
+        }
+        check("sessionBind A: remote 映射缺失 → remoteBindingFailed(label)",
+              HookEventHandler.decideSessionBind(isRemote: true, machineLabel: "lab-2",
+                                                 localResolved: ident(9), remoteResolved: nil)
+              == .remoteBindingFailed(label: "lab-2"))
+        check("sessionBind A: remote 未配 label → 失败兜底 'nil'",
+              HookEventHandler.decideSessionBind(isRemote: true, machineLabel: nil,
+                                                 localResolved: nil, remoteResolved: nil)
+              == .remoteBindingFailed(label: "nil"))
+
+        // B. local 通道：成功 → bind(.local)；失败 → terminalContextMatchFailed。
+        check("sessionBind B: local 成功 → bind(.local)",
+              HookEventHandler.decideSessionBind(isRemote: false, machineLabel: "lab-1",
+                                                 localResolved: ident(5), remoteResolved: nil)
+              == .bind(identity: ident(5), bindingType: .local))
+        check("sessionBind B: local 匹配失败 → terminalContextMatchFailed",
+              HookEventHandler.decideSessionBind(isRemote: false, machineLabel: nil,
+                                                 localResolved: nil, remoteResolved: nil)
+              == .terminalContextMatchFailed)
+
+        // C. 响应映射：码/状态/handled。
+        let okResp = HookEventHandler.sessionBindHttpResponse(
+            for: .bind(identity: ident(1), bindingType: .local), sessionID: "s")
+        let remoteResp = HookEventHandler.sessionBindHttpResponse(
+            for: .bind(identity: ident(1), bindingType: .remote), sessionID: "s")
+        check("sessionBind C: 本地成功 → 200 session_bound via TTY/PPID",
+              okResp.statusCode == 200 && okResp.response.code == "session_bound"
+              && okResp.response.handled == true
+              && okResp.response.message.contains("TTY/PPID"))
+        check("sessionBind C: 远程成功 → 200 session_bound via remote_label",
+              remoteResp.response.message.contains("remote_label"))
+        let failResp = HookEventHandler.sessionBindHttpResponse(
+            for: .remoteBindingFailed(label: "lab-x"), sessionID: "s")
+        check("sessionBind C: remote 失败 → 409 + label 回显",
+              failResp.statusCode == 409 && failResp.response.code == "remote_binding_failed"
+              && failResp.response.message.contains("lab-x") && failResp.response.handled == false)
+        let matchResp = HookEventHandler.sessionBindHttpResponse(
+            for: .terminalContextMatchFailed, sessionID: "s")
+        check("sessionBind C: 本地匹配失败 → 409 terminal_context_match_failed",
+              matchResp.statusCode == 409 && matchResp.response.code == "terminal_context_match_failed")
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

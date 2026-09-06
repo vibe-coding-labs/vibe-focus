@@ -62,8 +62,8 @@ extension HookEventHandler {
             )
         }
 
-        // 区分本地绑定和远程映射
-        let identity: WindowIdentity
+        // 区分本地绑定和远程映射；双通道解析结果由 decideSessionBind 纯判定裁决
+        //（Batch 19，决策与响应映射 Runner 直测穷尽锁定）。
         if terminalCtx.isRemote, let label = terminalCtx.machineLabel {
             log(
                 "[handleSessionStart] remote session detected, resolving via machine_label",
@@ -76,17 +76,21 @@ extension HookEventHandler {
                 ]
             )
             // 远程机器：通过 machine_label 查映射表
-            guard let resolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID) else {
-                return (
-                    409,
-                    ClaudeHookResponse(
-                        ok: false, code: "remote_binding_failed",
-                        message: "Remote machine label '\(label)' not mapped to a window",
-                        sessionID: payload.sessionID, handled: false
-                    )
+            let remoteResolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID)
+            switch Self.decideSessionBind(isRemote: true, machineLabel: label, localResolved: nil, remoteResolved: remoteResolved) {
+            case .bind(let identity, let bindingType):
+                return finishSessionBind(
+                    identity: identity, bindingType: bindingType,
+                    terminalCtx: terminalCtx, payload: payload
                 )
+            case .remoteBindingFailed(let failedLabel):
+                return (409, ClaudeHookResponse(
+                    ok: false, code: "remote_binding_failed",
+                    message: "Remote machine label '\(failedLabel)' not mapped to a window",
+                    sessionID: payload.sessionID, handled: false))
+            case .terminalContextMatchFailed:
+                fatalError("remote 通道不可能产生本地失败决策（决策表契约）")
             }
-            identity = resolved
         } else {
             // 本地机器：用 PPID/TTY 进程树匹配
             log(
@@ -99,7 +103,14 @@ extension HookEventHandler {
                     "termSessionID": terminalCtx.termSessionID ?? "nil"
                 ]
             )
-            guard let localIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx) else {
+            let localIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            switch Self.decideSessionBind(isRemote: false, machineLabel: nil, localResolved: localIdentity, remoteResolved: nil) {
+            case .bind(let identity, let bindingType):
+                return finishSessionBind(
+                    identity: identity, bindingType: bindingType,
+                    terminalCtx: terminalCtx, payload: payload
+                )
+            case .terminalContextMatchFailed:
                 log(
                     "[handleSessionStart] terminal context match failed",
                     level: .warn,
@@ -110,18 +121,28 @@ extension HookEventHandler {
                     ]
                 )
                 SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：终端上下文无法匹配窗口")
-                return (
-                    409,
-                    ClaudeHookResponse(
-                        ok: false, code: "terminal_context_match_failed",
-                        message: "Terminal context could not be resolved to a window",
-                        sessionID: payload.sessionID, handled: false
-                    )
-                )
+                return (409, ClaudeHookResponse(
+                    ok: false, code: "terminal_context_match_failed",
+                    message: "Terminal context could not be resolved to a window",
+                    sessionID: payload.sessionID, handled: false))
+            case .remoteBindingFailed:
+                fatalError("local 通道不可能产生远程失败决策（决策表契约）")
             }
-            identity = localIdentity
         }
+    }
+}
 
+// MARK: - 绑定成功共享尾（Batch 19：remote/local 双通道收敛的完成副作用）
+extension HookEventHandler {
+
+    /// 绑定成功终态：注册绑定 + 审计 + 可选项目名改名 + 成功响应。
+    /// 由 handleSessionStart 的 remote/local 两通道在决策为 .bind 后委托调用。
+    func finishSessionBind(
+        identity: WindowIdentity,
+        bindingType: WindowState.BindingType,
+        terminalCtx: TerminalContext,
+        payload: ClaudeHookPayload
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
         log(
             "[HookEventHandler] SessionStart matched",
             fields: [
@@ -132,7 +153,6 @@ extension HookEventHandler {
                 "windowID": String(identity.windowID)
             ]
         )
-        let resolvedBindingType: WindowState.BindingType = terminalCtx.isRemote ? .remote : .local
         SessionWindowRegistry.shared.bind(
             sessionID: payload.sessionID,
             windowIdentity: identity,
@@ -141,7 +161,7 @@ extension HookEventHandler {
             itermSessionID: payload.terminalCtx?.itermSessionID,
             cwd: payload.cwd,
             model: payload.model,
-            bindingType: resolvedBindingType
+            bindingType: bindingType
         )
         AuditLogger.shared.record(
             eventType: "session_bind",
@@ -151,7 +171,7 @@ extension HookEventHandler {
             details: [
                 "app": identity.appName ?? "unknown",
                 "isRemote": String(terminalCtx.isRemote),
-                "bindingType": String(describing: resolvedBindingType),
+                "bindingType": String(describing: bindingType),
                 "cwd": payload.cwd ?? "nil"
             ]
         )
@@ -182,3 +202,4 @@ extension HookEventHandler {
         )
     }
 }
+
