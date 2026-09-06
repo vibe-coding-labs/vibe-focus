@@ -3831,7 +3831,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             .processIdentifier ?? ProcessInfo.processInfo.processIdentifier
 
         func state(_ wid: UInt32, pid: Int32, session: String?) -> WindowState {
-            var ws = WindowState(
+            let ws = WindowState(
                 windowID: wid, pid: pid, tty: nil,
                 axWindowNumber: nil, appName: "TestTerminal", bundleIdentifier: nil, title: nil,
                 termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
@@ -4456,6 +4456,44 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         ]
         check("compose D: 畸形结构跳过不崩返回 false",
               !HookSettingsComposition.containsVibeFocusHook(hooks: malformed, targetURL: URL, scriptPath: SCRIPT))
+    }
+
+    // MARK: ToggleTriggerGate（真实实现——热键去重门与 fallback 路由，Batch 17）
+
+    do {
+        // A. 去重门：in-flight 最优先 → 双阈值重复 → accept。
+        check("triggerGate A1: in-flight 最优先（阈值再小也 skipInFlight）",
+              ToggleTriggerGate.dedupDecision(isInFlight: true, sinceLastTrigger: 99, sinceLastCompletion: 99,
+                                              dedupInterval: 0.15, cooldownInterval: 0.05) == .skipInFlight)
+        check("triggerGate A2: 距上次触发 < 0.15 → skipDuplicate",
+              ToggleTriggerGate.dedupDecision(isInFlight: false, sinceLastTrigger: 0.1, sinceLastCompletion: 99,
+                                              dedupInterval: 0.15, cooldownInterval: 0.05) == .skipDuplicate)
+        check("triggerGate A3: 距上次完成 < 0.05 → skipDuplicate",
+              ToggleTriggerGate.dedupDecision(isInFlight: false, sinceLastTrigger: 99, sinceLastCompletion: 0.01,
+                                              dedupInterval: 0.15, cooldownInterval: 0.05) == .skipDuplicate)
+        check("triggerGate A4: 双阈值都越过 → accept",
+              ToggleTriggerGate.dedupDecision(isInFlight: false, sinceLastTrigger: 0.2, sinceLastCompletion: 0.06,
+                                              dedupInterval: 0.15, cooldownInterval: 0.05) == .accept)
+        check("triggerGate A5: 恰在阈值上（< 语义）→ accept",
+              ToggleTriggerGate.dedupDecision(isInFlight: false, sinceLastTrigger: 0.15, sinceLastCompletion: 0.05,
+                                              dedupInterval: 0.15, cooldownInterval: 0.05) == .accept)
+
+        // B. fallback 路由优先级矩阵。
+        check("triggerGate B: repeat 一票忽略（其余全命中也 ignore）",
+              ToggleTriggerGate.fallbackRoute(isARepeat: true, matchesPrimaryHotKey: true,
+                                              titleEditorEnabledAndMatched: true, layoutMatch: .leftHalf) == .ignore)
+        check("triggerGate B: 主热键优先于 Title/摆位",
+              ToggleTriggerGate.fallbackRoute(isARepeat: false, matchesPrimaryHotKey: true,
+                                              titleEditorEnabledAndMatched: true, layoutMatch: .leftHalf) == .toggle)
+        check("triggerGate B: Title 次优先",
+              ToggleTriggerGate.fallbackRoute(isARepeat: false, matchesPrimaryHotKey: false,
+                                              titleEditorEnabledAndMatched: true, layoutMatch: .leftHalf) == .titleEditor)
+        check("triggerGate B: 摆位第三",
+              ToggleTriggerGate.fallbackRoute(isARepeat: false, matchesPrimaryHotKey: false,
+                                              titleEditorEnabledAndMatched: false, layoutMatch: .topLeftQuarter) == .layout(.topLeftQuarter))
+        check("triggerGate B: 全不命中 → ignore",
+              ToggleTriggerGate.fallbackRoute(isARepeat: false, matchesPrimaryHotKey: false,
+                                              titleEditorEnabledAndMatched: false, layoutMatch: nil) == .ignore)
     }
 
     // MARK: 汇总
