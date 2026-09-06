@@ -282,30 +282,17 @@ extension WindowManager {
             // float+settle 耗时（诊断字段名兼容保留）。
             preFloatApplied = true
             let preFloatStart = Date()
-            // 已 float 零等待（skippedNoOp 无重摆）；真 toggle 时等稳定代等固定
-            // （waitForRelayout：下限防静默误判，连续两读相等即走，300ms 总预算兜底）。
-            var p2FloatToggled = false
-            if let info = spaceController.queryWindow(windowID: identity.windowID), !info.isFloating {
-                let floatOutcome = spaceController.setWindowFloat(identity.windowID, operationID: op, knownWindowInfo: info)
-                p2FloatToggled = floatOutcome.didToggle
-            }
-            if p2FloatToggled {
-                FrameConvergence.waitForRelayout(
-                    minSettleMicros: WindowSettle.floatRelayoutMinSettleMicros,
-                    intervalMs: WindowSettle.frameVerifyPollIntervalMs,
-                    budgetMs: WindowSettle.floatRelayoutSettleMicros,
-                    read: { cgWindowBounds(for: identity.windowID) },
-                    isSame: { CoordinateKit.isFrameConverged(actual: $1, target: $0, tolerance: frameTolerance) }
-                )
-            }
+            // 已 float 零等待（skippedNoOp 无重摆）；真 toggle 时等稳定代等固定——
+            // 序列唯一出口 FloatSettle（Batch 6 收敛：下限防静默误判，连续两读相等
+            // 即走，300ms 总预算兜底；查询缓存失效随原语恒清）。
+            let p2Float = floatAndSettle(windowID: identity.windowID, operationID: op, knownWindowInfo: nil)
             p2YabaiSpaceMoveMs = elapsedMilliseconds(since: preFloatStart)
             log("[WindowManager] moveWindowToMainScreen P2: float + settle", fields: [
                 "op": op, "windowID": String(identity.windowID),
                 "mainScreenSpace": String(mainScreenSpaceIndex),
-                "floatToggled": String(p2FloatToggled),
+                "floatToggled": String(p2Float.didToggle),
                 "durationMs": String(p2YabaiSpaceMoveMs)
             ])
-            spaceController.clearWindowQueryCache()
             // 窗口物理仍在源屏，AX resolveWindow 可能跨屏阻塞一次（~68ms，可接受）
             let resolveStart = Date()
             let resolvedAXOpt = resolveWindow(identity: identity)
@@ -426,17 +413,9 @@ extension WindowManager {
             // （实测 height 卡副屏高 707）。float toggle 会触发 yabai 默认重摆，
             // 等 300ms 落定后再写（否则写被重摆覆盖，2026-09-01 toggle 尺寸错乱根因）。
             let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
-            let axFloatOutcome = spaceController.setWindowFloat(effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
-            // 已 float 零等待；真 toggle 时等稳定代等固定（同 P2 注释）。
-            if axFloatOutcome.didToggle {
-                FrameConvergence.waitForRelayout(
-                    minSettleMicros: WindowSettle.floatRelayoutMinSettleMicros,
-                    intervalMs: WindowSettle.frameVerifyPollIntervalMs,
-                    budgetMs: WindowSettle.floatRelayoutSettleMicros,
-                    read: { cgWindowBounds(for: effectiveWindowID) },
-                    isSame: { CoordinateKit.isFrameConverged(actual: $1, target: $0, tolerance: frameTolerance) }
-                )
-            }
+            // 已 float 零等待；真 toggle 时等稳定代等固定——序列唯一出口 FloatSettle
+            // （Batch 6 收敛；原副本漏清查询缓存，随原语统一恒清）。
+            floatAndSettle(windowID: effectiveWindowID, operationID: op, knownWindowInfo: floatKnownInfo)
             guard apply(frame: targetFrame, to: windowAX, operationID: op, stage: "move_to_main", maxAttempts: 3, windowID: effectiveWindowID) else {
                 log("moveWindowToMainScreen failed: AX apply failed", level: .error, fields: [
                     "op": op, "targetFrame": String(describing: targetFrame)

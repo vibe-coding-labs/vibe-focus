@@ -15,11 +15,11 @@ enum WindowSettle {
     /// float 脱管（--toggle float）后等 yabai 默认重摆落定，再写目标 frame。
     /// 300ms 为重摆耗时上界（实测低于此值 AX/yabai 写会被随后的重摆覆盖，
     /// 2026-09-01 尺寸错乱根因）。
-    /// 使用点语义分两档（2026-09-03 流畅度第二刀）：
-    /// - ToggleEngine+Restore 4a：仅真 toggle 时等待（didToggle 条件，历史行为）；
-    /// - move_to_main P2/AX、moveStuckWindowToSecondaryScreen：同改 didToggle 条件
-    ///   （已 float 零等待），真 toggle 时走 waitForRelayout 等稳定代等固定——
-    ///   下限 floatRelayoutMinSettleMicros，本值作总预算兜底。
+    /// 使用点（2026-09-06 Batch 6 起，唯一出口 FloatSettle.floatAndSettle）：
+    /// 全仓 float 脱管（move_to_main P2/AX、stuck 解堵、Layout.floatAndWriteFrame、
+    /// restore 4a）一律「仅真 toggle 时等待（didToggle 条件）」+ waitForRelayout
+    /// 等稳定代等固定——下限 floatRelayoutMinSettleMicros，本值作总预算兜底。
+    /// （Batch 6 前 restore 4a 是固定 usleep 300ms 历史档，已随原语统一。）
     static let floatRelayoutSettleMicros: useconds_t = 300_000
 
     /// float 重摆等稳定的下限：120ms。`--toggle float` 后重摆有启动延迟，过早的
@@ -50,8 +50,9 @@ enum WindowSettle {
     // MARK: - 等到位轮询（P1-2 等落定改等到位；骨架 ConditionPolling.waitUntil）
     //
     // 适用边界：仅用于**有可观测目标态**的等待（如源屏可见 space == sourceSpace）。
-    // float 重摆完成无可观测信号（is-floating 翻转远早于重摆结束），float 等待
-    // 保留 floatRelayoutSettleMicros 固定档，勿改轮询（2.15 尺寸错乱教训）。
+    // float 重摆完成无「目标态」可判（is-floating 翻转远早于重摆结束），勿改
+    // ConditionPolling 等到位——float 等待统一走 FloatSettle（waitForRelayout
+    // 「等稳定」轮询 + minSettle 下限防静默假稳定，2.15 尺寸错乱教训）。
 
     /// 等到位轮询节拍：50ms（space 可见性 yabai 查询 fork ~30ms，50ms 不空转）。
     static let conditionPollIntervalMs: UInt32 = 50

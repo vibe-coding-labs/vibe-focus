@@ -54,9 +54,37 @@
    applyMove/applyResize 执行器与 read 闭包，决策全部走 FrameConvergence），
    编排层降到 <300 行；
 2. `WindowManager` extension 族 22 文件共享隐式时序契约（float→写→收敛→
-   post-check→save）——契约目前只存在于注释；Batch 4 目标：阶段化枚举状态机，
-   每阶段入口/出口用 Runner 断言锁定；
+   post-check→save）——契约目前只存在于注释；阶段化目标的第一刀已完成：
+   float 段收敛为 `FloatSettle` 唯一序列原语（Batch 6，见下），post-check/save
+   段已函数化（+MoveWindow+PostMove.swift），剩余是跨函数调用的顺序约定；
 3. 判定/工具函数的 @MainActor 隔离与纯函数化不一致（CoordinateKit MainActor、
-   FrameConvergence 非隔离）——统一约定：纯数学函数一律非隔离；
-4. 移动管线对 `cgWindowBounds`（全局函数）的直接依赖 7 处/文件——Batch 3 一并
-   收敛到执行器注入。
+   FrameConvergence 非隔离）——统一约定：纯数学函数一律非隔离（Batch 4 完成）；
+4. 移动管线对 `cgWindowBounds`（全局函数）的直接依赖 7 处/文件——Batch 3 已
+   收敛到执行器注入，残余在 FloatSettle 接线闭包（单点）。
+
+## Batch 6 度量（refactor/float-settle）
+
+- 新增 `Support/FloatSettle.swift`：「float 脱管 → 等重摆落定 → 查询缓存失效」
+  唯一序列原语。此前 5 处手抄（Layout.floatAndWriteFrame、move_to_main P2、
+  move_to_main AX、stuck 解堵、restore 4a）语义已漂移成三类：等待策略两档
+  （4 处 waitForRelayout 轮询 vs restore 固定 usleep 300ms）、缓存失效三档
+  （仅 toggle 清 / 恒清 / 从不清）——「改一处漏四处」的活体样本，本批次起
+  五处调用点收敛为一行原语调用，契约由测试锁定而非注释；
+- **顺带逮出并修复一个真实生产 bug**：`waitForRelayout` 的 `budgetMs` 形参以
+  毫秒计，五处手抄均直传微秒值 `floatRelayoutSettleMicros`（300_000）——
+  「300ms 预算」实为 300 秒，frame 永不稳定的病理路径下轮询 30 万拍 ≈ 100
+  分钟挂死热键。镜像测试 C 场景（永不稳定走满预算）比对断言时暴露，修复为
+  `budgetMs: 300`（其文档契约），Runner 增加回归金丝雀断言锁死换算；
+- 统一语义裁决（记录在案）：缓存失效取「恒清」档（内存字典清空零成本，漏清
+  的代价是下游 queryWindow 吃到 float 前旧值）；restore 等待从固定 300ms 升级
+  为 waitForRelayout（下限 120ms 防静默假稳定 + 两读稳定早返回 + 300ms 预算
+  兜底），全仓 float 等待策略回到一档；
+- 测试：新增镜像 `FloatSettleSequenceTests`（17 断言：序列顺序/零浪费跳过/
+  预算兜底/容差接线/读失败不终止）+ Runner 真身 8 断言 + 真机 E2E
+  （`VIBEFOCUS_FLOATSETTLE_E2E=1`，真实 iTerm2 测试窗：真 toggle 157~164ms
+  有界落定 + isFloating 翻转 + 等待后两读稳定；已 float 零耗时跳过）；
+- **FloatSettle 全链路无 AX 依赖**（yabai fork + CGWindowList + 内存缓存）——
+  真机闭环不再被辅助功能授权状态卡死（2026-09-06 AX 授权反复被并行构建毒化
+  期间的质量门底座）；
+- 手抄 float→settle 序列在 WindowManager/ToggleEngine 族的出现次数：5 → 0；
+  `WindowManager+MoveWindow.swift` 491 → 470 行。

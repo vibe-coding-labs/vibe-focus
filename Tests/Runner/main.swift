@@ -116,6 +116,7 @@ final class FakeWindows: RestoreWindowOperating {
     var findResult: AXUIElement?
     var moveResult = true
     var displayContextResult: (yabaiIndex: Int?, displayID: UInt32?) = (yabaiIndex: 2, displayID: nil)
+    let frameTolerance: CGFloat = 20
     private(set) var moveCalls: [(windowID: UInt32, stage: String)] = []
 
     init(findResult: AXUIElement?, moveResult: Bool = true) {
@@ -1011,9 +1012,11 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             ch.focusResult = true
             let (rec, win, ch2, aud) = makeDeps(channels: ch)
             let outcome = run(rec, win, ch2, aud)
+            // Batch 6 起 4a FloatSettle 恒清缓存一次；守卫成功再清一次 = 共 2 次。
             check("主体: 视角漂移 → 守卫切回成功并清缓存，结局仍 restored(true)",
                   outcome == .restored(spaceExact: true) && ch2.cacheCleared
-                  && ch2.calls.contains("clearCache") && aud.events[0].eventType == "restore_success")
+                  && ch2.calls.filter { $0 == "clearCache" }.count == 2
+                  && aud.events[0].eventType == "restore_success")
         }
 
         // 分支 12：预切回「等到位」轮询超时（真实 ~800ms）→ spaceExact=false 如实
@@ -1038,8 +1041,11 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             // focusResult/refocusResult 默认 false → 守卫两层全失败
             let (rec, win, ch2, aud) = makeDeps(channels: ch)
             let outcome = run(rec, win, ch2, aud)
-            check("主体: 守卫双层全失败 → 结局仍 restored(true)，不清缓存（视角留在他处如实降级）",
-                  outcome == .restored(spaceExact: true) && !ch2.cacheCleared
+            // Batch 6 起 4a FloatSettle 恒清缓存一次（float 已改 yabai 侧状态，旧缓存
+            // 必须失效）；守卫失败路径不再额外清 = 全程恰好 1 次（视角留在他处如实降级）。
+            check("主体: 守卫双层全失败 → 结局仍 restored(true)，缓存仅 4a 清一次（守卫失败不再清）",
+                  outcome == .restored(spaceExact: true)
+                  && ch2.calls.filter { $0 == "clearCache" }.count == 1
                   && aud.events[0].eventType == "restore_success")
         }
 
@@ -2049,6 +2055,108 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         }
     }
 
+    // MARK: FloatSettle 序列原语真机 E2E（仅 VIBEFOCUS_FLOATSETTLE_E2E=1 时运行）
+    // 全链路无 AX 依赖（yabai fork + CGWindowList + 内存缓存）——无辅助功能授权环境
+    // 可闭环（2026-09-06 AX 授权反复被并行构建毒化期间的质量门底座）。
+    //   Case 1 managed 窗 → 真 toggle：didToggle + isFloating 翻转 + 落定有界（<2s）
+    //          + 等待后 frame 两读稳定（重摆确实落定，后续 frame 写不再被覆盖）；
+    //   Case 2 已 float 窗再跑 → skippedNoOp：didToggle=false 且近零耗时（restore
+    //          常见路径零浪费的实机证据）。
+    if ProcessInfo.processInfo.environment["VIBEFOCUS_FLOATSETTLE_E2E"] == "1" {
+        print("\n=== FloatSettle 序列原语真机 E2E ===")
+        SpaceController.shared.refreshAvailability(force: true)
+        check("FloatSettleE2E: yabai 可用", SpaceController.shared.isEnabled)
+
+        func yabaiWindowIDsFS() -> Set<UInt32> {
+            guard let out = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "query", "--windows"], timeout: 30),
+                  out.exitCode == 0 else { return [] }
+            let regex = try? NSRegularExpression(pattern: "\"id\":\\s*(\\d+)")
+            let range = NSRange(out.stdout.startIndex..., in: out.stdout)
+            var ids: Set<UInt32> = []
+            for result in (regex ?? NSRegularExpression()).matches(in: out.stdout, range: range) {
+                guard result.numberOfRanges > 1, let r = Range(result.range(at: 1), in: out.stdout),
+                      let n = UInt32(out.stdout[r]) else { continue }
+                ids.insert(n)
+            }
+            return ids
+        }
+        func isFloatingFS(_ id: UInt32) -> Bool? {
+            SpaceController.shared.queryWindow(windowID: id, ignoreCache: true)?.isFloating
+        }
+
+        let fsIdsBefore = yabaiWindowIDsFS()
+        _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+            "tell application id \"com.googlecode.iterm2\" to create window with default profile"], timeout: 30)
+        Thread.sleep(forTimeInterval: 0.8)
+        let fsCreated = yabaiWindowIDsFS().subtracting(fsIdsBefore)
+        guard let fsWid = fsCreated.first else {
+            check("FloatSettleE2E: 创建测试窗口", false)
+            exit(1)
+        }
+        check("FloatSettleE2E: 测试窗口已创建 id=\(fsWid)", true)
+
+        // 前置：确保 managed（若 yabai 配置 float 了 iTerm2 新窗，先拨回 tiled）
+        if isFloatingFS(fsWid) == true {
+            _ = SpaceController.shared.runYabai(
+                arguments: ["-m", "window", "\(fsWid)", "--toggle", "float"],
+                operation: "floatsettle-e2e.pretile", operationID: "floatsettle-e2e")
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        check("FloatSettleE2E: 前置窗口为 managed（tiled）", isFloatingFS(fsWid) == false)
+
+        // Case 1：真 toggle（真实等待，不注入 sleep）
+        let fsT1 = Date()
+        let outcome1 = FloatSettle.floatAndSettle(
+            windowID: fsWid,
+            operationID: "floatsettle-e2e-1",
+            knownWindowInfo: nil,
+            tolerance: 20,
+            setFloat: { SpaceController.shared.setWindowFloat($0, operationID: $1, knownWindowInfo: $2) },
+            read: { cgWindowBounds(for: $0) },
+            clearCache: { SpaceController.shared.clearWindowQueryCache() }
+        )
+        let ms1 = Int(Date().timeIntervalSince(fsT1) * 1000)
+        check("FloatSettleE2E Case1: didToggle=true", outcome1.didToggle)
+        check("FloatSettleE2E Case1: yabai 侧 isFloating 已翻转", isFloatingFS(fsWid) == true)
+        check("FloatSettleE2E Case1: 落定等待有界（\(ms1)ms < 2000）", ms1 < 2000)
+        if let f1 = cgWindowBounds(for: fsWid) {
+            Thread.sleep(forTimeInterval: 0.05)
+            let f2 = cgWindowBounds(for: fsWid)
+            check("FloatSettleE2E Case1: 等待后 frame 两读稳定（重摆已落定）",
+                  f2.map { CoordinateKit.isFrameConverged(actual: $0, target: f1, tolerance: 20) } == true)
+        } else {
+            check("FloatSettleE2E Case1: 读取 frame", false)
+        }
+        print("    [诊断] Case1 outcome=\(outcome1) 外部计时=\(ms1)ms")
+
+        // Case 2：已 float 再跑 → skippedNoOp 零浪费
+        let outcome2 = FloatSettle.floatAndSettle(
+            windowID: fsWid,
+            operationID: "floatsettle-e2e-2",
+            knownWindowInfo: nil,
+            tolerance: 20,
+            setFloat: { SpaceController.shared.setWindowFloat($0, operationID: $1, knownWindowInfo: $2) },
+            read: { cgWindowBounds(for: $0) },
+            clearCache: { SpaceController.shared.clearWindowQueryCache() }
+        )
+        check("FloatSettleE2E Case2: 已 float → didToggle=false", !outcome2.didToggle)
+        check("FloatSettleE2E Case2: 近零耗时（\(outcome2.durationMs)ms < 100）", outcome2.durationMs < 100)
+        print("    [诊断] Case2 outcome=\(outcome2)")
+
+        // 清理：向测试窗口 session 写 exit 关窗（best-effort，同 SizeE2E）。
+        // 注意：新建即 exit 会触发 iTerm2「session ended very soon」警告框（需手动
+        // 点 OK），窗口关闭可能滞后——清理非本原语契约，残余窗口如实报告不判 FAIL。
+        _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+            "tell application id \"com.googlecode.iterm2\" to tell window id \(fsWid) to tell current session to write text \"exit\""], timeout: 30)
+        Thread.sleep(forTimeInterval: 1.5)
+        let fsLeftover = yabaiWindowIDsFS().intersection(fsCreated)
+        if fsLeftover.isEmpty {
+            check("FloatSettleE2E: 测试窗口已关闭", true)
+        } else {
+            print("    [诊断] 关窗滞后（iTerm2 警告框/后台处理），请手动关闭：\(fsLeftover.sorted())")
+        }
+    }
+
         // MARK: Terminal 网格真机 E2E（仅 VIBEFOCUS_GRID_E2E=1 时运行）
     // 会真实创建 Terminal 窗口、调用 osascript/yabai/claude，普通门禁不跑。
     // 前置：主屏上有若干终端窗口；其中某窗口的 tty 上有存活 claude 会话。
@@ -2505,6 +2613,66 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               ToggleFocusBranching.axIdentityEntry(cgList: fullList, winID: 42) == nil)
     }
 
+    }
+
+    // MARK: FloatSettle（真实实现——float 脱管→等重摆→缓存失效唯一序列原语，Batch 6）
+
+    do {
+        // A. 真 toggle：setFloat 恰一次 → 睡下限 → 稳定早返回 → 缓存恒清，顺序锁定。
+        do {
+            var events: [String] = []
+            var sleeps: [useconds_t] = []
+            var polls: [UInt32] = []
+            let outcome = FloatSettle.floatAndSettle(
+                windowID: 42,
+                operationID: "fs-a",
+                knownWindowInfo: nil,
+                tolerance: 20,
+                setFloat: { id, op, _ in events.append("float(\(id),\(op))"); return .toggled },
+                read: { _ in CGRect(x: 0, y: 0, width: 800, height: 600) },
+                clearCache: { events.append("clear") },
+                sleep: { sleeps.append($0); events.append("sleep") },
+                pollSleep: { polls.append($0); events.append("poll") }
+            )
+            check("floatsettle A: 序列 float→sleep→poll→clear（真身）",
+                  events == ["float(42,fs-a)", "sleep", "poll", "clear"])
+            check("floatsettle A: 下限取 WindowSettle.floatRelayoutMinSettleMicros（120ms）",
+                  sleeps == [WindowSettle.floatRelayoutMinSettleMicros])
+            check("floatsettle A: 两读稳定即早返回（1 拍 25ms）",
+                  polls == [WindowSettle.frameVerifyPollIntervalMs])
+            check("floatsettle A: didToggle=true 如实上报", outcome.didToggle)
+        }
+
+        // B. skippedNoOp（已 float/unmanaged/query-nil）：零等待、缓存仍恒清。
+        do {
+            var waitEvents = 0
+            var clears = 0
+            let outcome = FloatSettle.floatAndSettle(
+                windowID: 42, operationID: "fs-b", knownWindowInfo: nil, tolerance: 20,
+                setFloat: { _, _, _ in .skippedNoOp },
+                read: { _ in waitEvents += 1; return nil },
+                clearCache: { clears += 1 },
+                sleep: { _ in waitEvents += 1 }, pollSleep: { _ in waitEvents += 1 })
+            check("floatsettle B: 已 float 零读零等待", waitEvents == 0)
+            check("floatsettle B: 缓存恒清语义（跳过场景仍清一次）", clears == 1)
+            check("floatsettle B: didToggle=false 如实上报", !outcome.didToggle)
+        }
+
+        // C. 预算兜底（μs→ms 修正回归金丝雀）：永不稳定走满 300ms = 12 拍。
+        //    Batch 6 前四处手抄直传微秒值（budgetMs=300_000 → 病理路径轮询 100 分钟），
+        //    本断言锁死换算，防回归。
+        do {
+            var polls = 0
+            var readN = 0
+            let outcome = FloatSettle.floatAndSettle(
+                windowID: 42, operationID: "fs-c", knownWindowInfo: nil, tolerance: 20,
+                setFloat: { _, _, _ in .toggled },
+                read: { _ in readN += 1; return CGRect(x: readN * 100, y: 0, width: 800, height: 600) },
+                clearCache: {},
+                sleep: { _ in }, pollSleep: { _ in polls += 1 })
+            check("floatsettle C: 预算按毫秒计（300ms=12 拍，而非 30 万拍 100 分钟）", polls == 12 && readN == 13)
+            check("floatsettle C: 走满预算仍如实上报 didToggle", outcome.didToggle)
+        }
     }
 
     // MARK: 汇总

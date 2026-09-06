@@ -55,6 +55,8 @@ protocol RestoreWindowOperating: AnyObject {
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement?
     func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleFrame: CGRect?) -> Bool
     func displayContext(for frame: CGRect) -> (yabaiIndex: Int?, displayID: UInt32?)
+    /// frame 收敛容差（FloatSettle 重摆等待的稳定判据与移动收敛共用同一容差）
+    var frameTolerance: CGFloat { get }
 }
 
 extension WindowManager: RestoreWindowOperating {}

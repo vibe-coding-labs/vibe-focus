@@ -291,16 +291,23 @@ extension ToggleEngine {
         // macOS 窗口归属跟随物理位置自动回到源 display 的 visible space。
         // 4a. float 脱管——仅在真发生脱管时等重摆落定（窗口已 float 时无重摆，
         // 无条件等待是 restore 常见路径的纯浪费，2026-09-02 消除）。
-        // 注意 float 等待不轮询：is-floating 翻转远早于 yabai 重摆完成，而重摆完成
-        // 无可观测信号——此处保留固定 300ms settle（等短了写会被重摆覆盖，
-        // 2026-09-01 尺寸错乱根因）；「等到位」轮询只用于有可观测目标态的 4-pre space 切回。
+        // 序列唯一出口 FloatSettle（Batch 6 收敛）：固定 300ms usleep → waitForRelayout
+        // 等稳定轮询（下限 120ms 防重摆未启动的静默假稳定 + 连续两读相等早返回 +
+        // 300ms 总预算兜底）——与 move_to_main/stuck 同源同一落定保证，本仓 float
+        // 等待策略不再有两档；查询缓存失效随原语恒清（restore 原副本从不清，
+        // float 后 isFloating/frame 旧值是竞态温床）。
         var moveMs = 0
         if let info = windowInfo {
             let floatStart = Date()
-            let floatOutcome = channels.setWindowFloat(windowID, operationID: trace, knownWindowInfo: info)
-            if floatOutcome.didToggle {
-                usleep(WindowSettle.floatRelayoutSettleMicros)
-            }
+            FloatSettle.floatAndSettle(
+                windowID: windowID,
+                operationID: trace,
+                knownWindowInfo: info,
+                tolerance: windows.frameTolerance,
+                setFloat: { channels.setWindowFloat($0, operationID: $1, knownWindowInfo: $2) },
+                read: { cgWindowBounds(for: $0) },
+                clearCache: { channels.clearQueryCache() }
+            )
             moveMs = elapsedMilliseconds(since: floatStart)
         }
         // 4b. yabai --move abs + --resize abs 直写 origFrame（窗口归属跟随物理位置）。

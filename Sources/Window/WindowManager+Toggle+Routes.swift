@@ -70,24 +70,10 @@ extension WindowManager {
         }
 
         // float 脱管 + settle（等 yabai 默认重摆落定）→ frame 直写（闭环验证内置）。
-        // 已 float 零等待（skippedNoOp 无重摆）；真 toggle 时等稳定代等固定
-        // （waitForRelayout，同 move_to_main P2 注释）。
+        // 序列唯一出口 FloatSettle（Batch 6 收敛）：已 float 零等待（skippedNoOp 无
+        // 重摆），真 toggle 时等稳定代等固定；查询缓存失效随原语恒清。
         let moveStart = Date()
-        var stuckFloatToggled = false
-        if let info = windowInfo, !info.isFloating {
-            let floatOutcome = spaceController.setWindowFloat(windowID, operationID: operationID, knownWindowInfo: info)
-            stuckFloatToggled = floatOutcome.didToggle
-        }
-        if stuckFloatToggled {
-            FrameConvergence.waitForRelayout(
-                minSettleMicros: WindowSettle.floatRelayoutMinSettleMicros,
-                intervalMs: WindowSettle.frameVerifyPollIntervalMs,
-                budgetMs: WindowSettle.floatRelayoutSettleMicros,
-                read: { cgWindowBounds(for: windowID) },
-                isSame: { CoordinateKit.isFrameConverged(actual: $1, target: $0, tolerance: frameTolerance) }
-            )
-        }
-        spaceController.clearWindowQueryCache()
+        floatAndSettle(windowID: windowID, operationID: operationID, knownWindowInfo: windowInfo)
         // 2026-09-06 尺寸保真修复：解堵 = 把卡住的窗口挪去副屏，**保持窗口当前尺寸**
         // （位置放副屏可视区原点、整框向内夹紧；窗口大于副屏可视区时才收窄）。
         // 旧实现目标 = 副屏整屏可视区（3440x1440），任何窗口一解堵就被放大成

@@ -182,27 +182,32 @@ extension WindowManager {
         )
     }
 
+    /// FloatSettle 唯一序列原语的 WindowManager 接线：通道 = spaceController 的
+    /// float/缓存通道 + cgWindowBounds 读，容差 = frameTolerance。
+    /// 全仓 float 脱管一律经此出口，禁止再手抄 float→settle 序列（Batch 6 收敛，
+    /// 序列契约见 FloatSettle）。
+    @discardableResult
+    func floatAndSettle(windowID: UInt32, operationID: String, knownWindowInfo: YabaiWindowInfo?) -> FloatSettle.Outcome {
+        FloatSettle.floatAndSettle(
+            windowID: windowID,
+            operationID: operationID,
+            knownWindowInfo: knownWindowInfo,
+            tolerance: frameTolerance,
+            setFloat: { self.spaceController.setWindowFloat($0, operationID: $1, knownWindowInfo: $2) },
+            read: { cgWindowBounds(for: $0) },
+            clearCache: { self.spaceController.clearWindowQueryCache() }
+        )
+    }
+
     private func floatAndWriteFrame(
         windowID: UInt32,
         targetFrame: CGRect,
         op: String,
         sourceVisibleFrame: CGRect?
     ) -> Bool {
-        var floatToggled = false
-        if let info = spaceController.queryWindow(windowID: windowID), !info.isFloating {
-            let floatOutcome = spaceController.setWindowFloat(windowID, operationID: op, knownWindowInfo: info)
-            floatToggled = floatOutcome.didToggle
-        }
-        if floatToggled {
-            FrameConvergence.waitForRelayout(
-                minSettleMicros: WindowSettle.floatRelayoutMinSettleMicros,
-                intervalMs: WindowSettle.frameVerifyPollIntervalMs,
-                budgetMs: WindowSettle.floatRelayoutSettleMicros,
-                read: { cgWindowBounds(for: windowID) },
-                isSame: { CoordinateKit.isFrameConverged(actual: $1, target: $0, tolerance: frameTolerance) }
-            )
-            spaceController.clearWindowQueryCache()
-        }
+        // float 脱管 + settle + 缓存失效统一走 FloatSettle（Batch 6 收敛，
+        // 原 12 行手抄副本删除——已 float 零等待语义经通道内 floatToggleDecision 保持）。
+        floatAndSettle(windowID: windowID, operationID: op, knownWindowInfo: nil)
 
         return moveWindowToFrameViaYabai(
             windowID: windowID,
