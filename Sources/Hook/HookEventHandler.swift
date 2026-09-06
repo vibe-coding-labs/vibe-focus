@@ -11,18 +11,9 @@ final class HookEventHandler {
     // MARK: - Per-session UPS rate tracking
     // Prevents automated/loop sessions from endlessly moving the same window.
     // 54+ sessions on one remote machine → all mapped to one window → constant jumping.
+    // Batch 14：滑动窗口限流器提取为 UPSRateLimiter（internal，真身直测穷尽锁定）。
 
-    /// Sliding-window UPS counter per session.
-    private struct UPSRateWindow {
-        var timestamps: [Date] = []
-        /// Prune events older than `windowDuration` and return the count of remaining events.
-        mutating func pruneAndCount(now: Date, windowDuration: TimeInterval) -> Int {
-            timestamps = timestamps.filter { now.timeIntervalSince($0) < windowDuration }
-            return timestamps.count
-        }
-    }
-
-    private var sessionUPSRate: [String: UPSRateWindow] = [:]
+    private var sessionUPSLimiters: [String: UPSRateLimiter] = [:]
 
     /// Sliding window duration for UPS rate tracking (10 minutes)
     private static let upsRateWindowDuration: TimeInterval = 600
@@ -66,22 +57,20 @@ final class HookEventHandler {
             ]
         )
 
+        // Batch 14：五重门决策收敛为 decidePromptMove 纯判定 + 响应表
+        //（+PromptSubmit+Decision.swift，Runner 真身穷尽锁定）。守护顺序：
+        // disabled → 无身份 → 限流 → 已在主屏 → 冷却 → 搬窗。
+
+        // 门 0：自动恢复总开关。
         guard ClaudeHookPreferences.autoRestoreOnPromptSubmit else {
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
                 message: "UserPromptSubmit 收到（自动恢复已关闭）"
             )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "auto_restore_disabled",
-                    message: "UserPromptSubmit received, auto restore disabled",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
+            return Self.promptHttpResponse(for: .autoRestoreDisabled, sessionID: payload.sessionID)
         }
 
-        // 1. 解析窗口身份
+        // 门 1：解析窗口身份。
         guard let identity = resolveWindowIdentity(payload: payload, traceID: traceID, startedAt: Date()) else {
             log(
                 "[HookEventHandler] UserPromptSubmit: window identity resolution failed",
@@ -93,25 +82,37 @@ final class HookEventHandler {
                     "machineLabel": payload.terminalCtx?.machineLabel ?? "nil"
                 ]
             )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "no_binding_skip",
-                    message: "Could not resolve window identity",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
+            return Self.promptHttpResponse(for: .noBinding, sessionID: payload.sessionID)
         }
 
-        // 1.5. Session-level UPS rate limit — prevents automated/loop sessions
-        // from endlessly moving the same window (e.g., 54 sessions on one remote machine).
+        // 门 2：Session 级 UPS 限流（先剪枝计数后注册，连发持续被限）。
         let now = Date()
-        var rateWindow = sessionUPSRate[payload.sessionID] ?? UPSRateWindow()
-        let recentCount = rateWindow.pruneAndCount(now: now, windowDuration: Self.upsRateWindowDuration)
-        rateWindow.timestamps.append(now)
-        sessionUPSRate[payload.sessionID] = rateWindow
+        var limiter = sessionUPSLimiters[payload.sessionID]
+            ?? UPSRateLimiter(windowDuration: Self.upsRateWindowDuration, maxEvents: Self.upsRateMaxEvents)
+        let rate = limiter.registerAndEvaluate(now: now)
+        sessionUPSLimiters[payload.sessionID] = limiter
 
-        if recentCount >= Self.upsRateMaxEvents {
+        // 门 3/4/5 输入采集：主屏归属 / 冷却。
+        let onMain = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+        let inCooldown = MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID)
+        let cooldownRemaining = inCooldown ? MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID) : 0
+
+        let decision = Self.decidePromptMove(
+            autoRestoreEnabled: true,
+            hasWindowIdentity: true,
+            rateLimited: rate.limited,
+            recentUPSCount: rate.recentCount,
+            maxUPSEvents: Self.upsRateMaxEvents,
+            isOnMainScreen: onMain,
+            isInCooldown: inCooldown,
+            cooldownRemainingSeconds: cooldownRemaining
+        )
+
+        switch decision {
+        case .autoRestoreDisabled, .noBinding:
+            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+
+        case .rateLimited:
             log(
                 "[HookEventHandler] UserPromptSubmit: session rate-limited (automated session detected), skipping move",
                 level: .info,
@@ -119,7 +120,7 @@ final class HookEventHandler {
                     "traceID": traceID,
                     "sessionID": payload.sessionID,
                     "windowID": String(identity.windowID),
-                    "upsCount": String(recentCount),
+                    "upsCount": String(rate.recentCount),
                     "upsMax": String(Self.upsRateMaxEvents)
                 ]
             )
@@ -127,18 +128,9 @@ final class HookEventHandler {
                 sessionID: payload.sessionID,
                 message: "UserPromptSubmit 被限流（session 自动化检测）"
             )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "session_rate_limited",
-                    message: "Session UPS rate limited (\(recentCount)/\(Self.upsRateMaxEvents) in 10min), skipping move",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
+            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
 
-        // 2. 窗口已在主屏 → 无需操作
-        if WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID) {
+        case .alreadyOnMain:
             log(
                 "[HookEventHandler] UserPromptSubmit: window already on main screen, skipping",
                 fields: [
@@ -148,19 +140,9 @@ final class HookEventHandler {
                 ]
             )
             SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "already_on_main_screen",
-                    message: "Window already on main screen, no action needed",
-                    sessionID: payload.sessionID, handled: false
-                )
-            )
-        }
+            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
 
-        // 3. 冷却检查：同一窗口在冷却期内不重复移动
-        if MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID) {
-            let remaining = MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID)
+        case .cooldownActive(let remaining):
             log(
                 "[HookEventHandler] UserPromptSubmit: cooldown active, skipping",
                 level: .info,
@@ -170,49 +152,31 @@ final class HookEventHandler {
                     "cooldownRemaining": String(remaining) + "s"
                 ]
             )
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "cooldown_active",
-                    message: "Auto-restore cooldown active (\(remaining)s remaining)",
-                    sessionID: payload.sessionID, handled: false
-                )
+            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+
+        case .proceedToMove:
+            // 窗口不在主屏 → 移到主屏（单向操作，不会推离主屏）。
+            log(
+                "[HookEventHandler] UserPromptSubmit: moving window to main screen",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "app": identity.appName ?? "unknown",
+                    "sessionID": payload.sessionID
+                ]
             )
-        }
-
-        // 4. 窗口不在主屏 → 移到主屏（单向操作，不会推离主屏）
-        log(
-            "[HookEventHandler] UserPromptSubmit: moving window to main screen",
-            level: .info,
-            fields: [
-                "traceID": traceID,
-                "windowID": String(identity.windowID),
-                "app": identity.appName ?? "unknown",
-                "sessionID": payload.sessionID
-            ]
-        )
-
-        let moved = WindowManager.shared.moveWindowToMainScreen(
-            identity: identity,
-            reason: .userPromptSubmit,
-            sessionID: payload.sessionID
-        )
-
-        if moved {
-            MoveCooldownRegistry.shared.setCooldown(windowID: identity.windowID)
-            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-        }
-
-        return (
-            200,
-            ClaudeHookResponse(
-                ok: true,
-                code: moved ? "moved_to_main" : "move_failed",
-                message: moved ? "Window moved to main screen" : "Failed to move window to main screen",
-                sessionID: payload.sessionID,
-                handled: moved
+            let moved = WindowManager.shared.moveWindowToMainScreen(
+                identity: identity,
+                reason: .userPromptSubmit,
+                sessionID: payload.sessionID
             )
-        )
+            if moved {
+                MoveCooldownRegistry.shared.setCooldown(windowID: identity.windowID)
+                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            }
+            return Self.promptMoveOutcomeResponse(moved: moved, sessionID: payload.sessionID)
+        }
     }
 
     // 窗口解析逻辑已移至 HookEventHandler+WindowResolution.swift
