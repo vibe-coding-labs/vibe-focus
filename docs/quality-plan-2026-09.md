@@ -105,7 +105,8 @@ FrameWriteExecutor / 阶段状态机（重构进度账本 Batch 3/4 热点）：
 | P3 | ✅ 2026-09-06 | 见本文件提交历史 | run.sh 部署文件锁（mkdir+陈锁回收）+ 安装事件（replaced/skipped-unchanged）写入 exits.jsonl，--diagnose 时间线可见 |
 | P4 | ✅ 2026-09-06 | 见本文件提交历史 | docs/troubleshooting-runbook.md 排查首站固化（--diagnose 六段读法 + 事件速查 + 症状对照） |
 | P5 | ✅ 2026-09-06 | 见本文件提交历史 | Runner 内建 E2E 同机互斥锁（mkdir + 陈锁回收 + atexit 释放，并发拒跑退出码 3） |
-| P6 | 步骤 1 ✅ 2026-09-07 | 见本文件提交历史 | 焦点链路清查表完成；ToggleFocusBranching 纯内核拆出 + Runner 直测 12 断言穷尽边界 + 真机 SIZE_E2E 全绿；余 windowless 回归用例评估 |
+| P6 | 步骤 1 ✅ 2026-09-07；windowless 评估 ✅ 2026-09-07 | 见本文件提交历史 | 焦点链路清查表完成；ToggleFocusBranching 纯内核拆出 + Runner 直测 12 断言穷尽边界 + 真机 SIZE_E2E 全绿；**windowless E2E 评估结论：不建**——确定性触发需把 SystemUIServer 弄成前台（抢用户焦点）且 z-order 快照在活动机器上不稳定，mirror（ToggleFallbackWindowTests）+ 真机 540d007 实证已覆盖，E2E 化性价比为负 |
+| P7 | ✅ 2026-09-07（Batch 5~9） | 3738220 等 | 结构降耦收官：ToggleRoute 唯一路由（Batch 5）、FloatSettle 序列原语 + budgetMs 单位 bug 修复（Batch 6）、MoveToMainPipeline 阶段管线（Batch 7）、restore 序列锁 S1~S4（Batch 8）、架构守护测试 9 规则（Batch 9）；账本见 docs/architecture-baseline.md 与 memory 重构进度 |
 | P7 | 立项 | 本文件 | 结构降耦接重构账本 Batch 3/4（FrameWriteExecutor / 阶段状态机；Batch 3/4 由重构线并行推进中，本计划不重复立项具体批次） |
 
 ## 运行注意事项（实测）
