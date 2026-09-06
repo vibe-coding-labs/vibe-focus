@@ -1940,6 +1940,61 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
             check("SizeE2E stuckCase: 读取解堵后帧", false)
         }
 
+        // Case E：restore 屏外 origFrame 保守退让（P1 修复）。合成一条 origFrame 在
+        // 所有屏之外的 record（显示器配置变化后的真实场景），restore 应把原始帧夹进
+        // 源屏可视区完成还原（修复前：清 record 放弃，窗口卡在原处）。期望终帧 =
+        // clampFrame((5000,500,800,600), 副屏可视区) = (1826,-600,800,600)。
+        let itermPID = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+            "tell application id \"com.googlecode.iterm2\" to return unix id"], timeout: 30)
+            .flatMap { Int32($0.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        let e1Sem = DispatchSemaphore(value: 0)
+        var clampExpected = CGRect.zero
+        var restoreOutcome: String = "n/a"
+        Task { @MainActor in
+            let spaces = SpaceController.shared.querySpaces()
+            let secDisplay = spaces?.first(where: { $0.display != 1 })?.display ?? 2
+            let secVisibleSpaceIdx = spaces?.first(where: { $0.display == secDisplay && $0.isVisible == true })?.index ?? 3
+            ToggleEngine.shared.save(
+                windowID: wid,
+                pid: itermPID ?? 0,
+                bundleIdentifier: "com.googlecode.iterm2",
+                appName: "iTerm2",
+                origFrame: CGRect(x: 5000, y: 500, width: 800, height: 600),
+                sourceSpace: .yabaiIndex(secVisibleSpaceIdx),
+                sourceDisplay: .yabaiIndex(Int(secDisplay)),
+                sourceYabaiDisp: .yabaiIndex(Int(secDisplay)),
+                sourceDispSpace: secVisibleSpaceIdx,
+                targetFrame: CGRect(x: 75, y: 38, width: 1653, height: 1079),
+                targetDisplay: 1,
+                sessionID: nil,
+                reason: .manualHotkey
+            )
+            if let secScreen = CoordinateKit.nsScreen(forYabaiDisplayIndex: Int(secDisplay)) {
+                clampExpected = CoordinateKit.clampFrame(
+                    CGRect(x: 5000, y: 500, width: 800, height: 600),
+                    into: CoordinateKit.quartzVisibleFrame(of: secScreen))
+            }
+            let outcome = ToggleEngine.shared.restore(windowID: wid, triggerSource: "size_e2e", traceID: "size-e2e-clamp")
+            restoreOutcome = outcome.outcomeLabel
+            e1Sem.signal()
+        }
+        while e1Sem.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        Thread.sleep(forTimeInterval: 1.0)
+        print("    [诊断] clampCase 结果=\(restoreOutcome) 期望终帧=\(clampExpected)")
+        if let clampedFinal = yabaiWindowFrame(wid), clampExpected != .zero {
+            let sizeOK = abs(clampedFinal.width - 800) <= 40 && abs(clampedFinal.height - 600) <= 40
+            let onScreen = CoordinateKit.isOnMainScreen(clampedFinal.origin)
+                || clampedFinal.origin.y < 0
+            check("SizeE2E clampCase: restore 上报 restored", restoreOutcome.hasPrefix("restored"))
+            check("SizeE2E clampCase: 屏外 origFrame 被夹进源屏且尺寸保持（±40）",
+                  sizeOK && onScreen)
+            check("SizeE2E clampCase: record 已消费", ToggleEngine.shared.load(windowID: wid) == nil)
+        } else {
+            check("SizeE2E clampCase: 读取夹取还原后帧", false)
+        }
+
         // 清理：向两个测试窗口的 session 写 exit 结束 shell，窗口随会话关闭（best-effort）
         let exitScript = """
         tell application id "com.googlecode.iterm2"

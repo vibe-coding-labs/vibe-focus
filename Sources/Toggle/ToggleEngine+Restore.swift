@@ -345,6 +345,50 @@ extension ToggleEngine {
                 )
                 return .moveFailedRetryable
             }
+            // P1 保守退让（2026-09-06）：origFrame 落在所有屏之外（显示器配置变化后
+            // 常见——副屏拔除/分辨率切换把存档帧甩出屏）。旧行为直接清 record 放弃还原，
+            // 窗口从此卡在主屏全屏态（用户主诉「尺寸/位置搞错」）。改为：原始帧夹进
+            // 源屏可视区（保持尺寸、位置回到可见处）幂等重试一次；成功即还原（审计
+            // 诚实标注 clamped_restore=true），仍失败才清 record 升级永久失败。
+            if let sourceScreen = CoordinateKit.nsScreen(forYabaiDisplayIndex: record.sourceYabaiDisp) {
+                let clampedFrame = CoordinateKit.clampFrame(
+                    record.origFrame,
+                    into: CoordinateKit.quartzVisibleFrame(of: sourceScreen)
+                )
+                log("[ToggleEngine] restore: origFrame is off any display, clamping into source screen and retrying", level: .warn, fields: [
+                    "traceID": trace, "windowID": String(windowID),
+                    "origFrame": QuartzRect(record.origFrame).description,
+                    "clampedFrame": QuartzRect(clampedFrame).description
+                ])
+                let retryOK = windows.moveWindowToFrameViaYabai(
+                    windowID: windowID,
+                    frame: clampedFrame,
+                    op: trace,
+                    stage: "restore_clamped",
+                    sourceVisibleFrame: nil
+                )
+                _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
+                if retryOK {
+                    records.clear(windowID: record.windowID)
+                    auditor.record(
+                        eventType: "restore_success",
+                        windowID: windowID,
+                        pid: record.pid,
+                        sessionID: nil,
+                        details: [
+                            "triggerSource": triggerSource,
+                            "targetSpace": String(record.sourceSpace),
+                            "clampedRestore": "true"
+                        ]
+                    )
+                    log("[ToggleEngine] restore: completed (clamped into source screen)", fields: [
+                        "traceID": trace,
+                        "windowID": String(windowID),
+                        "clampedFrame": QuartzRect(clampedFrame).description
+                    ])
+                    return .restored(spaceExact: spaceExact)
+                }
+            }
             log("[ToggleEngine] restore: frame move failed and origFrame is off any display, clearing record", level: .error, fields: [
                 "traceID": trace, "windowID": String(windowID),
                 "origFrame": QuartzRect(record.origFrame).description

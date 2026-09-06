@@ -94,12 +94,10 @@ extension WindowManager {
         // 整屏——用户主诉「移动窗口连尺寸都搞错了」的直接来源（观测堆栈+E2E 复现：
         // 系统设置抢焦点后 toggle 误入 stuck 路由，普通窗口被撑满整副屏）。
         let secondaryVisible = CoordinateKit.quartzVisibleFrame(of: targetScreen)
-        let currentBounds = cgWindowBounds(for: windowID) ?? secondaryVisible
-        let keptWidth = min(currentBounds.width, secondaryVisible.width)
-        let keptHeight = min(currentBounds.height, secondaryVisible.height)
-        let keptX = max(secondaryVisible.minX, min(currentBounds.origin.x, secondaryVisible.maxX - keptWidth))
-        let keptY = max(secondaryVisible.minY, min(currentBounds.origin.y, secondaryVisible.maxY - keptHeight))
-        let targetFrame = CGRect(x: keptX, y: keptY, width: keptWidth, height: keptHeight)
+        let targetFrame = CoordinateKit.clampFrame(
+            cgWindowBounds(for: windowID) ?? secondaryVisible,
+            into: secondaryVisible
+        )
         let moved = moveWindowToFrameViaYabai(
             windowID: windowID,
             frame: targetFrame,
