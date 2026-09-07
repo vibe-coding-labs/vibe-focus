@@ -275,6 +275,48 @@ final class SoundManager: ObservableObject {
 
     // MARK: - Sound Resolution
 
+    /// 音效解析决策（纯函数，B46 提纯）：音效类型 → 解析通道计划。
+    /// `.none`=不发声；`.system`=系统命名音；`.bundled`=Bundle Sounds 资源名；
+    /// `.file`=自定义文件绝对路径。计划由 resolveSound 执行，测试免 IO 直锁映射。
+    enum SoundResolution: Equatable {
+        case none
+        case system(name: String)
+        case bundled(resource: String)
+        case file(path: String)
+    }
+
+    /// 解析计划唯一事实源：自定义文件缺失降级系统默认（轮次 3 行为）、
+    /// 显式 customPath 优先于已配置路径、空路径不发声。
+    static func soundResolutionPlan(
+        for type: CompletionSoundType,
+        explicitPath: String?,
+        configuredPath: String?
+    ) -> SoundResolution {
+        switch type {
+        case .none:
+            return .none
+        case .systemDefault:
+            return .system(name: "Hero")
+        case .builtinDing:
+            return .bundled(resource: "ding")
+        case .builtinPing:
+            return .bundled(resource: "ping")
+        case .builtinComplete:
+            return .bundled(resource: "complete")
+        case .builtinAreYouOk:
+            return .bundled(resource: "are-you-ok")
+        case .custom:
+            let path = explicitPath ?? configuredPath
+            guard let path, !path.isEmpty else {
+                return .none
+            }
+            guard FileManager.default.fileExists(atPath: path) else {
+                return .system(name: "Hero")
+            }
+            return .file(path: path)
+        }
+    }
+
     private func resolveSound(
         soundType: CompletionSoundType? = nil,
         customPath: String? = nil
@@ -283,35 +325,21 @@ final class SoundManager: ObservableObject {
         let rsStart = Date()
         let result: NSSound? = {
             let type = soundType ?? preferences.soundType
-        let path = customPath ?? preferences.customSoundPath
-
-        switch type {
-        case .none:
-            return nil
-        case .systemDefault:
-            return NSSound(named: "Hero")
-        case .builtinDing:
-            return bundledSound(named: "ding")
-        case .builtinPing:
-            return bundledSound(named: "ping")
-        case .builtinComplete:
-            return bundledSound(named: "complete")
-        case .builtinAreYouOk:
-            return bundledSound(named: "are-you-ok")
-        case .custom:
-            guard let path, !path.isEmpty else {
-                log("[SoundManager] custom sound path is empty", level: .warn)
+            let plan = Self.soundResolutionPlan(
+                for: type,
+                explicitPath: customPath,
+                configuredPath: preferences.customSoundPath
+            )
+            switch plan {
+            case .none:
                 return nil
+            case .system(let name):
+                return NSSound(named: name)
+            case .bundled(let resource):
+                return bundledSound(named: resource)
+            case .file(let path):
+                return NSSound(contentsOfFile: path, byReference: false)
             }
-            // 轮次 3：配置过的文件被删 → 降级系统默认并告警（历史行为是静默无声）
-            guard FileManager.default.fileExists(atPath: path) else {
-                log("[SoundManager] custom sound file missing, falling back to system default", level: .warn, fields: [
-                    "path": path
-                ])
-                return NSSound(named: "Hero")
-            }
-            return NSSound(contentsOfFile: path, byReference: false)
-        }
         }()
         log("[SoundManager] resolveSound finished", level: .debug, fields: [
             "durationMs": String(elapsedMilliseconds(since: rsStart))

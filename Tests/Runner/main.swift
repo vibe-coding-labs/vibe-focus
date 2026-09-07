@@ -5962,6 +5962,37 @@ final class FakeAuditor: RestoreAuditing {
               != nil)
     }
 
+    // MARK: 音效解析计划（真实实现——B46：resolveSound 内嵌映射提纯，免 IO 直锁）
+
+    do {
+        typealias Plan = SoundManager.SoundResolution
+        func plan(_ type: CompletionSoundType, explicit: String? = nil, configured: String? = nil) -> Plan {
+            SoundManager.soundResolutionPlan(for: type, explicitPath: explicit, configuredPath: configured)
+        }
+        let missingFile = "/tmp/vibefocus-b46-nonexistent-\(getpid()).wav"
+        let existingFile = "/tmp/vibefocus-b46-existing-\(getpid()).m4a"
+        try? "".write(toFile: existingFile, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: existingFile) }
+
+        check("soundPlan: none 不发声；四内置音效映射 Bundle 资源名",
+              plan(.none) == .none
+              && plan(.builtinDing) == .bundled(resource: "ding")
+              && plan(.builtinPing) == .bundled(resource: "ping")
+              && plan(.builtinComplete) == .bundled(resource: "complete")
+              && plan(.builtinAreYouOk) == .bundled(resource: "are-you-ok"))
+        check("soundPlan: 系统默认映射 Hero 命名音",
+              plan(.systemDefault) == .system(name: "Hero"))
+        check("soundPlan: custom 文件存在 → file 通道",
+              plan(.custom, explicit: existingFile) == .file(path: existingFile))
+        check("soundPlan: custom 文件缺失 → 降级系统默认（轮次 3 行为）",
+              plan(.custom, explicit: missingFile) == .system(name: "Hero"))
+        check("soundPlan: custom 路径双缺/空串 → 不发声",
+              plan(.custom) == .none
+              && plan(.custom, configured: "") == .none)
+        check("soundPlan: 显式路径优先于已配置路径",
+              plan(.custom, explicit: existingFile, configured: missingFile) == .file(path: existingFile))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
