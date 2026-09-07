@@ -5006,6 +5006,58 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               voiceNames.allSatisfy { !$0.isEmpty } && Set(voiceNames).count == 4)
     }
 
+    // MARK: Doctor 取证纯逻辑（真实实现——B31：镜像转直测，退出审计语义锁进真身）
+
+    do {
+        // parseJournalLine：三种事件行 + 容错（install 行无 pid 占位 -1、未知 kind/junk → nil）。
+        let launch = Doctor.parseJournalLine(#"{"kind":"launch","pid":123,"at":"T1","exe":"/app/VF","ax":true}"#)
+        check("doctor: launch 行解析 pid/at/exe/ax",
+              launch?.kind == "launch" && launch?.pid == 123 && launch?.at == "T1"
+              && launch?.exe == "/app/VF" && launch?.ax == true)
+        let exit = Doctor.parseJournalLine(#"{"kind":"exit","pid":9,"at":"T2","reason":"signal","name":"SIGTRAP"}"#)
+        check("doctor: exit 行 name → signalName",
+              exit?.signalName == "SIGTRAP" && exit?.reason == "signal")
+        check("doctor: install 行无 pid → 占位 -1",
+              Doctor.parseJournalLine(#"{"kind":"install","at":"T3","reason":"rebuild"}"#)?.pid == -1)
+        check("doctor: 未知 kind / 非法 JSON → nil",
+              Doctor.parseJournalLine(#"{"kind":"other"}"#) == nil
+              && Doctor.parseJournalLine("not-json") == nil)
+
+        // accessibilityFlips：相邻 launch 间 ax 翻转检测（2026-09-06 TCC 毒化实证语义）。
+        func l(_ pid: Int32, _ at: String, _ ax: Bool?) -> Doctor.JournalEvent {
+            Doctor.JournalEvent(kind: "launch", pid: pid, at: at, reason: nil, signalName: nil, exe: nil, ax: ax)
+        }
+        let flipDown = Doctor.accessibilityFlips(events: [l(1, "A", true), l(2, "B", false)])
+        check("doctor: true→false 翻转捕获（授权失效）",
+              flipDown.count == 1 && flipDown[0].contains("true→false") && flipDown[0].contains("pid=2"))
+        check("doctor: false→true 翻转捕获（重新授权）",
+              Doctor.accessibilityFlips(events: [l(1, "A", false), l(2, "B", true)])
+              .first?.contains("false→true") == true)
+        check("doctor: 同值/nil 轴不误报（nil 轴跳过不阻断链）",
+              Doctor.accessibilityFlips(events: [l(1, "A", true), l(2, "B", true)]).isEmpty
+              && Doctor.accessibilityFlips(events: [l(1, "A", true), l(2, "B", nil), l(3, "C", false)])
+              .count == 1)
+
+        // unmatchedLaunches：launch 无配对 exit = 外部击杀实证（SIGKILL/断电）。
+        func e(_ pid: Int32, _ at: String) -> Doctor.JournalEvent {
+            Doctor.JournalEvent(kind: "exit", pid: pid, at: at, reason: "x", signalName: nil, exe: nil, ax: nil)
+        }
+        let unmatched = Doctor.unmatchedLaunches(events: [
+            l(1, "A", nil), e(1, "B"), l(2, "C", nil), l(3, "D", nil), e(9, "E"), l(4, "F", nil)
+        ])
+        check("doctor: 配对抵消 + 无配对按 at 排序",
+              unmatched.map(\.pid) == [2, 3, 4])
+
+        // runtimeAXFlipLine：count<=0 不占版面；direction/lastAt 缺失容错。
+        check("doctor: 翻转摘要 count<=0 → nil",
+              Doctor.runtimeAXFlipLine(count: 0, direction: "x", lastAt: 1) == nil
+              && Doctor.runtimeAXFlipLine(count: -1, direction: nil, lastAt: 0) == nil)
+        check("doctor: 翻转摘要格式 + 缺失容错 ?",
+              Doctor.runtimeAXFlipLine(count: 3, direction: "true→false", lastAt: 0)?
+              .contains("3 次") == true
+              && Doctor.runtimeAXFlipLine(count: 2, direction: nil, lastAt: 0)?.contains("@ ?") == true)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
