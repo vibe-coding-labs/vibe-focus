@@ -115,7 +115,6 @@ public struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     hotKeySection
-                    layoutHotKeySection
                     permissionsSection
                     loginItemSection
                 }
@@ -134,6 +133,7 @@ public struct SettingsView: View {
         case .orchestration:
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    layoutHotKeySection
                     terminalGridSection
                         .onAppear { refreshSelectionInfo() }
                 }
