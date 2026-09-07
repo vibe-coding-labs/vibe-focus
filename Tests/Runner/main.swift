@@ -4663,6 +4663,20 @@ final class FakeAuditor: RestoreAuditing {
             for: .terminalContextMatchFailed, sessionID: "s")
         check("sessionBind C: 本地匹配失败 → 409 terminal_context_match_failed",
               matchResp.statusCode == 409 && matchResp.response.code == "terminal_context_match_failed")
+
+        // D. 决策表契约违反的诚实上报（B53：fatalError → 500 保守退让，P1 红线——
+        // 一次 hook 请求不许击穿整个菜单栏应用）。
+        let violateRemote = HookEventHandler.decisionContractViolationResponse(channel: "remote", sessionID: "s")
+        let violateLocal = HookEventHandler.decisionContractViolationResponse(channel: "local", sessionID: "s")
+        check("sessionBind D: 契约违反 → 500 decision_contract_violation 诚实上报",
+              violateRemote.statusCode == 500 && violateRemote.response.ok == false
+              && violateRemote.response.code == "decision_contract_violation"
+              && violateRemote.response.handled == false)
+        check("sessionBind D: 契约违反响应携带通道名与 sessionID 回显",
+              violateRemote.response.message.contains("remote")
+              && violateLocal.response.message.contains("local")
+              && violateRemote.response.sessionID == "s"
+              && violateLocal.response.sessionID == "s")
     }
 
     // MARK: LayoutFrameCalculator（真实实现——摆位几何，Batch 20）
