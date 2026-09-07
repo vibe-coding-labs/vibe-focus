@@ -17,8 +17,34 @@ CONTENTS_DIR="$INSTALL_PATH/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PLIST_PATH="$CONTENTS_DIR/Info.plist"
-VERSION="$(awk -F'"' '/static let current/ {print $2}' "$SCRIPT_DIR/Sources/AppVersion.swift" 2>/dev/null || echo "0.0.0")"
+# B55 修复：版本号读取路径曾缺 App/ 层级（指向不存在的文件）→ VERSION 恒 fallback
+# 0.0.0，装机 Info.plist 的版本字段自始就是错的。实际位置在 Sources/App/ 下。
+VERSION="$(awk -F'"' '/static let current/ {print $2}' "$SCRIPT_DIR/Sources/App/AppVersion.swift" 2>/dev/null || echo "0.0.0")"
 ASSETS_DIR="$SCRIPT_DIR/assets"
+
+# 等待给定 pid 全部退出（轮询 kill -0，0.2s 间隔）：全部退出=0；超时=1。
+# B54 引入、B55 自 install.sh 迁入本文件（run.sh 是重启的生产事实源）。
+# 纯轮询原语，不杀进程——超时后由调用方决定兜底动作（本脚本 SIGKILL 升级）。
+wait_for_process_exit() {
+  local timeout="$1"; shift
+  local max_iters=$(( timeout * 5 + 1 ))
+  local i pid alive
+  for ((i = 0; i < max_iters; i++)); do
+    alive=0
+    for pid in "$@"; do
+      if kill -0 "$pid" 2>/dev/null; then alive=1; fi
+    done
+    if [[ "$alive" -eq 0 ]]; then return 0; fi
+    sleep 0.2
+  done
+  return 1
+}
+
+# B55：可 source 模板库守卫——source 时仅提供函数，不执行主流程
+#（Tests/Standalone/InstallRestartHardeningTests.swift 依赖）。
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0 2>/dev/null || true
+fi
 
 # Parse arguments
 MODE="bundle"
@@ -119,11 +145,10 @@ pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
 # 必须等旧进程真正退出才能替换 bundle：SIGTERM 后 SwiftUI/AppKit 撕卸可能超过 1s，
 # 若此刻 cp 就地覆盖运行中的可执行文件，旧进程随后缺页读到哈希不匹配的新内容，
 # 内核直接 SIGKILL（CODESIGNING Invalid Page）——即「莫名其妙的崩溃退出」。
-for i in {1..50}; do
-  pgrep -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || break
-  sleep 0.1
-done
-if pgrep -x "$EXECUTABLE_NAME" >/dev/null 2>&1; then
+# B55：等待逻辑收敛到 wait_for_process_exit 唯一原语（原为内联 50×0.1s 循环）。
+old_pids="$(pgrep -x "$EXECUTABLE_NAME" 2>/dev/null || true)"
+# shellcheck disable=SC2086 —— 有意按词展开多个 pid
+if [ -n "$old_pids" ] && ! wait_for_process_exit 5 $old_pids; then
   echo "  旧进程 5s 未退出，SIGKILL 兜底..."
   pkill -9 -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
   sleep 0.5

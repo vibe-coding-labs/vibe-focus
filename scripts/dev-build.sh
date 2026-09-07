@@ -79,7 +79,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <key>CFBundleExecutable</key>
     <string>VibeFocus</string>
     <key>CFBundleIdentifier</key>
-    <string>com.vibefocus.app</string>
+    <string>com.openai.vibe-focus</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

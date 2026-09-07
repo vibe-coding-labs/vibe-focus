@@ -79,7 +79,7 @@ struct ScreenIndexPreferences: Codable {
         }
 
         // 2. CFPreferences（次源）
-        let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
         if let value = CFPreferencesCopyAppValue(userDefaultsKey as CFString, bundleId as CFString),
            let jsonString = value as? String,
            let prefs = decodeWithLegacyFallback(Data(jsonString.utf8), source: "CFPreferences") {
@@ -224,7 +224,7 @@ struct ScreenIndexPreferences: Codable {
         // SQLite 主源（不受 app rebuild 影响）
         WindowStateStore.shared.savePreference(key: Self.userDefaultsKey, value: jsonString)
         // CFPreferences + UserDefaults 次源
-        let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
         CFPreferencesSetAppValue(Self.userDefaultsKey as CFString, jsonString as CFString, bundleId as CFString)
         CFPreferencesAppSynchronize(bundleId as CFString)
         UserDefaults.standard.set(jsonString, forKey: Self.userDefaultsKey)

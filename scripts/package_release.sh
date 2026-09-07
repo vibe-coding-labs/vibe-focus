@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="VibeFocus"
 EXECUTABLE_NAME="VibeFocusHotkeys"
 BUNDLE_EXECUTABLE="VibeFocus"
-BUNDLE_ID="com.vibefocus.app"
+BUNDLE_ID="com.openai.vibe-focus"
 VERSION="$(awk -F'\"' '/static let current/ {print $2}' "$ROOT_DIR/Sources/App/AppVersion.swift")"
 VERSION="${VERSION:-0.0.0}"
 OUTPUT_DIR="${1:-$ROOT_DIR/dist}"
@@ -51,7 +51,7 @@ cat > "$PLIST_PATH" <<PLIST
   <key>CFBundleExecutable</key>
   <string>VibeFocus</string>
   <key>CFBundleIdentifier</key>
-  <string>com.vibefocus.app</string>
+  <string>com.openai.vibe-focus</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

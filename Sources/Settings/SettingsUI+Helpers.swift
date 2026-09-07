@@ -34,7 +34,7 @@ extension SettingsView {
             ])
         }
         #endif
-        return Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
+        return Bundle.main.bundleIdentifier ?? "com.openai.vibe-focus"
     }
 
     var currentAppPath: String {

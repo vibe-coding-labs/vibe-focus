@@ -8,7 +8,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 APP_NAME="VibeFocus"
-BUNDLE_ID="com.vibefocus.app"
+# B55：canonical id 对齐 run.sh 装机；退役 id 的历史残留仍一并清理。
+BUNDLE_ID="com.openai.vibe-focus"
 TCC_DB="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
 
 echo -e "${YELLOW}🧹 VibeFocus 完全卸载脚本${NC}"
@@ -33,6 +34,7 @@ echo -e "${YELLOW}3. 清理辅助功能权限...${NC}"
 if [ -f "$TCC_DB" ]; then
     # Use exact matches to avoid accidentally removing other apps
     sqlite3 "$TCC_DB" "DELETE FROM access WHERE client = '${APP_NAME}.app';" 2>/dev/null || true
+    sqlite3 "$TCC_DB" "DELETE FROM access WHERE client = 'com.openai.vibe-focus';" 2>/dev/null || true
     sqlite3 "$TCC_DB" "DELETE FROM access WHERE client = 'com.vibefocus.app';" 2>/dev/null || true
     sqlite3 "$TCC_DB" "DELETE FROM access WHERE client = 'VibeFocusHotkeys';" 2>/dev/null || true
     sqlite3 "$TCC_DB" "DELETE FROM access WHERE client LIKE 'VibeFocus%';" 2>/dev/null || true
@@ -49,9 +51,11 @@ echo -e "${GREEN}   ✓ LaunchServices 已清理${NC}"
 
 # Clean UserDefaults
 echo -e "${YELLOW}5. 清理用户配置...${NC}"
+defaults delete com.openai.vibe-focus 2>/dev/null || true
 defaults delete com.vibefocus 2>/dev/null || true
 defaults delete com.vibefocus.app 2>/dev/null || true
 defaults delete VibeFocusHotkeys 2>/dev/null || true
+rm -rf "$HOME/Library/Preferences/com.openai.vibe-focus*"
 rm -rf "$HOME/Library/Preferences/com.vibefocus*"
 rm -rf "$HOME/Library/Preferences/VibeFocusHotkeys*"
 echo -e "${GREEN}   ✓ 用户配置已清理${NC}"
@@ -60,6 +64,7 @@ echo -e "${GREEN}   ✓ 用户配置已清理${NC}"
 echo -e "${YELLOW}6. 清理日志和缓存...${NC}"
 rm -rf "$HOME/Library/Logs/${APP_NAME}"
 rm -rf "$HOME/Library/Caches/${APP_NAME}"
+rm -rf "$HOME/Library/Caches/com.openai.vibe-focus*"
 rm -rf "$HOME/Library/Caches/com.vibefocus*"
 rm -rf "$HOME/Library/Caches/VibeFocusHotkeys"
 echo -e "${GREEN}   ✓ 日志和缓存已清理${NC}"

@@ -55,7 +55,7 @@ func findRepoRoot() -> String {
     var url = URL(fileURLWithPath: #filePath)
     for _ in 0..<6 {
         url.deleteLastPathComponent()
-        if FileManager.default.fileExists(atPath: url.appendingPathComponent("install.sh").path) {
+        if FileManager.default.fileExists(atPath: url.appendingPathComponent("run.sh").path) {
             return url.path
         }
     }
@@ -64,15 +64,16 @@ func findRepoRoot() -> String {
 
 let fm = FileManager.default
 let repoRoot = findRepoRoot()
-let installScript = repoRoot + "/install.sh"
+// B55：等待原语迁入 run.sh（重启的生产事实源）；install.sh 降级为委派器。
+let installScript = repoRoot + "/run.sh"
 
 print("=== InstallRestartHardeningTests ===")
 
-// T0 source 守卫：source 只定义函数、零副作用（无构建输出、无 main 流程）。
-let t0 = runShell("set -euo pipefail; source \"\(installScript)\"; echo \"FUNCS=$(type -t wait_for_process_exit):$(type -t restart_app)\"")
-check(t0.exit == 0, "T0 source install.sh 不触发 main 流程", t0.output)
-check(!t0.output.contains("== Building"), "T0 source 无构建副作用", t0.output)
-check(t0.output.contains("FUNCS=function:function"), "T0 两个函数以 function 形式在位", t0.output)
+// T0 source 守卫：source 只定义函数、零副作用（无构建输出、无主流程）。
+let t0 = runShell("set -euo pipefail; source \"\(installScript)\"; echo \"FUNCS=$(type -t wait_for_process_exit)\"")
+check(t0.exit == 0, "T0 source run.sh 不触发主流程", t0.output)
+check(!t0.output.contains("release 二进制") && !t0.output.contains("安装运行"), "T0 source 无构建/安装副作用", t0.output)
+check(t0.output.contains("FUNCS=function"), "T0 等待原语以 function 形式在位", t0.output)
 
 // T1 已死 pid：立即返回 0（先拉起再杀掉，确定 pid 存在过且已死）。
 let t1 = runShell("""
