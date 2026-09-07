@@ -43,7 +43,7 @@
 - **覆盖率**：全库行覆盖 10.60% → **15.84%**（+49% 相对提升）；函数覆盖 6433 中新增 1000+ 可测函数入覆盖。
   B13~B18 六轮镜像转直测后，WindowMove+Decision 80.9%、ClaudeHookModels 80.8%（区域）、
   TerminalContext+Helpers 75%——提取单元函数级≈100%，编排路径由真机 E2E 家族验收。
-- **Runner 直测断言**：278 → **838/838 全绿**（+560 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3 + B31 Doctor 取证纯逻辑 10 断言 e485523 + B33 路径注入/路由提纯 9 断言 79028dc + B34 SettingsUI 提纯前置 13 断言 29b5b63 + B35 section 拆分/请求契约提纯 12 断言 7cef427 + B36 提示音门控/项目音效解析 12 断言 bda04ec + B37 能力自检/屏幕映射/网格库 22 断言 d44376c + B38 共存探测/热键/队列策略 19 断言 b54d1da + B39 切换反馈/标题脚本 12 断言 f4a5d32 + B40 错误文案/状态枚举收尾 5 断言 069762e + B41 提权模板/Doctor 端到端 7 断言 3233816）。
+- **Runner 直测断言**：278 → **843/843 全绿**（+565 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3 + B31 Doctor 取证纯逻辑 10 断言 e485523 + B33 路径注入/路由提纯 9 断言 79028dc + B34 SettingsUI 提纯前置 13 断言 29b5b63 + B35 section 拆分/请求契约提纯 12 断言 7cef427 + B36 提示音门控/项目音效解析 12 断言 bda04ec + B37 能力自检/屏幕映射/网格库 22 断言 d44376c + B38 共存探测/热键/队列策略 19 断言 b54d1da + B39 切换反馈/标题脚本 12 断言 f4a5d32 + B40 错误文案/状态枚举收尾 5 断言 069762e + B41 提权模板/Doctor 端到端 7 断言 3233816 + B42 偏好契约回环 5 断言 6abfaea）。
 - **结构**：1055 行巨石 → 六模块；编排页/提示音段拆分；恢复帧规划去重；模型与编排分层。
 - **真 bug**：volume 必填解码静默重置用户偏好（单测先行实锤修复）。
 - **死测试清理**：FocusStepsCalculationTests（镜像函数已从源码删除）。
@@ -95,5 +95,6 @@
 | B39 | 并行会话新增镜像转直测：GridSpaceSwitchFeedback.message 三态如实反馈（空工作区失败说明原因不许静默——用户报告回归锁）、TitleEditor 脚本决策层增量加严（转义/定向寻址双哨兵/front 回退/verdict 大小写敏感/诊断 target_gone），12 断言（f4a5d32）| ✅ 2026-09-08 |
 | B40 | 双口径扫描收尾：VoiceAnnouncementError 四类 LLM 错误文案互异+状态码插值、SpaceAvailability/LogLevel rawValue 契约，5 断言；审计注记=ToggleRecordStore 为协议抽象（DI 本体）属扫描假阳性，其余零覆盖均为 SwiftUI/App 生命周期/shell 编排豁免项——**可单测面清账完成**（069762e）| ✅ 2026-09-08 |
 | B41 | 编排内嵌模板提纯：executeWithAdminPrivileges 的 AppleScript 模板构造（转义防注入+提权包装）提取为 makeAdminShellScript 纯函数（照 TitleEditor 模式，决策与执行分离）+ Doctor.report DoctorPaths 全注入端到端直测（临时 exits.jsonl → 生命周期/最近死亡/无配对现形三段），7 断言（3233816）| ✅ 2026-09-08 |
+| B42 | 仅镜像清单最后三类型直测：ClaudeHookEventType 四事件 PascalCase + WindowMoveReason 三原因 snake_case（线上 JSON 契约）、VoiceAnnouncementPreferences 默认实例 Codable 回环、TitleEditorPreferences 双开关默认开+显式关闭；教训入册=Optional 链比较中 `.none` 解析为 Optional.none 而非枚举同名 case，断言须显式限定枚举类型，5 断言（6abfaea）| ✅ 2026-09-08 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——**2026-09-08 已向用户征询裁决并附事实**（72 文件/10306 行；Package.swift:65 以专用 target 引用但本机不可执行；所锁逻辑已全部被 Runner 814 条真身直测覆盖且更新），用户未即时答复，默认维持保留现状；任何时刻用户回复「删」即 fork worktree 清理 + 三门禁推送。git 历史可找回，未来换完整 Xcode 亦可从历史复活 | 征询于 2026-09-08 |
 | 覆盖率复测（B39 后） | 行覆盖 **16.93%**（27371 行基数，函数 23.62%）；较 B31 后复测 12.88% **+4.05pp**——分母微增下覆盖行增长超 1100 行，B32~B39 注入化/直测化与并行会话直测共同贡献；18 文件 100% 满格继续有效 | 复测于 2026-09-08 |
