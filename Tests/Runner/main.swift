@@ -5862,6 +5862,47 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         try? FileManager.default.removeItem(atPath: dir)
     }
 
+    // MARK: 持久化偏好微缺口收尾（真实实现——B42：仅镜像清单最后三个可锁类型）
+
+    do {
+        // ClaudeHookEventType / WindowMoveReason：线上 JSON 契约的 rawValue（与 hook 脚本/审计行互为表里）。
+        check("hookEvent: 四事件 PascalCase rawValue 契约",
+              ClaudeHookEventType.allCases.map(\.rawValue)
+              == ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"])
+        check("moveReason: 三原因 snake_case rawValue 回环",
+              WindowMoveReason(rawValue: "manual_hotkey") == .manualHotkey
+              && WindowMoveReason(rawValue: "claude_session_end") == .claudeSessionEnd
+              && WindowMoveReason(rawValue: "user_prompt_submit") == .userPromptSubmit
+              && WindowMoveReason.manualHotkey.rawValue == "manual_hotkey")
+
+        // VoiceAnnouncementPreferences：默认实例 Codable 回环（播报偏好持久化契约）。
+        let voice = VoiceAnnouncementPreferences.default
+        let voiceBack = try? JSONDecoder().decode(
+            VoiceAnnouncementPreferences.self, from: JSONEncoder().encode(voice))
+        check("voicePrefs: 默认实例编解码回环逐字段保真",
+              voiceBack?.mode == VoiceAnnouncementMode.none && voiceBack?.templateText == "{project_name} 完成"
+              && voiceBack?.volume == Float(0.7) && voiceBack?.speechRate == 180
+              && voiceBack?.llmModel == "gpt-4o-mini" && voiceBack?.llmMaxChars == 30
+              && voiceBack?.audioFilePath == nil)
+
+        // TitleEditorPreferences：未设置默认 true 语义 + 回环（标准域先存后还原）。
+        let defaults = UserDefaults.standard
+        let savedEnabled = defaults.object(forKey: "titleEditorEnabled")
+        let savedHotKey = defaults.object(forKey: "titleEditorHotKeyEnabled")
+        defer {
+            if let v = savedEnabled { defaults.set(v, forKey: "titleEditorEnabled") } else { defaults.removeObject(forKey: "titleEditorEnabled") }
+            if let v = savedHotKey { defaults.set(v, forKey: "titleEditorHotKeyEnabled") } else { defaults.removeObject(forKey: "titleEditorHotKeyEnabled") }
+        }
+        defaults.removeObject(forKey: "titleEditorEnabled")
+        defaults.removeObject(forKey: "titleEditorHotKeyEnabled")
+        check("titlePrefs: 键未设置 → 功能默认开启（双开关同语义）",
+              TitleEditorPreferences.isEnabled == true && TitleEditorPreferences.isHotKeyEnabled == true)
+        TitleEditorPreferences.isEnabled = false
+        TitleEditorPreferences.isHotKeyEnabled = false
+        check("titlePrefs: 显式关闭回读 false（显式值优先于默认）",
+              TitleEditorPreferences.isEnabled == false && TitleEditorPreferences.isHotKeyEnabled == false)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
