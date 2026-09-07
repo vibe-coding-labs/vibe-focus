@@ -4615,10 +4615,16 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               == .remoteBindingFailed(label: "nil"))
 
         // B. local 通道：成功 → bind(.local)；失败 → terminalContextMatchFailed。
-        check("sessionBind B: local 成功 → bind(.local)",
-              HookEventHandler.decideSessionBind(isRemote: false, machineLabel: "lab-1",
-                                                 localResolved: ident(5), remoteResolved: nil)
-              == .bind(identity: ident(5), bindingType: .local))
+        // 注：不用 == .bind(identity: ident(5), ...)——WindowIdentity 含 capturedAt: Date，
+        // 两次构造通常同微秒恰好相等，但负载下跨时钟边界即假失败（2026-09-07 实测偶发）；
+        // 与 A 同用 if-case 解构，按 windowID/bindingType 断言。
+        if case .bind(let identity, let bindingType) = HookEventHandler.decideSessionBind(
+            isRemote: false, machineLabel: "lab-1", localResolved: ident(5), remoteResolved: nil) {
+            check("sessionBind B: local 成功 → bind(.local, windowID=5)",
+                  identity.windowID == 5 && bindingType == .local)
+        } else {
+            check("sessionBind B: local 成功 → bind(.local, windowID=5)", false)
+        }
         check("sessionBind B: local 匹配失败 → terminalContextMatchFailed",
               HookEventHandler.decideSessionBind(isRemote: false, machineLabel: nil,
                                                  localResolved: nil, remoteResolved: nil)
