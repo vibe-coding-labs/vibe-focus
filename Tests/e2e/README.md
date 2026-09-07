@@ -53,3 +53,17 @@ VIBEFOCUS_SIZE_E2E=1 VIBEFOCUS_DB_PATH=/tmp/vibefocus-size-e2e.db \
 - 改 `ToggleEngine+Restore / RestoreSwitchOrchestration` → SIZE_E2E（重点 clamp/toggle 往返）
 - 改 `TerminalGridController / Grid*` → GRID_SPACE_E2E（+ GRID_TARGET_E2E 若动编排目标）
 - 改 `SpaceController` space 通道 → GRID_SPACE_E2E + SIZE_E2E 双跑
+
+## 布局变更回归记录（2026-09-08，双 1920×1080 副屏在主屏上方三屏布局）
+
+显示器索引几何精确匹配（Batch 34）落地后的首次全量真机回归：
+
+- **SIZE_E2E 885/885**、**GRID_SPACE_E2E 873/873**、**FLOATSETTLE_E2E 879/879** 全绿；
+  SIZE/GRID_SPACE 同批修复了三处 P40UG 时代硬编码坐标与 GRID_SPACE setup 的
+  猜序残留（用例改从当前副屏可视区动态推导，后续换布局不应再坏）。
+- **TITLE_E2E 875/876**：iTerm2 建窗 AppleEvent 持续超时（-1712，手工 90s 长超时
+  同样超时；iTerm2 当时 41+ 窗口高负载）——环境受限，非代码回归（创建步在
+  被测写入逻辑之前，iTerm2 模板由镜像+Runner 锁定）。Terminal case 全绿。
+  **E2E 跑 TITLE 前先确认 iTerm2 可响应建窗 AE**（`tell app "iTerm2" to count
+  windows` 快，建窗慢/超时即环境不就绪）。
+
