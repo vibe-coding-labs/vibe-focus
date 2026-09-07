@@ -244,6 +244,12 @@
   1 处不可达 NSCoder 样板（SettingsWindowController，XIB 反序列化路径，
   按惯例保留），其余全零（B53 诚实退让修复后无遗留）；下标访问均有
   count 守卫。生产码崩溃安全审计通过，无需改动；
+- **Batch 41（test，构建器族镜像锁）**（6667498）：TerminalAutomationScript
+  零命中构建器族镜像直测——cellCommand 恢复命令优先级矩阵（cwd→session
+  resume→launchCommand）、双层转义分工（shellQuoted 单引号惯用法 /
+  appleScriptEscaped 反斜杠双引号翻倍）、Terminal 建窗异步轮询回归锁、
+  iTerm2 条件 writeText、注入寻址、parseBounds 畸形回退，14 检全绿
+  （Runner 主文件 runnersplit 拆分中，直测段随新结构补齐）；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
