@@ -43,7 +43,7 @@
 - **覆盖率**：全库行覆盖 10.60% → **15.84%**（+49% 相对提升）；函数覆盖 6433 中新增 1000+ 可测函数入覆盖。
   B13~B18 六轮镜像转直测后，WindowMove+Decision 80.9%、ClaudeHookModels 80.8%（区域）、
   TerminalContext+Helpers 75%——提取单元函数级≈100%，编排路径由真机 E2E 家族验收。
-- **Runner 直测断言**：278 → **671/671 全绿**（+393 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3）。
+- **Runner 直测断言**：278 → **671/671 全绿**（+393 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3 + B31 Doctor 取证纯逻辑 10 断言 e485523）。
 - **结构**：1055 行巨石 → 六模块；编排页/提示音段拆分；恢复帧规划去重；模型与编排分层。
 - **真 bug**：volume 必填解码静默重置用户偏好（单测先行实锤修复）。
 - **死测试清理**：FocusStepsCalculationTests（镜像函数已从源码删除）。
@@ -83,4 +83,5 @@
 | B28 | 缺口审计（全 Sources 类型 vs 测试符号对照）后 Overlay 偏好层 + Space 解码漂移直测 17 断言：legacy 迁移补默认/字段保真/非法回退、CodableColor 键集锁定+回环保真、IndexPosition 6 形态映射互异、YabaiSpaceInfo is-visible Bool/Int 四态、YabaiDisplayInfo 解析（90d5b13）| ✅ 2026-09-07 |
 | B29 | yabai 环境探针全注入直测（三层编排 L1/L2/版本 trim、parseSpaces 宽松语义、locateBinary 候选序）+ YabaiEnvironmentProfile 派生语义穷尽（spaceMoveTrusted 保守策略=v7 float 事故判据）+ decideSessionBindingStep 转直测消镜像，18 断言（df2ac5a）| ✅ 2026-09-07 |
 | B30 | ScreenIndexPreferences.load 四源回退链：CF/UserDefaults 两源逐字重复的 decode→enforce→legacy→save 块收敛为 decodeWithLegacyFallback 单一助手（行为逐项对齐，savesLegacyUpgrade 参数供测试避副作用）+ VoiceAnnouncementMode 映射锁定，5 断言（010b1d3）| ✅ 2026-09-07 |
+| B31 | Doctor 取证纯逻辑镜像转直测 10 断言：parseJournalLine 三事件行+容错（install 无 pid 占位/未知 kind/junk→nil）、accessibilityFlips 翻转捕获（nil 轴跳过不阻断）、unmatchedLaunches 配对抵消+at 排序（外部击杀实证）、runtimeAXFlipLine 版面守卫（e485523）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
