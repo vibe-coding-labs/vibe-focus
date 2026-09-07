@@ -5736,6 +5736,62 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("spacePrefs: 开启回读 true", SpacePreferences.integrationEnabled == true)
     }
 
+    // MARK: Minimap 切换反馈 + 标题脚本决策（真实实现——B39：并行会话新增镜像转直测）
+
+    do {
+        // GridSpaceSwitchFeedback：三态如实反馈（空工作区失败不许静默——用户报告回归锁）。
+        check("switchFB: noDrift 已是当前工作区",
+              GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 3) == "Space 3 已是当前工作区")
+        check("switchFB: refocused 成功文案（postSpace 不入文案，以目标 space 表述）",
+              GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 9), spaceIndex: 5) == "已切换到 Space 5")
+        check("switchFB: failed 失败说明含原因（不许静默）",
+              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 9), spaceIndex: 2)
+              == "无法切换到 Space 2：该工作区没有可聚焦的窗口（空工作区需要 SA 直切通道，本机未装）")
+
+        // TitleEditor 脚本决策层：转义/模板契约/verdict 哨兵/诊断回读。
+        check("titleEsc: 反斜杠与双引号转义 + 原文透传",
+              TitleEditorService.escapingAppleScriptString("my \\proj \"x\"") == "my \\\\proj \\\"x\\\""
+              && TitleEditorService.escapingAppleScriptString("干净标题") == "干净标题")
+        let ttyScript = TitleEditorService.makeTitleScript(
+            bundleID: "com.apple.Terminal", title: "vibe", targetTTY: "/dev/ttys001")
+        check("titleScript: Terminal+tty 定向寻址 + 双哨兵 + 诊断显示项关闭",
+              ttyScript?.contains("tty of t = \"/dev/ttys001\"") == true
+              && ttyScript?.contains("return \"matched\"") == true
+              && ttyScript?.contains("return \"not_found\"") == true
+              && ttyScript?.contains("title displays device name to false") == true)
+        let frontScript = TitleEditorService.makeTitleScript(
+            bundleID: "com.apple.Terminal", title: "vibe", targetTTY: nil)
+        check("titleScript: Terminal 无 tty 回退 front 窗口语义",
+              frontScript?.contains("selected tab of front window") == true
+              && frontScript?.contains("repeat") == false)
+        let itermScript = TitleEditorService.makeTitleScript(
+            bundleID: "com.googlecode.iterm2", title: "vibe", targetTTY: "/dev/ttys002")
+        check("titleScript: iTerm2+tty 会话级定向",
+              itermScript?.contains("tty of s = \"/dev/ttys002\"") == true
+              && itermScript?.contains("set name of s to") == true)
+        check("titleScript: iTerm2 无 tty 单行 front 语义",
+              TitleEditorService.makeTitleScript(bundleID: "com.googlecode.iterm2", title: "v", targetTTY: nil)?
+              .contains("current session of current window") == true)
+        check("titleScript: 不支持的 bundleID → nil（unsupported_bundle 结局）",
+              TitleEditorService.makeTitleScript(bundleID: "com.other.app", title: "x", targetTTY: nil) == nil)
+        let tricky = TitleEditorService.makeTitleScript(
+            bundleID: "com.apple.Terminal", title: "a\"b\\c", targetTTY: "/dev/ttys001")
+        check("titleScript: 标题内引号/反斜杠已转义进模板",
+              tricky?.contains("set custom title of t to \"a\\\"b\\\\c\"") == true)
+        check("titleVerdict: 只有 matched 算命中（not_found/nil/大小写均否）",
+              TitleEditorService.isMatchedVerdict("matched") == true
+              && TitleEditorService.isMatchedVerdict("not_found") == false
+              && TitleEditorService.isMatchedVerdict(nil) == false
+              && TitleEditorService.isMatchedVerdict("Matched") == false)
+        check("titleDiag: Terminal 诊断回读跟随 tty 定向 + target_gone 哨兵",
+              TitleEditorService.makeTerminalDiagnosticScript(targetTTY: "/dev/ttys001")
+              .contains("tty of t =") == true
+              && TitleEditorService.makeTerminalDiagnosticScript(targetTTY: "/dev/ttys001")
+              .contains("target_gone") == true
+              && TitleEditorService.makeTerminalDiagnosticScript(targetTTY: nil)
+              .contains("front window") == true)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
