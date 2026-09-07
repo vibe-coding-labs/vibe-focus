@@ -1669,7 +1669,9 @@ final class FakeAuditor: RestoreAuditing {
             let mainID = CGMainDisplayID()
             guard let targetScreen = NSScreen.screens.first(where: { CoordinateKit.cgDisplayID(for: $0) != mainID }),
                   let targetDisplayID = CoordinateKit.cgDisplayID(for: targetScreen),
-                  let displayIndex = CoordinateKit.yabaiDisplayIndex(for: targetScreen) else {
+                  // 几何精确解析（Batch 34）：猜序版在同尺寸双副屏上反序，会去错误
+                  // 显示器的 space 列表里挑目标，投递与断言错位（2026-09-08 实测）。
+                  let displayIndex = SpaceController.shared.exactYabaiDisplayIndex(for: targetScreen) else {
                 check("SpaceE2E: 找到非主屏", false)
                 return
             }
@@ -1961,9 +1963,27 @@ final class FakeAuditor: RestoreAuditing {
 
         // Case C：完整 toggle 往返（用户真实操作路径：聚焦副屏窗口 → 热键 toggle
         // 到主屏 → 再 toggle 还原回副屏原帧）。两次 toggle 各测一次尺寸。
+        // 测试初始帧从当前副屏可视区动态推导（Quartz 坐标）——历史版本硬编码
+        // 旧屏布局（P40UG 时代 -814,-1415），显示器换布局后落所有屏外，
+        // yabai 钳位导致还原位置断言必挂（2026-09-08 三屏布局实测）。
+        let secondaryForCaseC = NSScreen.screens.first { CoordinateKit.cgDisplayID(for: $0) != CGMainDisplayID() }
+        let secVisibleCocoa = secondaryForCaseC?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let secPlaceFrame = CGRect(
+            x: secVisibleCocoa.minX + 188,
+            y: CoordinateKit.quartzY(fromCocoaY: secVisibleCocoa.maxY) + 24,
+            width: 1146, height: 707)
+        // 副屏归属判定（布局自适应）：窗口中心（Quartz→Cocoa）落在当前副屏 frame 内。
+        // 旧断言 origin.x<0 假设副屏在主屏左侧，换布局即错。
+        func isOnSecondaryScreen(_ quartzFrame: CGRect) -> Bool {
+            guard let secondary = secondaryForCaseC else { return quartzFrame.origin.x < 0 }
+            let centerCocoa = CGPoint(
+                x: quartzFrame.midX,
+                y: CoordinateKit.cocoaY(fromQuartzY: quartzFrame.midY))
+            return secondary.frame.contains(centerCocoa)
+        }
         let c1Sem = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            yabaiPlace(wid, frame: CGRect(x: -814, y: -1415, width: 1146, height: 707))
+            yabaiPlace(wid, frame: secPlaceFrame)
             c1Sem.signal()
         }
         while c1Sem.wait(timeout: .now()) == .timedOut {
@@ -2003,12 +2023,12 @@ final class FakeAuditor: RestoreAuditing {
         }
         Thread.sleep(forTimeInterval: 1.2)
         if let afterRestore = yabaiWindowFrame(wid) {
-            print("    [诊断] toggle2 还原 终帧=\(afterRestore)（期望 -814,-1415 1146x707）")
-            let backOnSecondary = afterRestore.origin.x < 0
+            print("    [诊断] toggle2 还原 终帧=\(afterRestore)（期望 \(secPlaceFrame)）")
+            let backOnSecondary = isOnSecondaryScreen(afterRestore)
             let sizeOK = abs(afterRestore.width - 1146) <= 40 && abs(afterRestore.height - 707) <= 40
             check("SizeE2E toggleCase: 还原回副屏尺寸保真（±40）", backOnSecondary && sizeOK)
             check("SizeE2E toggleCase: 还原回副屏原位置（±80）",
-                  abs(afterRestore.origin.x - (-814)) <= 80 && abs(afterRestore.origin.y - (-1415)) <= 80)
+                  abs(afterRestore.origin.x - secPlaceFrame.minX) <= 80 && abs(afterRestore.origin.y - secPlaceFrame.minY) <= 80)
         } else {
             check("SizeE2E toggleCase: 读取还原后帧", false)
         }
@@ -2048,7 +2068,7 @@ final class FakeAuditor: RestoreAuditing {
         Thread.sleep(forTimeInterval: 1.2)
         if let stuckFrame = yabaiWindowFrame(widD) {
             print("    [诊断] stuckCase 终帧=\(stuckFrame)（期望尺寸保持 900x600、移到副屏）")
-            let onSecondary = stuckFrame.origin.y < 0
+            let onSecondary = isOnSecondaryScreen(stuckFrame)
             let sizeKept = abs(stuckFrame.width - 900) <= 40 && abs(stuckFrame.height - 600) <= 40
             check("SizeE2E stuckCase: 解堵移副屏尺寸保持 900x600（±40，修复前=撑满 3440x1440）",
                   onSecondary && sizeKept)
@@ -2116,7 +2136,7 @@ final class FakeAuditor: RestoreAuditing {
         // 断言：窗口落主屏可视区（1653x1079 ±40）+ toggle record 落库（还原可用）。
         let f1Sem = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            yabaiPlace(wid, frame: CGRect(x: -814, y: -1415, width: 1146, height: 707))
+            yabaiPlace(wid, frame: secPlaceFrame)
             f1Sem.signal()
         }
         while f1Sem.wait(timeout: .now()) == .timedOut {
@@ -6054,12 +6074,12 @@ final class FakeAuditor: RestoreAuditing {
             CGRect(x: 1920, y: 0, width: 1920, height: 1080),
             CGRect(x: -1920, y: 0, width: 1920, height: 1080),
         ]
-        let matchA = ScreenLayoutMapper.matchYabaiDisplayIndices(
+        let matchA = CoordinateKit.matchYabaiDisplayIndices(
             cocoaFrames: cocoaAB, mainHeight: 1080,
             yabaiIndices: [1, 2, 3], yabaiQuartzFrames: quartzReversed)
         check("yabaiMatchDirect A: 反序副屏几何配对（左→3 / 右→2）",
               matchA[0] == 1 && matchA[1] == 3 && matchA[2] == 2)
-        let matchB = ScreenLayoutMapper.matchYabaiDisplayIndices(
+        let matchB = CoordinateKit.matchYabaiDisplayIndices(
             cocoaFrames: [
                 CGRect(x: 0, y: 0, width: 1728, height: 1117),
                 CGRect(x: 0, y: 1117, width: 1920, height: 1080),
@@ -6073,10 +6093,10 @@ final class FakeAuditor: RestoreAuditing {
         check("yabaiMatchDirect B: 主屏上方副屏（quartz 负 y）翻转匹配",
               matchB[0] == 1 && matchB[1] == 2)
         check("yabaiMatchDirect C: 数量不符/空输入 → 空表回退",
-              ScreenLayoutMapper.matchYabaiDisplayIndices(
+              CoordinateKit.matchYabaiDisplayIndices(
                 cocoaFrames: cocoaAB, mainHeight: 1080,
                 yabaiIndices: [1], yabaiQuartzFrames: quartzReversed).isEmpty
-              && ScreenLayoutMapper.matchYabaiDisplayIndices(
+              && CoordinateKit.matchYabaiDisplayIndices(
                 cocoaFrames: [], mainHeight: 1080, yabaiIndices: [], yabaiQuartzFrames: []).isEmpty)
     }
 

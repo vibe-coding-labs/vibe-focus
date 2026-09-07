@@ -101,7 +101,7 @@ extension TerminalGridController {
             name: snapshotName,
             appBundleID: dominantBundleID,
             displayID: displayID,
-            displayYabaiIndex: CoordinateKit.yabaiDisplayIndex(for: screen),
+            displayYabaiIndex: SpaceController.shared.exactYabaiDisplayIndex(for: screen),
             rows: grid.rows,
             cols: grid.cols,
             cells: cells,

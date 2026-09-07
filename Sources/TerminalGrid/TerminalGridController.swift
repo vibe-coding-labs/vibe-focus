@@ -213,7 +213,7 @@ final class TerminalGridController {
             name: name,
             appBundleID: appBundleID,
             displayID: CoordinateKit.cgDisplayID(for: screen) ?? 0,
-            displayYabaiIndex: CoordinateKit.yabaiDisplayIndex(for: screen),
+            displayYabaiIndex: SpaceController.shared.exactYabaiDisplayIndex(for: screen),
             rows: rows,
             cols: cols,
             cells: cells,

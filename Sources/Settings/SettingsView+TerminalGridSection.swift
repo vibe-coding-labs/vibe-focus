@@ -157,24 +157,11 @@ extension SettingsView {
             return (display, ScreenLayoutMapper.InputSpace(yabaiIndex: index, isVisible: info.isVisible ?? false))
         }, by: { $0.display }).mapValues { $0.map { $0.space }.sorted { $0.yabaiIndex < $1.yabaiIndex } }
 
-        // NSScreen ↔ yabai display 几何精确匹配（2026-09-08 用户实测「对应关系完全
-        // 错误」根因：旧实现按 NSScreen 顺序猜 yabai 索引，两块同尺寸副屏排序反转
-        // 即胶囊挂错屏、点击切错屏）。yabai 不可用时回退 nil（老标注 + 空 Space 带）。
+        // 屏标签/胶囊挂接统一走精确解析器（几何匹配 + 1s 缓存，Batch 33/34）。
         let screens = NSScreen.screens
-        let mainHeight = screens.first { $0.frame.origin == .zero }?.frame.height ?? 0
-        let yabaiDisplays = SpaceController.shared.queryDisplays() ?? []
-        let yabaiIndexByScreenIndex = ScreenLayoutMapper.matchYabaiDisplayIndices(
-            cocoaFrames: screens.map(\.frame),
-            mainHeight: mainHeight,
-            yabaiIndices: yabaiDisplays.compactMap(\.index),
-            yabaiQuartzFrames: yabaiDisplays.compactMap { info in
-                info.frame.map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) }
-            }
-        )
-
-        gridMinimapScreens = screens.enumerated().map { screenIndex, screen in
+        gridMinimapScreens = screens.map { screen in
             let displayID = CoordinateKit.cgDisplayID(for: screen) ?? 0
-            let yabaiIndex = yabaiIndexByScreenIndex[screenIndex]
+            let yabaiIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen)
             return ScreenLayoutMapper.InputScreen(
                 displayID: displayID,
                 name: screen.localizedName,

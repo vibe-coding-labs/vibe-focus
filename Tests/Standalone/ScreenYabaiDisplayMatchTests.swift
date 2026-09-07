@@ -1,6 +1,6 @@
 // Tests/Standalone/ScreenYabaiDisplayMatchTests.swift
 // Verification: NSScreen ↔ yabai display 几何精确匹配（Quartz↔Cocoa 翻转 + 最近中心贪心唯一配对）
-// Mirrors: Sources/TerminalGrid/ScreenLayoutMapper.swift matchYabaiDisplayIndices
+// Mirrors: Sources/Space/CoordinateKit+Screen.swift matchYabaiDisplayIndices
 // Run: swift Tests/Standalone/ScreenYabaiDisplayMatchTests.swift
 //
 // 背景（2026-09-08 用户实测「屏幕对应关系完全错误」）：旧实现按 NSScreen 顺序猜

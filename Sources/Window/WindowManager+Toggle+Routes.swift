@@ -60,7 +60,7 @@ extension WindowManager {
         // yabai display 映射不到 NSScreen 时回退第一个非主屏。
         let currentDisplay = windowInfo?.display
         let targetYabaiDisplay = spaces?.first(where: { $0.display != currentDisplay && $0.isVisible == true })?.display
-        let targetScreen = targetYabaiDisplay.flatMap { CoordinateKit.nsScreen(forYabaiDisplayIndex: $0) }
+        let targetScreen = targetYabaiDisplay.flatMap { SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: $0) }
             ?? NSScreen.screens.first(where: { $0.frame.origin != .zero })
         guard let targetScreen else {
             log("[WindowManager] moveStuckWindowToSecondaryScreen: no secondary screen", level: .warn, fields: [
