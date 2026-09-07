@@ -4919,6 +4919,55 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                     && p.spaces.first?.layout == "bsp" && p.spaceMoveTrusted }())
     }
 
+    // MARK: TitleEditor 脚本决策表（真实实现——AppleScript 模板/verdict/诊断纯决策，Batch 29）
+
+    do {
+        // A. 模板决策表四分支（+ 不支持跳过）。
+        let termTTY = TitleEditorService.makeTitleScript(bundleID: "com.apple.Terminal", title: "t1", targetTTY: "ttys001")!
+        check("titleScript A1: Terminal 定向 tty 寻址 + 双哨兵",
+              termTTY.contains(#"if tty of t = "ttys001""#) && termTTY.contains(#"return "matched""#) && termTTY.contains(#"return "not_found""#))
+        let termFront = TitleEditorService.makeTitleScript(bundleID: "com.apple.Terminal", title: "t2", targetTTY: nil)!
+        check("titleScript A2: Terminal 回退 front window（无 repeat）",
+              termFront.contains("selected tab of front window") && !termFront.contains("repeat"))
+        let itermTTY = TitleEditorService.makeTitleScript(bundleID: "com.googlecode.iterm2", title: "t3", targetTTY: "ttys002")!
+        check("titleScript A3: iTerm2 定向 session tty + 双哨兵",
+              itermTTY.contains(#"if tty of s = "ttys002""#) && itermTTY.contains("set name of s to") && itermTTY.contains(#"return "not_found""#))
+        let itermFront = TitleEditorService.makeTitleScript(bundleID: "com.googlecode.iterm2", title: "t4", targetTTY: nil)!
+        check("titleScript A4: iTerm2 回退 current session",
+              itermFront.contains("set name of current session of current window") && !itermFront.contains("repeat"))
+        check("titleScript A5: 不支持 bundleID → nil",
+              TitleEditorService.makeTitleScript(bundleID: "com.apple.Safari", title: "x", targetTTY: "ttys001") == nil)
+
+        // B. 寻址铁律 + 转义（回归史：window id 与 CGWindowNumber 不同源，禁用）。
+        let tricky = #"my \proj "x""#
+        let all4 = [
+            TitleEditorService.makeTitleScript(bundleID: "com.apple.Terminal", title: tricky, targetTTY: "ttys001")!,
+            TitleEditorService.makeTitleScript(bundleID: "com.apple.Terminal", title: tricky, targetTTY: nil)!,
+            TitleEditorService.makeTitleScript(bundleID: "com.googlecode.iterm2", title: tricky, targetTTY: "ttys001")!,
+            TitleEditorService.makeTitleScript(bundleID: "com.googlecode.iterm2", title: tricky, targetTTY: nil)!,
+        ]
+        check("titleScript B1: 四分支模板全部不含 window id 寻址（寻址铁律）",
+              all4.allSatisfy { !$0.contains("window id") })
+        check("titleScript B2: 引号在模板内已转义",
+              all4.allSatisfy { $0.contains(#"my \\proj \"x\""#) })
+        check("titleScript B3: 转义函数反斜杠优先（防二次转义）",
+              TitleEditorService.escapingAppleScriptString("a\\b") == "a\\\\b")
+
+        // C. verdict 哨兵判定。
+        check("titleScript C: 只有 matched 算命中",
+              TitleEditorService.isMatchedVerdict("matched")
+              && !TitleEditorService.isMatchedVerdict("not_found")
+              && !TitleEditorService.isMatchedVerdict(nil))
+
+        // D. Terminal 诊断回读模板。
+        let diagTTY = TitleEditorService.makeTerminalDiagnosticScript(targetTTY: "ttys003")
+        check("titleScript D1: 诊断定向 tty + target_gone 哨兵",
+              diagTTY.contains(#"if tty of t = "ttys003""#) && diagTTY.contains(#"return "target_gone""#))
+        let diagFront = TitleEditorService.makeTerminalDiagnosticScript(targetTTY: nil)
+        check("titleScript D2: 诊断回退 front window（无 repeat）",
+              diagFront.contains("front window") && !diagFront.contains("repeat"))
+    }
+
     // MARK: 偏好解码去重助手 + 语音模式映射（真实实现——B30：load 四源重复块提纯后锁行为）
 
     do {
