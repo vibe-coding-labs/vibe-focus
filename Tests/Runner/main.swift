@@ -5270,6 +5270,24 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               ExitJournal.jsonEscape("中文✓") == "中文✓" && ExitJournal.jsonEscape("") == "")
     }
 
+    // MARK: Minimap live 切换反馈映射（真实实现——结局→文案，Batch 32 用户报告修复）
+    do {
+        check("spaceSwitch: noDrift → 已是当前工作区（含 space 号）",
+              GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 5).contains("已是当前工作区")
+              && GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 5).contains("Space 5"))
+        check("spaceSwitch: refocused → 已切换到 Space 5",
+              GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 4), spaceIndex: 5) == "已切换到 Space 5")
+        check("spaceSwitch: failed → 如实说明（含 space 号与 SA 事实，不静默）",
+              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 4), spaceIndex: 5).contains("无法切换到 Space 5")
+              && GridSpaceSwitchFeedback.message(for: .failed(postSpace: 4), spaceIndex: 5).contains("SA"))
+        check("spaceSwitch: 三态文案互异",
+              Set([
+                  GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 2),
+                  GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 1), spaceIndex: 2),
+                  GridSpaceSwitchFeedback.message(for: .failed(postSpace: 1), spaceIndex: 2),
+              ]).count == 3)
+    }
+
     // MARK: Claude 偏好路径注入 + SessionStart 路由提纯（真实实现——B33：沿用 B32 注入模式）
 
     do {

@@ -3,7 +3,8 @@ import SwiftUI
 // MARK: - 屏幕布局缩略图（可视化编排目标选择）
 /// 把整机屏幕按真实物理布局画成一张 mini map：每块屏一个圆角矩形（名称/分辨率/
 /// displayID/主屏标），屏底缘内嵌 Space 胶囊；点击屏幕 = 编排到该屏当前工作区，
-/// 点击某个 Space 胶囊 = 编排到该屏该工作区；选中目标屏内实时叠加 rows×cols
+/// 点击某个 Space 胶囊 = live 切换该屏到该工作区（restore 视角链，结局如实反馈）
+/// 并设为编排目标；选中目标屏内实时叠加 rows×cols
 /// 网格预览——所见即所得。
 /// 视觉语言：中性灰阶为底，accent 只做选中/当前两处点缀；格线画内部细实线
 /// （逐格 strokeBorder 会在相邻边叠加变粗，dash 显糙）。
@@ -207,7 +208,7 @@ struct ScreenMinimapView: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius + 0.5))
             .onTapGesture { onSelect(.displaySpace(displayID: screen.displayID, spaceIndex: space.yabaiIndex)) }
-            .help("Space \(space.yabaiIndex)\(space.isVisible ? "（当前）" : "")——编排到此工作区")
+            .help("Space \(space.yabaiIndex)\(space.isVisible ? "（当前）" : "")——切换到此工作区并设为编排目标")
             .accessibilityLabel("屏幕 \(screen.name) Space \(space.yabaiIndex)")
             .accessibilityAddTraits(isTargetSpace ? .isSelected : [])
     }

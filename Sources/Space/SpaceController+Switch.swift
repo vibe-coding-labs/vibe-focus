@@ -106,5 +106,18 @@ extension SpaceController {
         }
         return onSpace.first { !$0.isMinimized } ?? onSpace.first
     }
-}
 
+    /// Minimap 胶囊点击 live 切换（2026-09-07，用户报告「点胶囊切不过去」）：
+    /// 复用 restore 视角链（RestoreSwitchOrchestration.refocusPerspective）——
+    /// SA 直切（本机无 SA 必败）→ 聚焦带动降级（要求目标 space 上有可管理窗口）。
+    /// .failed 时调用方必须给用户明确反馈（空工作区切不动是平台事实，不许静默）。
+    @discardableResult
+    func switchToSpace(_ yabaiIndex: Int, operationID: String) -> RestoreSwitchOrchestration.PerspectiveRefocusOutcome {
+        RestoreSwitchOrchestration.refocusPerspective(
+            channels: self,
+            preMoveSpace: yabaiIndex,
+            excludingWindowID: 0,
+            operationID: operationID
+        )
+    }
+}

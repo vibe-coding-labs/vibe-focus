@@ -54,7 +54,7 @@ extension SettingsView {
                 .background(Capsule().fill(VibeColors.success.opacity(0.10)))
                 .overlay(Capsule().strokeBorder(VibeColors.success.opacity(0.20), lineWidth: 1))
 
-                Text("点屏幕选目标屏 · 点胶囊选工作区")
+                Text("点屏幕选目标屏 · 点胶囊切换该屏工作区并设为编排目标")
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundStyle(.secondary)
 
@@ -80,9 +80,26 @@ extension SettingsView {
                 onSelect: { target in
                     gridTargetCode = target.code
                     TerminalGridPreferences.target = target.code
+                    // 胶囊点击 = 同时 live 切换该屏到该工作区（2026-09-07 用户报告
+                    // 「点了没反应」）。复用 restore 视角链（SA 直切→聚焦带动降级），
+                    // 结局如实反馈——空工作区无 SA 切不动，不许静默。
+                    if case .displaySpace(_, let spaceIndex) = target {
+                        let outcome = SpaceController.shared.switchToSpace(
+                            spaceIndex,
+                            operationID: "minimap-space-\(spaceIndex)-\(Int(Date().timeIntervalSince1970 * 1000))"
+                        )
+                        gridSpaceSwitchMessage = GridSpaceSwitchFeedback.message(for: outcome, spaceIndex: spaceIndex)
+                    }
                 }
             )
             .padding(.top, 12)
+
+            if let switchMessage = gridSpaceSwitchMessage {
+                Text(switchMessage)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
+            }
 
             if GridTargetCode.parse(gridTargetCode)?.explicitDisplayID.map({ displayID in
                 !gridMinimapScreens.contains { $0.displayID == displayID }
