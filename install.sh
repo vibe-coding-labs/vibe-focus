@@ -1,6 +1,24 @@
 #!/bin/bash
+# VibeFocus 开发机构建 + 安装 + 重启（dev loop 主入口）。
+#
+# Usage:
+#   ./install.sh            # 构建 release → 原地更新 ~/Applications/VibeFocus.app → 重启
+#
+# 本脚本同时是「可 source 的函数库」（2026-09-08 B54，照 install-keepalive.sh 模式）：
+# wait_for_process_exit / restart_app 供 Tests/Standalone/InstallRestartHardeningTests.swift
+# 做真实行为测试；source 时仅定义函数，不构建、不触碰 ~/Applications（BASH_SOURCE 守卫）。
+#
+# ## 重启竞态加固（2026-09-08 实证）
+# 旧实现 pkill -x（异步）后立即 open：旧进程尚未死透时 LaunchServices 对「正在消失的
+# app」返回 -609（LSOpenURLsWithCompletionHandler failed），新包当场没被拉起。
+# 现改为 pgrep 取 pid → pkill → wait_for_process_exit 轮询等待（0.2s 间隔、上限 5s、
+# 超时不阻塞安装照常 open）→ open。
+# keepalive 侧已由 B50 收敛为「仅 fatal 文件 size 差分」裁决：本脚本的 SIGTERM
+# 优雅退出不会再被误判为崩溃进入 60s 冷却。
+
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="VibeFocus"
 EXECUTABLE_NAME="VibeFocusHotkeys"
 CERT_NAME="VibeFocus Local Code Signing"
@@ -9,11 +27,50 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PLIST_PATH="$CONTENTS_DIR/Info.plist"
-VERSION="$(awk -F'\"' '/static let current/ {print $2}' "$(dirname "$0")/Sources/App/AppVersion.swift")"
+VERSION="$(awk -F'\"' '/static let current/ {print $2}' "$SCRIPT_DIR/Sources/App/AppVersion.swift")"
 VERSION="${VERSION:-0.0.0}"
-ASSETS_DIR="$(dirname "$0")/assets"
+ASSETS_DIR="$SCRIPT_DIR/assets"
 APP_ICON_PATH="$ASSETS_DIR/AppIcon.icns"
 STATUS_ICON_PATH="$ASSETS_DIR/StatusBarIcon.png"
+
+# 等待给定 pid 全部退出（轮询 kill -0，0.2s 间隔）：全部退出=0；超时=1。
+# 用于 pkill（异步）与 open 之间消除「旧进程死透前 LaunchServices -609」竞态。
+# 纯轮询原语，不杀进程——超时后由调用方决定兜底动作。
+wait_for_process_exit() {
+    local timeout="$1"; shift
+    local max_iters=$(( timeout * 5 + 1 ))
+    local i pid alive
+    for ((i = 0; i < max_iters; i++)); do
+        alive=0
+        for pid in "$@"; do
+            if kill -0 "$pid" 2>/dev/null; then alive=1; fi
+        done
+        if [[ "$alive" -eq 0 ]]; then return 0; fi
+        sleep 0.2
+    done
+    return 1
+}
+
+restart_app() {
+    echo "== Restarting app =="
+    local pids
+    pids="$(pgrep -x "$EXECUTABLE_NAME" 2>/dev/null || true)"
+    pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+    if [[ -n "$pids" ]]; then
+        # shellcheck disable=SC2086 —— 有意按词展开多个 pid
+        if wait_for_process_exit 5 $pids; then
+            echo "== Old instance exited =="
+        else
+            echo "== WARN: old instance still exiting after 5s; continuing (keepalive 兜底) =="
+        fi
+    fi
+    open "$APP_DIR"
+}
+
+# source 时仅提供函数（测试模板库模式），main 流程不执行。
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0 2>/dev/null || true
+fi
 
 echo "== Building release binary =="
 # 只构建可执行产品：swift build -c release 全量构建会把 Tests/Runner 的
@@ -88,9 +145,7 @@ if command -v codesign >/dev/null 2>&1; then
   fi
 fi
 
-echo "== Restarting app =="
-pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
-open "$APP_DIR"
+restart_app
 
 echo
 echo "Installed to: $APP_DIR"
