@@ -234,6 +234,11 @@
   OverlayWindow 几何三件套（六方位原点/尺寸地板/标签映射）、
   decideBindingVerification 四分支（顺手补 Equatable）、端口钳制双语义；
   Runner 888/888；
+- **Batch 38（test，零命中清扫 III 收官）**（7cb8f70）：DisplayWorkArea.inferInsets
+  （保留区自愈推理核心：贴边 <0.5 / 学习 >1.5 且 ≤200 边界 / 同边取最小 /
+  触边即不学 / nil 跳过 / 四边独立）+ resolveDisplayLocalSpaceIndex（屏内
+  本地序升序位次与回退）直测 8 断言，Runner 896/896。至此零命中纯函数清单
+  仅剩 IO 域（按三通道模型归 E2E），纯判定层清扫收官；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数

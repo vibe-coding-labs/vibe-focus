@@ -6216,6 +6216,66 @@ final class FakeAuditor: RestoreAuditing {
               && ClaudeHookPreferences.clampedUserPort(99999, defaultValue: 8787) == 65535)
     }
 
+    // MARK: 零命中纯函数清扫 III（真实实现——保留区自愈推理/屏内本地序，Batch 38）
+
+    do {
+        // A. DisplayWorkArea.inferInsets：副屏隐形保留区自愈的推理核心。
+        // 坐标语义 = Quartz（minY=顶边，y 向下）。贴边 = 距规划边 <0.5；
+        // 学习 = 推离 >1.5 且 ≤200；同边取最小推离；任一格触边（推离 0）→ 该边不学。
+        let plan = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        func ins(_ t: CGFloat, _ l: CGFloat, _ b: CGFloat, _ r: CGFloat) -> WorkAreaInsets {
+            WorkAreaInsets(top: t, left: l, bottom: b, right: r)
+        }
+        func topCell(_ push: CGFloat) -> CGRect { CGRect(x: 0, y: push, width: 200, height: 40) }
+        check("insets A1: 顶部贴边格被推离 25 → 只学 top（菜单栏保留区）",
+              DisplayWorkArea.inferInsets(planned: [topCell(0)], actual: [CGRect?(topCell(25))],
+                                          planningFrame: plan) == ins(25, 0, 0, 0))
+        check("insets A2: 1px 抖动（≤1.5）不算钳制；2px 跨阈学习",
+              DisplayWorkArea.inferInsets(planned: [topCell(0)], actual: [CGRect?(topCell(1))],
+                                          planningFrame: plan) == .zero
+              && DisplayWorkArea.inferInsets(planned: [topCell(0)], actual: [CGRect?(topCell(2))],
+                                             planningFrame: plan) == ins(2, 0, 0, 0))
+        check("insets A3: 同边取最小推离；任一格触边（推离 0）→ 该边不学习",
+              DisplayWorkArea.inferInsets(planned: [topCell(0), topCell(0)],
+                                          actual: [CGRect?(topCell(45)), CGRect?(topCell(25))],
+                                          planningFrame: plan) == ins(25, 0, 0, 0)
+              && DisplayWorkArea.inferInsets(planned: [topCell(0), topCell(0)],
+                                             actual: [CGRect?(topCell(45)), CGRect?(topCell(0))],
+                                             planningFrame: plan) == .zero)
+        check("insets A4: 推离 =maxInset(200) 学习；>200 视为异常读数不学习",
+              DisplayWorkArea.inferInsets(planned: [topCell(0)], actual: [CGRect?(topCell(200))],
+                                          planningFrame: plan) == ins(200, 0, 0, 0)
+              && DisplayWorkArea.inferInsets(planned: [topCell(0)], actual: [CGRect?(topCell(250))],
+                                             planningFrame: plan) == .zero)
+        check("insets A5: 四边独立推断（top=两格取小 / left=两格取小 / bottom 未贴边不学）",
+              DisplayWorkArea.inferInsets(
+                planned: [topCell(0), CGRect(x: 300, y: 0, width: 200, height: 40),
+                          CGRect(x: 0, y: 300, width: 200, height: 40)],
+                actual: [CGRect?(CGRect(x: 25, y: 25, width: 200, height: 40)),
+                         CGRect?(CGRect(x: 300, y: 50, width: 200, height: 40)),
+                         CGRect?(CGRect(x: 30, y: 300, width: 200, height: 40))],
+                planningFrame: plan) == ins(25, 25, 0, 0))
+        check("insets A6: 底边 Dock 推离学习（bottom = plan.maxY - act.maxY）；actual=nil 跳过",
+              DisplayWorkArea.inferInsets(
+                planned: [topCell(0), CGRect(x: 0, y: 1040, width: 200, height: 40)],
+                actual: [nil, CGRect?(CGRect(x: 0, y: 1022, width: 200, height: 40))],
+                planningFrame: plan) == ins(0, 0, 18, 0))
+
+        // B. resolveDisplayLocalSpaceIndex：全局 space 序 → 屏内本地序（1-based，按 index 升序位次）。
+        func spaceInfo(_ display: Int, _ index: Int?) -> YabaiSpaceInfo {
+            YabaiSpaceInfo(id: nil, index: index, display: display, isVisible: false)
+        }
+        let spaces = [spaceInfo(1, 1), spaceInfo(1, 2), spaceInfo(2, 3), spaceInfo(2, 5), spaceInfo(2, nil)]
+        check("sweepIII B1: 屏 2 的全局 3/5 → 本地 1/2（按 index 升序位次）",
+              SpaceController.resolveDisplayLocalSpaceIndex(spaceIndex: 3, displayIndex: 2, spaces: spaces) == 1
+              && SpaceController.resolveDisplayLocalSpaceIndex(spaceIndex: 5, displayIndex: 2, spaces: spaces) == 2)
+        check("sweepIII B2: 不属于该屏的全局序 / 缺输入 → nil",
+              SpaceController.resolveDisplayLocalSpaceIndex(spaceIndex: 1, displayIndex: 2, spaces: spaces) == nil
+              && SpaceController.resolveDisplayLocalSpaceIndex(spaceIndex: nil, displayIndex: 2, spaces: spaces) == nil
+              && SpaceController.resolveDisplayLocalSpaceIndex(spaceIndex: 3, displayIndex: nil, spaces: spaces) == nil
+              && SpaceController.resolveDisplayLocalSpaceIndex(spaceIndex: 3, displayIndex: 2, spaces: nil) == nil)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
