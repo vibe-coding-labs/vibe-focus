@@ -5650,6 +5650,92 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               TerminalGridPreferences.autoRestoreSnapshotID == nil)
     }
 
+    // MARK: 共存探测/热键冲突/支持级别/队列策略（真实实现——B38：仅镜像/零覆盖类型转直测收尾）
+
+    do {
+        // WindowLayoutManagerProbe.evaluate：name/bundleID 双通道 + running 蕴含 installed。
+        let profile = WindowLayoutManagerProbe.evaluate(
+            runningAppNames: ["Magnet"],
+            runningBundleIDs: ["com.knollsoft.Rectangle"],
+            installedAppNames: ["Moom", "SizeUp"])
+        let rect = profile.candidates.first { $0.name == "Rectangle" }!
+        let magnet = profile.candidates.first { $0.name == "Magnet" }!
+        let moom = profile.candidates.first { $0.name == "Moom" }!
+        check("probe: bundleID 通道命中（运行即安装）", rect.running && rect.installed)
+        check("probe: name 通道兜底（bundleID 名单过期也不漏）", magnet.running && magnet.installed)
+        check("probe: 仅安装未运行不冲突 + 未知名单外不生成候选",
+              moom.installed && !moom.running
+              && !profile.candidates.contains { $0.name == "yabai" }
+              && profile.candidates.count == WindowLayoutManagerProbe.knownManagers.count)
+        check("probe: conflictSummary 人读格式拼接",
+              profile.conflictSummary == "Rectangle（运行中）、Magnet（运行中）"
+              && profile.hasRunningConflict
+              && profile.runningConflicts.map(\.name) == ["Rectangle", "Magnet"])
+        let calm = WindowLayoutManagerProbe.evaluate(
+            runningAppNames: [], runningBundleIDs: [], installedAppNames: ["Rectangle"])
+        check("probe: 无运行竞品 → summary nil（UI 不打扰）",
+              !calm.hasRunningConflict && calm.conflictSummary == nil)
+
+        // 热键系统冲突表 + 显示串。
+        check("hotKey: 默认 ⌃Q 与旧默认 ⌃⌥⌘M 显示串",
+              HotKeyConfiguration.default.displayString == "⌃Q"
+              && HotKeyConfiguration.legacyDefault.displayString == "⌃⌥⌘M")
+        check("hotKey: 冲突表配置互异 + 非空",
+              Set(HotKeyConfiguration.knownConflicts.map(\.configuration)).count
+              == HotKeyConfiguration.knownConflicts.count)
+        check("hotKey: 回归——默认 ⌃Q 不与系统冲突表相撞",
+              !HotKeyConfiguration.knownConflicts.contains { $0.configuration == HotKeyConfiguration.default })
+        let full = HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_A),
+                                       modifiers: UInt32(controlKey | optionKey | shiftKey | cmdKey))
+        check("hotKey: 修饰键显示序固定 ⌃⌥⇧⌘", full.displayString == "⌃⌥⇧⌘A")
+
+        // 终端自动化支持级别：三级别映射 + 未知回落。
+        check("supportLevel: Terminal full / iTerm2 partial",
+              TerminalSelectionResolver.supportLevel(forBundleID: "com.apple.Terminal") == .full
+              && TerminalSelectionResolver.supportLevel(forBundleID: "com.googlecode.iterm2") == .partial)
+        check("supportLevel: 名单内无通道 / 名单外未知 → none",
+              TerminalSelectionResolver.supportLevel(forBundleID: "dev.warp.Warp-Stable") == .none
+              && TerminalSelectionResolver.supportLevel(forBundleID: "com.unknown.app") == .none)
+        check("supportLevel: 名单与显示名登记数一致",
+              TerminalSelectionResolver.supportTable.count == TerminalSelectionResolver.knownNames.count)
+
+        // 播报队列入队策略：FIFO 保序 + 满丢最旧 + 容量防御 + 值语义。
+        var empty: [QueuedAnnouncement] = []
+        let q1 = VoiceAnnouncementQueuePolicy.appendedQueue(
+            empty, appending: .text("第一条"), capacity: 3)
+        let q2 = VoiceAnnouncementQueuePolicy.appendedQueue(
+            q1, appending: .text("第二条"), capacity: 3)
+        check("voiceQueue: FIFO 保序追加", q2.map { if case .text(let t) = $0 { return t } else { return "?" } } == ["第一条", "第二条"])
+        let q3 = VoiceAnnouncementQueuePolicy.appendedQueue(
+            q2, appending: .text("第三条"), capacity: 3)
+        let q4 = VoiceAnnouncementQueuePolicy.appendedQueue(
+            q3, appending: .audioFile(path: "/tmp/a.wav"), capacity: 3)
+        check("voiceQueue: 满容入队丢最旧（先进先出）",
+              q4.count == 3
+              && q4.map { if case .text(let t) = $0 { return t } else { return "audio" } } == ["第二条", "第三条", "audio"])
+        let q5 = VoiceAnnouncementQueuePolicy.appendedQueue(q4, appending: .text("新"), capacity: 0)
+        check("voiceQueue: 容量<1 防御按 1（仅留最新）",
+              q5.count == 1 && { if case .text("新") = q5[0] { return true }; return false }())
+        check("voiceQueue: 值语义——入参队列不被修改", q3.count == 3)
+    }
+
+    do {
+        // SpacePreferences：默认开 + 标准域回环（先存后还原）。
+        check("spacePrefs: 文档默认值 true",
+              SpacePreferences.defaultIntegrationEnabled == true)
+        let defaults = UserDefaults.standard
+        let saved = defaults.object(forKey: SpacePreferences.integrationEnabledKey)
+        defer {
+            if let v = saved { defaults.set(v, forKey: SpacePreferences.integrationEnabledKey) }
+            else { defaults.removeObject(forKey: SpacePreferences.integrationEnabledKey) }
+        }
+        SpacePreferences.integrationEnabled = false
+        check("spacePrefs: 关闭后回读 false（解除 Space 集成开关）",
+              SpacePreferences.integrationEnabled == false)
+        SpacePreferences.integrationEnabled = true
+        check("spacePrefs: 开启回读 true", SpacePreferences.integrationEnabled == true)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
