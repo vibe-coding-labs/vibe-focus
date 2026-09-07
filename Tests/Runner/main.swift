@@ -4826,6 +4826,99 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               di?.index == 1 && di?.frame?.w == 100 && di?.frame?.h == 50)
     }
 
+    // MARK: 会话绑定决策 + yabai 环境探针（真实实现——B29：镜像转直测 + 零覆盖注入式模块）
+
+    do {
+        // decideSessionBindingStep 三分支：有绑定先验证；自愈只救"无绑定"（Standalone 镜像的存在理由消解）。
+        check("bindStep: 有绑定 → verifyExisting（label 在场也不改道）",
+              HookEventHandler.decideSessionBindingStep(hasBinding: true, machineLabel: "lab-1") == .verifyExisting)
+        check("bindStep: 无绑定 + label 非空 → attemptSelfHeal",
+              HookEventHandler.decideSessionBindingStep(hasBinding: false, machineLabel: "lab-1") == .attemptSelfHeal)
+        check("bindStep: 无绑定 + label 空串 → giveUp",
+              HookEventHandler.decideSessionBindingStep(hasBinding: false, machineLabel: "") == .giveUp)
+        check("bindStep: 无绑定 + label nil → giveUp",
+              HookEventHandler.decideSessionBindingStep(hasBinding: false, machineLabel: nil) == .giveUp)
+        check("bindStep: 边界——纯空白 label 非空 → attemptSelfHeal（实现语义：isEmpty 判定）",
+              HookEventHandler.decideSessionBindingStep(hasBinding: false, machineLabel: "  ") == .attemptSelfHeal)
+    }
+
+    do {
+        // YabaiEnvironmentProbe：判定逻辑全注入（生产 ShellRunner，测试假 runner），三层探测与
+        // float 布局保守策略（v7 --space 静默失效事故）锁分支。
+        func profile(_ layouts: [YabaiSpaceLayout], binary: Bool = true, daemon: Bool = true) -> YabaiEnvironmentProfile {
+            YabaiEnvironmentProfile(
+                binaryPresent: binary, binaryPath: binary ? "/yabai" : nil,
+                daemonResponsive: daemon, versionString: daemon ? "yabai-v7.1.18" : nil,
+                spaces: layouts
+            )
+        }
+        let floatOnly = [YabaiSpaceLayout(index: 1, display: 1, layout: "float")]
+        let bspOnly = [YabaiSpaceLayout(index: 1, display: 1, layout: "bsp")]
+        let mixed = [floatOnly[0], YabaiSpaceLayout(index: 2, display: 1, layout: "bsp")]
+        check("probeProfile: usable = L1+L2 双过（缺一即 false）",
+              profile(floatOnly).usableAsEnhancer
+              && !profile(floatOnly, daemon: false).usableAsEnhancer
+              && !profile(floatOnly, binary: false).usableAsEnhancer)
+        check("probeProfile: isAllFloat 空 → false；全 float → true；混 bsp → false",
+              !profile([]).isAllFloatLayout && profile(floatOnly).isAllFloatLayout
+              && !profile(mixed).isAllFloatLayout)
+        check("probeProfile: hasBSPSpace 见 bsp 即 true（空 → false）",
+              profile(mixed).hasBSPSpace && profile(bspOnly).hasBSPSpace
+              && !profile(floatOnly).hasBSPSpace && !profile([]).hasBSPSpace)
+        check("probeProfile: spaceMoveTrusted 保守策略——任一 float 即不信任 + 空 spaces 不信任",
+              profile(bspOnly).spaceMoveTrusted
+              && !profile(mixed).spaceMoveTrusted && !profile(floatOnly).spaceMoveTrusted
+              && !profile([]).spaceMoveTrusted
+              && !profile(bspOnly, daemon: false).spaceMoveTrusted)
+
+        // parseSpaces：宽松语义（部分信息优于失败），index/display 缺一丢条目，type 缺 → unknown。
+        let spacesJSON = """
+        [{"index":1,"display":1,"type":"float"},{"index":2,"display":1,"type":"bsp"},
+         {"display":1,"type":"bsp"},{"index":3,"type":"float"},{"index":4,"display":2}]
+        """
+        let parsed = YabaiEnvironmentProbe.parseSpaces(spacesJSON)
+        check("probeParse: 有效条目解析 + 缺 index/display 丢弃",
+              parsed.count == 3 && parsed[0].layout == "float" && parsed[1].layout == "bsp"
+              && parsed[2].index == 4 && parsed[2].display == 2 && parsed[2].layout == "unknown")
+        check("probeParse: type 缺失 → unknown",
+              YabaiEnvironmentProbe.parseSpaces(#"[{"index":9,"display":1}]"#).first?.layout == "unknown")
+        check("probeParse: 非法 JSON / 空输入 → 空数组不炸",
+              YabaiEnvironmentProbe.parseSpaces("not-json").isEmpty
+              && YabaiEnvironmentProbe.parseSpaces("").isEmpty)
+
+        // locateBinary：注入 fileExists——首个存在者胜出；全缺 → nil。
+        check("probeL1: 候选按序首个存在者",
+              YabaiEnvironmentProbe.locateBinary(fileExists: { $0 == "/usr/local/bin/yabai" })
+              == "/usr/local/bin/yabai")
+        check("probeL1: 全部不存在 → nil",
+              YabaiEnvironmentProbe.locateBinary(fileExists: { _ in false }) == nil)
+
+        // probe 三层编排：L1 挡 → L2 挡（fork 失败与非零等价）→ 全通过（版本 trim + spaces 解析）。
+        check("probe编排: L1 失败 → 全 false profile",
+              YabaiEnvironmentProbe.probe(
+                runner: { _, _ in (0, "[]") },
+                fileExists: { _ in false }
+              ).binaryPresent == false)
+        check("probe编排: L2 非零退出 → binary 在场 daemon 失败 spaces 空",
+              { let p = YabaiEnvironmentProbe.probe(
+                    runner: { _, _ in (1, "") },
+                    fileExists: { _ in true })
+                return p.binaryPresent && !p.daemonResponsive && p.spaces.isEmpty }())
+        check("probe编排: L2 fork 失败（nil）与非零等价",
+              { let p = YabaiEnvironmentProbe.probe(
+                    runner: { _, _ in nil },
+                    fileExists: { _ in true })
+                return !p.daemonResponsive && !p.usableAsEnhancer }())
+        check("probe编排: 全通过 → 版本 trim + spaces 解析 + 增强可用",
+              { let p = YabaiEnvironmentProbe.probe(
+                    runner: { path, args in
+                        args == ["--version"] ? (0, "  yabai-v7.1.18\n") : (0, #"[{"index":1,"display":1,"type":"bsp"}]"#)
+                    },
+                    fileExists: { _ in true })
+                return p.usableAsEnhancer && p.versionString == "yabai-v7.1.18"
+                    && p.spaces.first?.layout == "bsp" && p.spaceMoveTrusted }())
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
