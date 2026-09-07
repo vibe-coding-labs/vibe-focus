@@ -214,6 +214,15 @@
   matchYabaiDisplayIndices（Quartz→Cocoa 翻转 + 中心距贪心唯一配对，纯函数）；
   屏标签/摘要徽章统一「屏N」（与 Space 胶囊同坐标系），#CGDisplayID 仅 yabai
   不可用时兜底；镜像 5 + Runner 真身 3，Runner 870/870；
+- **Batch 34（refactor，Batch 33 追踪项收口）**（5d822c2，b775274 合并）：显示器
+  索引几何精确匹配下沉全仓唯一事实源——真机实测本机 NSScreen 序（主,右,左）与
+  yabai 序（1主,2左,3右）恰好相反，猜序版压在 restore 预切回/move
+  sourceVisibleFrame/toggle 路由/网格投递全部热路径。matchYabaiDisplayIndices
+  下沉 CoordinateKit+Screen；SpaceController.exactYabaiDisplayIndex/exactNSScreen
+  （1s TTL 缓存 + 拓扑变化失效 + yabai 不可用回退猜序版）；9 消费点全改走精确
+  解析器；真机门禁 SIZE_E2E 885/885 + GRID_SPACE_E2E 873/873；**顺带修复 SIZE_E2E
+  三处 P40UG 时代硬编码坐标**（换布局后落所有屏外，改当前副屏动态推导 + 副屏归属
+  几何判定）与 GRID_SPACE setup 同源猜序残留；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
