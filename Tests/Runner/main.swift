@@ -4727,6 +4727,99 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && !ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: nil))
     }
 
+    // MARK: Overlay 偏好层 + Space 解码漂移补缺（真实实现——B28：缺口审计零覆盖直测）
+
+    do {
+        // IndexPosition：6 形态 rawValue 双向 + 展示映射互异（设置 Picker 唯一事实源）。
+        check("idxPos: 6 case + rawValue 双向回环",
+              IndexPosition.allCases.count == 6
+              && IndexPosition.allCases.allSatisfy { IndexPosition(rawValue: $0.rawValue) == $0 })
+        let names = IndexPosition.allCases.map(\.displayName)
+        check("idxPos: displayName 互异非空",
+              names.allSatisfy { !$0.isEmpty } && Set(names).count == 6)
+        check("idxPos: icon 全非空",
+              IndexPosition.allCases.allSatisfy { !$0.icon.isEmpty })
+        let jsonStr: (String) -> Data = { Data(("\"" + $0 + "\"").utf8) }
+        check("idxPos: JSON 按 rawValue 解码 + 垃圾值 → nil",
+              (try? JSONDecoder().decode(IndexPosition.self, from: jsonStr("topCenter"))) == .topCenter
+              && (try? JSONDecoder().decode(IndexPosition.self, from: jsonStr("junk"))) == nil)
+    }
+
+    do {
+        // CodableColor：Codable 契约（键名 + 分量保真）——漂移会静默重置用户配色。
+        //（自定义 init(Color) 抑制了 memberwise，故经解码构造实例。）
+        func decodeColor(_ data: Data) throws -> CodableColor {
+            try JSONDecoder().decode(CodableColor.self, from: data)
+        }
+        let c = try? decodeColor(Data(#"{"red":0.25,"green":0.5,"blue":0.75,"opacity":0.8}"#.utf8))
+        check("codableColor: 解码分量保真",
+              c?.red == 0.25 && c?.green == 0.5 && c?.blue == 0.75 && c?.opacity == 0.8)
+        let back = c.flatMap { try? decodeColor(JSONEncoder().encode($0)) }
+        check("codableColor: 编解码回环保真",
+              back?.red == 0.25 && back?.green == 0.5 && back?.blue == 0.75 && back?.opacity == 0.8)
+        let keys = (c.flatMap { try? JSONEncoder().encode($0) })
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Double] }
+        check("codableColor: 键集锁定 rgba 四键",
+              keys?["red"] == 0.25 && keys?["green"] == 0.5 && keys?["blue"] == 0.75
+              && keys?["opacity"] == 0.8 && keys?.count == 4)
+    }
+
+    do {
+        // legacy 迁移解码（纯函数）：旧格式缺 panelScale/panelMargin → 补默认；per-screen 强制开。
+        let legacyMinimal = """
+        {"isEnabled":true,"position":"bottomLeft","fontSize":32,"opacity":0.5,
+         "textColor":{"red":1,"green":1,"blue":1,"opacity":1},
+         "backgroundColor":{"red":0,"green":0,"blue":0,"opacity":0.6},
+         "yabaiPath":"/opt/homebrew/bin/yabai"}
+        """
+        let migrated = ScreenIndexPreferences.loadLegacyPreferences(from: Data(legacyMinimal.utf8))
+        check("screenPrefs: legacy 最小格式补默认 scale/margin + per-screen 强制",
+              migrated?.panelScale == 1.0 && migrated?.panelMargin == 20
+              && migrated?.usePerScreenSpaceIndexing == true
+              && migrated?.position == .bottomLeft
+              && migrated?.yabaiPath == "/opt/homebrew/bin/yabai")
+        let legacyFull = """
+        {"isEnabled":false,"position":"topCenter","fontSize":64,"opacity":0.9,
+         "textColor":{"red":1,"green":0,"blue":0,"opacity":1},
+         "backgroundColor":{"red":0,"green":0,"blue":1,"opacity":0.5},
+         "panelScale":2.0,"panelMargin":10,"yabaiPath":null}
+        """
+        let full = ScreenIndexPreferences.loadLegacyPreferences(from: Data(legacyFull.utf8))
+        check("screenPrefs: legacy 完整格式字段保真",
+              full?.panelScale == 2.0 && full?.panelMargin == 10
+              && full?.isEnabled == false && full?.fontSize == 64 && full?.yabaiPath == nil)
+        check("screenPrefs: legacy 非法 JSON → nil",
+              ScreenIndexPreferences.loadLegacyPreferences(from: Data("not-json".utf8)) == nil)
+        check("screenPrefs: legacy 缺必填字段 → nil",
+              ScreenIndexPreferences.loadLegacyPreferences(from: Data(#"{"isEnabled":true}"#.utf8)) == nil)
+
+        // enforce 守卫安全侧：已 per-screen → 原样返回（迁移分支带 save 落库副作用，不在此测）。
+        let already = ScreenIndexPreferences.default
+        let enforced = ScreenIndexPreferences.enforcePerScreenSpaceIndexingIfNeeded(already)
+        check("screenPrefs: 已 per-screen → 原样返回",
+              enforced.isEnabled == already.isEnabled && enforced.position == already.position
+              && enforced.usePerScreenSpaceIndexing == true)
+    }
+
+    do {
+        // YabaiSpaceInfo.is-visible 漂移防御（与 YabaiWindowInfo 同族知识，Space 查询路径消费）。
+        func decodeSpace(_ json: String) -> YabaiSpaceInfo? {
+            try? JSONDecoder().decode(YabaiSpaceInfo.self, from: Data(json.utf8))
+        }
+        check("spaceInfo: is-visible Bool true",
+              decodeSpace(#"{"index":2,"display":1,"is-visible":true}"#)?.isVisible == true)
+        check("spaceInfo: is-visible Int 1/0 双形态",
+              decodeSpace(#"{"is-visible":1}"#)?.isVisible == true
+              && decodeSpace(#"{"is-visible":0}"#)?.isVisible == false)
+        check("spaceInfo: 字段缺失 → nil 不炸",
+              decodeSpace("{}")?.isVisible == nil && decodeSpace("{}")?.index == nil)
+        check("spaceInfo: 垃圾类型 → nil",
+              decodeSpace(#"{"is-visible":"yes"}"#)?.isVisible == nil)
+        let di = try? JSONDecoder().decode(YabaiDisplayInfo.self, from: Data(#"{"index":1,"frame":{"x":0,"y":0,"w":100,"h":50}}"#.utf8))
+        check("displayInfo: index + frame 解析",
+              di?.index == 1 && di?.frame?.w == 100 && di?.frame?.h == 50)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
