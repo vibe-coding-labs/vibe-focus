@@ -151,14 +151,40 @@
 - **Batch 15**：`HookSettingsComposition` 真身直测 9 断言（识别判据/摘除/组合
   终态/畸形防御）——夹具按真实 Claude settings 形状（hooks[事件]=条目数组），
   消除该文件真身 0% 的镜像盲区；
-- **Batch 16**：`ClaudeHookServer` 鉴权三纯函数真身直测 8 断言（大小写不敏感
-  header 查找/query 优先 token 解析/未配置放行+精确匹配）——LAN 访问 token 门
-  100% 分支；
+- **Batch 16**：`ClaudeHookServer` 鉴权三纯函数真身直测（大小写不敏感
+  header 查找/query 优先 token 解析/未配置放行+精确匹配）——**账实更正
+  （2026-09-07 晚）**：原提交 167dd7b 只落了 var→let 两行，8 断言段在
+  worktree 冲突整理中丢失、从未上 main（提交信息与 diff 不符未被发现）；
+  由 Batch 27 补做并扩为 13 断言，见下节；
 - **Batch 17**：`HotKey/ToggleTriggerGate`——热键去重门（in-flight 最优先→
   双阈值→accept）与 fallback 路由（repeat 忽略→主热键→TitleEditor→摆位表）
   提纯 + Runner 10 断言（阈值 < 边界 + 优先级矩阵穷尽）；
 - Batch 10 的 E2E 回归扫 + Batch 13 的迁移真身测试 + 本四批覆盖收口后，
   覆盖率报告中手工可测缺口（纯判定/可注入层）已全部清完。
+
+## Batch 18~20 + 27 度量（cg-event-tap-route / session-bind-decision / layout-frame-lock / hook-auth-lock）
+
+- **Batch 18**（db341c6）：`ToggleTriggerGate.cgEventRoute`——CGEventTap 事件
+  路由提纯（tapDisabled 自愈区分 timeout/user_input、flagsChanged/自动连发放行、
+  主热键→toggle、摆位键→layout、全未命中 passThrough）+ Runner 8 断言；
+  handleCGEvent 内联守卫收敛为门结果分派；
+- **Batch 19**（6074c87）：`HookEventHandler+SessionStart+Decision`——
+  SessionStart 双通道（remote_label/terminal_ctx）绑定裁决收敛为
+  decideSessionBind 纯判定（SessionBindDecision 三态）+ sessionBindHttpResponse
+  响应表（200 session_bound / 409 remote_binding_failed /
+  409 terminal_context_match_failed）；绑定成功共享尾提取
+  finishSessionBind；Runner 真身 9 断言（决策矩阵 + 响应表穷尽）；
+- **Batch 20**（bac7a77）：`LayoutFrameCalculator` 真身直测 14 断言——
+  全动作几何矩阵（half/quarter/maximize/center × gap=0/gap>0 外缘整 gap
+  接缝半 gap/极小可见区防负尺寸/center 钳制与 nil）；
+- **Batch 27**（bcf1c4c）：`ClaudeHookServer` 鉴权三函数补做丢失的
+  Batch 16 段并扩展——resolveHeaderValue 3 分支/resolveProvidedToken 4 分支
+  （含 query 空串不回退 header）/isTokenValid 6 分支（大小写敏感、未提供拒绝）
+  共 13 断言，Runner 636/636；
+- **两次门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
+  断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
+  门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
+  对账（Batch 16 即账实不符案例）。
 
 ## 当前热点（后续批次目标，按优先级）
 

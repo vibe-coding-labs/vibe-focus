@@ -43,7 +43,7 @@
 - **覆盖率**：全库行覆盖 10.60% → **15.84%**（+49% 相对提升）；函数覆盖 6433 中新增 1000+ 可测函数入覆盖。
   B13~B18 六轮镜像转直测后，WindowMove+Decision 80.9%、ClaudeHookModels 80.8%（区域）、
   TerminalContext+Helpers 75%——提取单元函数级≈100%，编排路径由真机 E2E 家族验收。
-- **Runner 直测断言**：278 → **623/623 全绿**（+345 条，全部真实实现直测、零镜像漂移；含并行会话 Batch 20 LayoutFrameCalculator 14 断言）。
+- **Runner 直测断言**：278 → **636/636 全绿**（+358 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 补做丢失 Batch 16 的鉴权 13 断言 bcf1c4c）。
 - **结构**：1055 行巨石 → 六模块；编排页/提示音段拆分；恢复帧规划去重；模型与编排分层。
 - **真 bug**：volume 必填解码静默重置用户偏好（单测先行实锤修复）。
 - **死测试清理**：FocusStepsCalculationTests（镜像函数已从源码删除）。
