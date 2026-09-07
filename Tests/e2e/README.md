@@ -15,6 +15,10 @@
 | `VIBEFOCUS_GRID_E2E=1` | Terminal 网格全流程（真实建窗 + claude 会话） | 主屏有带存活 claude 会话的终端窗口 |
 | `VIBEFOCUS_TITLE_E2E=1` | 终端标题定向改名（Ctrl+T 链路）：tty 寻址命中自建会话、写入生效、双端自关清理 | iTerm2、Terminal、yabai |
 
+> B56 起 E2E 用例代码分布在 `Tests/Runner/Runner*E2E*.swift`（`RunnerHarness` 的
+> extension，如 GRID_TARGET→RunnerGridTargetE2ETests.swift）；新增 E2E = 新建域
+> 文件 + 在 `RunnerHarness.runAllTests()` 按序登记，main.swift 只放 harness。
+
 ## 标准跑法
 
 ```bash

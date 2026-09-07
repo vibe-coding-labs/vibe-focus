@@ -48,6 +48,32 @@ git commit -m "..." -- <具体文件...>
 仅当确认无并行会话且改动为单文件小改时，可就地提交，但 add 仍须定向；
 用户在当前会话明确要求就地改时从其指示。
 
+## 单一事实源契约（2026-09-08 起，BundleIdentityContractTests 守护）
+
+1. **bundle id**：canonical = `com.openai.vibe-focus`（run.sh 装机现状）。退役 id
+   `com.vibefocus.app` 是「误启旧副本回到无修复行为」陷阱的来源——任何脚本/代码
+   不得再把它写进新建 bundle 的 plist。`install.sh` 是 run.sh 的纯委派器，
+   不得复活第二套构建/装包/签名实现；签名一律「证书或拒绝」。
+2. **装包/重启**：生产事实源 = `run.sh`（哈希跳过保 TCC、部署锁、安装审计、
+   rm 旧 bundle 全新 inode、等待旧进程退出再 open）。改动装包逻辑只改 run.sh。
+
+## Runner 测试布局（2026-09-08 B56 起）
+
+`Tests/Runner/main.swift` 只保留 harness 基类 `RunnerHarness`（check/计数器/构造助手）、
+假依赖类与 E2E 锁尾区——**不再往 main.swift 里加测试**。新增断言：
+
+- 找到被测域对应的 `Tests/Runner/RunnerXxxTests.swift`，把 do-block 加进它的
+  `extension RunnerHarness` 方法；
+- 没有对应域文件就新建一个（模仿现有文件的 extension 结构）；
+- 在 `RunnerHarness.runAllTests()` 里按想跑的顺序登记一行调用。
+
+## 脚本行为测试模式（B50/B54/B55 固化）
+
+仓库脚本要改行为时：函数化 + `BASH_SOURCE` 守卫做成可 source 模板库 + 环境变量
+注入缝，然后按 `Tests/Standalone/KeepaliveWrapperDecisionTests.swift` /
+`InstallRestartHardeningTests.swift` 的方式对**生成物/真实脚本**做行为测试——
+不写镜像副本。
+
 ## 背景注记（2026-09-02/03 首个完整执行样本）
 
 `feat/sound-iteration` 线全程在独立 worktree 开发，rebase 回 main 零冲突、
