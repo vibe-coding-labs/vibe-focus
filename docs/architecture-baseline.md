@@ -181,10 +181,19 @@
   Batch 16 段并扩展——resolveHeaderValue 3 分支/resolveProvidedToken 4 分支
   （含 query 空串不回退 header）/isTokenValid 6 分支（大小写敏感、未提供拒绝）
   共 13 断言，Runner 636/636；
-- **两次门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
+- **Batch 28**（b72a5a3，043aa95 修偶发）：`ToggleEngine+Restore.swift`（451 行，
+  Window 编排域最大文件）按「决策/编排」缝拆分——RestoreOutcome/isMoveFailureRetryable/
+  SourceSpacePreSwitch 决策四件套独立 `+Restore+Decision.swift`（与 Hook 域 +Decision
+  命名惯例对齐），原文件保留视角守卫 + performRestore 编排；纯代码搬移零行为变更，
+  既有双通道锁（RestoreRefocusCandidateTests + Runner 分支穷举）即行为契约，无需新增
+  测试；顺带实修 sessionBind B 断言 capturedAt 偶发假失败（043aa95）；
+- **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
-  对账（Batch 16 即账实不符案例）。
+  对账（Batch 16 即账实不符案例）；③ 含 Date 字段的 Equatable 类型禁止两次
+  独立构造后 ==（通常同微秒恰好相等、负载下跨时钟边界即假失败）——必须
+  if-case 解构按业务字段断言；④ 在主工作区读代码会拿到过期 checkout（可落后
+  origin/main 十几小时），审查一律以 `git show origin/main:` 或 fork worktree 为准。
 
 ## 当前热点（后续批次目标，按优先级）
 
