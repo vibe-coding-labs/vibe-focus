@@ -7,6 +7,10 @@ import Cocoa
 // One shot, no retries. The old mechanism had 4 strategies, polling loops, a watchdog,
 // and 642 lines to do what these steps accomplish.
 //
+// 文件分层（2026-09-07 拆分，行为不变）：
+//   +Restore+Decision.swift — 结局类型 + record 处置/源屏预切回纯决策（测试锁所在）
+//   +Restore.swift（本文件） — 视角守卫 + 生产入口 + performRestore 编排
+//
 // 历史注：2026-09-01 起不再用 yabai `window --space`（v7 float 布局下静默失效，
 // exit 0 但窗口不动，Tests/AXMoveValidation.swift T3 断言实测）。
 // 历史注：2026-09-02 诚实结局重构——此前 frame 写失败仍清 record + 记 restore_success +
@@ -19,66 +23,6 @@ import Cocoa
 
 @MainActor
 extension ToggleEngine {
-
-    /// restore 的真实结局（record 处置与审计事件的唯一依据）。
-    enum RestoreOutcome: Equatable {
-        /// frame 已收敛：窗口回到源屏 origFrame。spaceExact：
-        ///   true  = 源屏可见 space 已精确等于 sourceSpace；
-        ///   false = 源屏切回失败（源 space 无可聚焦窗口等），窗口落在源屏可见 space；
-        ///   nil   = record 无 space 信息（sourceSpace=0），从未尝试切回。
-        case restored(spaceExact: Bool?)
-        /// 移动前的放弃：无 toggle record / AX 窗口已不存在。record 不动、无审计事件
-        /// （与历史行为一致；不是移动失败，别把语义让给 moveFailed*）。
-        case aborted(reason: String)
-        /// frame 未收敛但 origFrame 仍在某块现有屏上——瞬时失败（yabai 抖动/窗口最小化等）。
-        /// record 保留：用户再次触发 restore 即重试。
-        case moveFailedRetryable
-        /// frame 未收敛且 origFrame 已不在任何屏幕（断显/分辨率变更）——永久失败。
-        /// record 清除：下次 toggle 走 stuck 解堵路径兜底，避免每次热键空转整段恢复耗时。
-        case moveFailedPermanent
-
-        /// 机器可读结局标签（WindowManager 失败日志与 CrashContextRecorder 用；
-        /// RestoreRefocusCandidateTests 分支穷尽锁定）。
-        var outcomeLabel: String {
-            switch self {
-            case .restored(let spaceExact):
-                return "restored(spaceExact=\(String(describing: spaceExact)))"
-            case .aborted(let reason):
-                return "aborted_\(reason)"
-            case .moveFailedRetryable:
-                return "move_failed_retryable_record_kept"
-            case .moveFailedPermanent:
-                return "move_failed_permanent_record_cleared"
-            }
-        }
-    }
-
-    /// 失败时 record 处置的纯决策（RestoreRefocusCandidateTests 锁定）。
-    /// origFrame 中心仍落在某块现有屏上 → 瞬时失败保留 record；已不在任何屏 → 清除。
-    static func isMoveFailureRetryable(origFrameOnAnyDisplay: Bool) -> Bool {
-        origFrameOnAnyDisplay
-    }
-
-    /// 4-pre 源屏预切回决策（纯函数，RestoreRefocusCandidateTests 分支穷尽锁定）。
-    enum SourceSpacePreSwitch: Equatable {
-        /// record 无 space/display 上下文（0 值）——无从预切，spaceExact=nil。
-        case noContext
-        /// 源屏可见 space 已是 sourceSpace；或可见性查询失败（不盲切，历史行为视作
-        /// 已精确）——无需切换，spaceExact=true。
-        case notNeeded
-        /// 源屏停在别的 space——需要预切回 sourceSpace；spaceExact=切回是否成功。
-        case switchNeeded(visibleSpace: Int)
-    }
-
-    static func sourceSpacePreSwitch(
-        sourceSpace: Int,
-        sourceYabaiDisp: Int,
-        visibleSpaceOnSourceDisplay: Int?
-    ) -> SourceSpacePreSwitch {
-        guard sourceSpace > 0, sourceYabaiDisp > 0 else { return .noContext }
-        guard let visible = visibleSpaceOnSourceDisplay else { return .notNeeded }
-        return visible == sourceSpace ? .notNeeded : .switchNeeded(visibleSpace: visible)
-    }
 
     /// 视角守卫（成功与失败路径共用）：frame 直写/源屏预切回会把 macOS 键盘焦点/视角
     /// 拖到源 display，此处切回 preMoveSpace。通道双层编排收敛在
