@@ -177,7 +177,7 @@ extension TerminalGridController {
 
     /// 观测当前该终端 app 的全部可见窗口：CG 枚举 + tty 映射 + claude 存活标记
     private func observeLiveWindows(appBundleID: String) async -> [TerminalLiveWindow] {
-        let isIterm = appBundleID == "com.googlecode.iterm2"
+        let isIterm = TerminalAutomationScript.usesITermDialect(appBundleID)
         let entries = cgWindowListAll().filter { entry in
             guard entry.layer == 0, entry.isOnScreen,
                   let bounds = entry.bounds,
@@ -218,14 +218,12 @@ extension TerminalGridController {
     }
 
     private func injectScript(appBundleID: String, windowID: UInt32, command: String) -> String? {
-        switch appBundleID {
-        case "com.googlecode.iterm2":
+        // B64：支持集与方言判定收敛到 TerminalAutomationScript 唯一事实源
+        guard TerminalAutomationScript.isAutomationSupported(appBundleID) else { return nil }
+        if TerminalAutomationScript.usesITermDialect(appBundleID) {
             return TerminalAutomationScript.itermInjectCommand(windowID: String(windowID), command: command)
-        case "com.apple.Terminal":
-            return TerminalAutomationScript.terminalInjectCommand(windowID: windowID, command: command)
-        default:
-            return nil
         }
+        return TerminalAutomationScript.terminalInjectCommand(windowID: windowID, command: command)
     }
 
     func resolveRestoreScreen(for snapshot: TerminalGridSnapshot) -> NSScreen? {

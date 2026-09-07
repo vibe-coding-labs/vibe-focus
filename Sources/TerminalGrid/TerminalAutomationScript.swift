@@ -9,6 +9,26 @@ import Foundation
 @MainActor
 enum TerminalAutomationScript {
 
+    // MARK: - 自动化目标终端身份（B64：方言选择判断收敛的唯一事实源）
+
+    /// 网格自动化为其编写了 AppleScript 方言的终端集合（iTerm2 / Apple Terminal）。
+    /// 语义边界：`TerminalRegistry.terminalBundleIDs` 是「终端识别」超集（9 终端，
+    /// 回答"这是不是终端"）；本集合只回答"网格自动化有没有为它写方言"——两者刻意不同。
+    static let automationBundleIDs: Set<String> = [
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+    ]
+
+    /// 该 bundle id 是否使用 iTerm2 方言（否则按 Apple Terminal 方言处理）。
+    /// 不在支持集内的 id 一律返回 false，调用方应先以 isAutomationSupported 拒绝。
+    static func usesITermDialect(_ appBundleID: String) -> Bool {
+        appBundleID == "com.googlecode.iterm2"
+    }
+
+    static func isAutomationSupported(_ appBundleID: String) -> Bool {
+        automationBundleIDs.contains(appBundleID)
+    }
+
     static func appleScriptEscaped(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\\", with: "\\\\")

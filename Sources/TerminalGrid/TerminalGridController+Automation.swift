@@ -31,7 +31,7 @@ extension TerminalGridController {
         frame: CGRect,
         op: String
     ) async -> (cgWindowID: UInt32?, corrected: Bool) {
-        let isIterm = appBundleID == "com.googlecode.iterm2"
+        let isIterm = TerminalAutomationScript.usesITermDialect(appBundleID)
         let script = isIterm
             ? TerminalAutomationScript.itermCreateWindow(command: command, quartzFrame: frame)
             : TerminalAutomationScript.terminalCreateWindow(command: command, quartzFrame: frame)
