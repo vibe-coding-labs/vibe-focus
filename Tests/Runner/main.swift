@@ -5126,17 +5126,20 @@ final class FakeAuditor: RestoreAuditing {
               CodexHookPreferences.isHookInstalled(at: cfgPath) == false)
 
         // cleanVibeFocusHooks：精准移除匹配条目、保留他方条目、清空事件键回收。
+        let targetURL = "http://127.0.0.1:8765/hook"
         var mixed: [String: Any] = [
             "Stop": entry(script) + entry("/usr/bin/user-own"),
             "PreToolUse": entry("/usr/bin/foreign"),
+            "SessionEnd": [["matcher": "*", "hooks": [["type": "command", "url": targetURL]]]],
         ]
-        CodexHookPreferences.cleanVibeFocusHooks(from: &mixed, scriptPath: script)
+        CodexHookPreferences.cleanVibeFocusHooks(from: &mixed, scriptPath: script, targetURL: targetURL)
         let stopEntries = mixed["Stop"] as? [[String: Any]]
         let preEntries = mixed["PreToolUse"] as? [[String: Any]]
-        check("codex clean: 匹配条目移除 + 他方条目保留 + 纯他方事件键不动",
-              stopEntries?.count == 1 && preEntries?.count == 1 && mixed.count == 2)
+        check("codex clean: 匹配条目移除 + 他方条目保留 + url 形态旧条目同清（唯一判据统一）",
+              stopEntries?.count == 1 && preEntries?.count == 1
+              && mixed["SessionEnd"] == nil && mixed.count == 2)
         var onlyOurs: [String: Any] = ["SessionStart": entry(script)]
-        CodexHookPreferences.cleanVibeFocusHooks(from: &onlyOurs, scriptPath: script)
+        CodexHookPreferences.cleanVibeFocusHooks(from: &onlyOurs, scriptPath: script, targetURL: targetURL)
         check("codex clean: 清空后事件键回收", onlyOurs.isEmpty)
 
         // mergedHooks：保他方 + 换旧我方 + 开关裁剪（SessionEnd/UserPromptSubmit）。
@@ -5149,7 +5152,8 @@ final class FakeAuditor: RestoreAuditing {
             ourHooks: ourHooks,
             triggerOnSessionEnd: false,
             autoRestoreOnPromptSubmit: true,
-            scriptPath: script)
+            scriptPath: script,
+            targetURL: targetURL)
         let mergedStop = merged["Stop"] as? [[String: Any]]
         check("codex merged: 他方保留 + 陈旧我方替换 + SessionEnd 裁剪 + UserPromptSubmit 保留",
               mergedStop?.count == 1
