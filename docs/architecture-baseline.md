@@ -250,6 +250,10 @@
   appleScriptEscaped 反斜杠双引号翻倍）、Terminal 建窗异步轮询回归锁、
   iTerm2 条件 writeText、注入寻址、parseBounds 畸形回退，14 检全绿
   （Runner 主文件 runnersplit 拆分中，直测段随新结构补齐）；
+- **Batch 42（test，零命中清扫 IV）**（e21d1a5，2cea6c0 合并）：resolveNativeSpaceID
+  （SA 直切空间号翻译）+ staticDecodeSingleOrFirst（yabai 查询解析单一出口：
+  单对象/数组首元素/垃圾回退，is-visible 键映射随锁）+ overlay UUID 装配
+  （displayID 大端位布局/确定性/哈希回退 abs(%256)）镜像锁 8 检；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
