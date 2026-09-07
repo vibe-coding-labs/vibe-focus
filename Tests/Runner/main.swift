@@ -5530,6 +5530,126 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                 rules: [rule("vibe-labs", .builtinDing)], globalType: .builtinComplete) == .builtinComplete)
     }
 
+    // MARK: 构建能力自检 + 屏幕映射 + 网格快照库（真实实现——B37：镜像转直测/零覆盖转直测）
+
+    do {
+        // BuildCapabilities：二进制安全字节搜索（needle 头/中/尾均可命中）+ 稳定摘要格式。
+        let needleData = Data("resize channel".utf8)
+        let head = needleData + Data(" padding".utf8)
+        let middle = Data("x=y\n".utf8) + needleData + Data("\ngrid".utf8)
+        let tail = Data("prefix-".utf8) + needleData
+        let detected = BuildCapabilities.detect(in: head)
+        check("capabilities: 头部命中 + 全键登记数",
+              detected["ax-resize-channel"] == true && detected.count == BuildCapabilities.all.count)
+        check("capabilities: 中/尾命中 + 空 Data 全 false",
+              BuildCapabilities.detect(in: middle)["ax-resize-channel"] == true
+              && BuildCapabilities.detect(in: tail)["ax-resize-channel"] == true
+              && BuildCapabilities.all.allSatisfy { BuildCapabilities.detect(in: Data())[$0.name] == false })
+        let allTrue = Dictionary(uniqueKeysWithValues: BuildCapabilities.all.map { ($0.name, true) })
+        check("capabilities: summary 稳定 name=1 格式（登记序）",
+              BuildCapabilities.summary(allTrue)
+              == BuildCapabilities.all.map { "\($0.name)=1" }.joined(separator: " "))
+        check("capabilities: missing 只列 false 项、全真返回空",
+              BuildCapabilities.missing(allTrue).isEmpty
+              && BuildCapabilities.missing(BuildCapabilities.detect(in: Data())) == BuildCapabilities.all.map(\.name))
+
+        // ScreenLayoutMapper：Cocoa(y 向上)→view(y 向下) 翻转 + 缩放 + 胶囊带几何。
+        let main = ScreenLayoutMapper.InputScreen(
+            displayID: 1, name: "主屏", cocoaFrame: CGRect(x: 0, y: 0, width: 100, height: 100),
+            isMain: true,
+            spaces: [ScreenLayoutMapper.InputSpace(yabaiIndex: 1, isVisible: true),
+                     ScreenLayoutMapper.InputSpace(yabaiIndex: 2, isVisible: false)])
+        let upper = ScreenLayoutMapper.InputScreen(
+            displayID: 2, name: "副屏", cocoaFrame: CGRect(x: 0, y: 100, width: 100, height: 100),
+            isMain: false, spaces: [])
+        let layout = ScreenLayoutMapper.map(
+            screens: [main, upper], viewSize: CGSize(width: 314, height: 214))
+        let mappedMain = layout.screens.first { $0.displayID == 1 }!
+        let mappedUpper = layout.screens.first { $0.displayID == 2 }!
+        check("mapper: y 翻转——Cocoa 上方副屏在 view 里位于主屏之上",
+              mappedUpper.frame.maxY <= mappedMain.frame.minY)
+        // 界并集（两屏纵向堆叠）= 100 宽 × 200 高 → scale = min(286/100, 186/200)。
+        check("mapper: scale = min(可用宽/界宽, 可用高/界高)",
+              abs(layout.scale - min(286.0 / 100.0, 186.0 / 200.0)) < 0.0001)
+        check("mapper: contentRect 包围全部屏矩形",
+              abs(layout.contentRect.maxX - (mappedMain.frame.maxX)) < 0.0001
+              && layout.contentRect.minY <= mappedUpper.frame.minY)
+        check("mapper: Space 胶囊等分内嵌底缘 + 可见 Space 索引取首个可见",
+              mappedMain.spaces.count == 2
+              && mappedMain.visibleSpaceIndex == 1
+              && abs(mappedMain.spaces[0].frame.maxY - (mappedMain.frame.maxY - ScreenLayoutMapper.spaceStripInset)) < 0.0001)
+        check("mapper: 无 Space 屏 visibleSpaceIndex nil",
+              mappedUpper.visibleSpaceIndex == nil && !mappedUpper.hasSpaces)
+        check("mapper: 空输入/非法尺寸 → 空布局",
+              ScreenLayoutMapper.map(screens: [], viewSize: CGSize(width: 500, height: 500)).screens.isEmpty
+              && ScreenLayoutMapper.map(screens: [main], viewSize: CGSize(width: 10, height: 10)).scale == 0)
+        let cells = ScreenLayoutMapper.gridPreviewCells(screenFrame: CGRect(x: 0, y: 0, width: 100, height: 100), rows: 2, cols: 2)
+        check("mapper: 网格预览 2×2 等分 + 非法行列空数组",
+              cells.count == 4 && cells[0] == CGRect(x: 0, y: 0, width: 50, height: 50)
+              && cells[3].minX == 50 && cells[3].minY == 50
+              && ScreenLayoutMapper.gridPreviewCells(screenFrame: main.cocoaFrame, rows: 0, cols: 2).isEmpty)
+    }
+
+    do {
+        // TerminalGridStore：B32 式 store 注入——快照增改删/latest 语义经临时 SQLite 直测。
+        func snap(_ id: String, _ name: String, _ at: Date) -> TerminalGridSnapshot {
+            TerminalGridSnapshot(id: id, name: name, appBundleID: "com.apple.Terminal",
+                                 displayID: 1, displayYabaiIndex: nil, rows: 2, cols: 2,
+                                 cells: [], launchCommand: nil, capturedAt: at)
+        }
+        let dbPath = "/tmp/vibefocus-b37-\(getpid()).db"
+        let store = TerminalGridStore(store: WindowStateStore(dbPath: dbPath))
+        check("gridStore: 空库 → 空快照表", store.snapshots().isEmpty)
+        let a = snap("a", "布局A", Date(timeIntervalSince1970: 1000))
+        store.upsert(a)
+        store.upsert(snap("b", "布局B", Date(timeIntervalSince1970: 2000)))
+        check("gridStore: upsert 追加 + latest 取最新 capturedAt",
+              store.snapshots().count == 2 && store.latest()?.id == "b")
+        let aRenamed = TerminalGridSnapshot(id: "a", name: "布局A改", appBundleID: "com.apple.Terminal",
+                                            displayID: 1, displayYabaiIndex: nil, rows: 2, cols: 2,
+                                            cells: [], launchCommand: nil, capturedAt: a.capturedAt)
+        store.upsert(aRenamed)
+        check("gridStore: 同 id upsert 替换不追加", store.snapshots().count == 2
+              && store.snapshots().first { $0.id == "a" }?.name == "布局A改")
+        store.remove(id: "a")
+        check("gridStore: remove 生效", store.snapshots().map(\.id) == ["b"]
+              && store.latest()?.id == "b")
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: dbPath + suffix)
+        }
+
+        // TerminalGridPreferences：钳制与显式 0 语义（标准域先存后还原，不污染用户偏好）。
+        let defaults = UserDefaults.standard
+        let saved = (rows: defaults.object(forKey: TerminalGridPreferences.rowsKey),
+                     gap: defaults.object(forKey: TerminalGridPreferences.gapKey),
+                     target: defaults.object(forKey: TerminalGridPreferences.targetKey),
+                     snapID: defaults.object(forKey: TerminalGridPreferences.autoRestoreSnapshotIDKey))
+        defer {
+            if let v = saved.rows { defaults.set(v, forKey: TerminalGridPreferences.rowsKey) } else { defaults.removeObject(forKey: TerminalGridPreferences.rowsKey) }
+            if let v = saved.gap { defaults.set(v, forKey: TerminalGridPreferences.gapKey) } else { defaults.removeObject(forKey: TerminalGridPreferences.gapKey) }
+            if let v = saved.target { defaults.set(v, forKey: TerminalGridPreferences.targetKey) } else { defaults.removeObject(forKey: TerminalGridPreferences.targetKey) }
+            if let v = saved.snapID { defaults.set(v, forKey: TerminalGridPreferences.autoRestoreSnapshotIDKey) } else { defaults.removeObject(forKey: TerminalGridPreferences.autoRestoreSnapshotIDKey) }
+        }
+        TerminalGridPreferences.rows = 99
+        check("gridPrefs: 行列钳到 1...maxGridSize（上界 4）",
+              TerminalGridPreferences.rows == TerminalGridPlanner.maxGridSize)
+        TerminalGridPreferences.rows = 0
+        check("gridPrefs: 0 落盘钳为 1（非回默认 2）", TerminalGridPreferences.rows == 1)
+        TerminalGridPreferences.gap = 0
+        check("gridPrefs: 显式 0 间距持久生效（旧 bug 回归锁）",
+              TerminalGridPreferences.gap == 0)
+        TerminalGridPreferences.gap = 99
+        check("gridPrefs: 间距上钳 40", TerminalGridPreferences.gap == 40)
+        TerminalGridPreferences.target = "zzz"
+        check("gridPrefs: 非法 target 读取时回落 main",
+              TerminalGridPreferences.target == GridTargetCode.main.code)
+        TerminalGridPreferences.target = "d2s5"
+        check("gridPrefs: 合法 target 原样回读", TerminalGridPreferences.target == "d2s5")
+        TerminalGridPreferences.autoRestoreSnapshotID = ""
+        check("gridPrefs: 空串快照 ID 归一为 nil",
+              TerminalGridPreferences.autoRestoreSnapshotID == nil)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
