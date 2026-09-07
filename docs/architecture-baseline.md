@@ -239,6 +239,11 @@
   触边即不学 / nil 跳过 / 四边独立）+ resolveDisplayLocalSpaceIndex（屏内
   本地序升序位次与回退）直测 8 断言，Runner 896/896。至此零命中纯函数清单
   仅剩 IO 域（按三通道模型归 E2E），纯判定层清扫收官；
+- **Batch 40（audit，崩溃安全终审）**（2026-09-08 04:20）：全仓生产码扫
+  fatalError/preconditionFailure/try!/as!/first!·last!/无守卫下标——仅存
+  1 处不可达 NSCoder 样板（SettingsWindowController，XIB 反序列化路径，
+  按惯例保留），其余全零（B53 诚实退让修复后无遗留）；下标访问均有
+  count 守卫。生产码崩溃安全审计通过，无需改动；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
