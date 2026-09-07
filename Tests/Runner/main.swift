@@ -3875,7 +3875,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
 
         // ===== B24：状态操作语义（markCompleted/reactivate/remap/clearAll）=====
         func mkState(_ wid: UInt32, session: String?) -> WindowState {
-            var ws = WindowState(
+            let ws = WindowState(
                 windowID: wid, pid: terminalPID, tty: nil,
                 axWindowNumber: nil, appName: "TestTerminal", bundleIdentifier: nil, title: nil,
                 termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
@@ -4589,6 +4589,8 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("ips: 多行 JSON 完整解析",
               (CrashContextRecorder.parseIPSJSONPayload(from: pretty)?["k"] as? String) == "v")
         check("ips: 空输入 → nil", CrashContextRecorder.parseIPSJSONPayload(from: "") == nil)
+    }
+
     // MARK: SessionBind 决策（真实实现——SessionStart 双通道绑定裁决，Batch 19）
 
     do {
