@@ -43,7 +43,7 @@
 - **覆盖率**：全库行覆盖 10.60% → **15.84%**（+49% 相对提升）；函数覆盖 6433 中新增 1000+ 可测函数入覆盖。
   B13~B18 六轮镜像转直测后，WindowMove+Decision 80.9%、ClaudeHookModels 80.8%（区域）、
   TerminalContext+Helpers 75%——提取单元函数级≈100%，编排路径由真机 E2E 家族验收。
-- **Runner 直测断言**：278 → **795/795 全绿**（+517 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3 + B31 Doctor 取证纯逻辑 10 断言 e485523 + B33 路径注入/路由提纯 9 断言 79028dc + B34 SettingsUI 提纯前置 13 断言 29b5b63 + B35 section 拆分/请求契约提纯 12 断言 7cef427 + B36 提示音门控/项目音效解析 12 断言 bda04ec + B37 能力自检/屏幕映射/网格库 22 断言 d44376c）。
+- **Runner 直测断言**：278 → **814/814 全绿**（+536 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3 + B31 Doctor 取证纯逻辑 10 断言 e485523 + B33 路径注入/路由提纯 9 断言 79028dc + B34 SettingsUI 提纯前置 13 断言 29b5b63 + B35 section 拆分/请求契约提纯 12 断言 7cef427 + B36 提示音门控/项目音效解析 12 断言 bda04ec + B37 能力自检/屏幕映射/网格库 22 断言 d44376c + B38 共存探测/热键/队列策略 19 断言 b54d1da）。
 - **结构**：1055 行巨石 → 六模块；编排页/提示音段拆分；恢复帧规划去重；模型与编排分层。
 - **真 bug**：volume 必填解码静默重置用户偏好（单测先行实锤修复）。
 - **死测试清理**：FocusStepsCalculationTests（镜像函数已从源码删除）。
@@ -91,4 +91,5 @@
 | B35 | SettingsView section 拆分落地：混杂双域的 SettingsView+Helpers（261 行）拆为 Installations + HookTest；SettingsUI+Helpers（179 行）拆出 SessionLists（余纯展示助手）；HookTest 提纯 buildHookRequest 请求契约与 hookResponseVerdict 四态裁决（nonisolated 纯函数，测试免网络）；直测 12 断言。**B20 缓办项就此闭环：Settings 模块无 300 行以上视图文件，全部按域内聚**（7cef427）| ✅ 2026-09-07 |
 | B36 | 全新缺口扫描（符号对照升级：区分零覆盖与仅镜像）后提示音双决策转直测：SoundPlayGate.decide 免打扰四语义（跨午夜/起闭右开/同日窗/无效配置）+ 硬静音优先级 + 节流取整边界（UTC 固定时区注入）、ProjectSoundResolver.resolvedType 首命中/非法跳过/路径归一匹配/全局回落，12 断言（bda04ec）| ✅ 2026-09-08 |
 | B37 | 镜像/零覆盖三件套转直测：BuildCapabilities 二进制安全搜索契约（needle 三段命中/summary 登记序/missing 缺失清单——部署互踩 drift 自检）、ScreenLayoutMapper 纯函数全语义（y 翻转/scale 双向约束/胶囊带几何/网格预览等分）、TerminalGridStore store 注入直测（增改删/latest）+ TerminalGridPreferences 钳制回环（显式 0 间距持久=旧 bug 回归锁、标准域先存后还原），22 断言（d44376c）| ✅ 2026-09-08 |
+| B38 | 仅镜像/零覆盖收尾批：WindowLayoutManagerProbe.evaluate 双通道探测（name 兜底/运行即安装/conflictSummary 拼接）、HotKeyConfiguration 显示串与冲突表互异 + 默认 ⌃Q 不撞表回归锁、TerminalSelectionResolver.supportLevel 三级别映射、VoiceAnnouncementQueuePolicy.appendedQueue FIFO/满丢最旧/容量防御/值语义、SpacePreferences 默认值与回环，19 断言（b54d1da）| ✅ 2026-09-08 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
