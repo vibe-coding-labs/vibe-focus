@@ -5700,7 +5700,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               TerminalSelectionResolver.supportTable.count == TerminalSelectionResolver.knownNames.count)
 
         // 播报队列入队策略：FIFO 保序 + 满丢最旧 + 容量防御 + 值语义。
-        var empty: [QueuedAnnouncement] = []
+        let empty: [QueuedAnnouncement] = []
         let q1 = VoiceAnnouncementQueuePolicy.appendedQueue(
             empty, appending: .text("第一条"), capacity: 3)
         let q2 = VoiceAnnouncementQueuePolicy.appendedQueue(
@@ -5790,6 +5790,33 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               .contains("target_gone") == true
               && TitleEditorService.makeTerminalDiagnosticScript(targetTTY: nil)
               .contains("front window") == true)
+    }
+
+    // MARK: 轻量枚举与错误文案收尾（真实实现——B40：双口径扫描最后可行动项清账）
+
+    do {
+        // VoiceAnnouncementError：LLM 播报链四类错误的用户可见文案。
+        check("voiceErr: 四类错误文案非空且互异",
+              Set([VoiceAnnouncementError.invalidAPIBase,
+                   VoiceAnnouncementError.invalidResponse,
+                   VoiceAnnouncementError.httpError(502),
+                   VoiceAnnouncementError.parseError].compactMap(\.errorDescription)).count == 4)
+        check("voiceErr: httpError 携带状态码插值",
+              VoiceAnnouncementError.httpError(502).errorDescription == "API 请求失败（HTTP 502）")
+        check("voiceErr: LocalizedError 协议经 errorDescription 暴露",
+              (VoiceAnnouncementError.parseError as LocalizedError).errorDescription == "无法解析 API 响应")
+
+        // SpaceAvailability / LogLevel：String rawValue 契约（日志与 UI 状态判定的事实源）。
+        check("spaceAvail: 四态 rawValue 双向回环",
+              SpaceAvailability(rawValue: "available") == .available
+              && SpaceAvailability(rawValue: "unknown") == .unknown
+              && SpaceAvailability(rawValue: "notInstalled") == .notInstalled
+              && SpaceAvailability(rawValue: "unavailable") == .unavailable
+              && SpaceAvailability.available.rawValue == "available")
+        check("logLevel: 四级 rawValue 契约（DEBUG/INFO/WARN/ERROR）",
+              LogLevel(rawValue: "DEBUG") == .debug && LogLevel(rawValue: "INFO") == .info
+              && LogLevel(rawValue: "WARN") == .warn && LogLevel(rawValue: "ERROR") == .error
+              && LogLevel.warn.rawValue == "WARN" && LogLevel.error.rawValue == "ERROR")
     }
 
     // MARK: 汇总
