@@ -187,6 +187,12 @@
   命名惯例对齐），原文件保留视角守卫 + performRestore 编排；纯代码搬移零行为变更，
   既有双通道锁（RestoreRefocusCandidateTests + Runner 分支穷举）即行为契约，无需新增
   测试；顺带实修 sessionBind B 断言 capturedAt 偶发假失败（043aa95）；
+- **Batch 29**（ae40ad1，1dcb74e 合并）：`TitleEditorService` 标题写入脚本
+  决策表提纯——applyViaAppleScript（~167 行）内联的 AppleScript 模板收敛为
+  makeTitleScript（bundleID × targetTTY 四分支决策表：tty 寻址铁律/matched
+  哨兵/转义契约随函数成文）+ isMatchedVerdict + makeTerminalDiagnosticScript；
+  双通道锁：Standalone 镜像 15 断言 + Runner 真身 11 断言，Runner 697/697；
+  行为验证归真机 TITLE_E2E；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
