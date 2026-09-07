@@ -43,14 +43,14 @@ extension SessionWindowRegistry {
         }
 
         // 3. DB fallback
-        if let state = WindowStateStore.shared.findWindowStateBySession(sessionID: sessionID) {
+        if let state = store.findWindowStateBySession(sessionID: sessionID) {
             if !TerminalRegistry.isTerminalPID(state.pid) {
                 log("[SessionWindowRegistry] binding(for:) loaded corrupt binding from DB, cleaning up", level: .warn, fields: [
                     "windowID": String(state.windowID),
                     "pid": String(state.pid),
                     "sessionID": sessionID
                 ])
-                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
+                store.deleteWindowState(windowID: state.windowID)
                 return nil
             }
             windowStates[state.windowID] = state
@@ -74,7 +74,7 @@ extension SessionWindowRegistry {
         if let state = windowStates[windowID] {
             return state
         }
-        if let state = WindowStateStore.shared.findWindowState(windowID: windowID) {
+        if let state = store.findWindowState(windowID: windowID) {
             windowStates[state.windowID] = state
             return state
         }

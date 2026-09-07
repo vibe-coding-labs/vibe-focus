@@ -5104,6 +5104,128 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && WindowManager.route(for: .noRecord, onMainScreen: false) == .moveToMain)
     }
 
+    // MARK: 依赖注入编排层直测（真实实现——B32：SessionWindowRegistry store 注入 + CodexHookPreferences 路径注入）
+
+    do {
+        // CodexHookPreferences：home/path/scriptPath 全注入——整链直测零真身 IO（原 ~151 行 0% 覆盖）。
+        let home = "/tmp/vibefocus-b32-home-\(getpid())"
+        let cfgPath = CodexHookPreferences.codexConfigPath(home: home)
+        check("codex: 路径拼接 home 注入",
+              cfgPath == home + "/.codex/hooks.json"
+              && CodexHookPreferences.codexConfigDir(home: home) == home + "/.codex")
+        check("codex isInstalled: 文件缺失/非法 JSON → false",
+              CodexHookPreferences.isHookInstalled(at: cfgPath) == false)
+        let script = ClaudeHookPreferences.helperScriptPath
+        func entry(_ command: String) -> [[String: Any]] {
+            [["matcher": "*", "hooks": [["type": "command", "command": command]]]]
+        }
+        func writeJSON(_ obj: [String: Any], to path: String) {
+            try? FileManager.default.createDirectory(
+                atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            let data = try? JSONSerialization.data(withJSONObject: obj)
+            try? data?.write(to: URL(fileURLWithPath: path))
+        }
+        writeJSON(["Stop": entry(script)], to: cfgPath)
+        check("codex isInstalled: 嵌套 command 含脚本路径 → true",
+              CodexHookPreferences.isHookInstalled(at: cfgPath) == true)
+        writeJSON(["Stop": entry("/usr/bin/other-hook")], to: cfgPath)
+        check("codex isInstalled: 非 VibeFocus 条目 → false",
+              CodexHookPreferences.isHookInstalled(at: cfgPath) == false)
+
+        // cleanVibeFocusHooks：精准移除匹配条目、保留他方条目、清空事件键回收。
+        var mixed: [String: Any] = [
+            "Stop": entry(script) + entry("/usr/bin/user-own"),
+            "PreToolUse": entry("/usr/bin/foreign"),
+        ]
+        CodexHookPreferences.cleanVibeFocusHooks(from: &mixed, scriptPath: script)
+        let stopEntries = mixed["Stop"] as? [[String: Any]]
+        let preEntries = mixed["PreToolUse"] as? [[String: Any]]
+        check("codex clean: 匹配条目移除 + 他方条目保留 + 纯他方事件键不动",
+              stopEntries?.count == 1 && preEntries?.count == 1 && mixed.count == 2)
+        var onlyOurs: [String: Any] = ["SessionStart": entry(script)]
+        CodexHookPreferences.cleanVibeFocusHooks(from: &onlyOurs, scriptPath: script)
+        check("codex clean: 清空后事件键回收", onlyOurs.isEmpty)
+
+        // mergedHooks：保他方 + 换旧我方 + 开关裁剪（SessionEnd/UserPromptSubmit）。
+        let ourHooks: [String: Any] = [
+            "SessionStart": entry(script), "Stop": entry(script),
+            "SessionEnd": entry(script), "UserPromptSubmit": entry(script),
+        ]
+        let merged = CodexHookPreferences.mergedHooks(
+            existing: ["Stop": entry("/old/stale.sh"), "Notification": entry("/usr/bin/n")],
+            ourHooks: ourHooks,
+            triggerOnSessionEnd: false,
+            autoRestoreOnPromptSubmit: true,
+            scriptPath: script)
+        let mergedStop = merged["Stop"] as? [[String: Any]]
+        check("codex merged: 他方保留 + 陈旧我方替换 + SessionEnd 裁剪 + UserPromptSubmit 保留",
+              mergedStop?.count == 1
+              && (mergedStop?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String == script
+              && merged["Notification"] != nil
+              && merged["SessionEnd"] == nil && merged["UserPromptSubmit"] != nil)
+
+        try? FileManager.default.removeItem(atPath: home)
+    }
+
+    do {
+        // SessionWindowRegistry：store 注入——init 剪枝/bind 拒绝/状态操作持久化整链直测，
+        // 无需 VIBEFOCUS_REGISTRY_E2E 环境门控（原编排层 0% 覆盖的根因即不可注入）。
+        func mkState(_ wid: UInt32, session: String?, pid: Int32 = 99999) -> WindowState {
+            WindowState(
+                windowID: wid, pid: pid, tty: nil,
+                axWindowNumber: nil, appName: "TestTerminal", bundleIdentifier: nil, title: nil,
+                termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                envWindowID: nil, sessionID: session, cwd: nil, model: nil,
+                isCompleted: false, createdAt: Date(), updatedAt: Date()
+            )
+        }
+        let dbPath = "/tmp/vibefocus-b32-\(getpid()).db"
+        let store = WindowStateStore(dbPath: dbPath)
+
+        // init 剪枝：非终端 PID 的腐坏绑定加载即清（内存 + DB 双清）。
+        store.saveWindowState(mkState(9301, session: "b32-corrupt"))
+        let reg1 = SessionWindowRegistry(store: store)
+        check("di registry: init 剪枝非终端 PID（内存+DB 双清）",
+              reg1.windowStates.isEmpty && store.findWindowState(windowID: 9301) == nil)
+
+        // bind 拒绝分支：非终端 PID 不建绑定。
+        reg1.bind(
+            sessionID: "b32-rej",
+            windowIdentity: WindowIdentity(windowID: 9302, pid: 99999, bundleIdentifier: nil,
+                                           appName: "TestTerminal", windowNumber: nil, title: "t"))
+        check("di registry: bind 非终端 PID → 拒绝无绑定",
+              reg1.windowStates.isEmpty && reg1.binding(for: "b32-rej") == nil)
+
+        // 状态操作 × 注入 store：内存变更同步落库（原 B24 语义经 DI 通道无门控复验）。
+        let reg2 = SessionWindowRegistry(store: store)
+        reg2.windowStates[9303] = mkState(9303, session: "b32-done")
+        reg2.sessionAliasWindowID["b32-done"] = 9303
+        reg2.markCompleted(sessionID: "b32-done")
+        check("di registry: markCompleted 置位落库 + 清别名",
+              reg2.windowStates[9303]?.isCompleted == true
+              && store.findWindowState(windowID: 9303)?.isCompleted == true
+              && reg2.sessionAliasWindowID["b32-done"] == nil)
+
+        reg2.reactivate(sessionID: "b32-done")
+        check("di registry: reactivate 复位落库",
+              reg2.windowStates[9303]?.isCompleted == false
+              && store.findWindowState(windowID: 9303)?.isCompleted == false)
+
+        reg2.remapWindowID(oldWindowID: 9303, newWindowID: 9304)
+        check("di registry: remap 内存+DB 双迁移",
+              reg2.windowStates[9303] == nil && reg2.windowStates[9304]?.sessionID == "b32-done"
+              && store.findWindowState(windowID: 9303) == nil
+              && store.findWindowState(windowID: 9304)?.sessionID == "b32-done")
+
+        reg2.clearAllBindings()
+        check("di registry: clearAll 内存+DB 双清",
+              reg2.windowStates.isEmpty && store.findWindowState(windowID: 9304) == nil)
+
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: dbPath + suffix)
+        }
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

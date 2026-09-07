@@ -52,12 +52,12 @@ extension SessionWindowRegistry {
         guard oldWindowID != newWindowID else { return }
         guard var state = windowStates[oldWindowID] else {
             // 旧 windowID 不在内存缓存中 — 尝试从 DB 加载
-            if let dbState = WindowStateStore.shared.findWindowState(windowID: oldWindowID) {
+            if let dbState = store.findWindowState(windowID: oldWindowID) {
                 var remapped = dbState
                 remapped.windowID = newWindowID
                 windowStates[newWindowID] = remapped
                 persistToDB(windowID: newWindowID)
-                WindowStateStore.shared.deleteWindowState(windowID: oldWindowID)
+                store.deleteWindowState(windowID: oldWindowID)
                 windowStates.removeValue(forKey: oldWindowID)
                 log("[SessionWindowRegistry] remapWindowID: DB remap", fields: [
                     "oldWindowID": String(oldWindowID),
@@ -69,7 +69,7 @@ extension SessionWindowRegistry {
         state.windowID = newWindowID
         windowStates[newWindowID] = state
         windowStates.removeValue(forKey: oldWindowID)
-        WindowStateStore.shared.deleteWindowState(windowID: oldWindowID)
+        store.deleteWindowState(windowID: oldWindowID)
         persistToDB(windowID: newWindowID)
         log("[SessionWindowRegistry] remapWindowID: memory+DB remap", fields: [
             "oldWindowID": String(oldWindowID),
@@ -83,7 +83,7 @@ extension SessionWindowRegistry {
         windowStates.removeAll()
         sessionAliasWindowID.removeAll()
         lastEventDescription = "所有绑定已清除"
-        WindowStateStore.shared.deleteAllWindowsStates()
+        store.deleteAllWindowsStates()
     }
 
     func purgeClosedWindows() {
@@ -100,7 +100,7 @@ extension SessionWindowRegistry {
         for key in keysToRemove {
             if let state = windowStates[key] {
                 log("[SessionWindowRegistry] purging closed window: wid=\(state.windowID) pid=\(state.pid) app=\(state.appName ?? "unknown")")
-                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
+                store.deleteWindowState(windowID: state.windowID)
             }
             windowStates.removeValue(forKey: key)
         }

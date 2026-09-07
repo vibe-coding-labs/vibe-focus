@@ -13,17 +13,18 @@ enum CodexHookPreferences {
 
     // MARK: - Paths
 
-    static var codexConfigDir: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent(".codex")
+    /// 依赖注入点（B32）：`home` 缺省生产家目录，测试注入临时目录即整链无真身 IO。
+    static func codexConfigDir(home: String = NSHomeDirectory()) -> String {
+        (home as NSString).appendingPathComponent(".codex")
     }
 
-    static var codexConfigPath: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent(".codex/hooks.json")
+    static func codexConfigPath(home: String = NSHomeDirectory()) -> String {
+        (home as NSString).appendingPathComponent(".codex/hooks.json")
     }
 
     // MARK: - Installation State
 
-    static var isHookInstalled: Bool {
+    static func isHookInstalled(at path: String = codexConfigPath()) -> Bool {
         // P-INST-282: Codex hook 安装状态检查耗时（Data(contentsOf codexConfigPath) + JSONSerialization 解析 + hooks 字典遍历匹配 command 含 helperScriptPath；设置面板 Codex UI 状态渲染调用）。
         #if PERF_INSTRUMENT
         let ihiStart = Date()
@@ -33,7 +34,7 @@ enum CodexHookPreferences {
             ])
         }
         #endif
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: codexConfigPath)),
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
@@ -69,8 +70,8 @@ enum CodexHookPreferences {
         // 确保已有 token（hook-config.json 需要）
         ClaudeHookPreferences.ensureTokenGenerated()
 
-        let path = codexConfigPath
-        let dir = codexConfigDir
+        let path = codexConfigPath()
+        let dir = codexConfigDir(home: NSHomeDirectory())
 
         // 安装辅助脚本（与 Claude Code 共用 ~/.vibefocus/hook-forwarder.sh）
         let (scriptOK, scriptMsg) = ClaudeHookPreferences.installHelperScript()
@@ -98,17 +99,13 @@ enum CodexHookPreferences {
             log("[CodexHookPreferences] read existing hooks.json, keys: \(hooks.keys.sorted().joined(separator: ","))")
         }
 
-        // 清理旧的 VibeFocus hook 条目
-        cleanVibeFocusHooks(from: &hooks)
-
-        // 合并新生成的 hook 条目
-        let ourHooks = ClaudeHookPreferences.generateHooksDict()
-        for (key, value) in ourHooks {
-            hooks[key] = value
-        }
-        // 与 Claude Code 安装逻辑保持一致：根据触发开关移除不需要的事件
-        if !ClaudeHookPreferences.triggerOnSessionEnd { hooks.removeValue(forKey: "SessionEnd") }
-        if !ClaudeHookPreferences.autoRestoreOnPromptSubmit { hooks.removeValue(forKey: "UserPromptSubmit") }
+        hooks = mergedHooks(
+            existing: hooks,
+            ourHooks: ClaudeHookPreferences.generateHooksDict(),
+            triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd,
+            autoRestoreOnPromptSubmit: ClaudeHookPreferences.autoRestoreOnPromptSubmit,
+            scriptPath: ClaudeHookPreferences.helperScriptPath
+        )
 
         log(
             "[CodexHookPreferences] installing hooks",
@@ -133,7 +130,10 @@ enum CodexHookPreferences {
     }
 
     /// 从 Codex ~/.codex/hooks.json 移除 VibeFocus hook
-    static func uninstallHookFromCodexSettings() -> (Bool, String) {
+    static func uninstallHookFromCodexSettings(
+        at path: String = codexConfigPath(),
+        scriptPath: String = ClaudeHookPreferences.helperScriptPath
+    ) -> (Bool, String) {
         // P-INST-284: Codex hook 卸载耗时（Data(contentsOf codexConfigPath) 读 + JSONSerialization 解析 + cleanVibeFocusHooks 清理 + JSONSerialization 编码 + atomic write；设置面板 Codex 卸载按钮调用）。
         #if PERF_INSTRUMENT
         let uhStart = Date()
@@ -143,14 +143,13 @@ enum CodexHookPreferences {
             ])
         }
         #endif
-        let path = codexConfigPath
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               var hooks = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             // 文件不存在视为已卸载
             return (true, "Codex 配置不存在，无需卸载")
         }
 
-        cleanVibeFocusHooks(from: &hooks)
+        cleanVibeFocusHooks(from: &hooks, scriptPath: scriptPath)
 
         log("[CodexHookPreferences] uninstalling hooks from \(path)", fields: ["remainingEvents": hooks.keys.sorted().joined(separator: ",")])
 
@@ -167,13 +166,33 @@ enum CodexHookPreferences {
         }
     }
 
+    /// 合并语义唯一事实源（纯字典变换，B32 提纯）：清理旧 VibeFocus 条目 → 并入新条目 →
+    /// 按触发开关裁剪事件。install 的正文与测试共用，消除「改安装语义必须同步改测试副本」的漂移面。
+    static func mergedHooks(
+        existing: [String: Any],
+        ourHooks: [String: Any],
+        triggerOnSessionEnd: Bool,
+        autoRestoreOnPromptSubmit: Bool,
+        scriptPath: String
+    ) -> [String: Any] {
+        var hooks = existing
+        cleanVibeFocusHooks(from: &hooks, scriptPath: scriptPath)
+        for (key, value) in ourHooks {
+            hooks[key] = value
+        }
+        // 与 Claude Code 安装逻辑保持一致：根据触发开关移除不需要的事件
+        if !triggerOnSessionEnd { hooks.removeValue(forKey: "SessionEnd") }
+        if !autoRestoreOnPromptSubmit { hooks.removeValue(forKey: "UserPromptSubmit") }
+        return hooks
+    }
+
     /// 从 hooks 字典中清理所有 VibeFocus 相关的 hook 条目
-    /// 逻辑与 ClaudeHookPreferences.cleanVibeFocusHooks 一致（Codex hooks.json 顶层即事件键名）
-    private static func cleanVibeFocusHooks(from hooks: inout [String: Any]) {
+    /// 逻辑与 ClaudeHookPreferences.cleanVibeFocusHooks 一致（Codex hooks.json 顶层即事件键名）；
+    /// `scriptPath` 注入（B32）——测试得以构造匹配/不匹配条目而无需真身脚本路径。
+    static func cleanVibeFocusHooks(from hooks: inout [String: Any], scriptPath: String) {
         log("[CodexHookPreferences] cleanVibeFocusHooks() entered", level: .debug, fields: [
             "keysBefore": hooks.keys.sorted().joined(separator: ",")
         ])
-        let scriptPath = ClaudeHookPreferences.helperScriptPath
         for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
             guard var entries = hooks[key] as? [[String: Any]] else { continue }
             let countBefore = entries.count

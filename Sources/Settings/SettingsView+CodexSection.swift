@@ -47,7 +47,7 @@ extension SettingsView {
             )
 
             HStack(spacing: 12) {
-                Button(CodexHookPreferences.isHookInstalled ? "重新安装" : "安装到 Codex CLI") {
+                Button(CodexHookPreferences.isHookInstalled() ? "重新安装" : "安装到 Codex CLI") {
                     let (ok, msg) = CodexHookPreferences.installHookToCodexSettings()
                     codexInstallSucceeded = ok
                     codexInstallMessage = msg
@@ -55,7 +55,7 @@ extension SettingsView {
                 .buttonStyle(.vibeProminent)
                 .disabled(!hookEnabled)
 
-                if CodexHookPreferences.isHookInstalled {
+                if CodexHookPreferences.isHookInstalled() {
                     Button("卸载") {
                         let (ok, msg) = CodexHookPreferences.uninstallHookFromCodexSettings()
                         codexInstallSucceeded = ok
@@ -78,11 +78,11 @@ extension SettingsView {
 
         SettingsRow(
             title: "Codex Hook 安装状态",
-            detail: CodexInstallPresentation.detailText(installed: CodexHookPreferences.isHookInstalled)
+            detail: CodexInstallPresentation.detailText(installed: CodexHookPreferences.isHookInstalled())
         ) {
             SettingsStatusPill(
-                title: CodexInstallPresentation.pillTitle(installed: CodexHookPreferences.isHookInstalled),
-                tint: CodexInstallPresentation.pillTintName(installed: CodexHookPreferences.isHookInstalled) == "success" ? VibeColors.success : VibeColors.warning
+                title: CodexInstallPresentation.pillTitle(installed: CodexHookPreferences.isHookInstalled()),
+                tint: CodexInstallPresentation.pillTintName(installed: CodexHookPreferences.isHookInstalled()) == "success" ? VibeColors.success : VibeColors.warning
             )
         }
     }

@@ -29,14 +29,19 @@ final class SessionWindowRegistry: ObservableObject {
     private let completedRetention: TimeInterval = 4 * 60 * 60
     private let activeRetention: TimeInterval = 24 * 60 * 60
 
-    private init() {
-        let loaded = WindowStateStore.shared.loadAllWindowStates()
+    /// 持久层（依赖注入点，B32）：生产走 `.shared`（env 可重定向 DB 路径），
+    /// 测试注入临时 `WindowStateStore(dbPath:)` 实现无环境门控的直测。
+    let store: WindowStateStore
+
+    init(store: WindowStateStore = .shared) {
+        self.store = store
+        let loaded = store.loadAllWindowStates()
         var prunedCount = 0
         for state in loaded {
             if TerminalRegistry.isTerminalPID(state.pid) {
                 windowStates[state.windowID] = state
             } else {
-                WindowStateStore.shared.deleteWindowState(windowID: state.windowID)
+                store.deleteWindowState(windowID: state.windowID)
                 prunedCount += 1
                 log("[SessionWindowRegistry] init pruned corrupt binding: wid=\(state.windowID) pid=\(state.pid) app=\(state.appName ?? "nil") sid=\(state.sessionID?.prefix(8) ?? "nil")")
             }
@@ -163,7 +168,7 @@ final class SessionWindowRegistry: ObservableObject {
             ])
         }
         #endif
-        let removed = WindowStateStore.shared.pruneExpiredWindowStates(
+        let removed = store.pruneExpiredWindowStates(
             activeRetention: activeRetention,
             completedRetention: completedRetention
         )
@@ -190,6 +195,6 @@ final class SessionWindowRegistry: ObservableObject {
         }
         #endif
         guard let state = windowStates[windowID] else { return }
-        WindowStateStore.shared.saveWindowState(state)
+        store.saveWindowState(state)
     }
 }
