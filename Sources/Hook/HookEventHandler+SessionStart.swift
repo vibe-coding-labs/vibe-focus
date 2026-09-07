@@ -120,7 +120,14 @@ extension HookEventHandler {
                     message: "Remote machine label '\(failedLabel)' not mapped to a window",
                     sessionID: payload.sessionID, handled: false))
             case .terminalContextMatchFailed:
-                fatalError("remote 通道不可能产生本地失败决策（决策表契约）")
+                // 决策表契约违反（B53）：按 P1 红线保守退让+诚实上报，绝不 crash 应用。
+                log(
+                    "[handleSessionStart] DECISION CONTRACT VIOLATION: remote channel got local failure decision",
+                    level: .error,
+                    fields: ["sessionID": payload.sessionID, "machineLabel": label]
+                )
+                SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：决策表契约违反（remote 通道收到本地失败决策）")
+                return Self.decisionContractViolationResponse(channel: "remote", sessionID: payload.sessionID)
             }
         } else {
             // 本地机器：用 PPID/TTY 进程树匹配
@@ -157,7 +164,18 @@ extension HookEventHandler {
                     message: "Terminal context could not be resolved to a window",
                     sessionID: payload.sessionID, handled: false))
             case .remoteBindingFailed:
-                fatalError("local 通道不可能产生远程失败决策（决策表契约）")
+                // 决策表契约违反（B53）：按 P1 红线保守退让+诚实上报，绝不 crash 应用。
+                log(
+                    "[handleSessionStart] DECISION CONTRACT VIOLATION: local channel got remote failure decision",
+                    level: .error,
+                    fields: [
+                        "sessionID": payload.sessionID,
+                        "tty": terminalCtx.tty ?? "nil",
+                        "ppid": terminalCtx.ppid ?? "nil"
+                    ]
+                )
+                SessionWindowRegistry.shared.setLastEventDescription("SessionStart 失败：决策表契约违反（local 通道收到远程失败决策）")
+                return Self.decisionContractViolationResponse(channel: "local", sessionID: payload.sessionID)
             }
         }
     }

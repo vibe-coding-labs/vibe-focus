@@ -73,4 +73,22 @@ extension HookEventHandler {
             )
         }
     }
+
+    /// 决策表契约违反的诚实上报（B53）：跨通道 case 到达执行半区 = 决策表演化破坏
+    /// 契约的信号。按 P1 红线保守退让——返回诚实 500、请求被拒但应用继续活着；
+    /// 旧实现在此 fatalError，一次 hook 请求即可击穿整个菜单栏应用。
+    /// 纯函数，Runner 直测锁定（状态码/代码/语义字段恒定，供 --diagnose 对照）。
+    static func decisionContractViolationResponse(
+        channel: String,
+        sessionID: String
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        (
+            500,
+            ClaudeHookResponse(
+                ok: false, code: "decision_contract_violation",
+                message: "Decision table contract violated in \(channel) channel (unexpected cross-channel decision); app kept alive",
+                sessionID: sessionID, handled: false
+            )
+        )
+    }
 }
