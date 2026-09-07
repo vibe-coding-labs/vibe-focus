@@ -43,7 +43,7 @@
 - **覆盖率**：全库行覆盖 10.60% → **15.84%**（+49% 相对提升）；函数覆盖 6433 中新增 1000+ 可测函数入覆盖。
   B13~B18 六轮镜像转直测后，WindowMove+Decision 80.9%、ClaudeHookModels 80.8%（区域）、
   TerminalContext+Helpers 75%——提取单元函数级≈100%，编排路径由真机 E2E 家族验收。
-- **Runner 直测断言**：278 → **671/671 全绿**（+393 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3 + B31 Doctor 取证纯逻辑 10 断言 e485523）。
+- **Runner 直测断言**：278 → **736/736 全绿**（+458 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13 + B29 yabai 环境探针/绑定决策 18 断言 df2ac5a + B30 解码去重助手/语音模式 5 断言 010b1d3 + B31 Doctor 取证纯逻辑 10 断言 e485523 + B33 路径注入/路由提纯 9 断言 79028dc）。
 - **结构**：1055 行巨石 → 六模块；编排页/提示音段拆分；恢复帧规划去重；模型与编排分层。
 - **真 bug**：volume 必填解码静默重置用户偏好（单测先行实锤修复）。
 - **死测试清理**：FocusStepsCalculationTests（镜像函数已从源码删除）。
@@ -86,4 +86,5 @@
 | B31 | Doctor 取证纯逻辑镜像转直测 10 断言：parseJournalLine 三事件行+容错（install 无 pid 占位/未知 kind/junk→nil）、accessibilityFlips 翻转捕获（nil 轴跳过不阻断）、unmatchedLaunches 配对抵消+at 排序（外部击杀实证）、runtimeAXFlipLine 版面守卫（e485523）| ✅ 2026-09-07 |
 | B31 后覆盖率复测 | 行覆盖 12.88%（27267 行基数；B19 基线 15.84% 口径相同但分母已扩张——并行功能开发新增大量编排/SwiftUI 代码 + env 门控注册表测试不计入普通运行）。结构指标持续向好：**18 个文件行覆盖 100%**（LayoutFrameCalculator/ToggleFocusBranching/ToggleTriggerGate/ConditionPolling/FloatSettle/YabaiErrorClassifier/OverlayRefreshPolicy/Decision 三兄弟等纯内核族全部满格），函数级满格面更广 | 复测于 2026-09-07 |
 | B32 | 依赖注入改造拔除编排层零覆盖根因：SessionWindowRegistry `private init` → `init(store:)`（三文件 12 处 WindowStateStore.shared 硬引用改走注入属性，直构临时 SQLite 即整链直测，无需 env 门控）；CodexHookPreferences 路径/脚本参数化 + install 清理合并段提纯为 mergedHooks 纯函数；直测 21 断言（isInstalled 四态/清理精准/合并保真+开关裁剪；init 剪枝/bind 拒绝/状态操作落库经真临时库），Runner 697→718（ff73ad9）| ✅ 2026-09-07 |
+| B33 | Claude 偏好路径注入（claudeSettingsPath/Dir home 注入、isHookInstalled(at:)、uninstall 全参数化+removesHelpers 测试开关）+ SessionStart 前置分流提纯 decideSessionStartRoute 纯函数（handler 双通道收敛单主体）+ 直测 9 断言（安装→卸载回环经临时 settings）；ClaudeHookServer 审计结论=剩余 0% 属 GCDWebServer 第三方编排、DI 价值低缓办（79028dc）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |

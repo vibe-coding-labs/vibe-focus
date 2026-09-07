@@ -214,12 +214,13 @@ enum ClaudeHookPreferences {
 
     // MARK: - Claude Settings Integration
 
-    static var claudeSettingsPath: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent(".claude/settings.json")
+    /// 依赖注入点（B33）：`home` 缺省生产家目录，测试注入临时目录即免真身 IO。
+    static func claudeSettingsPath(home: String = NSHomeDirectory()) -> String {
+        (home as NSString).appendingPathComponent(".claude/settings.json")
     }
 
-    static var claudeSettingsDir: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent(".claude")
+    static func claudeSettingsDir(home: String = NSHomeDirectory()) -> String {
+        (home as NSString).appendingPathComponent(".claude")
     }
 
     static var claudeSettingsExists: Bool {
@@ -232,10 +233,10 @@ enum ClaudeHookPreferences {
             ])
         }
         #endif
-        return FileManager.default.fileExists(atPath: claudeSettingsPath)
+        return FileManager.default.fileExists(atPath: claudeSettingsPath())
     }
 
-    static var isHookInstalled: Bool {
+    static func isHookInstalled(at path: String = claudeSettingsPath()) -> Bool {
         // P-INST-82: hook 安装状态检查耗时（Data(contentsOf claudeSettingsPath) + JSONSerialization 解析 + hooks 字典遍历匹配；设置面板 UI 状态渲染调用；文件读 + JSON 解析在 settings 较大时可阻塞）。
         #if PERF_INSTRUMENT
         let ihiStart = Date()
@@ -246,7 +247,7 @@ enum ClaudeHookPreferences {
         }
         #endif
         log("ClaudeHookPreferences.isHookInstalled checking", level: .debug)
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: claudeSettingsPath)),
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hooks = json["hooks"] as? [String: Any] else {
             log("ClaudeHookPreferences.isHookInstalled: no hooks found in settings", level: .debug)

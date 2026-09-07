@@ -5271,7 +5271,6 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
     }
 
     // MARK: Minimap live 切换反馈映射（真实实现——结局→文案，Batch 32 用户报告修复）
-
     do {
         check("spaceSwitch: noDrift → 已是当前工作区（含 space 号）",
               GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 5).contains("已是当前工作区")
@@ -5287,6 +5286,70 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                   GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 1), spaceIndex: 2),
                   GridSpaceSwitchFeedback.message(for: .failed(postSpace: 1), spaceIndex: 2),
               ]).count == 3)
+    }
+
+    // MARK: Claude 偏好路径注入 + SessionStart 路由提纯（真实实现——B33：沿用 B32 注入模式）
+
+    do {
+        // SessionStart 前置分流（isRemote 由 machineLabel 派生 → 可达 4 态）。
+        func ctx(tty: String? = nil, machine: String? = nil) -> TerminalContext {
+            TerminalContext(termSessionID: nil, itermSessionID: nil, kittyWindowID: nil,
+                            weztermPane: nil, tty: tty, ppid: nil,
+                            claudeProjectDir: nil, windowID: nil, machineLabel: machine)
+        }
+        check("ssRoute: nil ctx → noContext",
+              HookEventHandler.decideSessionStartRoute(terminalCtx: nil) == .noContext)
+        check("ssRoute: 无用 ctx → noContext",
+              HookEventHandler.decideSessionStartRoute(terminalCtx: ctx()) == .noContext)
+        check("ssRoute: 本地（tty 有用）→ local",
+              HookEventHandler.decideSessionStartRoute(terminalCtx: ctx(tty: "/dev/ttys001"))
+              == .local(ctx(tty: "/dev/ttys001")))
+        check("ssRoute: remote+label → remote 通道携带 ctx 与 label",
+              HookEventHandler.decideSessionStartRoute(terminalCtx: ctx(tty: "/dev/ttys001", machine: "srv-1"))
+              == .remote(ctx(tty: "/dev/ttys001", machine: "srv-1"), label: "srv-1"))
+
+        // ClaudeHookPreferences：home 注入 + 安装→卸载回环（临时 settings，零真身 IO）。
+        let home = "/tmp/vibefocus-b33-home-\(getpid())"
+        let settingsPath = ClaudeHookPreferences.claudeSettingsPath(home: home)
+        check("claude: 路径拼接 home 注入",
+              settingsPath == home + "/.claude/settings.json"
+              && ClaudeHookPreferences.claudeSettingsDir(home: home) == home + "/.claude")
+        check("claude isInstalled: 缺文件 → false",
+              ClaudeHookPreferences.isHookInstalled(at: settingsPath) == false)
+
+        let scriptPath = ClaudeHookPreferences.helperScriptPath
+        let targetURL = ClaudeHookPreferences.endpointURLString()
+        let generated = ClaudeHookPreferences.generateHooksDict()
+        let hooks = HookSettingsComposition.composeDesiredHooks(
+            existing: [:], generated: generated, targetURL: targetURL, scriptPath: scriptPath)
+
+        func writeSettings(_ obj: [String: Any]) {
+            try? FileManager.default.createDirectory(
+                atPath: (settingsPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+            try? data.write(to: URL(fileURLWithPath: settingsPath))
+        }
+        writeSettings(["hooks": hooks, "model": "claude-opus"])
+        check("claude isInstalled: 真实 compose 产物 → true",
+              ClaudeHookPreferences.isHookInstalled(at: settingsPath) == true)
+
+        var withForeign = hooks
+        withForeign["Notification"] = [["hooks": [["type": "command", "command": "/usr/bin/user-own"]]]]
+        writeSettings(["hooks": withForeign, "model": "claude-opus"])
+        let (ok, _) = ClaudeHookPreferences.uninstallHookFromClaudeSettings(
+            at: settingsPath, removesHelpers: false)
+        let after = (try? JSONSerialization.jsonObject(
+            with: try Data(contentsOf: URL(fileURLWithPath: settingsPath)))) as? [String: Any]
+        let afterHooks = after?["hooks"] as? [String: Any]
+        check("claude uninstall: 成功 + VibeFocus 清除 + 他方 hook 与无关键保留",
+              ok == true
+              && ClaudeHookPreferences.isHookInstalled(at: settingsPath) == false
+              && afterHooks?["Notification"] != nil && after?["model"] as? String == "claude-opus")
+        check("claude uninstall: 缺文件 → false 拒绝",
+              ClaudeHookPreferences.uninstallHookFromClaudeSettings(
+                at: home + "/.claude/none.json", removesHelpers: false).0 == false)
+
+        try? FileManager.default.removeItem(atPath: home)
     }
 
     // MARK: 汇总

@@ -121,8 +121,8 @@ extension ClaudeHookPreferences {
         }
         #endif
         ensureTokenGenerated()
-        let path = claudeSettingsPath
-        let dir = claudeSettingsDir
+        let path = claudeSettingsPath()
+        let dir = claudeSettingsDir(home: NSHomeDirectory())
 
         // 安装辅助脚本
         let (scriptOK, scriptMsg) = installHelperScript()
@@ -196,7 +196,14 @@ extension ClaudeHookPreferences {
     }
 
     /// 从 Claude settings.json 中精确移除 VibeFocus Hook
-    static func uninstallHookFromClaudeSettings() -> (Bool, String) {
+    /// 依赖注入点（B33）：`at`/`scriptPath`/`targetURL` 缺省生产值；`removesHelpers=false`
+    /// 供测试跳过真身辅助文件清理。
+    static func uninstallHookFromClaudeSettings(
+        at path: String = claudeSettingsPath(),
+        scriptPath: String = ClaudeHookPreferences.helperScriptPath,
+        targetURL: String = ClaudeHookPreferences.endpointURLString(),
+        removesHelpers: Bool = true
+    ) -> (Bool, String) {
         // P-INST-83: hook 卸载耗时（Data(contentsOf claudeSettingsPath) 读 + JSONSerialization 解析 + cleanVibeFocusHooks 遍历清理 + JSONSerialization 编码 + atomic write + removeHelperFiles 两次 removeItem；设置面板卸载按钮触发；P-INST-78 install 的逆操作）。
         #if PERF_INSTRUMENT
         let uhStart = Date()
@@ -206,7 +213,6 @@ extension ClaudeHookPreferences {
             ])
         }
         #endif
-        let path = claudeSettingsPath
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hooks = settings["hooks"] as? [String: Any] else {
@@ -217,8 +223,8 @@ extension ClaudeHookPreferences {
         let desiredHooks = HookSettingsComposition.composeDesiredHooks(
             existing: hooks,
             generated: [:],
-            targetURL: endpointURLString(),
-            scriptPath: helperScriptPath
+            targetURL: targetURL,
+            scriptPath: scriptPath
         )
         settings["hooks"] = desiredHooks.isEmpty ? nil : desiredHooks
 
@@ -229,8 +235,8 @@ extension ClaudeHookPreferences {
         }
         do {
             try outputData.write(to: URL(fileURLWithPath: path), options: .atomic)
-            // 清理辅助文件
-            removeHelperFiles()
+            // 清理辅助文件（测试注入 removesHelpers=false 跳过真身删除）
+            if removesHelpers { removeHelperFiles() }
             log("[ClaudeHookPreferences] hooks uninstalled successfully")
             return (true, "已移除 Hook")
         } catch {
