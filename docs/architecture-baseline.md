@@ -203,6 +203,11 @@
   防重复 toggle 落 corrupt record）/filterWindowsByPID（layer+PID 过滤与
   元数据透传）/jsonEscape（五类转义+控制符十六进制）三函数真身直测 9 断言，
   Runner 714/714；
+- **Batch 32（feat，用户报告修复）**（4e1a882，b9ef083 合并）：minimap 胶囊
+  点击 live 切换该屏工作区——原设计只设编排目标不切屏（用户感知「点了没反应」）；
+  SpaceController.switchToSpace 薄封装 restore 视角链 + GridSpaceSwitchFeedback
+  三态反馈映射（failed 如实说明空工作区/无 SA 事实，禁止静默）；镜像 4 + Runner
+  真身 4，Runner 740/740；切换链路由 restore 既有锁 + 真机验收覆盖；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
