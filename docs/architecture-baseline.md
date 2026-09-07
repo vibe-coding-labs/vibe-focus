@@ -193,6 +193,11 @@
   哨兵/转义契约随函数成文）+ isMatchedVerdict + makeTerminalDiagnosticScript；
   双通道锁：Standalone 镜像 15 断言 + Runner 真身 11 断言，Runner 697/697；
   行为验证归真机 TITLE_E2E；
+- **Batch 30**（6799877，3a636c1 合并）：toggle restore 决策树镜像盲区收口——
+  decideRestore 六分支穷举（nil 焦点→副屏短路→无 record→无主屏→corrupted→
+  restore，corrupted/valid 夹具走 isValid 的 Cocoa 翻转语义）+ route 映射真身侧
+  回归（Batch 5 失真组合）；Runner 705/705；evaluateRestoreDecision 的 IO 聚合壳
+  归真机 E2E 域；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
