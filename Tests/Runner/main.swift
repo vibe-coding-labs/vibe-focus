@@ -5993,6 +5993,49 @@ final class FakeAuditor: RestoreAuditing {
               plan(.custom, explicit: existingFile, configured: missingFile) == .file(path: existingFile))
     }
 
+    // MARK: Doctor 报告全段落端到端（真实实现——B47：B41 生命周期段之外的六个段落补齐）
+
+    do {
+        let dir = "/tmp/vibefocus-b47-\(getpid())"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let journalPath = dir + "/exits.jsonl"
+        let journal = [
+            "{\"kind\":\"launch\",\"pid\":101,\"at\":\"T1\",\"exe\":\"/app/VF\",\"ax\":true}",
+            "{\"kind\":\"exit\",\"pid\":101,\"at\":\"T2\",\"reason\":\"signal\",\"name\":\"SIGTRAP\"}",
+            "{\"kind\":\"launch\",\"pid\":102,\"at\":\"T3\",\"exe\":\"/app/VF\",\"ax\":false}",
+        ]
+        try? journal.joined(separator: "\n").write(toFile: journalPath, atomically: true, encoding: .utf8)
+        let tmpFatal = dir + "/fatal.tmp"
+        try? "FATAL".write(toFile: tmpFatal, atomically: true, encoding: .utf8)
+        try? "keepalive line 1".write(toFile: dir + "/keepalive.log", atomically: true, encoding: .utf8)
+        try? "fatal archive".write(toFile: dir + "/crash-fatal-1.log", atomically: true, encoding: .utf8)
+        try? "ips body".write(toFile: dir + "/VibeFocus-2026-09-08.ips", atomically: true, encoding: .utf8)
+
+        let paths = DoctorPaths(
+            journalPath: journalPath, logDir: dir, tmpFatalPath: tmpFatal,
+            tmpSnapshotPath: dir + "/none2", keepaliveLogPath: dir + "/keepalive.log",
+            diagnosticReportsDir: dir, appLogPath: dir + "/vibefocus.log")
+        let report = Doctor.report(paths: paths, now: Date(timeIntervalSince1970: 1000))
+
+        check("doctorFull: 授权时间线段——当前状态与翻转计数",
+              report.contains("[辅助功能授权] 当前：未授权")
+              && report.contains("检测到 1 次翻转"))
+        check("doctorFull: 疑似外部击杀段计数（launch 无配对 exit）",
+              report.contains("[疑似外部击杀（launch 无配对 exit，SIGKILL 类）] 1 个"))
+        check("doctorFull: 致命信号现场段——存在含 size 标注、缺失报不存在",
+              report.contains("[致命信号记录现场]")
+              && report.contains("/tmp fatal: 存在 size=")
+              && report.contains("/tmp snapshot: 不存在"))
+        check("doctorFull: .ips 崩溃报告段列出夹具文件",
+              report.contains("[.ips 崩溃报告]") && report.contains("VibeFocus-2026-09-08.ips"))
+        check("doctorFull: keepalive 决策段回显夹具行",
+              report.contains("[keepalive 决策]") && report.contains("keepalive line 1"))
+        check("doctorFull: 构建能力标记段恒在场（自检字节级）",
+              report.contains("[构建能力标记]"))
+
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
