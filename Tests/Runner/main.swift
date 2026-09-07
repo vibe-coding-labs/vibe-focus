@@ -5903,6 +5903,54 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               TitleEditorPreferences.isEnabled == false && TitleEditorPreferences.isHotKeyEnabled == false)
     }
 
+    // MARK: 坐标纯函数补齐（真实实现——B43：漂移和判据/夹取/主屏归属，原仅 E2E 门控覆盖）
+
+    do {
+        // originDrift/sizeDrift：曼哈顿漂移和（日志展示与收敛判定唯一公式）。
+        check("coord: originDrift 绝对值求和（负向同权）",
+              CoordinateKit.originDrift(CGPoint(x: 3, y: -4), CGPoint(x: 0, y: 0)) == 7
+              && CoordinateKit.originDrift(CGPoint(x: 5, y: 5), CGPoint(x: 5, y: 5)) == 0)
+        check("coord: sizeDrift 宽高差绝对值求和",
+              CoordinateKit.sizeDrift(CGSize(width: 50, height: 50), CGSize(width: 40, height: 60)) == 20)
+
+        // isSizeConverged：漂移和 ≤ 容差（playbook 2.16a 第十二刀：禁止逐轴判据的合计超调）。
+        check("coord: 漂移和判据——逐轴均贴容差但合计超调 → 不收敛",
+              CoordinateKit.isSizeConverged(actual: CGSize(width: 50, height: 50),
+                                            target: CGSize(width: 40, height: 60), tolerance: 10) == false
+              && CoordinateKit.isSizeConverged(actual: CGSize(width: 45, height: 60),
+                                               target: CGSize(width: 40, height: 60), tolerance: 10) == true)
+
+        // isFrameConverged：origin 与 size 双维度漂移和均 ≤ 容差。
+        let target = CGRect(x: 100, y: 200, width: 800, height: 600)
+        check("coord: isFrameConverged 双维容差内收敛",
+              CoordinateKit.isFrameConverged(actual: CGRect(x: 102, y: 198, width: 802, height: 598),
+                                             target: target, tolerance: 5))
+        check("coord: isFrameConverged 任一维超差即不收敛",
+              !CoordinateKit.isFrameConverged(actual: CGRect(x: 106, y: 200, width: 800, height: 600),
+                                              target: target, tolerance: 5)
+              && !CoordinateKit.isFrameConverged(actual: CGRect(x: 100, y: 200, width: 810, height: 600),
+                                                 target: target, tolerance: 5))
+
+        // clampFrame：尺寸 min 收窄 + 位置夹回内部（右/下越界与居中内不动）。
+        let bounds = CGRect(x: 0, y: 0, width: 1000, height: 1000)
+        check("coord: clampFrame 界内原样 + 超界夹边",
+              CoordinateKit.clampFrame(CGRect(x: 100, y: 100, width: 800, height: 600), into: bounds)
+              == CGRect(x: 100, y: 100, width: 800, height: 600)
+              && CoordinateKit.clampFrame(CGRect(x: 5000, y: 500, width: 800, height: 600), into: bounds)
+              == CGRect(x: 200, y: 400, width: 800, height: 600))
+        check("coord: clampFrame 超大 frame 尺寸收窄到 bounds",
+              CoordinateKit.clampFrame(CGRect(x: -50, y: -50, width: 5000, height: 3000), into: bounds)
+              == bounds)
+
+        // isOnMainScreen(rect:mainScreenFrame:)：中心点包含判定（全仓唯一主屏归属实现）。
+        let mainFrame = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+        check("coord: isOnMainScreen 中心点在主屏内/外",
+              CoordinateKit.isOnMainScreen(CGRect(x: 800, y: 500, width: 100, height: 100),
+                                           mainScreenFrame: mainFrame)
+              && !CoordinateKit.isOnMainScreen(CGRect(x: 2000, y: 500, width: 100, height: 100),
+                                               mainScreenFrame: mainFrame))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
