@@ -104,7 +104,8 @@ enum CodexHookPreferences {
             ourHooks: ClaudeHookPreferences.generateHooksDict(),
             triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd,
             autoRestoreOnPromptSubmit: ClaudeHookPreferences.autoRestoreOnPromptSubmit,
-            scriptPath: ClaudeHookPreferences.helperScriptPath
+            scriptPath: ClaudeHookPreferences.helperScriptPath,
+            targetURL: ClaudeHookPreferences.endpointURLString()
         )
 
         log(
@@ -132,7 +133,8 @@ enum CodexHookPreferences {
     /// 从 Codex ~/.codex/hooks.json 移除 VibeFocus hook
     static func uninstallHookFromCodexSettings(
         at path: String = codexConfigPath(),
-        scriptPath: String = ClaudeHookPreferences.helperScriptPath
+        scriptPath: String = ClaudeHookPreferences.helperScriptPath,
+        targetURL: String = ClaudeHookPreferences.endpointURLString()
     ) -> (Bool, String) {
         // P-INST-284: Codex hook 卸载耗时（Data(contentsOf codexConfigPath) 读 + JSONSerialization 解析 + cleanVibeFocusHooks 清理 + JSONSerialization 编码 + atomic write；设置面板 Codex 卸载按钮调用）。
         #if PERF_INSTRUMENT
@@ -149,7 +151,7 @@ enum CodexHookPreferences {
             return (true, "Codex 配置不存在，无需卸载")
         }
 
-        cleanVibeFocusHooks(from: &hooks, scriptPath: scriptPath)
+        cleanVibeFocusHooks(from: &hooks, scriptPath: scriptPath, targetURL: targetURL)
 
         log("[CodexHookPreferences] uninstalling hooks from \(path)", fields: ["remainingEvents": hooks.keys.sorted().joined(separator: ",")])
 
@@ -173,10 +175,11 @@ enum CodexHookPreferences {
         ourHooks: [String: Any],
         triggerOnSessionEnd: Bool,
         autoRestoreOnPromptSubmit: Bool,
-        scriptPath: String
+        scriptPath: String,
+        targetURL: String
     ) -> [String: Any] {
         var hooks = existing
-        cleanVibeFocusHooks(from: &hooks, scriptPath: scriptPath)
+        cleanVibeFocusHooks(from: &hooks, scriptPath: scriptPath, targetURL: targetURL)
         for (key, value) in ourHooks {
             hooks[key] = value
         }
@@ -186,27 +189,26 @@ enum CodexHookPreferences {
         return hooks
     }
 
-    /// 从 hooks 字典中清理所有 VibeFocus 相关的 hook 条目
-    /// 逻辑与 ClaudeHookPreferences.cleanVibeFocusHooks 一致（Codex hooks.json 顶层即事件键名）；
-    /// `scriptPath` 注入（B32）——测试得以构造匹配/不匹配条目而无需真身脚本路径。
-    static func cleanVibeFocusHooks(from hooks: inout [String: Any], scriptPath: String) {
+    /// 从 hooks 字典中清理所有 VibeFocus 相关的 hook 条目（Codex hooks.json 顶层即事件键名）。
+    /// B46 统一判据：识别走 HookSettingsComposition 唯一事实源（url 精确相等 OR command 含
+    /// 脚本路径）——此前本地内联仅按 command 匹配，url 形态旧条目漏删（双份判据漂移修复）；
+    /// `targetURL` 注入（B32/B46）——测试免真身脚本路径与端口。
+    static func cleanVibeFocusHooks(
+        from hooks: inout [String: Any],
+        scriptPath: String,
+        targetURL: String
+    ) {
         log("[CodexHookPreferences] cleanVibeFocusHooks() entered", level: .debug, fields: [
             "keysBefore": hooks.keys.sorted().joined(separator: ",")
         ])
         for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
-            guard var entries = hooks[key] as? [[String: Any]] else { continue }
-            let countBefore = entries.count
-            entries.removeAll { entry in
-                guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
-                return hookList.contains { hook in
-                    if let command = hook["command"] as? String, command.contains(scriptPath) { return true }
-                    return false
-                }
-            }
-            if entries.isEmpty { hooks.removeValue(forKey: key) }
-            else { hooks[key] = entries }
+            guard let entries = hooks[key] as? [[String: Any]] else { continue }
+            let stripped = HookSettingsComposition.stripVibeFocusEntries(
+                from: entries, targetURL: targetURL, scriptPath: scriptPath)
+            if stripped.kept.isEmpty { hooks.removeValue(forKey: key) }
+            else { hooks[key] = stripped.kept }
             log("[CodexHookPreferences] cleanVibeFocusHooks() cleaned \(key)", level: .debug, fields: [
-                "removed": String(countBefore - entries.count)
+                "removed": String(stripped.removed)
             ])
         }
     }

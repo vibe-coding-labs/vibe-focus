@@ -101,5 +101,7 @@
 | B45 | HotKeyManager.validate 提纯为 nonisolated static validationError(for:)（修饰键要求 + knownConflicts 查表唯一事实源），两处调用点静态化行为不变；Runner 内同语义镜像 hotKeyPassesSystemConflicts 删除、校验路径直测真身（无修饰键拒绝/冲突携带原因/默认 ⌃Q 合法/shiftKey 不算修饰），4 断言（16ebc1a）| ✅ 2026-09-08 |
 | B46 | resolveSound 解析映射提纯为 SoundManager.soundResolutionPlan 纯函数（none/系统命名音/Bundle 资源名/自定义文件四通道 + 缺失降级 Hero + 显式路径优先级），resolveSound 只剩按计划执行；直测 6 断言免 IO 直锁映射（7f3e94a）| ✅ 2026-09-08 |
 | B47 | Doctor.report 全段落端到端补齐（B41 三段之外的六段）：辅助功能授权时间线（当前状态+翻转计数）、疑似外部击杀计数、致命信号现场（存在 size/缺失不存在）、.ips 报告列表、keepalive 尾部回显、构建能力标记段恒在场——DoctorPaths 注入 + 临时夹具零真身 IO，6 断言（17c4a80）| ✅ 2026-09-08 |
+| B48 | 双份判据漂移修复：CodexHookInstaller.cleanVibeFocusHooks 内联仅按 command 匹配（url 形态旧条目漏删），统一改调 HookSettingsComposition.stripVibeFocusEntries 唯一判据（url 精确 OR command 含脚本路径），targetURL 传递链补齐 clean/mergedHooks/uninstall 三签名；行为变化=Codex 安装/卸载现会清 url 精确匹配旧 HTTP 条目（与 Claude 侧对齐），断言更新 6 处（c0b4b6e）| ✅ 2026-09-08 |
+| B49 | CoordinateKit 按纯净度拆分（330→171+175）：纯坐标数学（标识符/y 换算/clampFrame/漂移判据族，仅 CoreGraphics+Foundation、零 AppKit 触碰）与 NSScreen 查询半区（主屏帧/索引互转/NSApp 枚举）分文件——落实原文件「纯坐标数学」设计声明；纯文件搬移零行为变更，B43/B15 直测兜底（01cdb99）| ✅ 2026-09-08 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——**2026-09-08 已向用户征询裁决并附事实**（72 文件/10306 行；Package.swift:65 以专用 target 引用但本机不可执行；所锁逻辑已全部被 Runner 814 条真身直测覆盖且更新），用户未即时答复，默认维持保留现状；任何时刻用户回复「删」即 fork worktree 清理 + 三门禁推送。git 历史可找回，未来换完整 Xcode 亦可从历史复活 | 征询于 2026-09-08 |
 | 覆盖率复测（B39 后） | 行覆盖 **16.93%**（27371 行基数，函数 23.62%）；较 B31 后复测 12.88% **+4.05pp**——分母微增下覆盖行增长超 1100 行，B32~B39 注入化/直测化与并行会话直测共同贡献；18 文件 100% 满格继续有效 | 复测于 2026-09-08 |
