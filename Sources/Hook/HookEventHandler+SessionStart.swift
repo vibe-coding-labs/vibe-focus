@@ -5,10 +5,29 @@
 import Cocoa
 import Foundation
 
+/// SessionStart 前置分流（纯决策，B33 提纯）：上下文缺失 → noContext；
+/// remote + machineLabel → remote；remote 无 label 与本地一样走 TTY/PPID 通道（历史行为）。
+enum SessionStartRoute: Equatable {
+    case noContext
+    case remote(TerminalContext, label: String)
+    case local(TerminalContext)
+}
+
 @MainActor
 extension HookEventHandler {
 
     // MARK: - Session Start
+
+    /// 通道分流唯一事实源——handler 的 guard/if 结构由此函数表达，分支语义 Runner 直测锁定。
+    static func decideSessionStartRoute(terminalCtx: TerminalContext?) -> SessionStartRoute {
+        guard let terminalCtx = terminalCtx, terminalCtx.hasUsefulContext else {
+            return .noContext
+        }
+        if terminalCtx.isRemote, let label = terminalCtx.machineLabel {
+            return .remote(terminalCtx, label: label)
+        }
+        return .local(terminalCtx)
+    }
 
     /// Handle SessionStart hook event — bind a terminal window to a Claude Code session.
     ///
@@ -45,7 +64,8 @@ extension HookEventHandler {
             ]
         )
 
-        guard let terminalCtx = payload.terminalCtx, terminalCtx.hasUsefulContext else {
+        switch Self.decideSessionStartRoute(terminalCtx: payload.terminalCtx) {
+        case .noContext:
             log(
                 "[handleSessionStart] no terminal context, cannot bind",
                 level: .warn,
@@ -60,11 +80,22 @@ extension HookEventHandler {
                     sessionID: payload.sessionID, handled: false
                 )
             )
+        case .remote(let terminalCtx, let label):
+            return handleRoutedSessionBind(terminalCtx: terminalCtx, payload: payload, label: label)
+        case .local(let terminalCtx):
+            return handleRoutedSessionBind(terminalCtx: terminalCtx, payload: payload, label: nil)
         }
+    }
 
-        // 区分本地绑定和远程映射；双通道解析结果由 decideSessionBind 纯判定裁决
+    /// remote/local 双通道共用主体（原 if/else 两翼；label=nil 即本地通道）。
+    private func handleRoutedSessionBind(
+        terminalCtx: TerminalContext,
+        payload: ClaudeHookPayload,
+        label: String?
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        // 双通道解析结果由 decideSessionBind 纯判定裁决
         //（Batch 19，决策与响应映射 Runner 直测穷尽锁定）。
-        if terminalCtx.isRemote, let label = terminalCtx.machineLabel {
+        if let label {
             log(
                 "[handleSessionStart] remote session detected, resolving via machine_label",
                 level: .debug,

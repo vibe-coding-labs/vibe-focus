@@ -47,18 +47,18 @@ extension SettingsView {
 
             SettingsRow(
                 title: "Hook 安装状态",
-                detail: ClaudeHookPreferences.isHookInstalled
+                detail: ClaudeHookPreferences.isHookInstalled()
                     ? "已安装到 ~/.claude/settings.json"
                     : "尚未安装"
             ) {
                 SettingsStatusPill(
-                    title: ClaudeHookPreferences.isHookInstalled ? "已安装" : "未安装",
-                    tint: ClaudeHookPreferences.isHookInstalled ? VibeColors.success : VibeColors.warning
+                    title: ClaudeHookPreferences.isHookInstalled() ? "已安装" : "未安装",
+                    tint: ClaudeHookPreferences.isHookInstalled() ? VibeColors.success : VibeColors.warning
                 )
             }
 
             HStack(spacing: 12) {
-                Button(ClaudeHookPreferences.isHookInstalled ? "重新安装" : "一键安装 Hook") {
+                Button(ClaudeHookPreferences.isHookInstalled() ? "重新安装" : "一键安装 Hook") {
                     let (ok, msg) = ClaudeHookPreferences.installHookToClaudeSettings()
                     hookInstallSucceeded = ok
                     hookInstallMessage = msg
@@ -66,7 +66,7 @@ extension SettingsView {
                 .buttonStyle(.vibeProminent)
                 .disabled(!hookEnabled)
 
-                if ClaudeHookPreferences.isHookInstalled {
+                if ClaudeHookPreferences.isHookInstalled() {
                     Button("卸载") {
                         let (ok, msg) = ClaudeHookPreferences.uninstallHookFromClaudeSettings()
                         hookInstallSucceeded = ok
