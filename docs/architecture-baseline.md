@@ -223,6 +223,11 @@
   解析器；真机门禁 SIZE_E2E 885/885 + GRID_SPACE_E2E 873/873；**顺带修复 SIZE_E2E
   三处 P40UG 时代硬编码坐标**（换布局后落所有屏外，改当前副屏动态推导 + 副屏归属
   几何判定）与 GRID_SPACE setup 同源猜序残留；
+- **Batch 35（test，纪律机制化）**（747035a）：架构守护 R11——yabai 显示器索引
+  猜序版（yabaiDisplayIndex/nsScreen(forYabaiDisplayIndex:)）仅许定义处 +
+  SpaceController 精确解析器回退线，白名单外热路径直呼静态拦截；自测三锁
+  （命中/exact 系不误伤/回退线放行）；当前 Sources 零违例即 Batch 34 扫尾
+  完成的机器证明；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
