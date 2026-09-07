@@ -145,7 +145,13 @@ struct ScreenMinimapView: View {
         if let input = screens.first(where: { $0.displayID == screen.displayID }) {
             parts.append("\(Int(input.cocoaFrame.width))×\(Int(input.cocoaFrame.height))")
         }
-        parts.append("#\(screen.displayID)")
+        // 用户可见标注一律 yabai display index（与 Space 胶囊同一坐标系）；
+        // #CGDirectDisplayID 是另一套体系，仅在 yabai 不可用时兜底展示。
+        if let yabai = screen.yabaiDisplayIndex {
+            parts.append("屏\(yabai)")
+        } else {
+            parts.append("#\(screen.displayID)")
+        }
         if let visible = screen.visibleSpaceIndex {
             parts.append("S\(visible)")
         }
@@ -214,9 +220,10 @@ struct ScreenMinimapView: View {
     }
 
     private func screenTapHelp(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
+        let label = screen.yabaiDisplayIndex.map { "屏\($0)" } ?? "#\(screen.displayID)"
         if let visible = screen.visibleSpaceIndex {
-            return "编排到「\(screen.name)」当前工作区 Space \(visible)"
+            return "编排到「\(screen.name)」（\(label)）当前工作区 Space \(visible)"
         }
-        return "编排到「\(screen.name)」"
+        return "编排到「\(screen.name)」（\(label)）"
     }
 }

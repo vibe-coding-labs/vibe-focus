@@ -6036,6 +6036,46 @@ final class FakeAuditor: RestoreAuditing {
         try? FileManager.default.removeItem(atPath: dir)
     }
 
+    // MARK: NSScreen ↔ yabai display 几何匹配（真实实现——minimap 对应关系修复，Batch 33）
+
+    do {
+        // 回归主案例：yabai 序与 NSScreen 序相反（同尺寸双副屏），按几何必须配对正确。
+        let cocoaAB = [
+            CGRect(x: 0, y: 0, width: 1920, height: 1080),
+            CGRect(x: -1920, y: 0, width: 1920, height: 1080),
+            CGRect(x: 1920, y: 0, width: 1920, height: 1080),
+        ]
+        let quartzReversed = [
+            CGRect(x: 0, y: 0, width: 1920, height: 1080),
+            CGRect(x: 1920, y: 0, width: 1920, height: 1080),
+            CGRect(x: -1920, y: 0, width: 1920, height: 1080),
+        ]
+        let matchA = ScreenLayoutMapper.matchYabaiDisplayIndices(
+            cocoaFrames: cocoaAB, mainHeight: 1080,
+            yabaiIndices: [1, 2, 3], yabaiQuartzFrames: quartzReversed)
+        check("yabaiMatchDirect A: 反序副屏几何配对（左→3 / 右→2）",
+              matchA[0] == 1 && matchA[1] == 3 && matchA[2] == 2)
+        let matchB = ScreenLayoutMapper.matchYabaiDisplayIndices(
+            cocoaFrames: [
+                CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                CGRect(x: 0, y: 1117, width: 1920, height: 1080),
+            ],
+            mainHeight: 1117,
+            yabaiIndices: [1, 2],
+            yabaiQuartzFrames: [
+                CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                CGRect(x: 0, y: -1080, width: 1920, height: 1080),
+            ])
+        check("yabaiMatchDirect B: 主屏上方副屏（quartz 负 y）翻转匹配",
+              matchB[0] == 1 && matchB[1] == 2)
+        check("yabaiMatchDirect C: 数量不符/空输入 → 空表回退",
+              ScreenLayoutMapper.matchYabaiDisplayIndices(
+                cocoaFrames: cocoaAB, mainHeight: 1080,
+                yabaiIndices: [1], yabaiQuartzFrames: quartzReversed).isEmpty
+              && ScreenLayoutMapper.matchYabaiDisplayIndices(
+                cocoaFrames: [], mainHeight: 1080, yabaiIndices: [], yabaiQuartzFrames: []).isEmpty)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

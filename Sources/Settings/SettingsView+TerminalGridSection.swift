@@ -126,9 +126,27 @@ extension SettingsView {
         )
     }
 
-    /// 当前编排目标的摘要胶囊文案
+    /// 当前编排目标的摘要胶囊文案（2026-09-08 起标注统一 yabai display index——
+    /// 与 minimap 屏标签/Space 胶囊同一坐标系，杜绝多套编号并存；查不到快照时
+    /// 回退 #CGDisplayID 老格式）
     var gridTargetSummary: String? {
-        GridTargetCode.parse(gridTargetCode)?.summaryText
+        guard let target = GridTargetCode.parse(gridTargetCode) else { return nil }
+        func yabaiLabel(_ displayID: UInt32) -> String {
+            if let y = gridMinimapScreens.first(where: { $0.displayID == displayID })?.yabaiDisplayIndex {
+                return "屏\(y)"
+            }
+            return "#\(displayID)"
+        }
+        switch target {
+        case .main:
+            return "→ 主屏"
+        case .focused:
+            return "→ 焦点屏"
+        case .display(let displayID):
+            return "→ \(yabaiLabel(displayID)) 当前 Space"
+        case .displaySpace(let displayID, let spaceIndex):
+            return "→ \(yabaiLabel(displayID)) · Space \(spaceIndex)"
+        }
     }
 
     /// minimap 数据构建：真实屏幕快照（Cocoa frame）+ yabai 空间快照。
@@ -139,15 +157,31 @@ extension SettingsView {
             return (display, ScreenLayoutMapper.InputSpace(yabaiIndex: index, isVisible: info.isVisible ?? false))
         }, by: { $0.display }).mapValues { $0.map { $0.space }.sorted { $0.yabaiIndex < $1.yabaiIndex } }
 
-        gridMinimapScreens = NSScreen.screens.map { screen in
+        // NSScreen ↔ yabai display 几何精确匹配（2026-09-08 用户实测「对应关系完全
+        // 错误」根因：旧实现按 NSScreen 顺序猜 yabai 索引，两块同尺寸副屏排序反转
+        // 即胶囊挂错屏、点击切错屏）。yabai 不可用时回退 nil（老标注 + 空 Space 带）。
+        let screens = NSScreen.screens
+        let mainHeight = screens.first { $0.frame.origin == .zero }?.frame.height ?? 0
+        let yabaiDisplays = SpaceController.shared.queryDisplays() ?? []
+        let yabaiIndexByScreenIndex = ScreenLayoutMapper.matchYabaiDisplayIndices(
+            cocoaFrames: screens.map(\.frame),
+            mainHeight: mainHeight,
+            yabaiIndices: yabaiDisplays.compactMap(\.index),
+            yabaiQuartzFrames: yabaiDisplays.compactMap { info in
+                info.frame.map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) }
+            }
+        )
+
+        gridMinimapScreens = screens.enumerated().map { screenIndex, screen in
             let displayID = CoordinateKit.cgDisplayID(for: screen) ?? 0
-            let yabaiIndex = CoordinateKit.yabaiDisplayIndex(for: screen)
+            let yabaiIndex = yabaiIndexByScreenIndex[screenIndex]
             return ScreenLayoutMapper.InputScreen(
                 displayID: displayID,
                 name: screen.localizedName,
                 cocoaFrame: screen.frame,
                 isMain: displayID == CGMainDisplayID(),
-                spaces: yabaiIndex.flatMap { spacesByYabaiDisplay[$0] } ?? []
+                spaces: yabaiIndex.flatMap { spacesByYabaiDisplay[$0] } ?? [],
+                yabaiDisplayIndex: yabaiIndex
             )
         }
     }

@@ -208,4 +208,16 @@ extension SpaceController {
         }
         return space.index
     }
+
+    /// yabai displays 全量查询（index + frame，frame 为 Quartz TopLeft 全局坐标）。
+    /// Minimap「NSScreen ↔ yabai 显示器」几何精确匹配的数据源——禁止用 NSScreen
+    /// 顺序猜 yabai 索引（两块同尺寸副屏排序反转即挂错胶囊/切错屏，2026-09-08 用户实测）。
+    func queryDisplays(caller: String = #function) -> [YabaiDisplayInfo]? {
+        guard let result = runYabai(arguments: ["-m", "query", "--displays"]),
+              result.exitCode == 0 else {
+            log("[SpaceController] queryDisplays failed", level: .warn, fields: ["caller": caller])
+            return nil
+        }
+        return decodeArray(YabaiDisplayInfo.self, from: result.stdout)
+    }
 }
