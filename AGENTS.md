@@ -37,7 +37,8 @@ git commit -m "..." -- <具体文件...>
 1. worktree 内跑门禁，全绿才准合：
    - `swift build` 零警告；
    - `bash Tests/run_all_tests.sh` 全绿；
-   - 涉及 restore 链路时加跑 `swift run VibeFocusTestRunner` 全绿；
+   - `swift run VibeFocusTestRunner` 全绿（无条件必跑——B56 起 Runner 是主断言基线，
+     896+ checks 秒级；新增断言入对应域文件 `Tests/Runner/RunnerXxxTests.swift`）；
 2. `git fetch origin` 确认 `origin/main` 无新提交（有则先 rebase/merge 解决冲突）；
 3. `git push origin HEAD:main`（fast-forward）；
 4. 合并推送后清理：`git worktree remove ../vibe-focus-<topic>` + `git branch -d <分支>`。
