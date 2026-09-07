@@ -342,5 +342,40 @@ extension RunnerHarness {
         check("delivery: 窗 display 查询失败（nil）≠ 目标屏 → 跨屏",
               decide(Args(5, 5, 1, nil, true, nil)) == .deliverCrossDisplay)
     }
+
+    // MARK: CompletionSoundType 自身契约（B61：SoundAndTitleTests 漂移镜像转直测）
+
+    do {
+        check("soundType: 7 cases", CompletionSoundType.allCases.count == 7)
+        check("soundType: rawValue 契约",
+              CompletionSoundType.none.rawValue == "none"
+              && CompletionSoundType.systemDefault.rawValue == "system_default"
+              && CompletionSoundType.builtinDing.rawValue == "builtin_ding"
+              && CompletionSoundType.builtinPing.rawValue == "builtin_ping"
+              && CompletionSoundType.builtinComplete.rawValue == "builtin_complete"
+              && CompletionSoundType.builtinAreYouOk.rawValue == "builtin_are_you_ok"
+              && CompletionSoundType.custom.rawValue == "custom")
+        check("soundType: displayName 全表",
+              CompletionSoundType.none.displayName == "无"
+              && CompletionSoundType.systemDefault.displayName == "系统默认"
+              && CompletionSoundType.builtinDing.displayName == "Ding"
+              && CompletionSoundType.builtinPing.displayName == "Ping"
+              && CompletionSoundType.builtinComplete.displayName == "Complete"
+              && CompletionSoundType.builtinAreYouOk.displayName == "Are You OK"
+              && CompletionSoundType.custom.displayName == "自定义文件")
+        check("soundType: isBuiltin 分区",
+              CompletionSoundType.builtinDing.isBuiltin && CompletionSoundType.builtinPing.isBuiltin
+              && CompletionSoundType.builtinComplete.isBuiltin && CompletionSoundType.builtinAreYouOk.isBuiltin
+              && !CompletionSoundType.none.isBuiltin && !CompletionSoundType.systemDefault.isBuiltin
+              && !CompletionSoundType.custom.isBuiltin)
+        let roundtripOK = CompletionSoundType.allCases.allSatisfy { sound in
+            guard let data = try? JSONEncoder().encode(sound),
+                  let back = try? JSONDecoder().decode(CompletionSoundType.self, from: data) else { return false }
+            return back == sound
+        }
+        check("soundType: Codable 回环全 case", roundtripOK)
+        check("soundType: 非法值拒绝解码",
+              (try? JSONDecoder().decode(CompletionSoundType.self, from: Data("\"unknown_sound\"".utf8))) == nil)
+    }
     }
 }
