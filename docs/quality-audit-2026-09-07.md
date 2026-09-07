@@ -85,4 +85,5 @@
 | B30 | ScreenIndexPreferences.load 四源回退链：CF/UserDefaults 两源逐字重复的 decode→enforce→legacy→save 块收敛为 decodeWithLegacyFallback 单一助手（行为逐项对齐，savesLegacyUpgrade 参数供测试避副作用）+ VoiceAnnouncementMode 映射锁定，5 断言（010b1d3）| ✅ 2026-09-07 |
 | B31 | Doctor 取证纯逻辑镜像转直测 10 断言：parseJournalLine 三事件行+容错（install 无 pid 占位/未知 kind/junk→nil）、accessibilityFlips 翻转捕获（nil 轴跳过不阻断）、unmatchedLaunches 配对抵消+at 排序（外部击杀实证）、runtimeAXFlipLine 版面守卫（e485523）| ✅ 2026-09-07 |
 | B31 后覆盖率复测 | 行覆盖 12.88%（27267 行基数；B19 基线 15.84% 口径相同但分母已扩张——并行功能开发新增大量编排/SwiftUI 代码 + env 门控注册表测试不计入普通运行）。结构指标持续向好：**18 个文件行覆盖 100%**（LayoutFrameCalculator/ToggleFocusBranching/ToggleTriggerGate/ConditionPolling/FloatSettle/YabaiErrorClassifier/OverlayRefreshPolicy/Decision 三兄弟等纯内核族全部满格），函数级满格面更广 | 复测于 2026-09-07 |
+| B32 | 依赖注入改造拔除编排层零覆盖根因：SessionWindowRegistry `private init` → `init(store:)`（三文件 12 处 WindowStateStore.shared 硬引用改走注入属性，直构临时 SQLite 即整链直测，无需 env 门控）；CodexHookPreferences 路径/脚本参数化 + install 清理合并段提纯为 mergedHooks 纯函数；直测 21 断言（isInstalled 四态/清理精准/合并保真+开关裁剪；init 剪枝/bind 拒绝/状态操作落库经真临时库），Runner 697→718（ff73ad9）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
