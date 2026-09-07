@@ -10,7 +10,7 @@ import Foundation
 extension SessionWindowRegistry {
 
     /// Binding verification decision — extracted for testability.
-    enum BindingVerificationResult {
+    enum BindingVerificationResult: Equatable {
         case valid
         case pidNoLongerExists
         case windowNotFound

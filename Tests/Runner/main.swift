@@ -6114,6 +6114,108 @@ final class FakeAuditor: RestoreAuditing {
                 cocoaFrames: [], mainHeight: 1080, yabaiIndices: [], yabaiQuartzFrames: []).isEmpty)
     }
 
+    // MARK: 零命中纯函数清扫 II（真实实现——Overlay 几何/免打扰门/绑定校验/端口钳制，Batch 37）
+
+    do {
+        // A. SoundPlayGate.decide：免打扰时间窗 + 节流的完整决策表（固定时区消歧义）。
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        func at(_ h: Int, _ m: Int = 0, _ sec: Int = 0) -> Date {
+            cal.date(from: DateComponents(year: 2026, month: 9, day: 8, hour: h, minute: m, second: sec))!
+        }
+        check("pureSweep2 A1: 同日窗（9..18）hour=12 → 静音",
+              SoundPlayGate.decide(now: at(12), lastPlayedAt: nil, minIntervalSeconds: 0,
+                                   quietEnabled: true, quietStartHour: 9, quietEndHour: 18, calendar: cal) == .quietHours)
+        check("pureSweep2 A2: 起闭右开——hour=9 静音、hour=18 不静音",
+              SoundPlayGate.decide(now: at(9), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: true,
+                                   quietStartHour: 9, quietEndHour: 18, calendar: cal) == .quietHours
+              && SoundPlayGate.decide(now: at(18), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: true,
+                                      quietStartHour: 9, quietEndHour: 18, calendar: cal) == .allow)
+        check("pureSweep2 A3: 跨午夜窗（22→8）hour=23/7 静音、hour=8/21 不静音",
+              SoundPlayGate.decide(now: at(23), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: true,
+                                   quietStartHour: 22, quietEndHour: 8, calendar: cal) == .quietHours
+              && SoundPlayGate.decide(now: at(7), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: true,
+                                      quietStartHour: 22, quietEndHour: 8, calendar: cal) == .quietHours
+              && SoundPlayGate.decide(now: at(8), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: true,
+                                      quietStartHour: 22, quietEndHour: 8, calendar: cal) == .allow
+              && SoundPlayGate.decide(now: at(21), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: true,
+                                      quietStartHour: 22, quietEndHour: 8, calendar: cal) == .allow)
+        check("pureSweep2 A4: start==end 配置无效视作不启用；开关关闭不静音",
+              SoundPlayGate.decide(now: at(12), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: true,
+                                   quietStartHour: 9, quietEndHour: 9, calendar: cal) == .allow
+              && SoundPlayGate.decide(now: at(12), lastPlayedAt: nil, minIntervalSeconds: 0, quietEnabled: false,
+                                      quietStartHour: 9, quietEndHour: 18, calendar: cal) == .allow)
+        check("pureSweep2 A5: 节流——间隔未到 throttled(remaining≥1)、跨阈放行、首播放行、间隔 0 关闭",
+              SoundPlayGate.decide(now: at(12, 0, 4), lastPlayedAt: at(12, 0, 0), minIntervalSeconds: 5,
+                                   quietEnabled: false, quietStartHour: 0, quietEndHour: 0, calendar: cal)
+              == .throttled(remainingSeconds: 1)
+              && SoundPlayGate.decide(now: at(12, 0, 5), lastPlayedAt: at(12, 0, 0), minIntervalSeconds: 5,
+                                      quietEnabled: false, quietStartHour: 0, quietEndHour: 0, calendar: cal) == .allow
+              && SoundPlayGate.decide(now: at(12), lastPlayedAt: nil, minIntervalSeconds: 5,
+                                      quietEnabled: false, quietStartHour: 0, quietEndHour: 0, calendar: cal) == .allow
+              && SoundPlayGate.decide(now: at(12), lastPlayedAt: at(12), minIntervalSeconds: 0,
+                                      quietEnabled: false, quietStartHour: 0, quietEndHour: 0, calendar: cal) == .allow)
+        check("pureSweep2 A6: 静音优先于节流（quiet 先裁决）",
+              SoundPlayGate.decide(now: at(12), lastPlayedAt: at(12), minIntervalSeconds: 5,
+                                   quietEnabled: true, quietStartHour: 9, quietEndHour: 18, calendar: cal) == .quietHours)
+
+        // B. Overlay 几何三件套：六方位原点 / 尺寸地板 / 标签映射。
+        let screen = CGRect(x: 100, y: 50, width: 1920, height: 1080)
+        let size = CGSize(width: 120, height: 40)
+        check("pureSweep2 B1: 六方位原点（Cocoa y 向上，top=maxY-h-m / bottom=minY+m）",
+              OverlayWindow.calculateOverlayOrigin(position: .topLeft, screenFrame: screen, windowSize: size, margin: 12)
+              == CGPoint(x: 112, y: 1078)
+              && OverlayWindow.calculateOverlayOrigin(position: .topRight, screenFrame: screen, windowSize: size, margin: 12)
+              == CGPoint(x: 1888, y: 1078)
+              && OverlayWindow.calculateOverlayOrigin(position: .bottomLeft, screenFrame: screen, windowSize: size, margin: 12)
+              == CGPoint(x: 112, y: 62)
+              && OverlayWindow.calculateOverlayOrigin(position: .bottomRight, screenFrame: screen, windowSize: size, margin: 12)
+              == CGPoint(x: 1888, y: 62)
+              && OverlayWindow.calculateOverlayOrigin(position: .topCenter, screenFrame: screen, windowSize: size, margin: 12)
+              == CGPoint(x: 1000, y: 1078)
+              && OverlayWindow.calculateOverlayOrigin(position: .bottomCenter, screenFrame: screen, windowSize: size, margin: 12)
+              == CGPoint(x: 1000, y: 62))
+        check("pureSweep2 B2: 负 margin 钳 0",
+              OverlayWindow.calculateOverlayOrigin(position: .topLeft, screenFrame: screen, windowSize: size, margin: -5)
+              == CGPoint(x: 100, y: 1090))
+        check("pureSweep2 B3: 尺寸 = 文本+双倍 padding，且不小于字号地板",
+              OverlayWindow.calculateOverlaySize(textWidth: 200, textHeight: 50, scaledFontSize: 20)
+              == CGSize(width: 232, height: 70)
+              && OverlayWindow.calculateOverlaySize(textWidth: 10, textHeight: 5, scaledFontSize: 20)
+              == CGSize(width: 70, height: 40))
+        check("pureSweep2 B4: 标签 = 屏序+1-工作区号",
+              OverlayWindow.calculateOverlayLabel(screenIndex: 0, spaceIndex: 5) == "1-5")
+
+        // C. BindingVerifier 决策表：pid 消亡 / 窗口缺失 / PID 错位（带关联值）/ 有效。
+        func winEntry(_ pid: Int32) -> CGWindowEntry {
+            CGWindowEntry(from: [kCGWindowNumber as String: UInt32(7),
+                                 kCGWindowOwnerPID as String: pid,
+                                 kCGWindowLayer as String: 0])!
+        }
+        check("pureSweep2 C1: pid 不存在 → pidNoLongerExists（先决）",
+              SessionWindowRegistry.decideBindingVerification(pidExists: false, windowEntry: winEntry(100), expectedPID: 100)
+              == .pidNoLongerExists)
+        check("pureSweep2 C2: pid 在但窗口缺失 → windowNotFound",
+              SessionWindowRegistry.decideBindingVerification(pidExists: true, windowEntry: nil, expectedPID: 100)
+              == .windowNotFound)
+        check("pureSweep2 C3: 窗口属主 PID 与期望错位 → windowPIDMismatch(带双方 PID)",
+              SessionWindowRegistry.decideBindingVerification(pidExists: true, windowEntry: winEntry(200), expectedPID: 100)
+              == .windowPIDMismatch(expectedPID: 100, actualPID: 200))
+        check("pureSweep2 C4: 属主一致 → valid",
+              SessionWindowRegistry.decideBindingVerification(pidExists: true, windowEntry: winEntry(100), expectedPID: 100)
+              == .valid)
+
+        // D. Hook 端口钳制：normalizePort 硬钳；clampedUserPort 的 0=恢复默认语义。
+        check("pureSweep2 D1: normalizePort 双边钳制（1023→1024 / 65536→65535）",
+              ClaudeHookPreferences.normalizePort(1023) == 1024
+              && ClaudeHookPreferences.normalizePort(1024) == 1024
+              && ClaudeHookPreferences.normalizePort(65535) == 65535
+              && ClaudeHookPreferences.normalizePort(65536) == 65535)
+        check("pureSweep2 D2: clampedUserPort——0=恢复默认，非 0 同钳制",
+              ClaudeHookPreferences.clampedUserPort(0, defaultValue: 8787) == 8787
+              && ClaudeHookPreferences.clampedUserPort(99999, defaultValue: 8787) == 65535)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
