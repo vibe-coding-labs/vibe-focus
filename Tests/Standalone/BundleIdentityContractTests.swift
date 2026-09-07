@@ -86,13 +86,18 @@ let runSh = content("run.sh")
 check(runSh.contains("Sources/App/AppVersion.swift"), "T4 run.sh 版本读取路径正确")
 check(!runSh.contains("Sources/AppVersion.swift"), "T4 无断版本路径残留")
 
-// T5 Sources fallback 对齐 canonical（Bundle.main.bundleIdentifier 为 nil 的兜底语义）。
+// T5 Sources fallback 收敛为 AppIdentity.bundleID 单一事实源（B58：字面量三副本提纯为常量）。
 let t5 = runShell("grep -rn '?? \"\(retired)\"' \"\(root)/Sources\" 2>/dev/null")
 check(t5.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       "T5 Sources 无退役 id fallback", t5.output)
 let t5b = runShell("grep -rn '?? \"\(canonical)\"' \"\(root)/Sources\" 2>/dev/null | wc -l")
-check(Int(t5b.output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 >= 3,
-      "T5 Sources canonical fallback ≥3 处", t5b.output)
+check(Int(t5b.output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1 == 0,
+      "T5 Sources 无字面量 fallback 副本（全部走 AppIdentity.bundleID）", t5b.output)
+let t5c = runShell("grep -rn 'AppIdentity.bundleID' \"\(root)/Sources\" 2>/dev/null | wc -l")
+check(Int(t5c.output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 >= 3,
+      "T5 Sources 经 AppIdentity.bundleID 引用 ≥3 处", t5c.output)
+let t5d = runShell("grep -n 'static let bundleID = \"\(canonical)\"' \"\(root)/Sources/App/AppIdentity.swift\"")
+check(t5d.exit == 0, "T5 AppIdentity 常量定义在位且值为 canonical", t5d.output)
 
 // T6 跨进程通知名历史契约不受误伤（分布式 open-settings 与实例通信按此名）。
 check(content("Sources/App/AppDelegate.swift").contains("\(retired).open-settings"),

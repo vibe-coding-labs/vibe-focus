@@ -218,6 +218,7 @@ final class FakeAuditor: RestoreAuditing {
         runHookWalkTests()
         runPureSweepA()
         runPureSweepB()
+        runAppIdentityTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
