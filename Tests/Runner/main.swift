@@ -5104,6 +5104,50 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && WindowManager.route(for: .noRecord, onMainScreen: false) == .moveToMain)
     }
 
+    // MARK: 零命中纯函数清扫（真实实现——保存守卫/窗口过滤/jsonEscape，Batch 31）
+
+    do {
+        // A. shouldRejectSave：orig 中心在主屏内即拒绝保存（防主屏窗重复 toggle 落 corrupt record）。
+        let main = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        check("pureSweep A1: 主屏未知 → 不拒绝（保守放行）",
+              !ToggleEngine.shouldRejectSave(origFrame: main, mainScreenFrame: nil))
+        check("pureSweep A2: orig 中心在主屏内 → 拒绝",
+              ToggleEngine.shouldRejectSave(origFrame: CGRect(x: 100, y: 100, width: 200, height: 200), mainScreenFrame: main))
+        check("pureSweep A3: orig 中心在副屏 → 放行",
+              !ToggleEngine.shouldRejectSave(origFrame: CGRect(x: -500, y: 100, width: 200, height: 200), mainScreenFrame: main))
+
+        // B. filterWindowsByPID：layer==0 + PID 匹配（菜单栏/ Dock 层与外进程滤除，元数据透传保序）。
+        func entry(_ id: UInt32, pid: Int32, layer: Int = 0, name: String? = nil) -> CGWindowEntry {
+            var d: [String: Any] = [kCGWindowNumber as String: id,
+                                    kCGWindowOwnerPID as String: pid,
+                                    kCGWindowLayer as String: layer]
+            if let name { d["kCGWindowName"] = name }
+            return CGWindowEntry(from: d)!
+        }
+        let filtered = WindowManager.filterWindowsByPID(
+            entries: [entry(1, pid: 100, name: "term"),
+                      entry(2, pid: 100, layer: 25),
+                      entry(3, pid: 200, name: "other"),
+                      entry(4, pid: 100, name: "term2")],
+            targetPID: 100, appName: "Terminal", bundleID: "com.apple.Terminal")
+        check("pureSweep B1: layer!=0 与外 PID 滤除，命中映射 WindowIdentity（元数据透传）",
+              filtered.map(\.windowID) == [1, 4]
+              && filtered.allSatisfy { $0.pid == 100 && $0.appName == "Terminal" && $0.bundleIdentifier == "com.apple.Terminal" }
+              && filtered[0].title == "term" && filtered[1].title == "term2")
+        check("pureSweep B2: 无命中 → 空数组",
+              WindowManager.filterWindowsByPID(entries: [entry(9, pid: 200)], targetPID: 100, appName: nil, bundleID: nil).isEmpty)
+
+        // C. ExitJournal.jsonEscape：五类转义 + 控制符 \u + 直通（崩溃/退出审计行安全）。
+        check("pureSweep C1: 引号与反斜杠转义",
+              ExitJournal.jsonEscape(#"a"b\c"#) == #"a\"b\\c"#)
+        check("pureSweep C2: \n\r\t 控制符转义",
+              ExitJournal.jsonEscape("a\nb\rc\td") == #"a\nb\rc\td"#)
+        check("pureSweep C3: <0x20 控制符转四位十六进制转义",
+              ExitJournal.jsonEscape("\u{01}") == #"\u0001"#)
+        check("pureSweep C4: 中文直通 + 空串恒等",
+              ExitJournal.jsonEscape("中文✓") == "中文✓" && ExitJournal.jsonEscape("") == "")
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
