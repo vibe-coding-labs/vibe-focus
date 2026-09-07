@@ -4968,6 +4968,44 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               diagFront.contains("front window") && !diagFront.contains("repeat"))
     }
 
+    // MARK: 偏好解码去重助手 + 语音模式映射（真实实现——B30：load 四源重复块提纯后锁行为）
+
+    do {
+        let currentJSON = """
+        {"isEnabled":true,"position":"topRight","fontSize":48,"opacity":0.8,
+         "textColor":{"red":1,"green":1,"blue":1,"opacity":1},
+         "backgroundColor":{"red":0,"green":0,"blue":0,"opacity":0.6},
+         "panelScale":1.0,"panelMargin":20,"yabaiPath":null,
+         "usePerScreenSpaceIndexing":true}
+        """
+        let current = ScreenIndexPreferences.decodeWithLegacyFallback(
+            Data(currentJSON.utf8), source: "test", savesLegacyUpgrade: false)
+        check("screenPrefsHelper: 当前格式直通（enforce 无迁移不落库）",
+              current?.isEnabled == true && current?.position == .topRight
+              && current?.usePerScreenSpaceIndexing == true)
+        let legacyJSON = """
+        {"isEnabled":false,"position":"bottomCenter","fontSize":24,"opacity":0.5,
+         "textColor":{"red":1,"green":1,"blue":1,"opacity":1},
+         "backgroundColor":{"red":0,"green":0,"blue":0,"opacity":0.5}}
+        """
+        let migrated = ScreenIndexPreferences.decodeWithLegacyFallback(
+            Data(legacyJSON.utf8), source: "test", savesLegacyUpgrade: false)
+        check("screenPrefsHelper: legacy 回落迁移（不回写升级）",
+              migrated?.position == .bottomCenter && migrated?.panelScale == 1.0
+              && migrated?.panelMargin == 20 && migrated?.usePerScreenSpaceIndexing == true)
+        check("screenPrefsHelper: 双格式皆非 → nil",
+              ScreenIndexPreferences.decodeWithLegacyFallback(
+                Data("junk".utf8), source: "test", savesLegacyUpgrade: false) == nil)
+
+        // VoiceAnnouncementMode：4 形态 rawValue 回环 + 展示映射互异（设置 Picker 事实源）。
+        check("voiceMode: 4 case + rawValue 双向回环",
+              VoiceAnnouncementMode.allCases.count == 4
+              && VoiceAnnouncementMode.allCases.allSatisfy { VoiceAnnouncementMode(rawValue: $0.rawValue) == $0 })
+        let voiceNames = VoiceAnnouncementMode.allCases.map(\.displayName)
+        check("voiceMode: displayName 互异非空",
+              voiceNames.allSatisfy { !$0.isEmpty } && Set(voiceNames).count == 4)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

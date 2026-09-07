@@ -82,37 +82,15 @@ struct ScreenIndexPreferences: Codable {
         let bundleId = Bundle.main.bundleIdentifier ?? "com.vibefocus.app"
         if let value = CFPreferencesCopyAppValue(userDefaultsKey as CFString, bundleId as CFString),
            let jsonString = value as? String,
-           let data = jsonString.data(using: .utf8) {
-            do {
-                let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
-                let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
-                log("ScreenIndexPreferences loaded: isEnabled=\(prefs.isEnabled)")
-                return migrated
-            } catch {
-                log("ScreenIndexPreferences decode error: \(error)")
-                if let oldPrefs = loadLegacyPreferences(from: data) {
-                    log("ScreenIndexPreferences: Loaded legacy preferences with migration")
-                    oldPrefs.save()
-                    return oldPrefs
-                }
-            }
+           let prefs = decodeWithLegacyFallback(Data(jsonString.utf8), source: "CFPreferences") {
+            log("ScreenIndexPreferences loaded: isEnabled=\(prefs.isEnabled)")
+            return prefs
         }
         // 3. UserDefaults（兜底）— save() 写入 String，优先用 .string() 读取
         if let jsonString = UserDefaults.standard.string(forKey: userDefaultsKey),
-           let data = jsonString.data(using: .utf8) {
-            do {
-                let prefs = try JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
-                let migrated = enforcePerScreenSpaceIndexingIfNeeded(prefs)
-                log("ScreenIndexPreferences loaded from UserDefaults: isEnabled=\(prefs.isEnabled)")
-                return migrated
-            } catch {
-                log("ScreenIndexPreferences decode error from UserDefaults: \(error)")
-                if let oldPrefs = loadLegacyPreferences(from: data) {
-                    log("ScreenIndexPreferences: Loaded legacy preferences from UserDefaults with migration")
-                    oldPrefs.save()
-                    return oldPrefs
-                }
-            }
+           let prefs = decodeWithLegacyFallback(Data(jsonString.utf8), source: "UserDefaults") {
+            log("ScreenIndexPreferences loaded from UserDefaults: isEnabled=\(prefs.isEnabled)")
+            return prefs
         }
         // Fallback: 如果以 Data 形式存储（理论上不会，但做兼容）
         if let data = UserDefaults.standard.data(forKey: userDefaultsKey) {
@@ -126,6 +104,28 @@ struct ScreenIndexPreferences: Codable {
             }
         }
         return .default
+    }
+
+    /// 单一源内解码：当前格式优先（enforce 守卫），legacy 旧格式迁移兜底（命中即回写升级格式）。
+    /// `source` 仅用于诊断日志区分来源；`savesLegacyUpgrade` 测试注入 false 避免落库副作用。
+    /// CFPreferences 与 UserDefaults 两个 String 源共用——消解历史上逐字重复的
+    /// decode→enforce→legacy→save 双份块（B30 提纯，行为与原两块一致）。
+    @MainActor
+    static func decodeWithLegacyFallback(
+        _ data: Data,
+        source: String,
+        savesLegacyUpgrade: Bool = true
+    ) -> ScreenIndexPreferences? {
+        do {
+            return enforcePerScreenSpaceIndexingIfNeeded(
+                try JSONDecoder().decode(ScreenIndexPreferences.self, from: data))
+        } catch {
+            log("ScreenIndexPreferences decode error from \(source): \(error)")
+        }
+        guard let legacy = loadLegacyPreferences(from: data) else { return nil }
+        log("ScreenIndexPreferences: Loaded legacy preferences with migration from \(source)")
+        if savesLegacyUpgrade { legacy.save() }
+        return legacy
     }
 
     @MainActor
