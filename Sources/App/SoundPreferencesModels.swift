@@ -82,6 +82,46 @@ struct SoundPreferences: Codable, Equatable {
     /// 项目音效规则表（从上到下首个命中者生效，轮次 2）
     var projectRules: [ProjectSoundRule]
 
+    // MARK: - 规则与钳制操作（纯 struct 变更，B34 提纯——原困在 SoundManager 单例不可直测）
+
+    /// 端口表单校验唯一事实源：0 = 恢复默认；其余钳制到 1024...65535。
+    static func clampedUserPort(_ raw: Int, defaultValue: Int) -> Int {
+        raw == 0 ? defaultValue : min(max(raw, 1024), 65535)
+    }
+
+    /// 新增一条空项目规则（默认音效，UI 中填项目名）
+    mutating func addProjectRule(defaultSound: CompletionSoundType = .builtinComplete) {
+        projectRules.append(ProjectSoundRule(projectName: "", soundType: defaultSound))
+    }
+
+    /// 越界索引静默忽略（UI 索引与规则表竞态防御）
+    mutating func setProjectRuleName(at index: Int, _ name: String) {
+        guard projectRules.indices.contains(index) else { return }
+        projectRules[index].projectName = name
+    }
+
+    mutating func setProjectRuleSound(at index: Int, _ type: CompletionSoundType) {
+        guard projectRules.indices.contains(index) else { return }
+        projectRules[index].soundRawValue = type.rawValue
+    }
+
+    mutating func removeProjectRule(at index: Int) {
+        guard projectRules.indices.contains(index) else { return }
+        projectRules.remove(at: index)
+    }
+
+    /// 更新播放节流间隔（秒，0 = 关闭；负值防御性归零）
+    mutating func updateMinPlayInterval(_ seconds: Int) {
+        minPlayIntervalSeconds = max(0, seconds)
+    }
+
+    /// 更新免打扰时段（小时钳制到 0...23；起==止在门控中视作无效不启用）
+    mutating func updateQuietHours(enabled: Bool, startHour: Int, endHour: Int) {
+        quietHoursEnabled = enabled
+        quietStartHour = max(0, min(23, startHour))
+        quietEndHour = max(0, min(23, endHour))
+    }
+
     static let `default` = SoundPreferences(
         soundType: .none,
         customSoundPath: nil,

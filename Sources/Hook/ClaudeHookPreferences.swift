@@ -208,6 +208,12 @@ enum ClaudeHookPreferences {
         return "http://127.0.0.1:\(effectivePort)\(endpointPath)?token=\(token)"
     }
 
+    /// 设置表单端口校验（B34 提纯）：0 = 恢复默认端口；其余钳制 1024...65535。
+    /// 与 normalizePort 的差异仅在 0 值语义（用户清空输入框 = 回默认）。
+    static func clampedUserPort(_ raw: Int, defaultValue: Int = defaultPort) -> Int {
+        raw == 0 ? defaultValue : min(max(raw, 1024), 65535)
+    }
+
     static func normalizePort(_ value: Int) -> Int {
         min(max(value, 1024), 65535)
     }

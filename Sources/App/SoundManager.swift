@@ -245,37 +245,32 @@ final class SoundManager: ObservableObject {
     }
 
     /// 更新播放节流间隔（秒，0 = 关闭；负值防御性归零）
+    /// 钳制语义在 SoundPreferences 纯结构（B34），manager 只做持久化转发
     func updateMinPlayInterval(_ seconds: Int) {
-        preferences.minPlayIntervalSeconds = max(0, seconds)
+        preferences.updateMinPlayInterval(seconds)
     }
 
-    /// 更新免打扰时段（小时钳制到 0...23；起==止在门控中视作无效不启用）
     func updateQuietHours(enabled: Bool, startHour: Int, endHour: Int) {
-        preferences.quietHoursEnabled = enabled
-        preferences.quietStartHour = max(0, min(23, startHour))
-        preferences.quietEndHour = max(0, min(23, endHour))
+        preferences.updateQuietHours(enabled: enabled, startHour: startHour, endHour: endHour)
     }
 
     // MARK: - Project Sound Rules（轮次 2）
 
-    /// 新增一条空项目规则（默认 Complete 音效，UI 中填项目名）
+    /// 规则表变更语义在 SoundPreferences 纯结构（B34），manager 只做持久化转发
     func addProjectRule() {
-        preferences.projectRules.append(ProjectSoundRule(projectName: "", soundType: .builtinComplete))
+        preferences.addProjectRule()
     }
 
     func setProjectRuleName(at index: Int, _ name: String) {
-        guard preferences.projectRules.indices.contains(index) else { return }
-        preferences.projectRules[index].projectName = name
+        preferences.setProjectRuleName(at: index, name)
     }
 
     func setProjectRuleSound(at index: Int, _ type: CompletionSoundType) {
-        guard preferences.projectRules.indices.contains(index) else { return }
-        preferences.projectRules[index].soundRawValue = type.rawValue
+        preferences.setProjectRuleSound(at: index, type)
     }
 
     func removeProjectRule(at index: Int) {
-        guard preferences.projectRules.indices.contains(index) else { return }
-        preferences.projectRules.remove(at: index)
+        preferences.removeProjectRule(at: index)
     }
 
     // MARK: - Sound Resolution

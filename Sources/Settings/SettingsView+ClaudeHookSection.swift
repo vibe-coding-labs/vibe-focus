@@ -164,7 +164,7 @@ extension SettingsView {
                 TextField("", value: Binding(
                     get: { hookPort },
                     set: { newValue in
-                        let clamped = max(1024, min(65535, newValue == 0 ? ClaudeHookPreferences.defaultPort : newValue))
+                        let clamped = ClaudeHookPreferences.clampedUserPort(newValue)
                         hookPort = clamped
                         ClaudeHookPreferences.listenPort = clamped
                         if hookEnabled { hookServer.applyPreferences() }

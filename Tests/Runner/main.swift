@@ -5334,6 +5334,58 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         try? FileManager.default.removeItem(atPath: home)
     }
 
+    // MARK: SettingsUI 拆分前置（真实实现——B34：34 @State 枢纽的决策逻辑提纯为可测纯类型）
+
+    do {
+        // 提示音规则操作：原困在 SoundManager 单例，现落在 SoundPreferences 纯结构直测。
+        var prefs = SoundPreferences.default
+        check("soundRules: 初始无规则", prefs.projectRules.isEmpty)
+        prefs.addProjectRule()
+        prefs.addProjectRule()
+        check("soundRules: add 默认空名 + Complete 音效",
+              prefs.projectRules.count == 2
+              && prefs.projectRules[0].projectName == ""
+              && prefs.projectRules[0].soundType == .builtinComplete)
+        prefs.setProjectRuleName(at: 0, "vibe-labs")
+        prefs.setProjectRuleSound(at: 0, .builtinDing)
+        check("soundRules: 改名改音效生效",
+              prefs.projectRules[0].projectName == "vibe-labs"
+              && prefs.projectRules[0].soundType == .builtinDing)
+        prefs.setProjectRuleName(at: 9, "越界")
+        prefs.setProjectRuleSound(at: -1, .none)
+        prefs.removeProjectRule(at: 7)
+        check("soundRules: 越界索引三连静默忽略",
+              prefs.projectRules.count == 2 && prefs.projectRules[1].projectName == ""
+              && prefs.projectRules[1].soundType == .builtinComplete)
+        prefs.removeProjectRule(at: 0)
+        check("soundRules: remove 命中且余序保持",
+              prefs.projectRules.count == 1 && prefs.projectRules[0].soundType == .builtinComplete)
+
+        // 提示音表单钳制：节流非负 + 免打扰小时 0...23。
+        prefs.updateMinPlayInterval(-5)
+        check("soundClamp: 负节流防御归零", prefs.minPlayIntervalSeconds == 0)
+        prefs.updateMinPlayInterval(7)
+        check("soundClamp: 正常节流透传", prefs.minPlayIntervalSeconds == 7)
+        prefs.updateQuietHours(enabled: true, startHour: -1, endHour: 24)
+        check("soundClamp: 免打扰小时钳到 0...23",
+              prefs.quietHoursEnabled == true && prefs.quietStartHour == 0 && prefs.quietEndHour == 23)
+        prefs.updateQuietHours(enabled: false, startHour: 22, endHour: 8)
+        check("soundClamp: 正常时段透传 + 开关独立",
+              prefs.quietHoursEnabled == false && prefs.quietStartHour == 22 && prefs.quietEndHour == 8)
+
+        // 端口表单校验（原内联在 ClaudeHookSection Binding 中）。
+        check("portForm: 0 恢复默认",
+              ClaudeHookPreferences.clampedUserPort(0) == ClaudeHookPreferences.defaultPort)
+        check("portForm: 低于 1024 钳到 1024",
+              ClaudeHookPreferences.clampedUserPort(-5) == 1024
+              && ClaudeHookPreferences.clampedUserPort(80) == 1024)
+        check("portForm: 超上钳到 65535 + 合法透传",
+              ClaudeHookPreferences.clampedUserPort(70000) == 65535
+              && ClaudeHookPreferences.clampedUserPort(8080) == 8080)
+        check("portForm: 自定义默认值生效",
+              ClaudeHookPreferences.clampedUserPort(0, defaultValue: 9000) == 9000)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
