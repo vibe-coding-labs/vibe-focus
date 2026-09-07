@@ -228,6 +228,12 @@
   SpaceController 精确解析器回退线，白名单外热路径直呼静态拦截；自测三锁
   （命中/exact 系不误伤/回退线放行）；当前 Sources 零违例即 Batch 34 扫尾
   完成的机器证明；
+- **Batch 37（test，零命中清扫 II）**（89b2e2c，c09683c 合并）：全仓符号重扫
+  （含并行 B50~B53 新增面）后第二批直测——SoundPlayGate.decide 免打扰完整
+  决策表（跨午夜窗/起闭右开/start==end 无效/静音优先于节流/节流跨阈）、
+  OverlayWindow 几何三件套（六方位原点/尺寸地板/标签映射）、
+  decideBindingVerification 四分支（顺手补 Equatable）、端口钳制双语义；
+  Runner 888/888；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
