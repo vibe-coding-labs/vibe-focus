@@ -4689,6 +4689,44 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               LayoutFrameCalculator.frame(for: .center, visibleFrame: vis) == nil)
     }
 
+    // MARK: ClaudeHookServer 鉴权门（真实实现——LAN token 三函数纯判定，Batch 27 补做丢失的 Batch 16）
+
+    do {
+        // A. resolveHeaderValue：精确命中 / 大小写不敏感回退 / 未命中 nil。
+        let headers = ["Content-Type": "application/json", "x-vibefocus-token": "abc"]
+        check("hookAuth A1: 精确键直取",
+              ClaudeHookServer.resolveHeaderValue(from: headers, forKey: "Content-Type") == "application/json")
+        check("hookAuth A2: 大小写不敏感命中（GCDWebServer 保留原始大小写）",
+              ClaudeHookServer.resolveHeaderValue(from: headers, forKey: "X-VibeFocus-Token") == "abc")
+        check("hookAuth A3: 未命中 → nil",
+              ClaudeHookServer.resolveHeaderValue(from: headers, forKey: "X-Forwarded-For") == nil)
+
+        // B. resolveProvidedToken：query 优先 → header（trim）→ 双缺空串（永不 nil）。
+        check("hookAuth B1: query 优先于 header",
+              ClaudeHookServer.resolveProvidedToken(query: ["token": "q1"], headers: ["X-VibeFocus-Token": "h1"]) == "q1")
+        check("hookAuth B2: 无 query 落 header 并 trim 空白",
+              ClaudeHookServer.resolveProvidedToken(query: [:], headers: ["X-VibeFocus-Token": "  h2  "]) == "h2")
+        check("hookAuth B3: 双缺 → 空串（非 nil）",
+              ClaudeHookServer.resolveProvidedToken(query: [:], headers: [:]) == "")
+        check("hookAuth B4: query 空串也算提供（不回退 header）",
+              ClaudeHookServer.resolveProvidedToken(query: ["token": ""], headers: ["X-VibeFocus-Token": "h3"]) == "")
+
+        // C. isTokenValid：未配置放行（nil/空串）→ 配置后精确匹配（大小写敏感）。
+        check("hookAuth C1: 未配置 token（nil）→ 放行",
+              ClaudeHookServer.isTokenValid(expectedToken: nil, providedToken: "anything"))
+        check("hookAuth C2: 配置为空串 → 放行（等同未配置）",
+              ClaudeHookServer.isTokenValid(expectedToken: "", providedToken: nil))
+        check("hookAuth C3: 精确匹配 → 通过",
+              ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: "secret"))
+        check("hookAuth C4: 大小写不匹配 → 拒绝",
+              !ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: "Secret"))
+        check("hookAuth C5: 值不同 → 拒绝",
+              !ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: "wrong"))
+        check("hookAuth C6: 未提供（空串/nil）→ 拒绝",
+              !ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: "")
+              && !ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: nil))
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
