@@ -43,7 +43,7 @@
 - **覆盖率**：全库行覆盖 10.60% → **15.84%**（+49% 相对提升）；函数覆盖 6433 中新增 1000+ 可测函数入覆盖。
   B13~B18 六轮镜像转直测后，WindowMove+Decision 80.9%、ClaudeHookModels 80.8%（区域）、
   TerminalContext+Helpers 75%——提取单元函数级≈100%，编排路径由真机 E2E 家族验收。
-- **Runner 直测断言**：278 → **636/636 全绿**（+358 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 补做丢失 Batch 16 的鉴权 13 断言 bcf1c4c）。
+- **Runner 直测断言**：278 → **653/653 全绿**（+375 条，全部真实实现直测、零镜像漂移；含 Batch 20 LayoutFrameCalculator 14 断言 + Batch 27 鉴权 13 断言 bcf1c4c + B28 Overlay 偏好层/Space 解码 17 断言 90d5b13）。
 - **结构**：1055 行巨石 → 六模块；编排页/提示音段拆分；恢复帧规划去重；模型与编排分层。
 - **真 bug**：volume 必填解码静默重置用户偏好（单测先行实锤修复）。
 - **死测试清理**：FocusStepsCalculationTests（镜像函数已从源码删除）。
@@ -80,4 +80,5 @@
 | B25 | shellQuoted 单引号转义直测 3 断言（惯用法四字符序列/原样包裹/空串）；cellCommand 分支已由并行会话直测覆盖，本批去重不重复添加 | ✅ 2026-09-07 |
 | B26 | IPS 崩溃报告解析直测 5 断言（首行头丢弃/多行 JSON 保留/非法与空输入回退）| ✅ 2026-09-07 |
 | 热修复 | B26 合并（68cb44b）冲突解决误删 IPS do 块闭合 `}`——main 编译断裂（`private` 非 local 报错），阻塞全部并行会话；814f63a 补括号 + B24 var→let 警告修复，合并并行 Batch 20 后三门禁全绿（构建零警告 + Runner 623/623 + run_all_tests 75/75）推送 78d22b2。**教训入册：合并冲突删标记行后必须跑构建门禁再推送** | ✅ 2026-09-07 |
+| B28 | 缺口审计（全 Sources 类型 vs 测试符号对照）后 Overlay 偏好层 + Space 解码漂移直测 17 断言：legacy 迁移补默认/字段保真/非法回退、CodableColor 键集锁定+回环保真、IndexPosition 6 形态映射互异、YabaiSpaceInfo is-visible Bool/Int 四态、YabaiDisplayInfo 解析（90d5b13）| ✅ 2026-09-07 |
 | 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
