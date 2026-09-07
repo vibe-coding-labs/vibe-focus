@@ -5404,6 +5404,55 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               ClaudeHookPreferences.clampedUserPort(0, defaultValue: 9000) == 9000)
     }
 
+    // MARK: Settings 拆分文件纯函数（真实实现——B35：Hook 测试请求构造/响应裁决提纯）
+
+    do {
+        // buildHookRequest：请求契约（URL/方法/头/JSON 体）——发收改造不再需要网络测试兜底。
+        func build(_ port: Int, endpoint: String, payload: [String: String], token: String?) throws -> URLRequest {
+            try SettingsView.buildHookRequest(port: port, endpoint: endpoint, payload: payload, token: token)
+        }
+        let req = try? build(8080, endpoint: "/hook",
+                             payload: ["event": "SessionStart", "session_id": "test-abc"],
+                             token: "tok-1")
+        check("hookReq: URL/方法/超时契约",
+              req?.url?.absoluteString == "http://127.0.0.1:8080/hook"
+              && req?.httpMethod == "POST" && req?.timeoutInterval == 5)
+        check("hookReq: Content-Type 恒在 + 有 token 时鉴权头在场",
+              req?.value(forHTTPHeaderField: "Content-Type") == "application/json"
+              && req?.value(forHTTPHeaderField: "X-VibeFocus-Token") == "tok-1")
+        let noToken = try? build(1, endpoint: "/hook", payload: ["event": "Stop"], token: "")
+        check("hookReq: 空 token 不设鉴权头",
+              noToken?.value(forHTTPHeaderField: "X-VibeFocus-Token") == nil)
+        let body = (try? JSONSerialization.jsonObject(with: req?.httpBody ?? Data())) as? [String: String]
+        check("hookReq: JSON 体回环",
+              body?["event"] == "SessionStart" && body?["session_id"] == "test-abc")
+
+        // hookResponseVerdict：非 HTTP/4xx/5xx/成功四态。
+        func httpResp(_ code: Int) -> URLResponse {
+            HTTPURLResponse(url: URL(string: "http://127.0.0.1")!, statusCode: code,
+                            httpVersion: nil, headerFields: nil)!
+        }
+        check("hookVerdict: 非 HTTP 响应 → 失败 code -2",
+              { if case .failure(let e) = SettingsView.hookResponseVerdict(response: nil, data: nil)
+                { return (e as NSError).code == -2 }; return false }())
+        check("hookVerdict: 404 → 失败携带状态码与响应体",
+              { if case .failure(let e) = SettingsView.hookResponseVerdict(
+                    response: httpResp(404), data: Data("not found".utf8))
+                { let ns = e as NSError
+                  return ns.code == 404 && ns.localizedDescription.contains("not found") }
+                return false }())
+        check("hookVerdict: 500 无体 → 失败含占位 nil",
+              { if case .failure(let e) = SettingsView.hookResponseVerdict(
+                    response: httpResp(500), data: nil)
+                { return (e as NSError).localizedDescription.contains("nil") }
+                return false }())
+        check("hookVerdict: 200 → 成功（2xx 边界含 299）",
+              { if case .success = SettingsView.hookResponseVerdict(response: httpResp(200), data: nil)
+                { return true }; return false }()
+              && { if case .success = SettingsView.hookResponseVerdict(response: httpResp(299), data: nil)
+                { return true }; return false }())
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

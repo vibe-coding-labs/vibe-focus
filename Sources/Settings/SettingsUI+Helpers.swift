@@ -1,87 +1,11 @@
 // SettingsUI+Helpers.swift
-// VibeFocus — SettingsView 计算属性与会话列表
-// 从 SettingsUI.swift 中提取
+// VibeFocus — SettingsView 展示助手（版本/路径/Space 状态文案）
+// 会话列表已移至 SettingsView+SessionLists.swift（B35）
 
 import SwiftUI
 import AppKit
 
 extension SettingsView {
-
-    // MARK: - Session Lists
-
-    var activeSessionList: some View {
-        let active = sessionRegistry.activeBindingsForUI
-        if active.isEmpty {
-            return AnyView(
-                Text("暂无活跃会话绑定")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 8)
-            )
-        }
-        return AnyView(
-            VStack(spacing: 6) {
-                ForEach(active, id: \.windowID) { binding in
-                    HStack {
-                        Text(binding.appName ?? "Unknown")
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Text(binding.sessionID?.prefix(8) ?? "—")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(VibeColors.card)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(VibeColors.hairline, lineWidth: 1)
-                    )
-                }
-            }
-        )
-    }
-
-    var completedSessionList: some View {
-        let recent = sessionRegistry.recentCompletedBindings
-        if recent.isEmpty {
-            return AnyView(
-                Text("暂无最近完成的会话")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 8)
-            )
-        }
-        return AnyView(
-            VStack(spacing: 6) {
-                ForEach(recent, id: \.windowID) { binding in
-                    HStack {
-                        Text(binding.appName ?? "Unknown")
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Text(binding.completedAt?.formatted(.dateTime.hour().minute()) ?? "—")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(VibeColors.card)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(VibeColors.hairline, lineWidth: 1)
-                    )
-                }
-            }
-        )
-    }
 
     // MARK: - Display Helpers
 
