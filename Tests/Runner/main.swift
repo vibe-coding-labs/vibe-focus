@@ -5819,6 +5819,49 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && LogLevel.warn.rawValue == "WARN" && LogLevel.error.rawValue == "ERROR")
     }
 
+    // MARK: Admin 提权模板 + Doctor 报告端到端（真实实现——B41：编排内嵌模板提纯 + 注入式路径直测）
+
+    do {
+        // makeAdminShellScript：转义防注入 + 包装格式（模板决策与执行分离，照 TitleEditor 模式）。
+        let plain = SpaceController.makeAdminShellScript("yabai --install-sa")
+        check("adminScript: 普通命令包装格式",
+              plain == "do shell script \"yabai --install-sa\" with administrator privileges")
+        let tricky = SpaceController.makeAdminShellScript("echo \"a b\"; rm -rf x\\y")
+        check("adminScript: 双引号/反斜杠转义防注入",
+              tricky.contains(#"echo \"a b\"; rm -rf x\\y"#)
+              && !tricky.contains(#"echo "a b""#)
+              && tricky.hasSuffix("with administrator privileges"))
+        check("adminScript: 分号等 shell 元字符原样保留（转义只处理引号族）",
+              tricky.contains("; rm -rf x"))
+    }
+
+    do {
+        // Doctor.report：DoctorPaths 全注入 → 临时日志目录端到端（原 317 行文件编排段 0 覆盖）。
+        let dir = "/tmp/vibefocus-b41-\(getpid())"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let journalPath = dir + "/exits.jsonl"
+        let lines = [
+            "{\"kind\":\"launch\",\"pid\":101,\"at\":\"T1\",\"exe\":\"/app/VF\",\"ax\":true}",
+            "{\"kind\":\"exit\",\"pid\":101,\"at\":\"T2\",\"reason\":\"signal\",\"name\":\"SIGTRAP\"}",
+            "{\"kind\":\"launch\",\"pid\":102,\"at\":\"T3\",\"exe\":\"/app/VF\",\"ax\":false}",
+        ]
+        try? lines.joined(separator: "\n").write(toFile: journalPath, atomically: true, encoding: .utf8)
+        check("doctorE2E: 日志夹具写入成功",
+              FileManager.default.fileExists(atPath: journalPath))
+        let paths = DoctorPaths(
+            journalPath: journalPath, logDir: dir, tmpFatalPath: dir + "/none1",
+            tmpSnapshotPath: dir + "/none2", keepaliveLogPath: dir + "/none3",
+            diagnosticReportsDir: dir, appLogPath: dir + "/vibefocus.log")
+        let report = Doctor.report(paths: paths, now: Date(timeIntervalSince1970: 1000))
+        check("doctorE2E: 报告含生命周期段与事件计数",
+              report.contains("[实例生命周期]") && report.contains("共 3 条事件"))
+        check("doctorE2E: 最近一次死亡段含 pid 与信号",
+              report.contains("[最近一次死亡]") && report.contains("pid=101") && report.contains("SIGTRAP"))
+        check("doctorE2E: 无配对 launch 现形（外部击杀实证段）",
+              report.contains("pid=102"))
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

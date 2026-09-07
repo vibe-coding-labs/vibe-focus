@@ -306,6 +306,15 @@ extension SpaceController {
         return false
     }
 
+    /// admin 提权 AppleScript 模板（纯函数，B41 提纯）：双引号/反斜杠转义防注入 +
+    /// `with administrator privileges` 包装。模板决策与 NSAppleScript 执行分离（照 TitleEditor 模式）。
+    static func makeAdminShellScript(_ command: String) -> String {
+        let escapedCommand = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "do shell script \"\(escapedCommand)\" with administrator privileges"
+    }
+
     func executeWithAdminPrivileges(_ command: String, operationID: String? = nil) -> (Bool, String) {
         let op = operationID ?? "none"
         #if PERF_INSTRUMENT
@@ -317,12 +326,7 @@ extension SpaceController {
             ])
         }
         #endif
-        // 转义命令中的双引号和反斜杠，防止 AppleScript 注入
-        let escapedCommand = command
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let scriptSource = "do shell script \"\(escapedCommand)\" with administrator privileges"
-        let appleScript = NSAppleScript(source: scriptSource)
+        let appleScript = NSAppleScript(source: Self.makeAdminShellScript(command))
 
         log(
             "[SpaceController] requesting admin privileges",
