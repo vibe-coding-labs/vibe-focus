@@ -92,4 +92,4 @@
 | B36 | 全新缺口扫描（符号对照升级：区分零覆盖与仅镜像）后提示音双决策转直测：SoundPlayGate.decide 免打扰四语义（跨午夜/起闭右开/同日窗/无效配置）+ 硬静音优先级 + 节流取整边界（UTC 固定时区注入）、ProjectSoundResolver.resolvedType 首命中/非法跳过/路径归一匹配/全局回落，12 断言（bda04ec）| ✅ 2026-09-08 |
 | B37 | 镜像/零覆盖三件套转直测：BuildCapabilities 二进制安全搜索契约（needle 三段命中/summary 登记序/missing 缺失清单——部署互踩 drift 自检）、ScreenLayoutMapper 纯函数全语义（y 翻转/scale 双向约束/胶囊带几何/网格预览等分）、TerminalGridStore store 注入直测（增改删/latest）+ TerminalGridPreferences 钳制回环（显式 0 间距持久=旧 bug 回归锁、标准域先存后还原），22 断言（d44376c）| ✅ 2026-09-08 |
 | B38 | 仅镜像/零覆盖收尾批：WindowLayoutManagerProbe.evaluate 双通道探测（name 兜底/运行即安装/conflictSummary 拼接）、HotKeyConfiguration 显示串与冲突表互异 + 默认 ⌃Q 不撞表回归锁、TerminalSelectionResolver.supportLevel 三级别映射、VoiceAnnouncementQueuePolicy.appendedQueue FIFO/满丢最旧/容量防御/值语义、SpacePreferences 默认值与回环，19 断言（b54d1da）| ✅ 2026-09-08 |
-| 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——删除需用户裁决，暂留并记录 | 记录于 2026-09-07 |
+| 备注 | Tests/XCTest/ 套件在 CLT 环境从未可执行（playbook 2.10），属死重——**2026-09-08 已向用户征询裁决并附事实**（72 文件/10306 行；Package.swift:65 以专用 target 引用但本机不可执行；所锁逻辑已全部被 Runner 814 条真身直测覆盖且更新），用户未即时答复，默认维持保留现状；任何时刻用户回复「删」即 fork worktree 清理 + 三门禁推送。git 历史可找回，未来换完整 Xcode 亦可从历史复活 | 征询于 2026-09-08 |
