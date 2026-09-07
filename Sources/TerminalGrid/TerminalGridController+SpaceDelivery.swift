@@ -57,11 +57,11 @@ extension TerminalGridController {
         guard case .displaySpace(_, let spaceIndex) = GridTargetCode.parse(TerminalGridPreferences.target) ?? .main else {
             return (0, 0, false)
         }
-        guard let targetDisplayIndex = CoordinateKit.yabaiDisplayIndex(for: screen) else {
+        guard let targetDisplayIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen) else {
             return (0, 0, false)
         }
         guard let parkingScreen = NSScreen.screens.first(where: {
-            CoordinateKit.yabaiDisplayIndex(for: $0) != targetDisplayIndex
+            SpaceController.shared.exactYabaiDisplayIndex(for: $0) != targetDisplayIndex
         }) else {
             log("[TerminalGrid] createGrid space delivery unavailable: single display", fields: [
                 "op": op, "space": String(spaceIndex)

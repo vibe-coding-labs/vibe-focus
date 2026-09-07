@@ -265,7 +265,7 @@ extension WindowManager {
                 targetDisplayIndexOf: { self.displayIndex(forDisplayID: self.displayID(for: $0)) },
                 windowHandleOf: { self.windowHandle(for: $0) },
                 visibleFrameOfYabaiDisplay: {
-                    $0.flatMap { CoordinateKit.nsScreen(forYabaiDisplayIndex: $0) }
+                    $0.flatMap { SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: $0) }
                         .map { CoordinateKit.quartzVisibleFrame(of: $0) }
                 },
                 applyFrameDirect: { self.moveWindowToFrameViaYabai(windowID: $0, frame: $1, op: $2, stage: "move_to_main", sourceVisibleFrame: $3) },

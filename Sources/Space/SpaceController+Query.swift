@@ -220,4 +220,61 @@ extension SpaceController {
         }
         return decodeArray(YabaiDisplayInfo.self, from: result.stdout)
     }
+
+    // MARK: - 显示器索引精确解析（几何匹配 + 短缓存；热路径唯一入口）
+
+    /// 重建几何匹配表；yabai 不可用返回 nil（调用方回退猜序版）。
+    private func rebuildDisplayMatchTable() -> DisplayMatchTable? {
+        let displays = queryDisplays(caller: "displayMatchTable")
+        let screens = NSScreen.screens
+        guard let displays, !displays.isEmpty, !screens.isEmpty else { return nil }
+        let mainHeight = screens.first { $0.frame.origin == .zero }?.frame.height ?? 0
+        let match = CoordinateKit.matchYabaiDisplayIndices(
+            cocoaFrames: screens.map(\.frame),
+            mainHeight: mainHeight,
+            yabaiIndices: displays.compactMap(\.index),
+            yabaiQuartzFrames: displays.compactMap { info in
+                info.frame.map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) }
+            }
+        )
+        guard !match.isEmpty else { return nil }
+        var indexByCG: [CGDirectDisplayID: Int] = [:]
+        var cgByYabai: [Int: CGDirectDisplayID] = [:]
+        for (screenIndex, screen) in screens.enumerated() {
+            guard let cgID = CoordinateKit.cgDisplayID(for: screen), let yabai = match[screenIndex] else { continue }
+            indexByCG[cgID] = yabai
+            cgByYabai[yabai] = cgID
+        }
+        return DisplayMatchTable(mappedAt: Date(), yabaiIndexByCGDisplayID: indexByCG, cgDisplayIDByYabaiIndex: cgByYabai)
+    }
+
+    /// NSScreen → yabai display index（几何精确，1s 缓存；yabai 不可用/表缺该屏回退猜序版）。
+    /// 热路径（restore 预切回 / move sourceVisibleFrame / toggle 路由 / 网格投递）一律经此，
+    /// 禁止直接消费 CoordinateKit.yabaiDisplayIndex(for:) 猜序版。
+    func exactYabaiDisplayIndex(for screen: NSScreen) -> Int? {
+        if displayMatchTable == nil || Date().timeIntervalSince(displayMatchTable!.mappedAt) > 1.0 {
+            displayMatchTable = rebuildDisplayMatchTable()
+        }
+        if let table = displayMatchTable, let yabai = table.yabaiIndexByCGDisplayID[screen.cgDirectDisplayID ?? 0] {
+            return yabai
+        }
+        return CoordinateKit.yabaiDisplayIndex(for: screen)
+    }
+
+    /// yabai display index → NSScreen（几何精确，1s 缓存；yabai 不可用回退猜序版）。
+    func exactNSScreen(forYabaiDisplayIndex index: Int) -> NSScreen? {
+        if displayMatchTable == nil || Date().timeIntervalSince(displayMatchTable!.mappedAt) > 1.0 {
+            displayMatchTable = rebuildDisplayMatchTable()
+        }
+        if let table = displayMatchTable, let cgID = table.cgDisplayIDByYabaiIndex[index],
+           let screen = CoordinateKit.nsScreen(forCGDisplayID: cgID) {
+            return screen
+        }
+        return CoordinateKit.nsScreen(forYabaiDisplayIndex: index)
+    }
+
+    /// 拓扑变化（didChangeScreenParameters）即时失效几何匹配表。
+    func invalidateDisplayMatchTable() {
+        displayMatchTable = nil
+    }
 }

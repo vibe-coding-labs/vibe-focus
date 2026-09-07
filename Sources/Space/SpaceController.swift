@@ -55,6 +55,16 @@ final class SpaceController: ObservableObject {
         return Date().timeIntervalSince(cachedAt) > Self.queryCacheTTL
     }
 
+    /// 几何匹配表缓存（1s TTL：move/restore/grid 投递热路径每窗查询，fork 成本必须摊销；
+    /// 显示器拓扑变化由 didChangeScreenParametersNotification 即时失效）。
+    struct DisplayMatchTable {
+        let mappedAt: Date
+        let yabaiIndexByCGDisplayID: [CGDirectDisplayID: Int]
+        let cgDisplayIDByYabaiIndex: [Int: CGDirectDisplayID]
+    }
+    // 模块内可见（extension 跨文件读写；单 target 无外泄面）
+    var displayMatchTable: DisplayMatchTable?
+
     private init() {
         // 启动后多次重试 refreshAvailability，覆盖启动 fork 竞争窗口。
         // 启动时 overlay refresh / hook check / querySpaces 并发 fork yabai，可能某次
@@ -73,6 +83,14 @@ final class SpaceController: ObservableObject {
         timer.tolerance = 15
         RunLoop.main.add(timer, forMode: .common)
         healthCheckTimer = timer
+        // 显示器拓扑变化即失效几何匹配表（exactYabaiDisplayIndex/exactNSScreen 的 1s
+        // TTL 缓存）：插拔/合盖后旧映射立即可错，不能等 TTL 自然过期。
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.invalidateDisplayMatchTable() }
+        }
     }
 
     deinit {}

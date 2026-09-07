@@ -123,7 +123,7 @@ extension WindowManager {
         let cocoaCenter = CGPoint(x: cocoaFrame.midX, y: cocoaFrame.midY)
         for (screenIndex, screen) in NSScreen.screens.enumerated() {
             if screen.frame.contains(cocoaCenter) || screen.frame.intersects(cocoaFrame) {
-                let yabaiIndex = CoordinateKit.yabaiDisplayIndex(for: screen)
+                let yabaiIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen)
                 let dID = CoordinateKit.cgDisplayID(for: screen)
                 log(
                     "[WindowManager] displayContext matched screen",

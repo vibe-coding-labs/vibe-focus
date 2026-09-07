@@ -31,7 +31,7 @@ extension TerminalGridController {
 
     /// 该屏当前可见工作区（yabai 全局索引；yabai 不可用时 nil）
     func activeSpaceIndex(for screen: NSScreen) -> Int? {
-        guard let displayIndex = CoordinateKit.yabaiDisplayIndex(for: screen) else { return nil }
+        guard let displayIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen) else { return nil }
         return SpaceController.shared.visibleSpaceIndex(forDisplayIndex: displayIndex, spaces: nil, ignoreCache: true)?.yabaiIndex
     }
 
@@ -49,7 +49,7 @@ extension TerminalGridController {
         guard case .displaySpace(_, let spaceIndex) = GridTargetCode.parse(TerminalGridPreferences.target) ?? .main else {
             return nil
         }
-        guard let displayIndex = CoordinateKit.yabaiDisplayIndex(for: screen) else {
+        guard let displayIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen) else {
             return "yabai 不可用，无法定位工作区，已在该屏当前工作区创建"
         }
         let spaces = SpaceController.shared.querySpaces() ?? []
