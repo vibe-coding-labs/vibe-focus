@@ -151,10 +151,6 @@ enum TerminalAutomationScript {
         return parts.isEmpty ? nil : parts.joined(separator: " && ")
     }
 
-    static func isSupported(appBundleID: String) -> Bool {
-        appBundleID == "com.apple.Terminal" || appBundleID == "com.googlecode.iterm2"
-    }
-
     /// 解析 `terminalEnumerateWindowTTYs` 的 stdout（每行 `windowID|tty`）。
     ///
     /// ## 边界（穷尽锁定于 Runner TerminalGridTTYParsingTests）
