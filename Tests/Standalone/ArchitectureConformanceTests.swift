@@ -26,6 +26,7 @@
 //                                 ToggleEngine+Restore 4a——新调用点=新手抄，必须走审查。
 // R9  MoveToMainPipeline.run(     move_to_main 阶段管线唯一入口（Batch 7）。
 // R10 FrameWriteExecutor(         两段写入执行器唯一实例化点（Batch 3）。
+// R11 yabaiDisplayIndex(/nsScreen(forYabaiDisplayIndex: 猜序版仅定义处+解析器回退（Batch 34）。
 
 import Foundation
 
@@ -140,6 +141,13 @@ let rules: [ConformanceRule] = [
         contextAnyPatterns: [],
         allowedFiles: ["FrameWriteExecutor.swift", "WindowManager+MoveWindow.swift"]
     ),
+    ConformanceRule(
+        id: "R11",
+        description: "yabai 显示器索引猜序版仅定义处/SpaceController 精确解析器回退（Batch 34，本机两套屏序相反）",
+        patterns: ["yabaiDisplayIndex(for:", "nsScreen(forYabaiDisplayIndex:"],
+        contextAnyPatterns: [],
+        allowedFiles: ["CoordinateKit+Screen.swift", "SpaceController+Query.swift"]
+    ),
 ]
 
 // MARK: - 扫描
@@ -175,6 +183,16 @@ do {
     let r8 = rules.first { $0.id == "R8" }!
     check("selftest: R8 命中第三处手抄 float-settle",
           isViolation(line: "    _ = FloatSettle.floatAndSettle(windowID: id, ...)\n", basename: "Foo.swift", rule: r8))
+
+    let r11 = rules.first { $0.id == "R11" }!
+    check("selftest: R11 命中白名单外热路径直呼猜序版",
+          isViolation(line: "    let s = CoordinateKit.nsScreen(forYabaiDisplayIndex: record.sourceYabaiDisp)\n", basename: "ToggleEngine+Restore.swift", rule: r11)
+          && isViolation(line: "    let idx = CoordinateKit.yabaiDisplayIndex(for: screen)\n", basename: "TerminalGridController.swift", rule: r11))
+    check("selftest: R11 放行精确解析器名（大小写不构成子串，关键防误伤）",
+          !isViolation(line: "    let idx = SpaceController.shared.exactYabaiDisplayIndex(for: screen)\n", basename: "Foo.swift", rule: r11)
+          && !isViolation(line: "    let sc = SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: i)\n", basename: "Foo.swift", rule: r11))
+    check("selftest: R11 放行白名单内回退线",
+          !isViolation(line: "        return CoordinateKit.yabaiDisplayIndex(for: screen)\n", basename: "SpaceController+Query.swift", rule: r11))
 }
 
 guard FileManager.default.fileExists(atPath: sourcesRoot.path) else {
