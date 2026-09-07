@@ -5058,6 +5058,52 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
               && Doctor.runtimeAXFlipLine(count: 2, direction: nil, lastAt: 0)?.contains("@ ?") == true)
     }
 
+    // MARK: Toggle restore 决策树（真实实现——decideRestore 六分支穷举，Batch 30）
+
+    do {
+        let mainScreen = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        func rec(orig: CGRect, target: CGRect, id: UInt32 = 42) -> ToggleRecord {
+            ToggleRecord(windowID: id, pid: 100, bundleIdentifier: nil, appName: "T",
+                         origFrame: orig, sourceSpace: 2, sourceDisplay: 0, sourceYabaiDisp: 2,
+                         sourceDispSpace: 1, targetFrame: target, targetDisplay: 1,
+                         toggledAt: Date(), sessionID: nil)
+        }
+        // A. 六分支穷举（守护顺序：nil 焦点 → 副屏短路 → 无 record → 无主屏 → corrupted → restore）。
+        check("toggleDecision A1: 焦点未知 → noFocusedWindow（最优先，其余输入无关）",
+              WindowManager.decideRestore(focusedOnMain: nil, recordByWindowID: nil, mainScreenFrame: nil) == .noFocusedWindow)
+        check("toggleDecision A2: 焦点在副屏 → moveToMain（record/屏幕输入短路不读）",
+              WindowManager.decideRestore(focusedOnMain: false, recordByWindowID: nil, mainScreenFrame: nil) == .moveToMain
+              && WindowManager.decideRestore(focusedOnMain: false,
+                                             recordByWindowID: rec(orig: .zero, target: .zero),
+                                             mainScreenFrame: mainScreen) == .moveToMain)
+        check("toggleDecision A3: 主屏焦点但无 record → noRecord",
+              WindowManager.decideRestore(focusedOnMain: true, recordByWindowID: nil, mainScreenFrame: mainScreen) == .noRecord)
+        check("toggleDecision A4: 有 record 但主屏 frame 未知 → noMainScreen",
+              WindowManager.decideRestore(focusedOnMain: true,
+                                          recordByWindowID: rec(orig: .zero, target: .zero),
+                                          mainScreenFrame: nil) == .noMainScreen)
+        check("toggleDecision A5: orig 中心在主屏内（corrupted record）→ corruptedClearWindowID(42)",
+              WindowManager.decideRestore(focusedOnMain: true,
+                                          recordByWindowID: rec(orig: CGRect(x: 100, y: 100, width: 200, height: 200),
+                                                                target: CGRect(x: 0, y: 0, width: 1000, height: 800)),
+                                          mainScreenFrame: mainScreen)
+              == .corruptedClearWindowID(42))
+        check("toggleDecision A6: orig 中心在主屏外 + target 在主屏内 → restore",
+              WindowManager.decideRestore(focusedOnMain: true,
+                                          recordByWindowID: rec(orig: CGRect(x: -1000, y: 100, width: 200, height: 200),
+                                                                target: CGRect(x: 100, y: 100, width: 800, height: 600)),
+                                          mainScreenFrame: mainScreen)
+              == .restore)
+        // B. route 映射真身侧回归（Batch 5 的 (decision, onMainScreen) 失真组合覆盖）。
+        check("toggleDecision B1: restore → restore 路由（忽略归属输入）",
+              WindowManager.route(for: .restore, onMainScreen: nil) == .restore
+              && WindowManager.route(for: .restore, onMainScreen: true) == .restore)
+        check("toggleDecision B2: moveToMain 在主屏 → stuck / 未知归属 → move_to_main（日志失真修复回归）",
+              WindowManager.route(for: .moveToMain, onMainScreen: true) == .moveSecondaryStuck
+              && WindowManager.route(for: .moveToMain, onMainScreen: nil) == .moveToMain
+              && WindowManager.route(for: .noRecord, onMainScreen: false) == .moveToMain)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
