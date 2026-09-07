@@ -47,6 +47,8 @@ public struct SettingsView: View {
     @State var gridCols = TerminalGridPreferences.cols
     @State var gridTargetCode = TerminalGridPreferences.target
     @State var gridMinimapScreens: [ScreenLayoutMapper.InputScreen] = []
+    // Minimap 胶囊点击 live 切换的结局反馈（nil = 无进行中的反馈）
+    @State var gridSpaceSwitchMessage: String?
     @State var gridGap = Double(TerminalGridPreferences.gap)
     @State var gridAppPreference = TerminalGridPreferences.appPreference
     @State var gridLaunchCommand = TerminalGridPreferences.launchCommand
