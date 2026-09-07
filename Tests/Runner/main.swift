@@ -5453,6 +5453,83 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                 { return true }; return false }())
     }
 
+    // MARK: 提示音门控 + 项目音效解析（真实实现——B36：仅镜像覆盖的纯决策转直测）
+
+    do {
+        // SoundPlayGate：免打扰（跨午夜/同日/起闭右开/无效配置）优先于节流；
+        // 节流剩余秒数向上取整下限 1。UTC 固定时区注入消环境波动。
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let tz = TimeZone(identifier: "UTC")!
+        func at(_ hour: Int) -> Date {
+            cal.date(from: DateComponents(timeZone: tz, year: 2026, month: 9, day: 8, hour: hour))!
+        }
+        func gate(_ hour: Int, quiet: Bool, start: Int, end: Int,
+                  interval: Int = 0, last: Date? = nil) -> SoundPlayGateDecision {
+            SoundPlayGate.decide(now: at(hour), lastPlayedAt: last,
+                                 minIntervalSeconds: interval,
+                                 quietEnabled: quiet, quietStartHour: start, quietEndHour: end,
+                                 calendar: cal)
+        }
+        check("gate: 跨午夜 22→8 两侧窗口命中（23 点与 7 点）",
+              gate(23, quiet: true, start: 22, end: 8) == .quietHours
+              && gate(7, quiet: true, start: 22, end: 8) == .quietHours)
+        check("gate: 窗口起闭右开（22 含 8 不含；21 与 8 点外放行）",
+              gate(22, quiet: true, start: 22, end: 8) == .quietHours
+              && gate(8, quiet: true, start: 22, end: 8) == .allow
+              && gate(21, quiet: true, start: 22, end: 8) == .allow)
+        check("gate: 同日窗 9→18（9 与 17 静音，18 放行）",
+              gate(9, quiet: true, start: 9, end: 18) == .quietHours
+              && gate(17, quiet: true, start: 9, end: 18) == .quietHours
+              && gate(18, quiet: true, start: 9, end: 18) == .allow)
+        check("gate: 起==止无效配置视作关闭 + 总开关关闭直放",
+              gate(23, quiet: true, start: 22, end: 22) == .allow
+              && gate(23, quiet: false, start: 22, end: 8) == .allow)
+        check("gate: 免打扰硬静音压过节流",
+              gate(23, quiet: true, start: 22, end: 8, interval: 60, last: at(23).addingTimeInterval(-5)) == .quietHours)
+        check("gate: 节流剩余秒向上取整且下限 1",
+              gate(12, quiet: false, start: 0, end: 0, interval: 3,
+                   last: at(12).addingTimeInterval(-1.0))
+              == .throttled(remainingSeconds: 2)
+              && gate(12, quiet: false, start: 0, end: 0, interval: 3,
+                      last: at(12).addingTimeInterval(-2.2))
+              == .throttled(remainingSeconds: 1))
+        check("gate: 间隔已满/首次播放/节流关闭 → 放行",
+              gate(12, quiet: false, start: 0, end: 0, interval: 3,
+                   last: at(12).addingTimeInterval(-3)) == .allow
+              && gate(12, quiet: false, start: 0, end: 0, interval: 3, last: nil) == .allow
+              && gate(12, quiet: false, start: 0, end: 0, interval: 0,
+                      last: at(12).addingTimeInterval(-0.5)) == .allow)
+
+        // ProjectSoundResolver：首命中优先/非法 rawValue 跳过/双侧归一匹配/未命中回落全局。
+        func rule(_ name: String, _ sound: CompletionSoundType?) -> ProjectSoundRule {
+            var r = ProjectSoundRule(projectName: name, soundType: .builtinDing)
+            if let sound { r.soundRawValue = sound.rawValue } else { r.soundRawValue = "garbage" }
+            return r
+        }
+        check("resolver: 无项目上下文（nil/空）→ 回落全局",
+              ProjectSoundResolver.resolvedType(projectName: nil, rules: [rule("x", .builtinDing)], globalType: .none) == .none
+              && ProjectSoundResolver.resolvedType(projectName: "", rules: [rule("x", .builtinDing)], globalType: .builtinPing) == .builtinPing)
+        check("resolver: 首个命中规则优先",
+              ProjectSoundResolver.resolvedType(
+                projectName: "vibe-labs",
+                rules: [rule("vibe-labs", .builtinDing), rule("vibe-labs", .builtinComplete)],
+                globalType: .none) == .builtinDing)
+        check("resolver: 非法 rawValue 规则跳过继续匹配",
+              ProjectSoundResolver.resolvedType(
+                projectName: "vibe-labs",
+                rules: [rule("vibe-labs", nil), rule("vibe-labs", .builtinComplete)],
+                globalType: .none) == .builtinComplete)
+        check("resolver: 规则名可为绝对路径（归一后命中）+ 大小写不敏感",
+              ProjectSoundResolver.resolvedType(
+                projectName: "vibe-labs",
+                rules: [rule("/Users/x/github/Vibe-Labs", .builtinDing)], globalType: .none) == .builtinDing)
+        check("resolver: 无命中回落全局",
+              ProjectSoundResolver.resolvedType(
+                projectName: "other-proj",
+                rules: [rule("vibe-labs", .builtinDing)], globalType: .builtinComplete) == .builtinComplete)
+    }
+
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
