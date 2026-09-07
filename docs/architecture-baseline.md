@@ -208,6 +208,12 @@
   SpaceController.switchToSpace 薄封装 restore 视角链 + GridSpaceSwitchFeedback
   三态反馈映射（failed 如实说明空工作区/无 SA 事实，禁止静默）；镜像 4 + Runner
   真身 4，Runner 740/740；切换链路由 restore 既有锁 + 真机验收覆盖；
+- **Batch 33（fix，用户报告修复）**（fb0c548，6762d54 合并）：minimap 屏幕↔yabai
+  显示器几何精确匹配 + 标注统一 yabai 坐标系——旧实现按 NSScreen 顺序猜 yabai
+  display 索引（同尺寸双副屏反序即胶囊挂错屏/切错屏），改 queryDisplays() +
+  matchYabaiDisplayIndices（Quartz→Cocoa 翻转 + 中心距贪心唯一配对，纯函数）；
+  屏标签/摘要徽章统一「屏N」（与 Space 胶囊同坐标系），#CGDisplayID 仅 yabai
+  不可用时兜底；镜像 5 + Runner 真身 3，Runner 870/870；
 - **门禁漏网教训（2026-09-07）**：① B26 合并删标记行吞括号致 main 编译
   断裂，b20b 复验只 `grep warning` 漏看 error，坏合并 9b2d7f5 带病推送——
   门禁必须同时检查 error 与 warning；② 批次提交前 diff 必须与宣称的断言数
