@@ -185,13 +185,6 @@ final class FakeAuditor: RestoreAuditing {
 
 // MARK: - 全部分支锁定（MainActor 隔离域内执行）
 
-/// 与 HotKeyManager.validate 同语义的校验（修饰键 + 已知系统冲突表）
-func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
-    let hasModifier = hk.modifiers & (UInt32(cmdKey) | UInt32(optionKey) | UInt32(controlKey)) != 0
-    let noSystemConflict = HotKeyConfiguration.knownConflicts.first(where: { $0.configuration == hk }) == nil
-    return hasModifier && noSystemConflict
-}
-
 @MainActor func runAllTests() {
     var passed = 0
     var failed = 0
@@ -1249,7 +1242,7 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
         check("热键表: 默认表不与主 toggle 键撞车",
               LayoutHotKeyTable.collidesWithToggleHotKey(table, toggleHotKey: .default) == nil)
         check("热键表: 默认键全部过系统冲突校验（无已知系统快捷键命中）",
-              table.bindings.values.allSatisfy { hk in hotKeyPassesSystemConflicts(hk) })
+              table.bindings.values.allSatisfy { HotKeyManager.validationError(for: $0) == nil })
         // Codable round-trip
         if let data = table.encoded(), let decoded = LayoutHotKeyTable.decode(data) {
             check("热键表: JSON round-trip 一致", decoded == table)
@@ -5949,6 +5942,24 @@ func hotKeyPassesSystemConflicts(_ hk: HotKeyConfiguration) -> Bool {
                                            mainScreenFrame: mainFrame)
               && !CoordinateKit.isOnMainScreen(CGRect(x: 2000, y: 500, width: 100, height: 100),
                                                mainScreenFrame: mainFrame))
+    }
+
+    // MARK: 热键校验真身（真实实现——B45：Runner 内同语义镜像删除，改直测 validate）
+
+    do {
+        // 无修饰键 → 拒绝；已知系统冲突 → 携带原因；合法组合 → nil。
+        let noMod = HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_A), modifiers: 0)
+        check("hotKeyValidate: 无 ⌘/⌥/⌃ 修饰 → 拒绝",
+              HotKeyManager.validationError(for: noMod)?.contains("⌘") == true)
+        let spotLight = HotKeyConfiguration(keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey))
+        check("hotKeyValidate: 已知冲突 → 携带冲突原因",
+              HotKeyManager.validationError(for: spotLight)?.contains("Spotlight") == true)
+        check("hotKeyValidate: 默认 ⌃Q 合法 → nil",
+              HotKeyManager.validationError(for: .default) == nil)
+        check("hotKeyValidate: shiftKey 单独不算有效修饰",
+              HotKeyManager.validationError(
+                for: HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_A), modifiers: UInt32(shiftKey)))
+              != nil)
     }
 
     // MARK: 汇总

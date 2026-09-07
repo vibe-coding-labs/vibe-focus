@@ -116,7 +116,7 @@ public final class HotKeyManager: ObservableObject {
             return
         }
 
-        if let validationError = validate(hotKey) {
+        if let validationError = Self.validationError(for: hotKey) {
             shortcutStatusMessage = validationError
             shortcutStatusIsError = true
             NSSound.beep()
@@ -191,7 +191,9 @@ public final class HotKeyManager: ObservableObject {
         return trusted
     }
 
-    private func validate(_ hotKey: HotKeyConfiguration) -> String? {
+    /// 快捷键校验唯一事实源（纯函数，B45 提纯）：修饰键要求 + 系统冲突表。
+    /// nonisolated static——Runner 直测真身，消除 Runner 内同语义镜像的漂移面。
+    nonisolated static func validationError(for hotKey: HotKeyConfiguration) -> String? {
         if hotKey.modifiers & (UInt32(cmdKey) | UInt32(optionKey) | UInt32(controlKey)) == 0 {
             log(
                 "[HotKey] validate: no modifier key",
@@ -272,7 +274,7 @@ public final class HotKeyManager: ObservableObject {
     @discardableResult
     func applyLayoutShortcut(_ hotKey: HotKeyConfiguration, for action: LayoutAction) -> String? {
         log("[HotKey] applyLayoutShortcut requested: \(action.rawValue) \(hotKey.displayString)")
-        if let validationError = validate(hotKey) {
+        if let validationError = Self.validationError(for: hotKey) {
             return validationError
         }
 
