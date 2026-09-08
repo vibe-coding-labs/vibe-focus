@@ -199,6 +199,22 @@ extension RunnerHarness {
         let cr = HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 9), sessionID: "s")
         check("ups B: 冷却文案含剩余秒", cr.response.message == "Auto-restore cooldown active (9s remaining)")
 
+        // B+. 字段级收口（B65）：六决策全部 ok=true/200/sessionID 透传 + 常量分支文案逐字锁定。
+        let allDecisions: [HookEventHandler.PromptMoveDecision] = [
+            .autoRestoreDisabled, .noBinding, .rateLimited(recentCount: 2, maxEvents: 20),
+            .alreadyOnMain, .cooldownActive(remainingSeconds: 4), .proceedToMove,
+        ]
+        check("ups B+: 六决策响应 ok=true、状态码 200、sessionID 逐项透传",
+              allDecisions.allSatisfy { d in
+                  let r = HookEventHandler.promptHttpResponse(for: d, sessionID: "sess-77")
+                  return r.statusCode == 200 && r.response.ok && r.response.sessionID == "sess-77"
+              })
+        check("ups B+: 常量分支文案逐字锁定",
+              HookEventHandler.promptHttpResponse(for: .autoRestoreDisabled, sessionID: "s").response.message == "UserPromptSubmit received, auto restore disabled"
+              && HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s").response.message == "Could not resolve window identity"
+              && HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s").response.message == "Window already on main screen, no action needed"
+              && HookEventHandler.promptHttpResponse(for: .proceedToMove, sessionID: "s").response.message == "Proceeding to move window")
+
         // C. 搬窗结果二分。
         check("ups C: moved → moved_to_main/handled=true",
               HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "s").response.code == "moved_to_main"
@@ -206,6 +222,10 @@ extension RunnerHarness {
         check("ups C: 失败 → move_failed/handled=false",
               HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "s").response.code == "move_failed"
               && HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "s").response.handled == false)
+        check("ups C+: 结果响应文案与 sessionID 透传",
+              HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "op-9").response.message == "Window moved to main screen"
+              && HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "op-9").response.sessionID == "op-9"
+              && HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "op-9").response.message == "Failed to move window to main screen")
 
         // D. UPSRateLimiter 滑动窗口（100% 分支）。
         var lim = UPSRateLimiter(windowDuration: 600, maxEvents: 3)
