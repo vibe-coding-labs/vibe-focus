@@ -9,7 +9,12 @@ import Foundation
 extension ClaudeHookPreferences {
 
     /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点
+    /// （默认入口读 LANHookPreferences.lanMode；lanMode 参数版是 P-INST-144 的测试缝，直测免 UserDefaults）
     static func generateHelperScriptContent() -> String {
+        generateHelperScriptContent(lanMode: LANHookPreferences.lanMode)
+    }
+
+    static func generateHelperScriptContent(lanMode: Bool) -> String {
         // P-INST-198: hook 辅助脚本内容生成耗时（读 LANHookPreferences.lanMode P-INST-144 + hostBlock/hostDefault 三元 + 多行 bash 字符串插值；installHelperScript P-INST-88 调用，写 hook-forwarder.sh）。
         #if PERF_INSTRUMENT
         let ghscStart = Date()
@@ -18,11 +23,11 @@ extension ClaudeHookPreferences {
             if durMs >= 5 { log("[HookScriptGenerator] generateHelperScriptContent slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
         #endif
-        let hostBlock = LANHookPreferences.lanMode ? """
+        let hostBlock = lanMode ? """
         VF_HOST=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('host','127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
 
 """ : ""
-        let hostDefault = LANHookPreferences.lanMode ? "$VF_HOST" : "127.0.0.1"
+        let hostDefault = lanMode ? "$VF_HOST" : "127.0.0.1"
         return """
         #!/bin/bash
         set -euo pipefail
@@ -79,12 +84,14 @@ extension ClaudeHookPreferences {
     // MARK: - Remote Install Script
 
     /// 生成远程安装脚本：用户复制到远程机器执行即可完成 Hook 配置
-    static func generateRemoteInstallScript(host: String) -> String {
-        let port = listenPort
-        let token = authToken ?? ""
-        let machineLabel = "remote-\(host.replacingOccurrences(of: ".", with: "-"))"
+    /// 远程机器标签：host 的点转连字符（hook-config.json 的 machine_label 与安装脚本展示共用同一事实源）
+    static func machineLabel(forHost host: String) -> String {
+        "remote-\(host.replacingOccurrences(of: ".", with: "-"))"
+    }
 
-        let hookConfigJSON = """
+    /// 远程 hook-config.json 模板（install 脚本写入远程 ~/.vibefocus/hook-config.json 的唯一形状）
+    static func hookConfigJSON(host: String, port: Int, token: String, machineLabel: String) -> String {
+        """
         {
           "host": "\(host)",
           "port": \(port),
@@ -92,6 +99,13 @@ extension ClaudeHookPreferences {
           "machine_label": "\(machineLabel)"
         }
         """
+    }
+
+    static func generateRemoteInstallScript(host: String) -> String {
+        let port = listenPort
+        let token = authToken ?? ""
+        let label = machineLabel(forHost: host)
+        let hookConfig = hookConfigJSON(host: host, port: port, token: token, machineLabel: label)
 
         let scriptContent = generateRemoteHelperScriptContent()
         let hooksJSON = generateHooksJSON()
@@ -128,7 +142,7 @@ extension ClaudeHookPreferences {
 
         # 2. 写入 hook-config.json
         cat > ~/.vibefocus/hook-config.json << 'HOOKCONFIG_EOF'
-        \(hookConfigJSON)
+        \(hookConfig)
         HOOKCONFIG_EOF
         echo "[2/4] Written hook-config.json (host=\(host), port=\(port))"
 
@@ -163,7 +177,7 @@ extension ClaudeHookPreferences {
         echo ""
         echo "=== Installation Complete ==="
         echo "Hook events will be forwarded to VibeFocus at \(host):\(port)"
-        echo "Machine label: \(machineLabel)"
+        echo "Machine label: \(label)"
         echo ""
         echo "To uninstall: rm -rf ~/.vibefocus && edit ~/.claude/settings.json to remove hooks"
         """
