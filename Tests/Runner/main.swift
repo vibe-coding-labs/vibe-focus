@@ -222,6 +222,7 @@ final class FakeAuditor: RestoreAuditing {
         runPureSweepB()
         runAppIdentityTests()
         runHotKeyDisplayTests()
+        runToggleDecisionTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
