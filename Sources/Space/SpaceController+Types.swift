@@ -68,7 +68,7 @@ private func decodeFlexibleBool<K: CodingKey>(_ key: K, from c: KeyedDecodingCon
 /// yabai space 查询结果
 /// - `index`: yabai 全局 space 索引 (1-based)，用于 yabai space 命令
 /// - `display`: yabai display 索引 (1-based, 1=主屏)
-struct YabaiSpaceInfo: Decodable {
+struct YabaiSpaceInfo: Decodable, Equatable {
     let id: Int?
     let index: Int?
     let display: Int?

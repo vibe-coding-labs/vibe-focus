@@ -220,6 +220,7 @@ final class FakeAuditor: RestoreAuditing {
         runHookWalkTests()
         runHookModelsTests()
         runSpaceIndexTests()
+        runSpaceIdentityTests()
         runPureSweepA()
         runPureSweepB()
         runAppIdentityTests()
