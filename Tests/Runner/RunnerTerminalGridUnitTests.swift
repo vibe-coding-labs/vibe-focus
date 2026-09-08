@@ -170,5 +170,53 @@ extension RunnerHarness {
         check("session: 点分文件名 stem 原样保留",
               ClaudeSessionLocator.latestSessionID(inProjectDir: "dots", home: home, now: now, fileManager: fm) == "abc.def")
     }
+
+    // ===== shellPID：tty 登录 shell 选取（B66 直测：runner 注入假 ps 输出，零真身进程查询） =====
+    do {
+        var seenExec: String?
+        var seenArgs: [String]?
+        func ps(_ stdout: String, exitCode: Int32 = 0) -> (String, [String]) -> YabaiClient.YabaiResult? {
+            { exec, args in
+                seenExec = exec
+                seenArgs = args
+                return YabaiClient.YabaiResult(exitCode: exitCode, stdout: stdout, stderr: "")
+            }
+        }
+        // 混合行：login 包装/claude CLI/垃圾行/裸 pid 全滤；-zsh 剥前导 '-'；路径形取 basename；最小 pid 胜出
+        let mixed = """
+          500 login -pf cc
+          501 -zsh
+          502 /bin/zsh -l
+          600 claude --resume abc
+          not-a-pid-line
+          700
+        """
+        check("shellPID: 最小 shell pid 胜出（login/claude/垃圾行/裸 pid 全滤）",
+              ClaudeSessionLocator.shellPID(onTTY: "/dev/ttys007", runner: ps(mixed)) == 501)
+        check("shellPID: 走 /bin/ps -t 且 /dev/ 前缀被剥",
+              seenExec == "/bin/ps" && seenArgs == ["-t", "ttys007", "-o", "pid=,command="])
+        // 路径形 shell 单命中
+        check("shellPID: 路径形 basename 识别",
+              ClaudeSessionLocator.shellPID(onTTY: "/dev/ttys007", runner: ps("  90 /usr/bin/fish")) == 90)
+        // 非 zsh 系（pwsh）也在 shell 集合内
+        check("shellPID: pwsh 属 shell 集合",
+              ClaudeSessionLocator.shellPID(onTTY: "/dev/ttys007", runner: ps("  70 pwsh")) == 70)
+        // 空 ps 输出 → nil
+        check("shellPID: 空 ps 输出 → nil",
+              ClaudeSessionLocator.shellPID(onTTY: "/dev/ttys007", runner: ps("")) == nil)
+        // ps 退出码非 0 → nil
+        check("shellPID: ps 退出码非 0 → nil",
+              ClaudeSessionLocator.shellPID(onTTY: "/dev/ttys007", runner: ps("  1 zsh", exitCode: 1)) == nil)
+        // ps 进程缺失（runner 返回 nil）→ nil
+        check("shellPID: ps 不可用 → nil",
+              ClaudeSessionLocator.shellPID(onTTY: "/dev/ttys007", runner: { _, _ in nil }) == nil)
+        // 非 /dev/ 前缀的 tty 原样透传
+        var capturedTTY: String?
+        _ = ClaudeSessionLocator.shellPID(onTTY: "ttys003", runner: { _, args in
+            capturedTTY = args[1]
+            return YabaiClient.YabaiResult(exitCode: 0, stdout: "  1 zsh", stderr: "")
+        })
+        check("shellPID: 无 /dev/ 前缀原样透传", capturedTTY == "ttys003")
+    }
     }
 }
