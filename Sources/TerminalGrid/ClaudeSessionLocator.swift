@@ -75,12 +75,14 @@ enum ClaudeSessionLocator {
     }
 
     /// projects 目录下最新（30 天内）session jsonl 的 sessionID。
+    /// home 可注入：Runner 直测以临时目录替代真身 `~`（B65）。
     static func latestSessionID(
         inProjectDir projectDir: String,
+        home: String = NSHomeDirectory(),
         now: Date = Date(),
         fileManager: FileManager = .default
     ) -> String? {
-        let dirURL = URL(fileURLWithPath: NSHomeDirectory())
+        let dirURL = URL(fileURLWithPath: home)
             .appendingPathComponent(".claude/projects/\(projectDir)")
         guard let items = try? fileManager.contentsOfDirectory(atPath: dirURL.path) else {
             return nil
