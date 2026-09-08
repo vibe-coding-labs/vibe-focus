@@ -218,6 +218,7 @@ final class FakeAuditor: RestoreAuditing {
         runSoundVoiceHookTests()
         runRegistryStoreTests()
         runHookWalkTests()
+        runHookModelsTests()
         runSpaceIndexTests()
         runPureSweepA()
         runPureSweepB()
