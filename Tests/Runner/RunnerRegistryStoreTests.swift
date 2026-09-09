@@ -643,4 +643,41 @@ extension RunnerHarness {
         try? FileManager.default.removeItem(atPath: dir)
     }
     }
+
+    // MARK: 过期绑定清理决策（B99：pruneExpiredWindowStates 保留期参数化直测——临时库）
+
+    func runPruneExpiryTests() {
+        do {
+            let dir = "/tmp/vibefocus-prunetest-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let dbPath = dir + "/prune.db"
+            let store = WindowStateStore(dbPath: dbPath)
+            let now = Date()
+            func state(_ wid: UInt32, completed: Bool, updatedAgo: TimeInterval) -> WindowState {
+                var ws = WindowState(
+                    windowID: wid, pid: 100, tty: nil, axWindowNumber: nil, appName: "T",
+                    bundleIdentifier: nil, title: "t", termSessionID: nil, itermSessionID: nil,
+                    sessionID: "s-\(wid)", bindingType: .local, isCompleted: completed,
+                    createdAt: now.addingTimeInterval(-updatedAgo), updatedAt: now.addingTimeInterval(-updatedAgo)
+                )
+                if completed { ws.completedAt = now.addingTimeInterval(-updatedAgo) }
+                return ws
+            }
+            store.saveWindowState(state(1, completed: false, updatedAgo: 3600))   // 活跃 1h 前 → 活跃保留期 24h 内
+            store.saveWindowState(state(2, completed: false, updatedAgo: 100_000)) // 活跃 27h 前 → 过期
+            store.saveWindowState(state(3, completed: true, updatedAgo: 7200))     // 完成 2h 前 → 完成保留期 4h 内
+            store.saveWindowState(state(4, completed: true, updatedAgo: 20_000))   // 完成 5.5h 前 → 过期
+            let removed = store.pruneExpiredWindowStates(
+                activeRetention: 24 * 3600, completedRetention: 4 * 3600)
+            check("prune: 活跃 24h/完成 4h 保留期——恰清 2 条过期（含已完成宽裕档）",
+                  removed == 2
+                  && store.findWindowState(windowID: 1) != nil
+                  && store.findWindowState(windowID: 2) == nil
+                  && store.findWindowState(windowID: 3) != nil
+                  && store.findWindowState(windowID: 4) == nil)
+            check("prune: 再跑一遍幂等（无新过期 → 0）",
+                  store.pruneExpiredWindowStates(activeRetention: 24 * 3600, completedRetention: 4 * 3600) == 0)
+        }
+    }
 }
