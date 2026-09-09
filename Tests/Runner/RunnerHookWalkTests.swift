@@ -637,6 +637,24 @@ extension RunnerHarness {
                   withToken == "http://127.0.0.1:39277/claude/hook?token=tok123")
         }
 
+        // resolveRemoteBinding 真实查找路径（B107：label 未映射/映射窗口已消失两分支——
+        // remoteBindings 种子化进独立 UserDefaults 域，用后清键）
+        do {
+            let key = "remoteBindings"
+            let saved = LANHookPreferences.remoteBindings
+            defer {
+                LANHookPreferences.remoteBindings = saved
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            LANHookPreferences.remoteBindings = ["lab-live": 424242]
+            let handler = HookEventHandler.shared
+            check("remoteBind: label 未映射 → nil 且描述更新",
+                  handler.resolveRemoteBinding(label: "no-such-label", sessionID: "s-x") == nil
+                  && SessionWindowRegistry.shared.lastEventDescription.contains("no-such-label"))
+            check("remoteBind: label 已映射但窗口已消失 → nil（window_gone）",
+                  handler.resolveRemoteBinding(label: "lab-live", sessionID: "s-x") == nil)
+        }
+
         // 编排目标候选装配（B106：selectionPreview 静态缝提纯——runningIDs/usageRank 接线锁定）
         do {
             let t0 = Date(timeIntervalSince1970: 1_700_000_000)
