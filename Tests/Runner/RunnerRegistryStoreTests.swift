@@ -228,10 +228,38 @@ extension RunnerHarness {
         // activeRemoteBindings 过滤 nil
         check("lan: activeRemoteBindings 仅含非空", LANHookPreferences.activeRemoteBindings == ["m1": 100])
 
-        // 旧格式迁移分支不在本进程内测：同进程混合 set/字典塞入受 UserDefaults 缓存
-        // 与 cfprefsd 写读一致性影响（实测不稳定），该路径由 Standalone/LANBindingTests
-        // 镜像 + 真机验证覆盖。
+        // 旧格式迁移解析（B83：parseLegacyBindings 静态缝提纯——逻辑原内联在 getter 迁移分支，
+        // Standalone/LANBindingTests 镜像退役。UserDefaults 端到端迁移写回受 cfprefsd 缓存
+        // 与写读一致性影响（实测不稳定），归真机验证；纯解析在此直锁）。
+        check("lan: legacy 解析 Int/UInt32 双形态、垃圾值跳过、空字典 → 空",
+              LANHookPreferences.parseLegacyBindings(from: ["a": UInt32(7), "b": 9, "c": "garbage"])
+              == ["a": Optional(UInt32(7)), "b": Optional(UInt32(9))]
+              && LANHookPreferences.parseLegacyBindings(from: [:]).isEmpty)
         UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    // MARK: WindowSettle 时长表（真实实现——B83：WindowSettleTimingTests 镜像退役）
+    // 镜像锁的旧时序模型（固定 400ms yabai 档）已被轮询制取代（25ms 节拍+400ms 预算），
+    // 属重度漂移——本块锁现行表：基准值 + 两级（yabai 级数百 ms / WindowServer 级数十 ms）关系不变量。
+
+    do {
+        check("settle: 基准值锁定（float 重摆预算 300ms/下限 120ms、frame 验证轮询 25ms+预算 400ms、AX 节拍 25ms、MC 150ms）",
+              WindowSettle.floatRelayoutSettleMicros == 300_000
+              && WindowSettle.floatRelayoutMinSettleMicros == 120_000
+              && WindowSettle.frameVerifyPollIntervalMs == 25
+              && WindowSettle.frameVerifyBudgetMs == 400
+              && WindowSettle.axWriteSettleMicros == 25_000
+              && WindowSettle.missionControlDismissSettleMicros == 150_000)
+        check("settle: 等到位族锁定（条件轮询 50ms/space 切回预算 800ms/段间预算 300ms）",
+              WindowSettle.conditionPollIntervalMs == 50
+              && WindowSettle.spaceSwitchWaitBudgetMs == 800
+              && WindowSettle.framePhaseVerifyBudgetMs == 300)
+        check("settle: 两级关系不变量——重摆下限 ≤ 预算、轮询节拍 ≤ 50ms、全部预算 ≤ 1s（用户可感知路径）",
+              WindowSettle.floatRelayoutMinSettleMicros <= WindowSettle.floatRelayoutSettleMicros
+              && WindowSettle.frameVerifyPollIntervalMs <= 50
+              && WindowSettle.conditionPollIntervalMs <= 50
+              && max(WindowSettle.frameVerifyBudgetMs,
+                     max(WindowSettle.spaceSwitchWaitBudgetMs, WindowSettle.framePhaseVerifyBudgetMs)) <= 1_000)
     }
 
     // MARK: LAN IP 选择（真实实现——B73：en0 硬编码修为 en0 优先/enX 次之/虚拟口排除）
@@ -271,6 +299,9 @@ extension RunnerHarness {
               && WindowManager.normalizeTTY("") == nil
               && WindowManager.normalizeTTY("not a tty") == nil)
         check("tty: normalize 正常补全", WindowManager.normalizeTTY("ttys009") == "/dev/ttys009")
+        // 精确匹配怪癖锁（B83：TTYNormalizationTests 镜像退役）——尾随空格不是 "not a tty" 精确串
+        check("tty: 'not a tty '（尾随空格）按路径补全而非拒绝",
+              WindowManager.normalizeTTY("not a tty ") == "/dev/not a tty ")
 
         // matchCommandToWindowTitle：倒序命令优先 + em-dash contains + 大小写
         let wins = [

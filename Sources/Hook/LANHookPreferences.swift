@@ -36,6 +36,20 @@ enum LANHookPreferences {
         }
     }
 
+    /// 旧格式（UserDefaults dictionary，Int/UInt32 混态）→ 绑定映射解析。
+    /// B83 测试缝提纯：逻辑原内联在 remoteBindings getter 的迁移分支；非数值垃圾值跳过。
+    static func parseLegacyBindings(from raw: [String: Any]) -> [String: UInt32?] {
+        var result: [String: UInt32?] = [:]
+        for (key, value) in raw {
+            if let id = value as? UInt32 {
+                result[key] = id
+            } else if let id = value as? Int {
+                result[key] = UInt32(id)
+            }
+        }
+        return result
+    }
+
     /// 远程机器 → 窗口ID 映射, 格式: ["machine-label": windowID]
     /// windowID 为 nil 表示已添加但尚未选择窗口
     /// 序列化为 JSON string 存入 UserDefaults
@@ -56,16 +70,9 @@ enum LANHookPreferences {
                 return decoded.mapValues { Optional($0) }
             }
             guard let raw = UserDefaults.standard.dictionary(forKey: remoteBindingsKey) else { return [:] }
-            var result: [String: UInt32?] = [:]
-            for (key, value) in raw {
-                if let id = value as? UInt32 {
-                    result[key] = id
-                } else if let id = value as? Int {
-                    result[key] = UInt32(id)
-                }
-            }
+            // 旧格式迁移写回（经辅助函数直接持久化，避免 getter 内访问自身）
+            let result = parseLegacyBindings(from: raw)
             if !result.isEmpty {
-                // 旧格式迁移写回（经辅助函数直接持久化，避免 getter 内访问自身）
                 persistBindings(result.compactMapValues { $0 })
             }
             return result
