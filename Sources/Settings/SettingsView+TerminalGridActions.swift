@@ -136,14 +136,23 @@ extension SettingsView {
 
             Divider()
 
-            SettingsRow(title: "每格启动命令", detail: "如 claude；创建网格时逐格执行（恢复有 session 的格子时优先 --resume）") {
+            // 启动命令常长于 200pt（如 claude --resume <uuid> --flag），固定窄框
+            // 不可读（2026-09-10 用户报告）——整行宽度 + 纵向伸缩（1~3 行）等宽输入
+            VStack(alignment: .leading, spacing: 6) {
+                Text("每格启动命令")
+                    .font(.system(size: 13, weight: .medium))
+                Text("如 claude；创建网格时逐格执行（恢复有 session 的格子时优先 --resume）")
+                    .font(.system(size: 11.5))
+                    .lineSpacing(2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 TextField("留空 = 纯 shell", text: Binding(
                     get: { gridLaunchCommand },
                     set: { gridLaunchCommand = $0; TerminalGridPreferences.launchCommand = $0 }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
-                .font(.system(size: 12, design: .monospaced))
+                ), axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .lineLimit(1...3)
             }
 
             Divider()
