@@ -101,6 +101,26 @@ enum ExitJournal {
         return chars
     }
 
+    /// 最近一条 exit 事件的 reason（纯函数，按文件行序取最后一条 exit；
+    /// 本实例自己的 launch/install 行跳过——自愈防循环判据要的是「上一个进程」）。
+    /// 无 exit 记录 → nil。
+    static func lastExitReason(journalContents: String) -> String? {
+        journalContents
+            .split(separator: "\n")
+            .compactMap { Doctor.parseJournalLine(String($0)) }
+            .filter { $0.kind == "exit" }
+            .last?
+            .reason
+    }
+
+    /// 读盘版：journal 不可读 → nil。
+    static func lastExitReason() -> String? {
+        guard let contents = try? String(contentsOfFile: filePath, encoding: .utf8) else {
+            return nil
+        }
+        return lastExitReason(journalContents: contents)
+    }
+
     // MARK: - 写入
 
     static func appendLine(_ line: String) {

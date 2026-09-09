@@ -118,3 +118,33 @@ stat -f "%Sm" ~/Applications/VibeFocus.app/Contents/MacOS/VibeFocusHotkeys
 # 重新正确部署
 bash scripts/dev-build.sh
 ```
+
+## 模式二：tccd 竞态误判（同证书重装后 ~1s 内拉起，2026-09-10 立项）
+
+### 表现
+- 重装（install replaced）后新进程 `ax=false`，热键/窗口管理全失效
+- **钥匙串证书签名身份前后一致**（DR = `certificate leaf = H"805659a6…"` 不变）
+- 授权本体从未被吊销：**重启进程即恢复**，不需要 tccutil、不需要用户重新勾选
+- 误判绑定进程存活期：不重启可卡死一整夜（pid 28750 实证 22 分钟+，pid 44322 同）
+
+### 实证时间线（exits.jsonl + /tmp/vibefocus-keepalive.log）
+- 09-09 23:12 重装 → 新进程 ax=true（竞态未命中）
+- 09-09 23:42 重装 → 新进程 ax=false（中招，卡到 00:05 人工重启）
+- 09-10 00:05 人工重启 → ax=true；00:15 并行会话重装 → ax=false（再中招）
+- 规律：旧进程退出后 ~1s 内拉起的新进程约半数被 tccd 误判；退让数秒后拉起则正常
+
+### 防护（fix/ax-tccd-race-hardening 批次，四层）
+1. **App 自愈**：`AXSelfHeal.decide`（纯决策表）——启动未授权且上轮非自愈退出
+   → 显式 `recordExit(ax-selfheal-relaunch)` 后优雅退出，交 keepalive 链拉起全新进程；
+   上轮已自愈过仍假 = 真未授权，防循环，落回人工勾选提示（AppDelegate ADFL 接线）
+2. **wrapper 退让**：install-keepalive.sh 生成器在 `open -W` 返回后 `sleep 3` 再裁决/重拉，
+   让 tccd 完成旧进程注销
+3. **装机后验证**：`--check-ax` 轻量探针（exit 0/3）+ deploy-release.sh 5.5/6 段——
+   装机脚本当场发现竞态并自动重启一次，安装会话立刻可见，不再等用户第二天报障
+4. **取证增强**：`--diagnose` 增「安装副本盘点」段（几份活体/谁在跑/各自身份 adhoc 或证书），
+   「是不是又装了两个版本」一条命令出答案
+
+### 判别口诀
+- 重启进程能好 → 竞态误判（本模式），自愈逻辑会自动处理
+- 重启也不好 + 系统设置显示已勾选 → ad-hoc 毒化（模式一），必须 tccutil reset + 重新勾选
+- `--diagnose` 副本盘点签名列显示 adhoc → 模式一，先查部署脚本是否绕过了「证书或拒绝」

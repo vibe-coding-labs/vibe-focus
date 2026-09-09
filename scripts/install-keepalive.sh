@@ -74,6 +74,10 @@ while true; do
     mtime_before=\$(fatal_mtime)
     bin_before=\$(bin_ident)
     "\$OPEN_BIN" -W "$app_path"
+    # tccd 退让（2026-09-09/10 三次实证）：旧进程死后 ~1s 内拉起的新进程约半数被
+    # tccd 误判未授权（AX 授权本体未吊销、重启即恢复，详见 Sources/Support/AXSelfHeal.swift）。
+    # 睡 3s 让 tccd 完成旧进程注销再进入裁决/重拉路径，降低竞态命中率；app 侧自愈兜底。
+    sleep 3
     # \$OPEN_BIN 返回 = app 已退出。裁决只看 size：本次运行期间 fatal 文件被真实
     # 追加（size 变化）才算崩溃；mtime 变化（陈旧记录复活/派生进程启动触碰）不误判。
     size_after=\$(fatal_size)

@@ -1,4 +1,5 @@
 import SwiftUI
+import ApplicationServices
 import VibeFocusKit
 
 @main
@@ -34,6 +35,17 @@ struct VibeFocusApp: App {
             print(VibeFocusDoctor.report())
             fflush(stdout)
             exit(0)
+        }
+        // 轻量 AX 探针：`VibeFocusHotkeys --check-ax` 打印 ax=true/false 即退，
+        // 退出码 0/3。deploy-release.sh 装机后验证用（tccd 竞态把新进程误标未授权
+        // 时，装机脚本据此自动重启一次，见 2026-09-10 教训）。CLI 调用与 GUI 实例
+        // 同一二进制同一 DR，tccd 视图一致（实证：竞态中毒期间终端跑 --diagnose
+        // 同样报未授权，中毒进程死后转真）。
+        if CommandLine.arguments.contains("--check-ax") {
+            let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
+            print("ax=\(trusted)")
+            fflush(stdout)
+            exit(trusted ? 0 : 3)
         }
     }
 }

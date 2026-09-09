@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 // MARK: - 一键取证报告（--diagnose）
@@ -113,6 +114,59 @@ enum Doctor {
         return "  运行期翻转 \(count) 次（最近 \(dir) @ \(at)）"
     }
 
+    // MARK: - 安装副本盘点（纯逻辑）
+
+    struct InstallCopyInfo: Equatable {
+        var path: String
+        var bundleID: String
+        var version: String
+        /// 证书名 / "adhoc" / "unsigned" / "?"
+        var signature: String
+        /// .app.backup-* 改名目录：LaunchServices 不注册，open/点按都不会拉起
+        var isBackup: Bool
+    }
+
+    struct RunningInstanceInfo: Equatable {
+        var pid: Int32
+        var bundleID: String?
+        var path: String?
+    }
+
+    /// 副本盘点排版（纯函数）：运行实例、活体安装、备份目录、双版本/多实例判定。
+    static func installInventoryLines(
+        copies: [InstallCopyInfo],
+        running: [RunningInstanceInfo]
+    ) -> [String] {
+        var lines: [String] = []
+        for r in running {
+            lines.append("  ▶ 运行中 pid=\(r.pid) bundle=\(r.bundleID ?? "?") exe=\(r.path ?? "?")")
+        }
+        if running.isEmpty {
+            lines.append("  （当前无运行实例）")
+        }
+        for c in copies where !c.isBackup {
+            let liveMark = running.contains { $0.path == c.path } ? "  ← 运行中" : ""
+            lines.append("  ● \(c.path)  \(c.bundleID) \(c.version)  签名: \(c.signature)\(liveMark)")
+        }
+        for c in copies where c.isBackup {
+            lines.append("  ○ \(c.path)  （备份目录，LaunchServices 不注册，不会拉起）")
+        }
+        let liveCount = copies.filter { !$0.isBackup }.count
+        switch (liveCount, running.count) {
+        case (1, 1):
+            lines.append("  ✅ 单份安装、单实例，无双版本。")
+        case (1, 0):
+            lines.append("  ✅ 单份安装（当前无运行实例）。")
+        case (_, 0):
+            lines.append("  ⚠️ 检测到 \(liveCount) 份活体安装（疑似双版本）。")
+        case (1, _):
+            lines.append("  ⚠️ 检测到 \(running.count) 个运行实例（多实例冲突或僵尸）。")
+        default:
+            lines.append("  ⚠️ 检测到 \(liveCount) 份活体安装 + \(running.count) 个运行实例（疑似双版本/多实例）。")
+        }
+        return lines
+    }
+
     // MARK: - 报告
 
     static func report(paths: DoctorPaths = .live(), now: Date = Date()) -> String {
@@ -184,6 +238,13 @@ enum Doctor {
         } else {
             out.append("[辅助功能授权] 审计中无 ax 记录（旧版本实例）")
         }
+
+        // 安装副本盘点（2026-09-10 立项：用户每次热键失效第一反应「是不是又装了两个版本」，
+        // 本段一条命令给答案：几份活体、谁在跑、各自签名身份）
+        let inventory = gatherInstallInventory()
+        out.append("")
+        out.append("[安装副本盘点] 扫描 ~/Applications 与 /Applications 下的 VibeFocus*")
+        out.append(contentsOf: installInventoryLines(copies: inventory.copies, running: inventory.running))
 
         // 构建能力标记（2026-09-06 部署互踩回归：修复在 main 但装机二进制被旧构建覆盖。
         // 检测对象是「诊断进程自身」这份二进制——对装机 App 跑 --diagnose 即检装机版本）
@@ -266,6 +327,74 @@ enum Doctor {
         df.formatOptions = [.withInternetDateTime]
         guard let date = df.date(from: fromISO) else { return nil }
         return max(0, now.timeIntervalSince(date))
+    }
+
+    // MARK: - 安装副本盘点（IO）
+
+    /// 扫描两个标准安装位 + 枚举运行实例。历史遗留 bundle id（com.vibefocus.app）
+    /// 与现行 id（com.openai.vibe-focus）都认，执行文件路径含 VibeFocus 也兜底认。
+    static func gatherInstallInventory() -> (copies: [InstallCopyInfo], running: [RunningInstanceInfo]) {
+        let scanDirs = [NSHomeDirectory() + "/Applications", "/Applications"]
+        var copies: [InstallCopyInfo] = []
+        for dir in scanDirs {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+            for name in names.sorted() where name.hasPrefix("VibeFocus") {
+                let path = dir + "/" + name
+                let infoPlist = path + "/Contents/Info.plist"
+                guard FileManager.default.fileExists(atPath: infoPlist),
+                      let plist = NSDictionary(contentsOfFile: infoPlist) as? [String: Any] else {
+                    continue
+                }
+                copies.append(InstallCopyInfo(
+                    path: path,
+                    bundleID: plist["CFBundleIdentifier"] as? String ?? "?",
+                    version: plist["CFBundleShortVersionString"] as? String ?? "?",
+                    signature: detectSignatureKind(bundlePath: path),
+                    isBackup: path.contains(".app.backup-")
+                ))
+            }
+        }
+        let knownBundleIDs: Set<String> = ["com.openai.vibe-focus", "com.vibefocus.app"]
+        let running = NSWorkspace.shared.runningApplications
+            .filter { app in
+                if let b = app.bundleIdentifier, knownBundleIDs.contains(b) { return true }
+                return app.executableURL?.path.contains("VibeFocus") == true
+            }
+            .map {
+                RunningInstanceInfo(
+                    pid: $0.processIdentifier,
+                    bundleID: $0.bundleIdentifier,
+                    path: $0.executableURL?.path
+                )
+            }
+        return (copies, running)
+    }
+
+    /// 签名身份：codesign -dv 一发判定——有 Authority= → 证书名（TCC 授权可跨重装
+    /// 存续）；Signature=adhoc → adhoc（每次构建 DR 都变，装机即毒化授权的元凶）；
+    /// 未签名 → unsigned；解析失败 → "?"。
+    static func detectSignatureKind(bundlePath: String) -> String {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        proc.arguments = ["-dv", bundlePath]
+        let pipe = Pipe()
+        proc.standardOutput = Pipe()
+        proc.standardError = pipe
+        do {
+            try proc.run()
+        } catch {
+            return "?"
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        if let range = text.range(of: "Authority=") {
+            let name = text[range.upperBound...].prefix { !$0.isNewline }
+            return String(name)
+        }
+        if text.contains("Signature=adhoc") { return "adhoc" }
+        if text.contains("code object is not signed") { return "unsigned" }
+        return "?"
     }
 
     // MARK: - IO 辅助

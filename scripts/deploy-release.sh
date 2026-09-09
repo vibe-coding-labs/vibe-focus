@@ -56,7 +56,24 @@ xattr -rd com.apple.quarantine "$DST_APP" 2>/dev/null || true
 
 echo "5/6 启动新 app..."
 open "$DST_APP"
-sleep 2
+sleep 5
+
+echo "5.5/6 AX 授权装机验证（tccd 竞态自检，2026-09-10 教训）..."
+AX_PROBE="$DST_APP/Contents/MacOS/$EXECUTABLE_NAME"
+ax_state="$("$AX_PROBE" --check-ax 2>/dev/null || true)"
+if [[ "$ax_state" != "ax=true" ]]; then
+  echo "  ⚠️ 新进程被 tccd 误标未授权（重装竞态，授权本体未吊销），自动重启一次..."
+  pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+  sleep 3
+  open "$DST_APP"
+  sleep 5
+  ax_state="$("$AX_PROBE" --check-ax 2>/dev/null || true)"
+fi
+if [[ "$ax_state" == "ax=true" ]]; then
+  echo "  ✅ AX 已授权，热键可用"
+else
+  echo "  ❌ 重启后仍未授权：请到 系统设置 → 隐私与安全性 → 辅助功能 重新勾选" >&2
+fi
 
 echo "6/6 安装带熔断的 keepalive..."
 bash "$SCRIPT_DIR/scripts/install-keepalive.sh"

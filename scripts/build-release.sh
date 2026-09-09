@@ -71,8 +71,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null 2>&1
-xattr -rd com.apple.quarantine "$APP_BUNDLE" 2>/dev/null || true
+# 「证书或拒绝」：ad-hoc 产物每次构建 cdhash 都变，一旦被直接运行/装机，TCC 授权
+# 即被钉死在该次构建上（之后正式构建全 denied）。与 deploy-release.sh / c8299ea 同规。
+if security find-identity -v -p codesigning 2>/dev/null | grep -F "VibeFocus Local Code Signing" >/dev/null 2>&1; then
+  codesign --force --deep --sign "VibeFocus Local Code Signing" "$APP_BUNDLE"
+else
+  echo "ERROR: 找不到 'VibeFocus Local Code Signing'，拒绝 ad-hoc 构建（会毒化辅助功能授权）。" >&2
+  echo "创建证书：bash scripts/setup_local_codesign.sh" >&2
+  exit 1
+fi
+xattr -rd com.apple.quarantine "$APP_BUNDLE" >/dev/null 2>&1 || true
 
 echo "产物: $APP_BUNDLE (版本 $VERSION)"
 echo "验证新代码标记: $(strings "$MACOS_DIR/$EXECUTABLE_NAME" | grep -c 'CRASH LOOP detected') 处熔断标记"
