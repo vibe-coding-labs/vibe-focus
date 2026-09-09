@@ -133,9 +133,9 @@ public struct SettingsView: View {
         case .orchestration:
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    layoutHotKeySection
                     terminalGridSection
                         .onAppear { refreshSelectionInfo() }
+                    layoutHotKeySection
                 }
             }
             .scrollIndicators(.visible)
