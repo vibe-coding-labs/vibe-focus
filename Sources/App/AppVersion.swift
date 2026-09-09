@@ -4,7 +4,7 @@ import Foundation
 enum AppVersion {
     /// 发布版本号单一事实源：build-release.sh / package_release.sh awk 提取此字面量
     /// 写入 Info.plist；运行时从 Info.plist 读回（AppVersion.current）。
-    /// 2026-09-10 修复：原 `static let current = "x.y.z"` 改 computed 后两个脚本
+    /// 2026-09-10 修复：原 `static let current（原字面量，x.y.z 为占位示例）` 改 computed 后两个脚本
     /// 提取静默失效，装机 Info.plist 一律退化为 0.0.0。
     static let releaseVersion = "0.0.20"
 

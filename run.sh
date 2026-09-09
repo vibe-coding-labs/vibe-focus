@@ -19,7 +19,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PLIST_PATH="$CONTENTS_DIR/Info.plist"
 # B55 修复：版本号读取路径曾缺 App/ 层级（指向不存在的文件）→ VERSION 恒 fallback
 # 0.0.0，装机 Info.plist 的版本字段自始就是错的。实际位置在 Sources/App/ 下。
-VERSION="$(awk -F'"' '/static let current/ {print $2}' "$SCRIPT_DIR/Sources/App/AppVersion.swift" 2>/dev/null || echo "0.0.0")"
+VERSION="$(awk -F'"' '/static let releaseVersion/ {print $2}' "$SCRIPT_DIR/Sources/App/AppVersion.swift" 2>/dev/null || echo "0.0.0")"
 ASSETS_DIR="$SCRIPT_DIR/assets"
 
 # 等待给定 pid 全部退出（轮询 kill -0，0.2s 间隔）：全部退出=0；超时=1。
