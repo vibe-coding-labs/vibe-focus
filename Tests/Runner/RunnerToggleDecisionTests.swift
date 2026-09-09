@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import VibeFocusKit
 
@@ -128,6 +129,39 @@ extension RunnerHarness {
                   !ws(origX: nil, targetX: 200).hasToggleState
                   && !ws(origX: 100, targetX: nil).hasToggleState
                   && !ws(origX: nil, targetX: nil).hasToggleState)
+        }
+
+        // ===== pickFallbackFrontWindow：无窗口前台兜底选取（B93：ToggleFallbackWindowTests 镜像退役转真身） =====
+        do {
+            func entry(_ id: UInt32, pid: Int32, layer: Int = 0, onScreen: Bool = true,
+                       w: CGFloat = 800, h: CGFloat = 600) -> CGWindowEntry {
+                var d: [String: Any] = [
+                    kCGWindowNumber as String: id, kCGWindowOwnerPID as String: pid,
+                    kCGWindowLayer as String: layer, kCGWindowIsOnscreen as String: onScreen,
+                ]
+                if w > 0 { d[kCGWindowBounds as String] = ["X": CGFloat(0), "Y": CGFloat(0), "Width": w, "Height": h] }
+                return CGWindowEntry(from: d)!
+            }
+            let own: pid_t = 999
+            let regular: (pid_t) -> NSApplication.ActivationPolicy? = { _ in .regular }
+            // z-order 语义：快照首个合格者胜出（CGWindowList 前→后）
+            check("fallback: 首个合格窗口入选（z-order 前→后）",
+                  pickFallbackFrontWindow(
+                    snapshot: [entry(1, pid: 100), entry(2, pid: 200)], ownPID: own,
+                    activationPolicyOf: regular)?.windowID == 1)
+            // 排除规则：自身 overlay / 非零 layer / 离屏 / 1x1 占位窗 / 非 regular 激活策略
+            check("fallback: 自身/非零 layer/离屏/1x1 占位/非 regular 全部跳过",
+                  pickFallbackFrontWindow(
+                    snapshot: [entry(9, pid: own), entry(10, pid: 100, layer: 5),
+                               entry(11, pid: 100, onScreen: false), entry(12, pid: 100, w: 1, h: 1),
+                               entry(13, pid: 300), entry(14, pid: 200)],
+                    ownPID: own,
+                    activationPolicyOf: { $0 == 300 ? .accessory : .regular })?.windowID == 14)
+            // 全部不合格 → nil（调用方保持无操作兜底）
+            check("fallback: 无合格候选 → nil",
+                  pickFallbackFrontWindow(
+                    snapshot: [entry(9, pid: own), entry(10, pid: 100, layer: 5)], ownPID: own,
+                    activationPolicyOf: regular) == nil)
         }
 
         // ===== isOnMainScreen(rect, mainScreenFrame:)：中心点归属（注入式重载，与活屏无关） =====
