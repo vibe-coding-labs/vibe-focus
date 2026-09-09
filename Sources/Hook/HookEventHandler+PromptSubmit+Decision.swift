@@ -4,9 +4,15 @@ import Foundation
 // WindowMove 决策树同款模式：纯决策 + 响应表，Runner 直测穷尽锁定）。
 //
 // 决策序 = 生产守护顺序（handleUserPromptSubmit 消费）：
-//   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 已在主屏 → 冷却中 → 搬窗。
-// 每个决策的响应码唯一且稳定；「单向移动」原则（只拉向主屏、永不推离）由
-// 决策集不含任何「移离主屏」分支体现。
+//   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 有 toggle 记录（回原位）
+//   → 已在主屏 → 冷却中 → 搬窗。
+// 每个决策的响应码唯一且稳定。
+//
+// 「回原位」语义（2026-09-10 用户定案，恢复 0f0a3bc 移除的承诺）：存在 toggle
+// 记录 = Stop 拉主屏时保存过原始屏幕/工作区/位置 → UserPromptSubmit 时经
+// ToggleEngine.restore 回到原位（本地会话与远程 machine_label 会话通用——
+// 都在窗口身份解析之后）。震荡天然有界：记录只由真实移动创建、restore 成功
+// 即清除，每次回跳都需要一次新的 Stop 移动作凭证；UPS 限流闸在其前兜底。
 
 @MainActor
 extension HookEventHandler {
@@ -16,6 +22,7 @@ extension HookEventHandler {
         case autoRestoreDisabled
         case noBinding
         case rateLimited(recentCount: Int, maxEvents: Int)
+        case restoreToOriginal
         case alreadyOnMain
         case cooldownActive(remainingSeconds: Int)
         case proceedToMove
@@ -28,6 +35,7 @@ extension HookEventHandler {
         rateLimited: Bool,
         recentUPSCount: Int,
         maxUPSEvents: Int,
+        hasToggleRecord: Bool,
         isOnMainScreen: Bool,
         isInCooldown: Bool,
         cooldownRemainingSeconds: Int
@@ -37,6 +45,7 @@ extension HookEventHandler {
         if rateLimited {
             return .rateLimited(recentCount: recentUPSCount, maxEvents: maxUPSEvents)
         }
+        if hasToggleRecord { return .restoreToOriginal }
         if isOnMainScreen { return .alreadyOnMain }
         if isInCooldown {
             return .cooldownActive(remainingSeconds: cooldownRemainingSeconds)
@@ -71,6 +80,15 @@ extension HookEventHandler {
                 ClaudeHookResponse(
                     ok: true, code: "session_rate_limited",
                     message: "Session UPS rate limited (\(recentCount)/\(maxEvents) in 10min), skipping move",
+                    sessionID: sessionID, handled: false
+                )
+            )
+        case .restoreToOriginal:
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "restore_to_original",
+                    message: "Toggle record present, restoring window to original screen/space/position",
                     sessionID: sessionID, handled: false
                 )
             )

@@ -26,11 +26,17 @@ final class HookEventHandler {
 
     // MARK: - User Prompt Submit
 
-    /// UserPromptSubmit 事件处理：确保终端窗口在主屏可见。
+    /// UserPromptSubmit 事件处理：双向编排的「回程」——提交新提示词时回原位。
     ///
-    /// **设计原则（单向移动）**：只在窗口不在主屏时将其拉到主屏，永远不会把窗口推离主屏。
-    /// 旧逻辑使用 ToggleEngine.restore() 会把窗口移回 origFrame（副屏），
-    /// 导致 Stop→UPS→Stop→UPS 无限循环，窗口在主屏和副屏之间反复跳动。
+    /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺）**：
+    /// 窗口带 toggle 记录（Stop 拉主屏时保存的原始屏幕/工作区/位置）→ 经
+    /// ToggleEngine.restore 回原位；无记录保持单向兜底（不在主屏→拉主屏，
+    /// 已在主屏→跳过）。
+    ///
+    /// **历史教训（0f0a3bc 曾把本路径退化成单向移主屏）**：旧 restore 实现
+    /// 因 Stop→UPS 无限循环被移除，但设置页承诺未改——UI 与行为脱节数月。
+    /// 新实现的可界性：restore 仅在 toggle 记录存在时触发（记录只由真实移动
+    /// 创建、成功即清除，每次回跳需一次新的 Stop 移动作凭证）+ UPS 限流闸前置。
     func handleUserPromptSubmit(
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
@@ -92,7 +98,8 @@ final class HookEventHandler {
         let rate = limiter.registerAndEvaluate(now: now)
         sessionUPSLimiters[payload.sessionID] = limiter
 
-        // 门 3/4/5 输入采集：主屏归属 / 冷却。
+        // 门 3/4/5 输入采集：toggle 记录（Stop 拉主屏时保存的原始位置）/ 主屏归属 / 冷却。
+        let hasToggleRecord = ToggleEngine.shared.load(windowID: identity.windowID) != nil
         let onMain = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
         let inCooldown = MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID)
         let cooldownRemaining = inCooldown ? MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID) : 0
@@ -103,6 +110,7 @@ final class HookEventHandler {
             rateLimited: rate.limited,
             recentUPSCount: rate.recentCount,
             maxUPSEvents: Self.upsRateMaxEvents,
+            hasToggleRecord: hasToggleRecord,
             isOnMainScreen: onMain,
             isInCooldown: inCooldown,
             cooldownRemainingSeconds: cooldownRemaining
@@ -111,6 +119,54 @@ final class HookEventHandler {
         switch decision {
         case .autoRestoreDisabled, .noBinding:
             return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+
+        case .restoreToOriginal:
+            // 有 toggle 记录 = Stop 拉主屏时保存过原始屏幕/工作区/位置 → 经
+            // ToggleEngine.restore 回原位（本地会话与远程 machine_label 会话通用）。
+            // 记录在 restore 成功后由引擎清除：每次回跳都需要一次新的 Stop 移动作
+            // 凭证，配合前置 UPS 限流闸，震荡天然有界。
+            log(
+                "[HookEventHandler] UserPromptSubmit: toggle record present, restoring to original screen/space/position",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sessionID": payload.sessionID
+                ]
+            )
+            let outcome = ToggleEngine.shared.restore(
+                windowID: identity.windowID,
+                triggerSource: "hook_user_prompt_submit",
+                traceID: traceID
+            )
+            var restored = false
+            if case .restored = outcome { restored = true }
+            if restored {
+                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            } else {
+                log(
+                    "[HookEventHandler] UserPromptSubmit: restore to original failed",
+                    level: .warn,
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(identity.windowID),
+                        "outcome": outcome.outcomeLabel,
+                        "sessionID": payload.sessionID
+                    ]
+                )
+            }
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true,
+                    code: restored ? "restored_to_original" : "restore_failed",
+                    message: restored
+                        ? "Window restored to original screen/space/position"
+                        : "Restore to original position failed (\(outcome.outcomeLabel))",
+                    sessionID: payload.sessionID,
+                    handled: restored
+                )
+            )
 
         case .rateLimited:
             log(

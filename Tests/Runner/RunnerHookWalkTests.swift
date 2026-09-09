@@ -157,38 +157,57 @@ extension RunnerHarness {
 
     do {
         // A. 守护顺序穷举：每道门 + 前门不满足时才看后门。
+        //    （2026-09-10 新增记录门：有 toggle 记录优先回原位——Stop 拉主屏后
+        //    提交提示词回原位即本门；窗口已在主屏也照样回，因为记录指向的就是原始位置。）
         check("ups A1: 自动恢复关闭 → autoRestoreDisabled（最优先）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: false, hasWindowIdentity: false, rateLimited: true,
-                                                recentUPSCount: 99, maxUPSEvents: 20, isOnMainScreen: false,
+                                                recentUPSCount: 99, maxUPSEvents: 20, hasToggleRecord: true,
+                                                isOnMainScreen: false,
                                                 isInCooldown: true, cooldownRemainingSeconds: 5) == .autoRestoreDisabled)
         check("ups A2: 无窗口身份 → noBinding",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: false, rateLimited: true,
-                                                recentUPSCount: 99, maxUPSEvents: 20, isOnMainScreen: false,
+                                                recentUPSCount: 99, maxUPSEvents: 20, hasToggleRecord: false,
+                                                isOnMainScreen: false,
                                                 isInCooldown: true, cooldownRemainingSeconds: 5) == .noBinding)
-        check("ups A3: 限流 → rateLimited(计数/阈值)",
+        check("ups A3: 限流 → rateLimited(计数/阈值)（有记录也先限流）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: true,
-                                                recentUPSCount: 20, maxUPSEvents: 20, isOnMainScreen: false,
+                                                recentUPSCount: 20, maxUPSEvents: 20, hasToggleRecord: true,
+                                                isOnMainScreen: false,
                                                 isInCooldown: false, cooldownRemainingSeconds: 0)
               == .rateLimited(recentCount: 20, maxEvents: 20))
-        check("ups A4: 已在主屏 → alreadyOnMain（先于冷却）",
+        check("ups A4: 有 toggle 记录 → restoreToOriginal（先于主屏/冷却判定；Stop 拉主屏后提交即回原位）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, isOnMainScreen: true,
-                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .alreadyOnMain)
-        check("ups A5: 冷却中 → cooldownActive(剩余秒)",
+                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
+                                                isOnMainScreen: true,
+                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreToOriginal)
+        check("ups A4b: 有记录且窗口已被手动挪走 → 仍回原位",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, isOnMainScreen: false,
+                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
+                                                isOnMainScreen: false,
+                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .restoreToOriginal)
+        check("ups A5: 无记录冷却中 → cooldownActive(剩余秒)",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
+                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
+                                                isOnMainScreen: false,
                                                 isInCooldown: true, cooldownRemainingSeconds: 7) == .cooldownActive(remainingSeconds: 7))
-        check("ups A6: 全门通过 → proceedToMove",
+        check("ups A6: 无记录全门通过 → proceedToMove",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, isOnMainScreen: false,
+                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
+                                                isOnMainScreen: false,
                                                 isInCooldown: false, cooldownRemainingSeconds: 0) == .proceedToMove)
+        check("ups A7: 无记录已在主屏 → alreadyOnMain",
+              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
+                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
+                                                isOnMainScreen: true,
+                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .alreadyOnMain)
 
         // B. 响应映射表：码/状态逐项锁定。
         func code(_ r: (statusCode: Int, response: ClaudeHookResponse)) -> String { r.response.code }
-        check("ups B: 六决策响应码唯一且稳定",
+        check("ups B: 七决策响应码唯一且稳定",
               code(HookEventHandler.promptHttpResponse(for: .autoRestoreDisabled, sessionID: "s")) == "auto_restore_disabled"
               && code(HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s")) == "no_binding_skip"
               && code(HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")) == "session_rate_limited"
+              && code(HookEventHandler.promptHttpResponse(for: .restoreToOriginal, sessionID: "s")) == "restore_to_original"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s")) == "already_on_main_screen"
               && code(HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 3), sessionID: "s")) == "cooldown_active"
               && code(HookEventHandler.promptHttpResponse(for: .proceedToMove, sessionID: "s")) == "proceed_to_move")
