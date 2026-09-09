@@ -160,3 +160,5 @@
 为本轮增量主因（Runner 1075→1230）。热点结构结论不变：文件级行覆盖不再作为批次目标（B40/B50
 清账结论沿用），增量继续走「决策提纯→Runner 直测」模式。测量命令 `bash scripts/coverage_test_runner.sh`
 （llvm-cov 真实数字，非代理指标）。
+| B96 | **hook-forwarder.sh 转发器行为测试补齐（原编号 B94 与并行镜像退役线撞号，让先合者改 B96）（LAN 链路客户端核心，此前零测试）**：假 curl PATH 注入（沙盒 bin：python3/cat 符号链接 + 假 curl 逐参落日志），三场景真执行——①config 四字段 → POST 到 `http://$host:$port/claude/hook` + `X-VibeFocus-Token` 头 + enriched 载荷（terminal_ctx.machine_label/term_session_id/claude_project_dir 注入实证）；②token 空 → 无鉴权头（本机默认形态）；③非 JSON 载荷 → enrich 失败原样转发不吞事件。生成器字符串契约断言（配置读取/端点构造）。沙盒 bin 需含 cat（`VF_PAYLOAD=$(cat)` 读 stdin，set -e 下缺失即 127 中止——诊断输出实锤）| ✅ 2026-09-10 |
+| LAN 全链路真机冒烟（2026-09-10，B89 修复后运行态验证） | ①本机部署产物：`~/.vibefocus/hook-forwarder.sh` 发射 UserPromptSubmit → 服务端 200 `no_binding_skip`（无绑定会话诚实跳过）；②远程部署产物：Local Server 001（192.168.1.83）经装好的转发器发 SessionStart → 本机收到 `source=remote(192.168.1.83)` `isRemote=true` `machineLabel=remote-server-001`（B89 分类生产生效）+ 诚实 409 `remote_binding_failed`（label 未映射窗口的预期响应）；③绑定自愈观察：指向已关闭测试窗（7280）的 remote-server-001 绑定被应用自动清理（totalRemoteBindings 归零）——死窗口绑定自清理为正确行为；**用户待办一步**：SSH 终端窗就位后，局域网 Hook 卡添加 `remote-server-001` → 「映射当前窗口」即完成联动闭环 | ✅ 2026-09-10 |
