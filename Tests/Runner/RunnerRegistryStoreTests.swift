@@ -226,6 +226,32 @@ extension RunnerHarness {
         UserDefaults.standard.removeObject(forKey: key)
     }
 
+    // MARK: LAN IP 选择（真实实现——B73：en0 硬编码修为 en0 优先/enX 次之/虚拟口排除）
+
+    do {
+        func ip(_ interface: String, _ address: String) -> (interface: String, ip: String) {
+            (interface, address)
+        }
+        check("lanIP: en0 最优先（多候选时选 en0）",
+              LANHookPreferences.selectLANIP(from: [
+                ip("en1", "192.168.1.50"), ip("en0", "192.168.1.12"), ip("utun4", "198.18.0.1"),
+              ]) == "192.168.1.12")
+        check("lanIP: 无 en0 → 首个其它 enX",
+              LANHookPreferences.selectLANIP(from: [
+                ip("en5", "192.168.7.7"), ip("en1", "192.168.1.50"),
+              ]) == "192.168.7.7")
+        check("lanIP: utun/awdl/loopback 不参与",
+              LANHookPreferences.selectLANIP(from: [
+                ip("utun4", "198.18.0.1"), ip("awdl0", "169.254.5.6"), ip("lo0", "127.0.0.1"),
+              ]) == nil)
+        check("lanIP: en 口上的 loopback 地址也排除",
+              LANHookPreferences.selectLANIP(from: [ip("en0", "127.0.0.1")]) == nil)
+        check("lanIP: 空候选 → nil",
+              LANHookPreferences.selectLANIP(from: []) == nil)
+        check("lanIP: 只有虚拟口无 enX → nil（调用方回退 127.0.0.1）",
+              LANHookPreferences.selectLANIP(from: [ip("bridge0", "10.0.0.1")]) == nil)
+    }
+
     // MARK: 终端上下文匹配族 + Claude 窗口定位（真实实现——B11：镜像转直测）
 
     do {

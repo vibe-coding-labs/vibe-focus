@@ -89,7 +89,11 @@ enum LANHookPreferences {
         remoteBindings.compactMapValues { $0 }
     }
 
-    /// 获取本机 en0 的 IPv4 地址
+    /// 获取本机对外可直达的 LAN IPv4 地址。
+    /// 选择规则（B73）：优先 en0，其次其它物理网卡族 enX；排除 loopback 与
+    /// utun/awdl 等 VPN/虚拟口（那些地址局域网对端不可达）；无合格候选 → 127.0.0.1。
+    /// 旧行为硬编码只认 en0——Wi-Fi 不在 en0 的机器会拿到 127.0.0.1，
+    /// 设置页显示与远程安装脚本随之失效。
     static func currentLANIP() -> String {
         // P-INST-146: 本机 en0 IPv4 地址查询耗时（getifaddrs 链表遍历 + getnameinfo 反向解析 syscall + freeifaddrs；HookInstaller:33 写 config host + LANSettingsView 显示调用）。
         #if PERF_INSTRUMENT
@@ -100,24 +104,31 @@ enum LANHookPreferences {
             ])
         }
         #endif
-        var address = "127.0.0.1"
+        var candidates: [(interface: String, ip: String)] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return address }
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return "127.0.0.1" }
+        defer { freeifaddrs(ifaddr) }
         for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
             let interface = ptr.pointee
-            let addrFamily = interface.ifa_addr.pointee.sa_family
-            if addrFamily == UInt8(AF_INET) {
-                let name = String(cString: interface.ifa_name)
-                if name == "en0" {
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
-                                &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
-                    address = String(cString: hostname)
-                    break
-                }
-            }
+            guard interface.ifa_addr != nil,
+                  interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let name = String(cString: interface.ifa_name)
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                              &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            candidates.append((name, String(cString: hostname)))
         }
-        freeifaddrs(ifaddr)
-        return address
+        return selectLANIP(from: candidates) ?? "127.0.0.1"
+    }
+
+    /// 从 IPv4 候选（interface, ip）中选出对外 LAN IP 的纯判定：
+    /// en0 最优先 → 其它 enX → 无合格候选返回 nil（调用方回退 127.0.0.1）。
+    /// loopback 与非 en 前缀（utun/awdl/llw/bridge 等虚拟口）不参与。
+    static func selectLANIP(from candidates: [(interface: String, ip: String)]) -> String? {
+        let lan = candidates.filter { $0.interface.hasPrefix("en") && !$0.ip.hasPrefix("127.") }
+        if let en0 = lan.first(where: { $0.interface == "en0" }) {
+            return en0.ip
+        }
+        return lan.first?.ip
     }
 }
