@@ -72,8 +72,9 @@ enum SoundPlayGate {
         return .allow
     }
 
-    /// 时间点是否落在免打扰窗口内（起闭右开：含 startHour，不含 endHour）
-    private static func isInQuietHours(
+    /// 时间点是否落在免打扰窗口内（起闭右开：含 startHour，不含 endHour）。
+    /// internal：B92 并行重构产物直测（RunnerPureSweepBTests quietHelper 块）。
+    static func isInQuietHours(
         date: Date,
         startHour: Int,
         endHour: Int,
