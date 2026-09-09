@@ -87,6 +87,9 @@ extension ScreenOverlayManager {
         lastForceRefreshTriggerAt = now
 
         log("[FORCE_REFRESH] Triggered by reason=\(reason), clearing caches and refreshing")
+        // 广播给非 overlay 消费方（设置页 minimap 等）：去重闸之后发出，
+        // 频率已与本函数的真实刷新率一致，不会放大 yabai fork。
+        NotificationCenter.default.post(name: .vibefocusSpaceStateMayHaveChanged, object: nil)
         cancelPendingSignalRefreshes()
         clearSpaceIndexCache()
         refreshSpaceIndices(force: true)

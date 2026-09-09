@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - 编排页（终端网格 · Claude 会话编排）
@@ -25,6 +26,15 @@ extension SettingsView {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             // 接拔显示器 / 分辨率变化后重建缩略图
             refreshGridMinimap()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vibefocusSpaceStateMayHaveChanged)
+            // 防抖合并信号连发（SIGUSR1/插拔/toggle 汇聚点已自带去重闸，这里再并突发）
+            .debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)) { _ in
+            // 根治编排区「快照与现实脱节」家族（双高亮/S 标注滞后/编号漂移）：
+            // 任何来源的 space 变化（快捷键/胶囊点击/外部 yabai 命令/其它会话）经
+            // overlay 信号链广播到此，编排页可见即自动重建快照，绕缓存取稳态值——
+            // 不再依赖离散的手工刷新点，UI 自愈（2026-09-10 用户要求根治）。
+            refreshGridMinimap(ignoreCache: true)
         }
     }
 

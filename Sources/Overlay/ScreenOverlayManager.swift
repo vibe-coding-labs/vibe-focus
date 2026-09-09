@@ -2,6 +2,14 @@ import AppKit
 import Foundation
 import Darwin  // for signal.h
 
+/// Overlay 判定「工作区/屏幕状态可能已变化」后广播的应用内通知——SIGUSR1（yabai
+/// space_changed）/ 插拔 / toggle 后的 force refresh 汇聚点统一发出。设置页 minimap 等
+/// 非 overlay 消费方借此与真实 yabai 状态保持同步，不再依赖离散的手工刷新点
+/// （2026-09-10 用户要求根治编排区「快照与现实脱节」家族：双高亮/S 标注滞后等变体）。
+extension Notification.Name {
+    static let vibefocusSpaceStateMayHaveChanged = Notification.Name("vibefocus-space-state-may-have-changed")
+}
+
 // MARK: - Screen Overlay Manager
 /// Manages the always-on-top screen index overlay that labels windows by display.
 @MainActor
