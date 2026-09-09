@@ -152,6 +152,81 @@ extension ToggleEngine {
             "targetFrame": QuartzRect(record.targetFrame).description
         ])
 
+        let preMove = Self.performSourcePreSwitch(record: record, channels: channels, windowID: windowID, trace: trace)
+        let preMoveSpace = preMove.preMoveSpace
+        let spaceExact = preMove.spaceExact
+        let guardPrefetchedWindows = preMove.guardPrefetchedWindows
+
+        // 4. Move back to original frame（2026-09-01 重构：float 脱管 → yabai --move/--resize 直写 origFrame）
+        // 原 `yabai --space` 在 yabai v7 float 布局下静默失效（exit 0 但窗口不动，
+        // Tests/AXMoveValidation.swift T3 实测）；frame 直写经断言验证跨 display 可靠，
+        // macOS 窗口归属跟随物理位置自动回到源 display 的 visible space。
+        let (frameOK, moveMs) = Self.performFloatDetachAndFrameMove(
+            windowID: windowID, record: record, windowInfo: windowInfo,
+            windows: windows, channels: channels, trace: trace)
+
+        // 5. 结局裁决（诚实化：frame 未收敛不再伪装成功、不再销毁 record）。
+        guard frameOK else {
+            return Self.performMoveFailureStage(
+                record: record, windowID: windowID, triggerSource: triggerSource, trace: trace,
+                spaceExact: spaceExact, preMove: preMove,
+                windows: windows, channels: channels, records: records, auditor: auditor)
+        }
+
+        // 6. 视角守卫（与失败路径共用 runPerspectiveGuard，见其文档）。
+        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
+
+        // 7. Clear record
+        records.clear(windowID: record.windowID)
+
+        log("[ToggleEngine] restore: completed", fields: [
+            "traceID": trace,
+            "windowID": String(windowID),
+            "targetSpace": String(record.sourceSpace),
+            "frameOK": String(frameOK),
+            "spaceExact": String(describing: spaceExact),
+            "origFrame": QuartzRect(record.origFrame).originDescription,
+            "lookupMs": String(lookupMs),
+            "queryMs": String(queryMs),
+            "moveMs": String(moveMs),
+            "focusSpaceMs": String(focusSpaceMs)
+        ])
+
+        auditor.record(
+            eventType: "restore_success",
+            windowID: windowID,
+            pid: record.pid,
+            sessionID: nil,
+            details: [
+                "triggerSource": triggerSource,
+                "targetSpace": String(record.sourceSpace),
+                "spaceExact": String(describing: spaceExact)
+            ]
+        )
+
+        return .restored(spaceExact: spaceExact)
+    }
+
+    // MARK: - 分阶段提取（B97：行为等价重构，调用序列由 Tests/Runner 序列锁穷尽锁定）
+
+    /// 4-pre 前置阶段结果：视角基准 + 源屏精确恢复结论 + 守卫预取窗口。
+    private struct RestorePreMoveContext {
+        /// 移动前的 focused space（视角基准，必须在预切回之前采集）
+        let preMoveSpace: Int?
+        /// 源屏精确恢复结论（nil=无 space 上下文）
+        let spaceExact: Bool?
+        /// 守卫候选预取（preMoveSpace 未知时为 nil）
+        let guardPrefetchedWindows: [YabaiWindowInfo]?
+    }
+
+    /// 4-pre 前置阶段：采集视角基准 → 源屏 space 预切回（sourceSpacePreSwitch 纯函数裁决）
+    /// → 守卫候选预取。行为与内联版逐行等价。
+    private static func performSourcePreSwitch(
+        record: ToggleRecord,
+        channels: any RestoreSpaceChanneling,
+        windowID: UInt32,
+        trace: String
+    ) -> RestorePreMoveContext {
         // 视角基准：必须在 4-pre 切换源屏之前采集（否则守卫看到的是切换后的 space，漏切回）。
         // 记录移动前的 focused space — 用于检测 macOS 是否自动切换了 space
         let preMoveSpace = channels.currentSpaceIndex()
@@ -223,16 +298,30 @@ extension ToggleEngine {
         // （frame 直写必拖焦点），预取浪费路径罕见；preMoveSpace 未知（无 space 上下文）
         // 时跳过。查询失败由守卫内部如实降级（nil = refocusWindowOnSpace 现查）。
         let guardPrefetchedWindows: [YabaiWindowInfo]?
-        if preMoveSpace != nil, let pms = preMoveSpace {
+        if let pms = preMoveSpace {
             guardPrefetchedWindows = channels.queryWindowsOnSpace(pms, operationID: trace)
         } else {
             guardPrefetchedWindows = nil
         }
 
-        // 4. Move back to original frame（2026-09-01 重构：float 脱管 → yabai --move/--resize 直写 origFrame）
-        // 原 `yabai --space` 在 yabai v7 float 布局下静默失效（exit 0 但窗口不动，
-        // Tests/AXMoveValidation.swift T3 实测）；frame 直写经断言验证跨 display 可靠，
-        // macOS 窗口归属跟随物理位置自动回到源 display 的 visible space。
+        return RestorePreMoveContext(
+            preMoveSpace: preMoveSpace,
+            spaceExact: spaceExact,
+            guardPrefetchedWindows: guardPrefetchedWindows
+        )
+    }
+
+    /// 4a+4b 阶段：float 脱管（仅在真脱管时等重摆落定）→ yabai --move/--resize abs 直写
+    /// origFrame。行为与内联版逐行等价。
+    /// - Returns: (frameOK 直写收敛与否, moveMs 阶段累计耗时)
+    private static func performFloatDetachAndFrameMove(
+        windowID: UInt32,
+        record: ToggleRecord,
+        windowInfo: YabaiWindowInfo?,
+        windows: any RestoreWindowOperating,
+        channels: any RestoreSpaceChanneling,
+        trace: String
+    ) -> (frameOK: Bool, moveMs: Int) {
         // 4a. float 脱管——仅在真发生脱管时等重摆落定（窗口已 float 时无重摆，
         // 无条件等待是 restore 常见路径的纯浪费，2026-09-02 消除）。
         // 序列唯一出口 FloatSettle（Batch 6 收敛）：固定 300ms usleep → waitForRelayout
@@ -271,80 +360,32 @@ extension ToggleEngine {
             "traceID": trace, "frameOK": String(frameOK),
             "origFrame": QuartzRect(record.origFrame).description
         ])
+        return (frameOK, moveMs)
+    }
 
-        // 5. 结局裁决（诚实化：frame 未收敛不再伪装成功、不再销毁 record）。
-        guard frameOK else {
-            // frame 写失败但源屏预切回可能已把视角拖走——失败路径同样执行视角守卫，
-            // 把用户带回原处（窗口仍在主屏）。
-            _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
-            let origFrameOnAnyDisplay = windows.displayContext(for: record.origFrame).yabaiIndex != nil
-            if Self.isMoveFailureRetryable(origFrameOnAnyDisplay: origFrameOnAnyDisplay) {
-                log("[ToggleEngine] restore: frame move failed, keeping record for retry", level: .error, fields: [
-                    "traceID": trace, "windowID": String(windowID),
-                    "origFrame": QuartzRect(record.origFrame).description
-                ])
-                auditor.record(
-                    eventType: "restore_move_failed",
-                    windowID: windowID,
-                    pid: record.pid,
-                    sessionID: nil,
-                    details: [
-                        "triggerSource": triggerSource,
-                        "reason": "frame_not_converged",
-                        "recordKept": "true"
-                    ]
-                )
-                return .moveFailedRetryable
-            }
-            // P1 保守退让（2026-09-06）：origFrame 落在所有屏之外（显示器配置变化后
-            // 常见——副屏拔除/分辨率切换把存档帧甩出屏）。旧行为直接清 record 放弃还原，
-            // 窗口从此卡在主屏全屏态（用户主诉「尺寸/位置搞错」）。改为：原始帧夹进
-            // 源屏可视区（保持尺寸、位置回到可见处）幂等重试一次；成功即还原（审计
-            // 诚实标注 clamped_restore=true），仍失败才清 record 升级永久失败。
-            if let sourceScreen = SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: record.sourceYabaiDisp) {
-                let clampedFrame = CoordinateKit.clampFrame(
-                    record.origFrame,
-                    into: CoordinateKit.quartzVisibleFrame(of: sourceScreen)
-                )
-                log("[ToggleEngine] restore: origFrame is off any display, clamping into source screen and retrying", level: .warn, fields: [
-                    "traceID": trace, "windowID": String(windowID),
-                    "origFrame": QuartzRect(record.origFrame).description,
-                    "clampedFrame": QuartzRect(clampedFrame).description
-                ])
-                let retryOK = windows.moveWindowToFrameViaYabai(
-                    windowID: windowID,
-                    frame: clampedFrame,
-                    op: trace,
-                    stage: "restore_clamped",
-                    sourceVisibleFrame: nil
-                )
-                _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
-                if retryOK {
-                    records.clear(windowID: record.windowID)
-                    auditor.record(
-                        eventType: "restore_success",
-                        windowID: windowID,
-                        pid: record.pid,
-                        sessionID: nil,
-                        details: [
-                            "triggerSource": triggerSource,
-                            "targetSpace": String(record.sourceSpace),
-                            "clampedRestore": "true"
-                        ]
-                    )
-                    log("[ToggleEngine] restore: completed (clamped into source screen)", fields: [
-                        "traceID": trace,
-                        "windowID": String(windowID),
-                        "clampedFrame": QuartzRect(clampedFrame).description
-                    ])
-                    return .restored(spaceExact: spaceExact)
-                }
-            }
-            log("[ToggleEngine] restore: frame move failed and origFrame is off any display, clearing record", level: .error, fields: [
+    /// 5. 失败裁决阶段（frameOK == false 时进入）：视角守卫 → 可重试性判定 →
+    /// 屏外夹进源屏幂等重试（P1 保守退让）→ 永久失败清 record。行为与内联版逐行等价。
+    private static func performMoveFailureStage(
+        record: ToggleRecord,
+        windowID: UInt32,
+        triggerSource: String,
+        trace: String,
+        spaceExact: Bool?,
+        preMove: RestorePreMoveContext,
+        windows: any RestoreWindowOperating,
+        channels: any RestoreSpaceChanneling,
+        records: any RestoreRecordStoring,
+        auditor: any RestoreAuditing
+    ) -> RestoreOutcome {
+        // frame 写失败但源屏预切回可能已把视角拖走——失败路径同样执行视角守卫，
+        // 把用户带回原处（窗口仍在主屏）。
+        _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows)
+        let origFrameOnAnyDisplay = windows.displayContext(for: record.origFrame).yabaiIndex != nil
+        if Self.isMoveFailureRetryable(origFrameOnAnyDisplay: origFrameOnAnyDisplay) {
+            log("[ToggleEngine] restore: frame move failed, keeping record for retry", level: .error, fields: [
                 "traceID": trace, "windowID": String(windowID),
                 "origFrame": QuartzRect(record.origFrame).description
             ])
-            records.clear(windowID: record.windowID)
             auditor.record(
                 eventType: "restore_move_failed",
                 windowID: windowID,
@@ -352,44 +393,72 @@ extension ToggleEngine {
                 sessionID: nil,
                 details: [
                     "triggerSource": triggerSource,
-                    "reason": "orig_frame_offscreen",
-                    "recordKept": "false"
+                    "reason": "frame_not_converged",
+                    "recordKept": "true"
                 ]
             )
-            return .moveFailedPermanent
+            return .moveFailedRetryable
         }
-
-        // 6. 视角守卫（与失败路径共用 runPerspectiveGuard，见其文档）。
-        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
-
-        // 7. Clear record
-        records.clear(windowID: record.windowID)
-
-        log("[ToggleEngine] restore: completed", fields: [
-            "traceID": trace,
-            "windowID": String(windowID),
-            "targetSpace": String(record.sourceSpace),
-            "frameOK": String(frameOK),
-            "spaceExact": String(describing: spaceExact),
-            "origFrame": QuartzRect(record.origFrame).originDescription,
-            "lookupMs": String(lookupMs),
-            "queryMs": String(queryMs),
-            "moveMs": String(moveMs),
-            "focusSpaceMs": String(focusSpaceMs)
+        // P1 保守退让（2026-09-06）：origFrame 落在所有屏之外（显示器配置变化后
+        // 常见——副屏拔除/分辨率切换把存档帧甩出屏）。旧行为直接清 record 放弃还原，
+        // 窗口从此卡在主屏全屏态（用户主诉「尺寸/位置搞错」）。改为：原始帧夹进
+        // 源屏可视区（保持尺寸、位置回到可见处）幂等重试一次；成功即还原（审计
+        // 诚实标注 clamped_restore=true），仍失败才清 record 升级永久失败。
+        if let sourceScreen = SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: record.sourceYabaiDisp) {
+            let clampedFrame = CoordinateKit.clampFrame(
+                record.origFrame,
+                into: CoordinateKit.quartzVisibleFrame(of: sourceScreen)
+            )
+            log("[ToggleEngine] restore: origFrame is off any display, clamping into source screen and retrying", level: .warn, fields: [
+                "traceID": trace, "windowID": String(windowID),
+                "origFrame": QuartzRect(record.origFrame).description,
+                "clampedFrame": QuartzRect(clampedFrame).description
+            ])
+            let retryOK = windows.moveWindowToFrameViaYabai(
+                windowID: windowID,
+                frame: clampedFrame,
+                op: trace,
+                stage: "restore_clamped",
+                sourceVisibleFrame: nil
+            )
+            _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows)
+            if retryOK {
+                records.clear(windowID: record.windowID)
+                auditor.record(
+                    eventType: "restore_success",
+                    windowID: windowID,
+                    pid: record.pid,
+                    sessionID: nil,
+                    details: [
+                        "triggerSource": triggerSource,
+                        "targetSpace": String(record.sourceSpace),
+                        "clampedRestore": "true"
+                    ]
+                )
+                log("[ToggleEngine] restore: completed (clamped into source screen)", fields: [
+                    "traceID": trace,
+                    "windowID": String(windowID),
+                    "clampedFrame": QuartzRect(clampedFrame).description
+                ])
+                return .restored(spaceExact: spaceExact)
+            }
+        }
+        log("[ToggleEngine] restore: frame move failed and origFrame is off any display, clearing record", level: .error, fields: [
+            "traceID": trace, "windowID": String(windowID),
+            "origFrame": QuartzRect(record.origFrame).description
         ])
-
+        records.clear(windowID: record.windowID)
         auditor.record(
-            eventType: "restore_success",
+            eventType: "restore_move_failed",
             windowID: windowID,
             pid: record.pid,
             sessionID: nil,
             details: [
                 "triggerSource": triggerSource,
-                "targetSpace": String(record.sourceSpace),
-                "spaceExact": String(describing: spaceExact)
+                "reason": "orig_frame_offscreen",
+                "recordKept": "false"
             ]
         )
-
-        return .restored(spaceExact: spaceExact)
+        return .moveFailedPermanent
     }
 }

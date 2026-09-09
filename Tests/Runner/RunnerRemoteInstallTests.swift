@@ -238,7 +238,7 @@ extension RunnerHarness {
             FileManager.default.createFile(atPath: fwdPath, contents: Data(forwarder.utf8))
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fwdPath)
 
-            let exit = runForwarder(fwdPath, payload: #"{"event":"Stop","session_id":"s-1"}"#,
+            _ = runForwarder(fwdPath, payload: #"{"event":"Stop","session_id":"s-1"}"#,
                                     env: ["HOME": home, "FAKE_CURL_LOG": log,
                                           "TERM_SESSION_ID": "ts-1", "PPID": "4242",
                                           "CLAUDE_PROJECT_DIR": "/Users/x/proj-a"],
