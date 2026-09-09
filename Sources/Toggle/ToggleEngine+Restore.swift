@@ -153,9 +153,7 @@ extension ToggleEngine {
         ])
 
         let preMove = Self.performSourcePreSwitch(record: record, channels: channels, windowID: windowID, trace: trace)
-        let preMoveSpace = preMove.preMoveSpace
         let spaceExact = preMove.spaceExact
-        let guardPrefetchedWindows = preMove.guardPrefetchedWindows
 
         // 4. Move back to original frame（2026-09-01 重构：float 脱管 → yabai --move/--resize 直写 origFrame）
         // 原 `yabai --space` 在 yabai v7 float 布局下静默失效（exit 0 但窗口不动，
@@ -173,8 +171,32 @@ extension ToggleEngine {
                 windows: windows, channels: channels, records: records, auditor: auditor)
         }
 
+        return Self.performSuccessTail(
+            record: record, windowID: windowID, triggerSource: triggerSource, trace: trace,
+            spaceExact: spaceExact, frameOK: frameOK, moveMs: moveMs, lookupMs: lookupMs, queryMs: queryMs,
+            preMove: preMove,
+            windows: windows, channels: channels, records: records, auditor: auditor)
+    }
+
+    /// 6+7 成功尾段阶段：视角守卫 → 清 record → completed 汇总日志 → 审计。行为与内联版逐行等价。
+    private static func performSuccessTail(
+        record: ToggleRecord,
+        windowID: UInt32,
+        triggerSource: String,
+        trace: String,
+        spaceExact: Bool?,
+        frameOK: Bool,
+        moveMs: Int,
+        lookupMs: Int,
+        queryMs: Int,
+        preMove: RestorePreMoveContext,
+        windows: any RestoreWindowOperating,
+        channels: any RestoreSpaceChanneling,
+        records: any RestoreRecordStoring,
+        auditor: any RestoreAuditing
+    ) -> RestoreOutcome {
         // 6. 视角守卫（与失败路径共用 runPerspectiveGuard，见其文档）。
-        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: guardPrefetchedWindows)
+        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows)
 
         // 7. Clear record
         records.clear(windowID: record.windowID)
