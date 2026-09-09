@@ -583,6 +583,44 @@ extension RunnerHarness {
                   && reg.store.findWindowState(windowID: 51) != nil
                   && reg.store.findWindowState(windowID: 50) == nil)
         }
+
+        // Lookup/UI 支持成员（B102：SessionWindowRegistry+Lookup 29% 最薄面补测——临时库实例）
+        do {
+            let dir = "/tmp/vibefocus-swr2-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let reg = SessionWindowRegistry(store: WindowStateStore(dbPath: dir + "/swr2.db"))
+            let base = Date().addingTimeInterval(-3600)
+            func ws(_ wid: UInt32, sid: String, completed: Bool, createdAt: Date, updatedAt: Date) -> WindowState {
+                var st = WindowState(
+                    windowID: wid, pid: 100, tty: nil, axWindowNumber: nil, appName: "T",
+                    bundleIdentifier: nil, title: "t", termSessionID: nil, itermSessionID: nil,
+                    sessionID: sid, bindingType: .local, isCompleted: completed,
+                    createdAt: createdAt, updatedAt: updatedAt)
+                if completed { st.completedAt = updatedAt }
+                return st
+            }
+            reg.windowStates[60] = ws(60, sid: "old-active", completed: false,
+                                      createdAt: base, updatedAt: base)
+            reg.windowStates[61] = ws(61, sid: "new-active", completed: false,
+                                      createdAt: base.addingTimeInterval(600), updatedAt: base.addingTimeInterval(600))
+            reg.windowStates[62] = ws(62, sid: "recent-done", completed: true,
+                                      createdAt: base, updatedAt: Date().addingTimeInterval(-600))
+            reg.windowStates[63] = ws(63, sid: "old-done", completed: true,
+                                      createdAt: base, updatedAt: Date().addingTimeInterval(-3600))
+            check("swrLookup: activeBindingsForUI 只含活跃且按 createdAt 降序",
+                  reg.activeBindingsForUI.map(\.windowID) == [61, 60])
+            check("swrLookup: recentCompletedBindings 仅 30 分钟内完成且按 updatedAt 降序",
+                  reg.recentCompletedBindings.map(\.windowID) == [62])
+            // findState DB 回填：内存缺失时从库装载并回填缓存
+            let solo = WindowStateStore(dbPath: dir + "/solo.db")
+            let reg2 = SessionWindowRegistry(store: solo)
+            // 先建实例后入库：绕过 init 的 isTerminalPID 清扫（pid 100 非真实终端进程）
+            solo.saveWindowState(ws(70, sid: "s-db", completed: false, createdAt: base, updatedAt: base))
+            check("swrLookup: findState 内存 miss → DB 装载并回填缓存",
+                  reg2.findState(windowID: 70)?.sessionID == "s-db"
+                  && reg2.windowStates[70] != nil)
+        }
     }
     }
 }
