@@ -789,6 +789,28 @@ extension RunnerHarness {
         check("pureSweep2 D2: clampedUserPort——0=恢复默认，非 0 同钳制",
               ClaudeHookPreferences.clampedUserPort(0, defaultValue: 8787) == 8787
               && ClaudeHookPreferences.clampedUserPort(99999, defaultValue: 8787) == 65535)
+
+        // B92 补：并行重构产物直测——isInQuietHours（私有助手经 internal 化直测）与
+        // ProjectSoundResolver.ruleMatches（双侧归一比较）。
+        func at2(_ h: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: h))! }
+        check("quietHelper: 同日窗 9..<18（含头不含尾）",
+              SoundPlayGate.isInQuietHours(date: at2(9), startHour: 9, endHour: 18, calendar: cal)
+              && SoundPlayGate.isInQuietHours(date: at2(17), startHour: 9, endHour: 18, calendar: cal)
+              && !SoundPlayGate.isInQuietHours(date: at2(18), startHour: 9, endHour: 18, calendar: cal)
+              && !SoundPlayGate.isInQuietHours(date: at2(8), startHour: 9, endHour: 18, calendar: cal))
+        check("quietHelper: 跨午夜 22..6 → OR 语义",
+              SoundPlayGate.isInQuietHours(date: at2(23), startHour: 22, endHour: 6, calendar: cal)
+              && SoundPlayGate.isInQuietHours(date: at2(2), startHour: 22, endHour: 6, calendar: cal)
+              && !SoundPlayGate.isInQuietHours(date: at2(6), startHour: 22, endHour: 6, calendar: cal)
+              && !SoundPlayGate.isInQuietHours(date: at2(21), startHour: 22, endHour: 6, calendar: cal))
+        check("quietHelper: start==end 退化 → 常假（正常语义下无静音时段）",
+              !SoundPlayGate.isInQuietHours(date: at2(9), startHour: 9, endHour: 9, calendar: cal))
+        check("ruleMatch: 双侧归一（大小写/路径末段）等价即匹配",
+              ProjectSoundResolver.ruleMatches(ruleName: "MyProj", liveProjectName: "/Users/x/work/myproj")
+              && ProjectSoundResolver.ruleMatches(ruleName: "/Users/x/work/MyProj", liveProjectName: "myproj"))
+        check("ruleMatch: 不同项目 → false；live 全斜杠归一为 nil → false",
+              !ProjectSoundResolver.ruleMatches(ruleName: "alpha", liveProjectName: "beta")
+              && !ProjectSoundResolver.ruleMatches(ruleName: "alpha", liveProjectName: "///"))
     }
 
     // MARK: 零命中纯函数清扫 III（真实实现——保留区自愈推理/屏内本地序，Batch 38）
