@@ -85,11 +85,14 @@ VIBEFOCUS_SIZE_E2E=1 VIBEFOCUS_DB_PATH=/tmp/vibefocus-size-e2e.db \
 ## 回归记录（2026-09-10 凌晨，本周修复批后：UPS 回原位语义/决策表记录门/LAN 重绑定/信号广播/minimap 标签）
 
 - **SIZE_E2E 1114/1114 全绿**：restore 引擎、toggle 往返、跨屏直写在全部本周改动后健康。
-- **GRID_SPACE_E2E 1099/1102（3 FAIL）**：失败点=建窗第一步 osascript 20s 无响应
-  （同 TITLE_E2E 的 iTerm2 高负载建窗 AE 受限，ShellRunner 30s 超时内未归），非代码
-  回归——**同一恢复链路已用真实 HTTP hook 事件人工验证通过**（SessionStart 绑定 →
-  Stop 拉主屏 → UserPromptSubmit `restored_to_original` 回 HONOR 2-1 原帧，yabai 实测）。
-  iTerm2 空闲时重跑即可转绿。
+- **GRID_SPACE_E2E 1099/1102（3 FAIL）→ 根因已定位，1166/1166 全绿**：失败点=建窗
+  第一步 osascript 挂起 20-120s 后超时。**真凶（2026-09-10 实测闭环）= iTerm2 的
+  「A session ended very soon after starting」告警框**：E2E 清理语义（`write text
+  "exit"`）的快速退出会话恰好触发该告警框，而它开着时 iTerm2 对一切**建窗**
+  AppleEvent 不响应（查询类秒回，建窗挂起 2 分钟+超时）——与代码无关。处置：
+  关掉告警框后重跑，1166/1166 一次全绿（含本周全部改动）。跑前检查：屏幕上是否
+  有该告警框；`osascript -e 'tell application id "com.googlecode.iterm2" to create
+  window with default profile'` 秒回=环境就绪，挂起=先关框。
 - **FLOATSETTLE_E2E 1139/1139 全绿（2026-09-10 补跑，证书签名 runner）**。
 - **GRID_TARGET_E2E 1139/1143（4 FAIL，环境敏感先例复现）**：失败全部落在像素级
   收敛断言（落规划区内/≤4px 收敛/顶行保留区 ≤2px/二次直中），结构性断言全过
