@@ -609,6 +609,34 @@ extension RunnerHarness {
                   && reg.store.findWindowState(windowID: 50) == nil)
         }
 
+        // 别名查找/落库 + hook 端点 URL（B104：SessionWindowRegistry+Lookup 与 ClaudeHookPreferences 薄面补测）
+        do {
+            let dir = "/tmp/vibefocus-swr3-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let reg = SessionWindowRegistry(store: WindowStateStore(dbPath: dir + "/swr3.db"))
+            reg.windowStates[80] = WindowState(
+                windowID: 80, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "t",
+                termSessionID: nil, itermSessionID: nil, sessionID: "main-s",
+                bindingType: .local, isCompleted: false, createdAt: Date(), updatedAt: Date())
+            reg.sessionAliasWindowID["alias-s"] = 80
+            check("swrLookup: binding(for:) 别名通道解析到主绑定",
+                  reg.binding(for: "alias-s")?.windowID == 80)
+            reg.persistToDB(windowID: 80)
+            check("swrLookup: persistToDB 落库往返", reg.store.findWindowState(windowID: 80)?.sessionID == "main-s")
+        }
+        do {
+            // endpointURLString：token 缺省纯端点；配置 token 追加查询串（用后清键）
+            check("hookEndpoint: 无 token → 纯端点",
+                  ClaudeHookPreferences.endpointURLString(port: 39277) == "http://127.0.0.1:39277/claude/hook")
+            ClaudeHookPreferences.authToken = "tok123"
+            let withToken = ClaudeHookPreferences.endpointURLString(port: 39277)
+            ClaudeHookPreferences.authToken = nil
+            check("hookEndpoint: 配置 token → ?token= 查询串",
+                  withToken == "http://127.0.0.1:39277/claude/hook?token=tok123")
+        }
+
         // Lookup/UI 支持成员（B102：SessionWindowRegistry+Lookup 29% 最薄面补测——临时库实例）
         do {
             let dir = "/tmp/vibefocus-swr2-\(UUID().uuidString)"
