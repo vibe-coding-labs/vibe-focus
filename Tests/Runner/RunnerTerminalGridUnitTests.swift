@@ -219,4 +219,38 @@ extension RunnerHarness {
         check("shellPID: 无 /dev/ 前缀原样透传", capturedTTY == "ttys003")
     }
     }
+
+    // MARK: 捕获过滤纯决策（B105：TerminalGridController+Capture 16% 最薄面——注入式直测）
+
+    func runCaptureFilterTests() {
+        func entry(_ id: UInt32, pid: Int32 = 4242, layer: Int = 0, onScreen: Bool = true,
+                   w: CGFloat = 800, h: CGFloat = 600) -> CGWindowEntry {
+            let d: [String: Any] = [
+                kCGWindowNumber as String: id, kCGWindowOwnerPID as String: pid,
+                kCGWindowLayer as String: layer, kCGWindowIsOnscreen as String: onScreen,
+                kCGWindowBounds as String: ["X": CGFloat(0), "Y": CGFloat(0), "Width": w, "Height": h],
+            ]
+            return CGWindowEntry(from: d)!
+        }
+        let isTerm: (pid_t) -> String? = { _ in "com.apple.Terminal" }
+        let noTerm: (pid_t) -> String? = { _ in nil }
+        let onMain: (CGRect) -> UInt32? = { _ in 1 }
+        let onOther: (CGRect) -> UInt32? = { _ in 2 }
+        check("captureFilter: layer0+onscreen+合格尺寸+终端 owner+目标屏 → 通过",
+              TerminalGridController.isCapturableTerminalEntry(entry(1), targetDisplayID: 1,
+                                                              bundleIDOf: isTerm, displayIDOf: onMain))
+        check("captureFilter: 非零 layer/离屏/小窗（<100pt）拒绝",
+              !TerminalGridController.isCapturableTerminalEntry(entry(2, layer: 3), targetDisplayID: 1,
+                                                               bundleIDOf: isTerm, displayIDOf: onMain)
+              && !TerminalGridController.isCapturableTerminalEntry(entry(3, onScreen: false), targetDisplayID: 1,
+                                                                  bundleIDOf: isTerm, displayIDOf: onMain)
+              && !TerminalGridController.isCapturableTerminalEntry(entry(4, w: 99, h: 99), targetDisplayID: 1,
+                                                                  bundleIDOf: isTerm, displayIDOf: onMain))
+        check("captureFilter: owner 非终端（nil bundleID）拒绝",
+              !TerminalGridController.isCapturableTerminalEntry(entry(5), targetDisplayID: 1,
+                                                               bundleIDOf: noTerm, displayIDOf: onMain))
+        check("captureFilter: 目标 display 不符拒绝",
+              !TerminalGridController.isCapturableTerminalEntry(entry(6), targetDisplayID: 1,
+                                                               bundleIDOf: isTerm, displayIDOf: onOther))
+    }
 }

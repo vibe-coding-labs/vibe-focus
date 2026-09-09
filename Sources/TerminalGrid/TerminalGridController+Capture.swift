@@ -6,6 +6,28 @@ import Foundation
 
 extension TerminalGridController {
 
+    /// 捕获窗口过滤纯决策（B105 提纯——原内联在 captureLayout 的 filter 闭包）：
+    /// layer 0 + onscreen + 合理尺寸（≥100pt，滤托盘/占位微窗）+ 属目标 display +
+    /// owner 是编排支持终端（TerminalRegistry 名单）。bundleIDOf/displayIDOf 注入
+    /// （生产=实例 IO 方法：NSRunningApplication / NSScreen 几何）。
+    static func isCapturableTerminalEntry(
+        _ entry: CGWindowEntry,
+        targetDisplayID: UInt32,
+        bundleIDOf: (pid_t) -> String?,
+        displayIDOf: (CGRect) -> UInt32?
+    ) -> Bool {
+        guard entry.layer == 0, entry.isOnScreen,
+              let bounds = entry.bounds,
+              bounds.width >= 100, bounds.height >= 100 else {
+            return false
+        }
+        guard let bundleID = bundleIDOf(entry.ownerPID),
+              TerminalRegistry.isTerminalBundleID(bundleID) else {
+            return false
+        }
+        return displayIDOf(bounds) == targetDisplayID
+    }
+
     func captureLayout(name: String? = nil) async -> OperationResult {
         let op = makeOperationID(prefix: "grid-capture")
 
@@ -14,18 +36,14 @@ extension TerminalGridController {
             return OperationResult(ok: false, message: "无法确定目标显示器")
         }
 
-        // 目标屏上全部终端窗口（layer 0 + onscreen + 尺寸合理）
+        // 目标屏上全部终端窗口（过滤判据提纯至 isCapturableTerminalEntry，B105 直测）
         let terminalEntries = cgWindowListAll().filter { entry in
-            guard entry.layer == 0, entry.isOnScreen,
-                  let bounds = entry.bounds,
-                  bounds.width >= 100, bounds.height >= 100 else {
-                return false
-            }
-            guard let bundleID = bundleIdentifier(ofPID: entry.ownerPID),
-                  TerminalRegistry.isTerminalBundleID(bundleID) else {
-                return false
-            }
-            return displayContextDisplayID(for: bounds) == displayID
+            Self.isCapturableTerminalEntry(
+                entry,
+                targetDisplayID: displayID,
+                bundleIDOf: { bundleIdentifier(ofPID: $0) },
+                displayIDOf: { displayContextDisplayID(for: $0) }
+            )
         }
 
         guard !terminalEntries.isEmpty else {
