@@ -440,6 +440,38 @@ extension RunnerHarness {
             check("floatsettle C: 预算按毫秒计（300ms=12 拍，而非 30 万拍 100 分钟）", polls == 12 && readN == 13)
             check("floatsettle C: 走满预算仍如实上报 didToggle", outcome.didToggle)
         }
+
+        // D. isSame 判据真身策略 + E. 读全 nil 防御（B84：FloatSettleSequenceTests 镜像退役，缺口语义转真身）
+        do {
+            // 相邻两读漂移 8（≤ 容差 20，单轴）→ 1 拍稳定早返回
+            var beat = 0
+            var pollsD2 = 0
+            let d2 = FloatSettle.floatAndSettle(
+                windowID: 42, operationID: "fs-d2", knownWindowInfo: nil, tolerance: 20,
+                setFloat: { _, _, _ in .toggled },
+                read: { _ in beat += 1; return CGRect(x: 0, y: 0, width: 800, height: beat == 1 ? 600 : 608) },
+                clearCache: {}, sleep: { _ in }, pollSleep: { _ in pollsD2 += 1 })
+            check("floatsettle D: 相邻两读漂移 8 ≤ 容差 20 → 1 拍稳定", d2.didToggle && pollsD2 == 1)
+            // 相邻两读漂移 21（> 容差 20）→ 永不误判稳定，走满 12 拍
+            var drift = 0
+            var pollsD1 = 0
+            _ = FloatSettle.floatAndSettle(
+                windowID: 42, operationID: "fs-d1", knownWindowInfo: nil, tolerance: 20,
+                setFloat: { _, _, _ in .toggled },
+                read: { _ in drift += 1; return CGRect(x: drift * 21, y: 0, width: 800, height: 600) },
+                clearCache: {}, sleep: { _ in }, pollSleep: { _ in pollsD1 += 1 })
+            check("floatsettle D: 相邻两读漂移 21 > 容差 20 → 不误判稳定（走满 12 拍）", pollsD1 == 12)
+            // 读全 nil：走满预算不崩溃、缓存仍清、didToggle 如实
+            var pollsE = 0
+            var clearsE = 0
+            let e1 = FloatSettle.floatAndSettle(
+                windowID: 42, operationID: "fs-e", knownWindowInfo: nil, tolerance: 20,
+                setFloat: { _, _, _ in .toggled },
+                read: { _ in nil },
+                clearCache: { clearsE += 1 }, sleep: { _ in }, pollSleep: { _ in pollsE += 1 })
+            check("floatsettle E: 读全 nil 走满预算不崩溃、缓存仍清",
+                  pollsE == 12 && clearsE == 1 && e1.didToggle)
+        }
     }
 
     // MARK: MoveToMainPipeline（真实实现——move_to_main 阶段管线，Batch 7）

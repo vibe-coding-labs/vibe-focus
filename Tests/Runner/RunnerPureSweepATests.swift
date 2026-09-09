@@ -193,6 +193,12 @@ extension RunnerHarness {
               ScreenIndexPreferences.loadLegacyPreferences(from: Data("not-json".utf8)) == nil)
         check("screenPrefs: legacy 缺必填字段 → nil",
               ScreenIndexPreferences.loadLegacyPreferences(from: Data(#"{"isEnabled":true}"#.utf8)) == nil)
+        // 解码失败边缘补锁（B84：ScreenIndexPreferencesMigrationTests 镜像退役）
+        check("screenPrefs: 非法 position 枚举 / isEnabled 类型错误 → nil",
+              ScreenIndexPreferences.loadLegacyPreferences(
+                from: Data(#"{"isEnabled":true,"position":"middleLeft"}"#.utf8)) == nil
+              && ScreenIndexPreferences.loadLegacyPreferences(
+                from: Data(#"{"isEnabled":"yes"}"#.utf8)) == nil)
 
         // enforce 守卫安全侧：已 per-screen → 原样返回（迁移分支带 save 落库副作用，不在此测）。
         let already = ScreenIndexPreferences.default

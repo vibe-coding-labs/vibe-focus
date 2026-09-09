@@ -314,6 +314,18 @@ extension RunnerHarness {
               WindowManager.matchCommandToWindowTitle(commands: ["zsh", "claude"], windows: wins)?.windowID == 2)
         check("cmdMatch: 大小写敏感命令不命中小写标题",
               WindowManager.matchCommandToWindowTitle(commands: ["CLAUDE"], windows: wins) == nil)
+        // 边界怪癖锁（B84：TerminalContextMatchingTests 镜像退役）
+        check("cmdMatch: ◂ 前台标记标题仍命中（子串包含）、普通连字符不命中（分隔符必须 em dash）、标题侧大小写不敏感",
+              WindowManager.matchCommandToWindowTitle(
+                commands: ["vim"], windows: [WindowIdentity(windowID: 3, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 3, title: "notes ◂ — vim")])?.windowID == 3
+              && WindowManager.matchCommandToWindowTitle(
+                commands: ["vim"], windows: [WindowIdentity(windowID: 4, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 4, title: "notes - vim")]) == nil
+              && WindowManager.matchCommandToWindowTitle(
+                commands: ["vim"], windows: [WindowIdentity(windowID: 5, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 5, title: "REPO — VIM")])?.windowID == 5)
+        check("cmdMatch: 空命令表 → nil；标题 nil 不命中",
+              WindowManager.matchCommandToWindowTitle(commands: ["claude"], windows: []) == nil
+              && WindowManager.matchCommandToWindowTitle(
+                commands: ["claude"], windows: [WindowIdentity(windowID: 6, pid: 100, bundleIdentifier: nil, appName: "T", windowNumber: 6, title: nil)]) == nil)
 
         // parseCommandBasename：路径取 basename、空行跳过
         let basenames = WindowManager.parseCommandBasename(from: "/usr/bin/claude\n\n  /opt/homebrew/bin/nvim ")
@@ -323,11 +335,22 @@ extension RunnerHarness {
         check("itermUUID: 冒号后取段", WindowManager.parseItermSessionUUID("iTerm:ABC-123") == "ABC-123")
         check("itermUUID: 无冒号原样", WindowManager.parseItermSessionUUID("ABC") == "ABC")
         check("itermUUID: 冒号后空 → nil", WindowManager.parseItermSessionUUID("iTerm:") == nil)
+        check("itermUUID: 多冒号按首个切分（UUID 段可含冒号）", WindowManager.parseItermSessionUUID("iTerm:AB:CD") == "AB:CD")
         check("uuidAllow: hex+连字符通过", WindowManager.isValidUUIDPart("ABC-def-0123"))
         check("uuidAllow: 元字符拒绝", !WindowManager.isValidUUIDPart("abc\"; rm"))
+        check("uuidAllow: 空串恒真（allSatisfy 空集）+ 分号/空格/换行注入拒绝",
+              WindowManager.isValidUUIDPart("")
+              && !WindowManager.isValidUUIDPart("abc;def")
+              && !WindowManager.isValidUUIDPart("abc def")
+              && !WindowManager.isValidUUIDPart("abc\ndef"))
         check("ttyAllow: /dev/ttys### 通过", WindowManager.isValidTTYPath("/dev/ttys004"))
         check("ttyAllow: /dev/pty### 通过", WindowManager.isValidTTYPath("/dev/pty3"))
         check("ttyAllow: 非设备路径拒绝", !WindowManager.isValidTTYPath("/dev/tty; rm -rf"))
+        check("ttyAllow: 边界怪癖（B84）——单数字通过、无编号 /dev/tty 拒、/dev/ttys 宽松通过、换行注入拒",
+              WindowManager.isValidTTYPath("/dev/ttys3")
+              && !WindowManager.isValidTTYPath("/dev/tty")
+              && WindowManager.isValidTTYPath("/dev/ttys")
+              && !WindowManager.isValidTTYPath("/dev/ttys004\n"))
 
         // Claude 窗口定位：两级策略
         typealias Cand = WindowManager.WindowCandidate
