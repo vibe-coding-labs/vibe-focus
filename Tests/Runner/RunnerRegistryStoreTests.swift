@@ -368,6 +368,10 @@ extension RunnerHarness {
               SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: false, ax: false) }()).skipReason == "unmanaged")
         check("floatToggle: 可脱管 → toggled",
               SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: false, ax: true) }()).outcome == .toggled)
+        // 守卫序锁（B81：FloatToggleDecisionTests 镜像退役，缺口语义转真身）：
+        // 已 float 且不可管理 → already_floating（floating 检查先于 unmanaged）。
+        check("floatToggle: 已 float 且无 AX 引用 → already_floating（floating 先于 unmanaged）",
+              SpaceController.floatToggleDecision(isEnabled: true, info: { info(float: true, ax: false) }()).skipReason == "already_floating")
 
         // selectRefocusCandidate：space/可管理/排除过滤 + 非最小化优先
         func win(_ id: Int, space: Int, ax: Bool, minimized: Bool) -> YabaiWindowInfo {
@@ -387,6 +391,22 @@ extension RunnerHarness {
               SpaceController.selectRefocusCandidate(
                 windows: [win(3, space: 5, ax: true, minimized: true), win(6, space: 5, ax: true, minimized: true)],
                 spaceIndex: 5, excludingWindowID: nil)?.id == 3)
+        // 缺口语义锁（B81：RestoreRefocusCandidateTests 镜像退役）：
+        // minimized 字段缺失（旧版 yabai）按未最小化参与排序；
+        // 目标 space 无可管理窗口 → nil（不跨屏聚焦）。
+        check("refocus: minimized 缺失按未最小化",
+              SpaceController.selectRefocusCandidate(
+                windows: [YabaiWindowInfo(id: 8, pid: 100, app: "T", title: "w8", space: 5, display: 1,
+                                          frame: nil, isFloatingRaw: false, hasAXReferenceRaw: true,
+                                          isMinimizedRaw: nil, hasFocusRaw: false)],
+                spaceIndex: 5, excludingWindowID: nil)?.id == 8)
+        check("refocus: 目标 space 无窗口 → nil",
+              SpaceController.selectRefocusCandidate(windows: wins, spaceIndex: 9, excludingWindowID: nil) == nil)
+
+        // preSwitch 单维 0 值（B81 补锁）：space/display 任一缺上下文都 → noContext
+        check("preSwitch: 仅缺 display 上下文（sourceYabaiDisp=0）→ noContext",
+              ToggleEngine.sourceSpacePreSwitch(sourceSpace: 5, sourceYabaiDisp: 0, visibleSpaceOnSourceDisplay: 5)
+              == .noContext)
 
         // RestoreOutcome.outcomeLabel：四分支机器可读标签
         check("outcomeLabel: restored(spaceExact=nil)",
