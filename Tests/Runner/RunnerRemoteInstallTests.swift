@@ -170,4 +170,137 @@ extension RunnerHarness {
             try? FileManager.default.removeItem(atPath: home)
         }
     }
+
+    // MARK: - B94：hook-forwarder.sh 转发器行为测试（假 curl 捕获，PATH 注入）
+    //
+    // 转发器是 LAN 链路的客户端核心（远程机器每个 hook 事件都经它发出）。
+    // 测试不真发请求：PATH 注入沙盒 bin（python3 真身 + 假 curl），假 curl 把
+    // 参数逐行追加到日志文件，断言 URL/鉴权头/enriched 载荷三要素。
+
+    func runForwarderBehaviorTests() {
+        func makeSandbox() -> (home: String, bin: String, log: String, configPath: String, fwdPath: String) {
+            let home = "/tmp/vibefocus-b94-fw-\(UUID().uuidString)"
+            let bin = home + "/bin"
+            let cfgDir = home + "/.vibefocus"
+            try? FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(atPath: cfgDir, withIntermediateDirectories: true)
+            // python3（config 解析与 enrich）与 cat（VF_PAYLOAD=$(cat) 读 stdin）真身；
+            // tty 不在 PATH 时脚本有 || echo 兜底，无需符号链接
+            try? FileManager.default.createSymbolicLink(atPath: bin + "/python3", withDestinationPath: "/usr/bin/python3")
+            try? FileManager.default.createSymbolicLink(atPath: bin + "/cat", withDestinationPath: "/bin/cat")
+            let log = home + "/fake-curl.log"
+            // 假 curl：把收到的参数逐行写日志，调用之间用 --- 分隔
+            let fake = "#!/bin/bash\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${FAKE_CURL_LOG}\"; done; printf '%s\\n' '---' >> \"${FAKE_CURL_LOG}\"\n"
+            let fakePath = bin + "/curl"
+            FileManager.default.createFile(atPath: fakePath, contents: Data(fake.utf8))
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakePath)
+            let configPath = cfgDir + "/hook-config.json"
+            let fwdPath = cfgDir + "/hook-forwarder.sh"
+            return (home, bin, log, configPath, fwdPath)
+        }
+
+        func runForwarder(_ fwdPath: String, payload: String, env: [String: String], bin: String) -> Int32 {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+            proc.arguments = [fwdPath]
+            var childEnv = env
+            childEnv["PATH"] = bin
+            proc.environment = childEnv
+            let inPipe = Pipe()
+            proc.standardInput = inPipe
+            let dbgOut = Pipe()
+            proc.standardOutput = dbgOut
+            proc.standardError = dbgOut
+            do { try proc.run() } catch { return -1 }
+            inPipe.fileHandleForWriting.write(Data(payload.utf8))
+            try? inPipe.fileHandleForWriting.close()
+            proc.waitUntilExit()
+            let dbg = String(data: dbgOut.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            if proc.terminationStatus != 0 || !dbg.isEmpty {
+                print("[诊断-forwarder] status=\(proc.terminationStatus) child<<\n\(dbg.prefix(600))\n>>")
+            }
+            return proc.terminationStatus
+        }
+
+        func readLines(_ path: String) -> [String] {
+            guard let data = FileManager.default.contents(atPath: path),
+                  let text = String(data: data, encoding: .utf8) else { return [] }
+            return text.components(separatedBy: "\n").filter { !$0.isEmpty }
+        }
+
+        let forwarder = ClaudeHookPreferences.generateRemoteHelperScriptContent()
+
+        // 场景 1：完整转发——config 四字段 → URL/token 头/machine_label 注入 enriched 载荷
+        do {
+            let (home, bin, log, configPath, fwdPath) = makeSandbox()
+            FileManager.default.createFile(atPath: configPath,
+                contents: Data(#"{"host":"192.168.1.12","port":39277,"token":"sec-123","machine_label":"remote-server-001"}"#.utf8))
+            FileManager.default.createFile(atPath: fwdPath, contents: Data(forwarder.utf8))
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fwdPath)
+
+            let exit = runForwarder(fwdPath, payload: #"{"event":"Stop","session_id":"s-1"}"#,
+                                    env: ["HOME": home, "FAKE_CURL_LOG": log,
+                                          "TERM_SESSION_ID": "ts-1", "PPID": "4242",
+                                          "CLAUDE_PROJECT_DIR": "/Users/x/proj-a"],
+                                    bin: bin)
+            let lines = readLines(log)
+            check("forwarder: 假 curl 收到调用（日志非空）", !lines.isEmpty)
+
+            // URL 与方法
+            check("forwarder: POST 到 config 指定的 host:port 端点",
+                  lines.contains("-X") && lines.contains("POST")
+                  && lines.contains("http://192.168.1.12:39277/claude/hook"))
+            // 鉴权头
+            check("forwarder: 携带 X-VibeFocus-Token 鉴权头",
+                  lines.contains("X-VibeFocus-Token: sec-123"))
+            // enriched 载荷：machine_label 与终端上下文注入
+            if let dataIdx = lines.firstIndex(of: "--data"), dataIdx + 1 < lines.count,
+               let payloadData = lines[dataIdx + 1].data(using: .utf8),
+               let body = (try? JSONSerialization.jsonObject(with: payloadData)) as? [String: Any],
+               let ctx = body["terminal_ctx"] as? [String: Any] {
+                check("forwarder: --data 为 enriched JSON（事件/会话/label/终端上下文注入）",
+                      body["event"] as? String == "Stop"
+                      && body["session_id"] as? String == "s-1"
+                      && ctx["machine_label"] as? String == "remote-server-001"
+                      && ctx["term_session_id"] as? String == "ts-1"
+                      && ctx["claude_project_dir"] as? String == "/Users/x/proj-a")
+            } else {
+                check("forwarder: --data 为 enriched JSON（事件/会话/label/终端上下文注入）", false)
+            }
+            try? FileManager.default.removeItem(atPath: home)
+        }
+
+        // 场景 2：config 无 token → 不带鉴权头（本机服务器默认未配 token 的形态）
+        do {
+            let (home, bin, log, configPath, fwdPath) = makeSandbox()
+            FileManager.default.createFile(atPath: configPath,
+                contents: Data(#"{"host":"127.0.0.1","port":39277,"token":""}"#.utf8))
+            FileManager.default.createFile(atPath: fwdPath, contents: Data(forwarder.utf8))
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fwdPath)
+
+            _ = runForwarder(fwdPath, payload: #"{"event":"Stop","session_id":"s-2"}"#,
+                             env: ["HOME": home, "FAKE_CURL_LOG": log], bin: bin)
+            let lines = readLines(log)
+            check("forwarder: token 为空 → 不带鉴权头",
+                  !lines.contains(where: { $0.hasPrefix("X-VibeFocus-Token") })
+                  && lines.contains("http://127.0.0.1:39277/claude/hook"))
+            try? FileManager.default.removeItem(atPath: home)
+        }
+
+        // 场景 3：载荷非 JSON → enrich 失败回退原样转发（不吞事件）
+        do {
+            let (home, bin, log, configPath, fwdPath) = makeSandbox()
+            FileManager.default.createFile(atPath: configPath,
+                contents: Data(#"{"host":"192.168.1.12","port":39277,"token":"t","machine_label":"m1"}"#.utf8))
+            FileManager.default.createFile(atPath: fwdPath, contents: Data(forwarder.utf8))
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fwdPath)
+
+            _ = runForwarder(fwdPath, payload: "not-json-at-all",
+                             env: ["HOME": home, "FAKE_CURL_LOG": log], bin: bin)
+            let lines = readLines(log)
+            check("forwarder: 非 JSON 载荷原样转发（不吞事件）",
+                  lines.contains("not-json-at-all"))
+            try? FileManager.default.removeItem(atPath: home)
+        }
+    }
 }
