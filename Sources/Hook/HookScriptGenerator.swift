@@ -162,7 +162,7 @@ extension ClaudeHookPreferences {
         fi
 
         if [ "$HAS_JQ" = true ]; then
-          HOOKS_JSON=\(hooksJSON.sanitizedForShell())
+          HOOKS_JSON=\(generateHooksDictJSON().sanitizedForShell())
           CLEANED=$(jq 'del(.hooks.SessionStart) | del(.hooks.Stop) | del(.hooks.SessionEnd) | del(.hooks.UserPromptSubmit)' "$CLAUDE_SETTINGS" 2>/dev/null || cat "$CLAUDE_SETTINGS")
           echo "$CLEANED" | jq --argjson hooks "$HOOKS_JSON" '.hooks += $hooks' > "$CLAUDE_SETTINGS.tmp" 2>/dev/null && mv "$CLAUDE_SETTINGS.tmp" "$CLAUDE_SETTINGS"
           echo "[4/4] Updated ~/.claude/settings.json (via jq)"
@@ -294,6 +294,18 @@ extension ClaudeHookPreferences {
             return "{\n  \"hooks\": {}\n}"
         }
         log("ClaudeHookPreferences.generateHooksJSON() completed", level: .debug, fields: ["length": String(json.count)])
+        return json
+    }
+
+    /// 仅 hooks 字典的 JSON（不含顶层 "hooks" 包裹）——远程安装脚本 jq 合并用：
+    /// `.hooks += $hooks` 的右侧必须是「事件名 → 条目」字典本身；传整个 settings
+    /// 形状会嵌套出 "hooks" 键、三个真正的事件全部静默丢失（B84 实锤复现于
+    /// 沙盒 HOME 行为测试）。
+    static func generateHooksDictJSON() -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: generateHooksDict(), options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
         return json
     }
 }
