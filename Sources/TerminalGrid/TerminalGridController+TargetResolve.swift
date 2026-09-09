@@ -95,6 +95,22 @@ extension TerminalGridController {
             NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier }
         )
         let usageRank = TerminalUsageTracker.shared.table.ranked()
+        return Self.selectionPreview(
+            runningBundleIDs: runningIDs,
+            usageRank: usageRank,
+            appPreference: TerminalGridPreferences.appPreference
+        )
+    }
+
+    /// 候选装配纯函数（B102 提纯——原内联在 selectionPreview）：
+    /// supportTable 全量名单 → 候选（usage/lastUsed/running 观测接线）+
+    /// appPreference → manualBundleID 映射，最终委托 resolve 纯决策。
+    /// runningBundleIDs/usageRank 由调用方采集（NSWorkspace/UserDefaults IO 归 E2E）。
+    static func selectionPreview(
+        runningBundleIDs: Set<String>,
+        usageRank: [(bundleID: String, count: Int, lastAt: Date)],
+        appPreference: TerminalGridPreferences.AppPreference
+    ) -> TerminalSelection {
         let usageCounts = Dictionary(uniqueKeysWithValues: usageRank.map { ($0.bundleID, $0.count) })
         let lastUsed = Dictionary(usageRank.map { ($0.bundleID, $0.lastAt) },
                                   uniquingKeysWith: { first, _ in first })
@@ -106,11 +122,11 @@ extension TerminalGridController {
                 support: TerminalSelectionResolver.supportLevel(forBundleID: bundleID),
                 usageCount: usageCounts[bundleID] ?? 0,
                 lastUsedAt: lastUsed[bundleID],
-                isRunning: runningIDs.contains(bundleID)
+                isRunning: runningBundleIDs.contains(bundleID)
             )
         }
         let manualBundleID: String? = {
-            switch TerminalGridPreferences.appPreference {
+            switch appPreference {
             case .auto: return nil
             case .terminal: return "com.apple.Terminal"
             case .iterm2: return "com.googlecode.iterm2"

@@ -637,6 +637,32 @@ extension RunnerHarness {
                   withToken == "http://127.0.0.1:39277/claude/hook?token=tok123")
         }
 
+        // 编排目标候选装配（B106：selectionPreview 静态缝提纯——runningIDs/usageRank 接线锁定）
+        do {
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+            func rank(_ id: String, _ count: Int) -> [(bundleID: String, count: Int, lastAt: Date)] {
+                [(bundleID: id, count: count, lastAt: t0)]
+            }
+            check("selPreview: .terminal 偏好 → manual 指定 Terminal.app（压过他端用量）",
+                  TerminalGridController.selectionPreview(
+                    runningBundleIDs: ["com.googlecode.iterm2"],
+                    usageRank: rank("com.googlecode.iterm2", 9),
+                    appPreference: .terminal).bundleID == "com.apple.Terminal")
+            check("selPreview: .iterm2 偏好 → manual iterm2",
+                  TerminalGridController.selectionPreview(
+                    runningBundleIDs: [], usageRank: [],
+                    appPreference: .iterm2).bundleID == "com.googlecode.iterm2")
+            check("selPreview: .auto + 用量与运行观测接线（运行者优先于高用量）",
+                  TerminalGridController.selectionPreview(
+                    runningBundleIDs: ["dev.warp.Warp-Stable"],
+                    usageRank: rank("com.apple.Terminal", 9),
+                    appPreference: .auto).bundleID == "com.apple.Terminal")
+            check("selPreview: .auto + 全零观测 → autoDefault 兜底 Terminal.app",
+                  TerminalGridController.selectionPreview(
+                    runningBundleIDs: [], usageRank: [],
+                    appPreference: .auto).source == .autoDefault)
+        }
+
         // Lookup/UI 支持成员（B102：SessionWindowRegistry+Lookup 29% 最薄面补测——临时库实例）
         do {
             let dir = "/tmp/vibefocus-swr2-\(UUID().uuidString)"
