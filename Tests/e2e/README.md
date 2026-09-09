@@ -90,6 +90,10 @@ VIBEFOCUS_SIZE_E2E=1 VIBEFOCUS_DB_PATH=/tmp/vibefocus-size-e2e.db \
   回归——**同一恢复链路已用真实 HTTP hook 事件人工验证通过**（SessionStart 绑定 →
   Stop 拉主屏 → UserPromptSubmit `restored_to_original` 回 HONOR 2-1 原帧，yabai 实测）。
   iTerm2 空闲时重跑即可转绿。
-- **FLOATSETTLE_E2E**：本轮未跑（无窗口创建依赖的最轻用例，需要时单跑）。
+- **FLOATSETTLE_E2E 1139/1139 全绿（2026-09-10 补跑，证书签名 runner）**。
+- **GRID_TARGET_E2E 1139/1143（4 FAIL，环境敏感先例复现）**：失败全部落在像素级
+  收敛断言（落规划区内/≤4px 收敛/顶行保留区 ≤2px/二次直中），结构性断言全过
+  （创建/双窗/displayID/共边 ≤2px/贴缘/定向非主屏/二次创建）——与下方 2026-09-07
+  注记同因：Terminal.app frame 按字符行高量化，≤4px 收敛不保证；放宽容差属网格域决策。
 - **基建发现**：debug runner ad-hoc 签名导致 TCC 身份随构建哈希漂移——已改证书签名
   （见「标准跑法」TCC 身份稳定节），授权一次长期有效。
