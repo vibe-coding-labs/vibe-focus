@@ -207,6 +207,7 @@ final class FakeAuditor: RestoreAuditing {
         runRestoreOrchestrationTests()
         runLayoutGridTests()
         runGridTargetE2E()
+        runGridTargetLogicTests()
         runGridSpaceE2E()
         runSizeE2E()
         runFloatSettleE2E()
