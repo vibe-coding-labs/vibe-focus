@@ -91,55 +91,24 @@ final class SessionWindowRegistry: ObservableObject {
             resolvedWindowNumber = WindowManager.shared.windowNumber(for: axWindow)
         }
 
-        if var existing = windowStates[wid] {
-            // Don't overwrite an active binding from a different session
-            if let existingSID = existing.sessionID, existingSID != sessionID, !existing.isCompleted {
-                log("[SessionWindowRegistry] bind alias: windowID \(wid) already has active binding for session \(existingSID.prefix(8)), recording alias for session \(sessionID.prefix(8))", level: .info, fields: [
-                    "windowID": String(wid),
-                    "existingSessionID": existingSID,
-                    "newSessionID": sessionID,
-                    "existingBindingType": existing.bindingType.rawValue,
-                    "newBindingType": bindingType.rawValue
-                ])
-                sessionAliasWindowID[sessionID] = wid
-                lastEventDescription = "SessionStart 别名绑定：\(windowIdentity.appName ?? "Unknown") / \(sessionID.prefix(8))"
-                return
-            }
-            existing.pid = windowIdentity.pid
-            existing.tty = terminalTTY
-            existing.axWindowNumber = resolvedWindowNumber
-            existing.appName = windowIdentity.appName
-            existing.bundleIdentifier = windowIdentity.bundleIdentifier
-            existing.title = windowIdentity.title
-            existing.sessionID = sessionID
-            existing.isCompleted = false
-            existing.completedAt = nil
-            existing.updatedAt = now
-            existing.termSessionID = terminalSessionID
-            existing.itermSessionID = itermSessionID
-            existing.cwd = cwd
-            existing.model = model
-            existing.bindingType = bindingType
-            windowStates[wid] = existing
-        } else {
-            var state = WindowState(
-                windowID: wid,
-                pid: windowIdentity.pid,
-                tty: terminalTTY,
-                axWindowNumber: resolvedWindowNumber,
-                appName: windowIdentity.appName,
-                bundleIdentifier: windowIdentity.bundleIdentifier,
-                title: windowIdentity.title,
-                termSessionID: terminalSessionID,
-                itermSessionID: itermSessionID,
-                sessionID: sessionID,
-                bindingType: bindingType,
-                isCompleted: false,
-                createdAt: now,
-                updatedAt: now
-            )
-            state.cwd = cwd
-            state.model = model
+        switch Self.makeBoundState(
+            existing: windowStates[wid], sessionID: sessionID, identity: windowIdentity,
+            resolvedWindowNumber: resolvedWindowNumber, terminalTTY: terminalTTY,
+            terminalSessionID: terminalSessionID, itermSessionID: itermSessionID,
+            cwd: cwd, model: model, bindingType: bindingType, now: now
+        ) {
+        case .alias(let existingSID):
+            log("[SessionWindowRegistry] bind alias: windowID \(wid) already has active binding for session \(existingSID.prefix(8)), recording alias for session \(sessionID.prefix(8))", level: .info, fields: [
+                "windowID": String(wid),
+                "existingSessionID": existingSID,
+                "newSessionID": sessionID,
+                "existingBindingType": windowStates[wid]?.bindingType.rawValue ?? "?",
+                "newBindingType": bindingType.rawValue
+            ])
+            sessionAliasWindowID[sessionID] = wid
+            lastEventDescription = "SessionStart 别名绑定：\(windowIdentity.appName ?? "Unknown") / \(sessionID.prefix(8))"
+            return
+        case .merged(let state), .created(let state):
             windowStates[wid] = state
         }
 
@@ -153,6 +122,80 @@ final class SessionWindowRegistry: ObservableObject {
             "activeBindings": String(activeBindingCount),
             "totalBindings": String(windowStates.count)
         ])
+    }
+
+    // MARK: - Pure Decision
+
+    /// bind 的身份合并纯决策（B98 测试缝提纯，原内联在 bind）：
+    /// - `.alias(existingSID)`：窗口已有**其他 session 的活跃绑定**（未 completed）——
+    ///   不覆盖，调用方记录 session 别名后结束；
+    /// - `.merged(state)`：同 session 重绑或已完成绑定复用——刷新身份/上下文字段并复活；
+    /// - `.created(state)`：无既有记录——新建绑定。
+    static func makeBoundState(
+        existing: WindowState?,
+        sessionID: String,
+        identity: WindowIdentity,
+        resolvedWindowNumber: Int?,
+        terminalTTY: String?,
+        terminalSessionID: String?,
+        itermSessionID: String?,
+        cwd: String?,
+        model: String?,
+        bindingType: WindowState.BindingType,
+        now: Date
+    ) -> BindOutcome {
+        let wid = identity.windowID
+        if var state = existing {
+            // Don't overwrite an active binding from a different session
+            if let existingSID = state.sessionID, existingSID != sessionID, !state.isCompleted {
+                return .alias(existingSessionID: existingSID)
+            }
+            state.pid = identity.pid
+            state.tty = terminalTTY
+            state.axWindowNumber = resolvedWindowNumber
+            state.appName = identity.appName
+            state.bundleIdentifier = identity.bundleIdentifier
+            state.title = identity.title
+            state.sessionID = sessionID
+            state.isCompleted = false
+            state.completedAt = nil
+            state.updatedAt = now
+            state.termSessionID = terminalSessionID
+            state.itermSessionID = itermSessionID
+            state.cwd = cwd
+            state.model = model
+            state.bindingType = bindingType
+            return .merged(state)
+        }
+        var state = WindowState(
+            windowID: wid,
+            pid: identity.pid,
+            tty: terminalTTY,
+            axWindowNumber: resolvedWindowNumber,
+            appName: identity.appName,
+            bundleIdentifier: identity.bundleIdentifier,
+            title: identity.title,
+            termSessionID: terminalSessionID,
+            itermSessionID: itermSessionID,
+            sessionID: sessionID,
+            bindingType: bindingType,
+            isCompleted: false,
+            createdAt: now,
+            updatedAt: now
+        )
+        state.cwd = cwd
+        state.model = model
+        return .created(state)
+    }
+
+    /// makeBoundState 的三态结局。
+    enum BindOutcome: Equatable {
+        /// 窗口已被其他活跃 session 占用（携带既有 sessionID），调用方记录别名
+        case alias(existingSessionID: String)
+        /// 既有记录刷新复用
+        case merged(WindowState)
+        /// 全新绑定
+        case created(WindowState)
     }
 
     // MARK: - Private

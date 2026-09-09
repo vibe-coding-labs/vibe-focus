@@ -500,6 +500,52 @@ extension RunnerHarness {
                   && !ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: "x")
                   && !ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: ""))
         }
+        // bind 身份合并纯决策（B98：SessionWindowRegistry.makeBoundState 提纯——别名/合并/新建三态）
+        do {
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            let ident = WindowIdentity(windowID: 77, pid: 4242, bundleIdentifier: "com.apple.Terminal",
+                                       appName: "Terminal", windowNumber: nil, title: "repo — zsh")
+            func existingState(sessionID: String?, completed: Bool) -> WindowState {
+                var ws = WindowState(
+                    windowID: 77, pid: 1, tty: nil, axWindowNumber: nil, appName: "Old",
+                    bundleIdentifier: nil, title: "old", termSessionID: nil, itermSessionID: nil,
+                    sessionID: sessionID, bindingType: .local, isCompleted: completed,
+                    createdAt: now, updatedAt: now.addingTimeInterval(-60)
+                )
+                ws.completedAt = completed ? now.addingTimeInterval(-30) : nil
+                return ws
+            }
+            func make(existing: WindowState?, sessionID: String) -> SessionWindowRegistry.BindOutcome {
+                SessionWindowRegistry.makeBoundState(
+                    existing: existing, sessionID: sessionID, identity: ident,
+                    resolvedWindowNumber: 9, terminalTTY: "/dev/ttys9",
+                    terminalSessionID: nil, itermSessionID: nil,
+                    cwd: "/x/proj", model: "opus", bindingType: .local, now: now)
+            }
+            var createdOK = false
+            if case .created(let st) = make(existing: nil, sessionID: "s1") {
+                createdOK = st.windowID == 77 && st.sessionID == "s1" && st.appName == "Terminal"
+                    && st.isCompleted == false && st.axWindowNumber == 9 && st.tty == "/dev/ttys9"
+                    && st.cwd == "/x/proj" && st.model == "opus" && st.createdAt == now
+            }
+            check("bindState: 无既有 → created 全字段就位", createdOK)
+            var aliasSID: String?
+            if case .alias(let sid) = make(existing: existingState(sessionID: "sA", completed: false), sessionID: "sB") {
+                aliasSID = sid
+            }
+            check("bindState: 他 session 活跃绑定 → alias（不覆盖）", aliasSID == "sA")
+            var mergedOK = false
+            if case .merged(let st) = make(existing: existingState(sessionID: "s1", completed: false), sessionID: "s1") {
+                mergedOK = st.appName == "Terminal" && st.tty == "/dev/ttys9" && st.isCompleted == false
+                    && st.completedAt == nil && st.updatedAt == now
+            }
+            check("bindState: 同 session 重绑 → merged 刷新身份字段并复活", mergedOK)
+            var reuseOK = false
+            if case .merged(let st) = make(existing: existingState(sessionID: "sA", completed: true), sessionID: "sB") {
+                reuseOK = st.sessionID == "sB" && st.isCompleted == false
+            }
+            check("bindState: 已完成绑定可被新 session 复用（completed 不算活跃冲突）", reuseOK)
+        }
     }
     }
 }
