@@ -480,6 +480,19 @@ extension RunnerHarness {
               && violateLocal.response.message.contains("local")
               && violateRemote.response.sessionID == "s"
               && violateLocal.response.sessionID == "s")
+        // Hook token 解析/校验（B91：TokenValidationLogicTests 镜像退役转真身）
+        do {
+            check("token: query 优先于 header、回退 header 并 trim、双缺失空串、header 大小写不敏感",
+                  ClaudeHookServer.resolveProvidedToken(query: ["token": "q"], headers: ["X-VibeFocus-Token": "h"]) == "q"
+                  && ClaudeHookServer.resolveProvidedToken(query: [:], headers: ["x-vibefocus-token": "  h \n"]) == "h"
+                  && ClaudeHookServer.resolveProvidedToken(query: [:], headers: [:]) == "")
+            check("token: nil/空串 expected 跳过验证、相等通过、不等拒绝、空 provided 拒绝",
+                  ClaudeHookServer.isTokenValid(expectedToken: nil, providedToken: nil)
+                  && ClaudeHookServer.isTokenValid(expectedToken: "", providedToken: "anything")
+                  && ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: "t")
+                  && !ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: "x")
+                  && !ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: ""))
+        }
     }
     }
 }

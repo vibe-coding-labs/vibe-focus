@@ -729,6 +729,30 @@ extension RunnerHarness {
               ExitJournal.jsonEscape("\u{01}") == #"\u0001"#)
         check("pureSweep C4: 中文直通 + 空串恒等",
               ExitJournal.jsonEscape("中文✓") == "中文✓" && ExitJournal.jsonEscape("") == "")
+
+        // D. Support 日志工具三函数 + normalizePort/sanitizedForShell（B91：SupportUtilityTests/PreferencesValidationTests 镜像退役转真身）。
+        do {
+            check("support: sanitizeFieldValue 控制符转义 + 含空格加引号",
+                  sanitizeFieldValue("a\nb\"c") == "\"a\\nb\\\"c\""
+                  && sanitizeFieldValue("plain") == "plain")
+            let serialized = serializeFields(["b": "x y", "a": "1", "": "skipped"])
+            check("support: serializeFields 键排序 + 空键过滤 + 前导空格",
+                  serialized == " a=1 b=\"x y\"")
+            check("support: truncateForLog 超 260 截断加省略号、未超原样",
+                  truncateForLog(String(repeating: "x", count: 263)).count == 263
+                  && truncateForLog(String(repeating: "x", count: 263)).hasSuffix("...")
+                  && truncateForLog("short") == "short")
+            check("prefs: normalizePort 边界（0/负→1024，65536+→65535，1024/65535/39277 原样）",
+                  ClaudeHookPreferences.normalizePort(0) == 1024
+                  && ClaudeHookPreferences.normalizePort(-1) == 1024
+                  && ClaudeHookPreferences.normalizePort(1023) == 1024
+                  && ClaudeHookPreferences.normalizePort(65536) == 65535
+                  && ClaudeHookPreferences.normalizePort(1000000) == 65535
+                  && ClaudeHookPreferences.normalizePort(39277) == 39277)
+            check("shell: sanitizedForShell 单引号 POSIX 转义 + URL 直通",
+                  "it's".sanitizedForShell() == "'it'\\''s'"
+                  && "https://x/y".sanitizedForShell() == "'https://x/y'")
+        }
     }
 
     // MARK: Minimap live 切换反馈映射（真实实现——结局→文案，Batch 32 用户报告修复）
