@@ -193,6 +193,12 @@ extension RunnerHarness {
               ScreenIndexPreferences.loadLegacyPreferences(from: Data("not-json".utf8)) == nil)
         check("screenPrefs: legacy 缺必填字段 → nil",
               ScreenIndexPreferences.loadLegacyPreferences(from: Data(#"{"isEnabled":true}"#.utf8)) == nil)
+        // 解码失败边缘补锁（B84：ScreenIndexPreferencesMigrationTests 镜像退役）
+        check("screenPrefs: 非法 position 枚举 / isEnabled 类型错误 → nil",
+              ScreenIndexPreferences.loadLegacyPreferences(
+                from: Data(#"{"isEnabled":true,"position":"middleLeft"}"#.utf8)) == nil
+              && ScreenIndexPreferences.loadLegacyPreferences(
+                from: Data(#"{"isEnabled":"yes"}"#.utf8)) == nil)
 
         // enforce 守卫安全侧：已 per-screen → 原样返回（迁移分支带 save 落库副作用，不在此测）。
         let already = ScreenIndexPreferences.default
@@ -655,6 +661,35 @@ extension RunnerHarness {
               filtered.map(\.windowID) == [1, 4]
               && filtered.allSatisfy { $0.pid == 100 && $0.appName == "Terminal" && $0.bundleIdentifier == "com.apple.Terminal" }
               && filtered[0].title == "term" && filtered[1].title == "term2")
+        // CGWindowEntry 解码韧性契约（B85：CGWindowEntryTests 镜像退役——此前仅作夹具被间接消费）。
+        do {
+            func raw(_ pairs: [String: Any]) -> [String: Any] { pairs }
+            check("cgEntry: 必填缺一不可——缺 windowNumber/缺 ownerPID/空 dict 全 nil",
+                  CGWindowEntry(from: raw([kCGWindowOwnerPID as String: 100])) == nil
+                  && CGWindowEntry(from: raw([kCGWindowNumber as String: 1])) == nil
+                  && CGWindowEntry(from: raw([:])) == nil)
+            check("cgEntry: 类型严格——windowID/ownerPID 字符串形态拒绝；layer/isOnScreen 缺省 0/true",
+                  CGWindowEntry(from: raw([kCGWindowNumber as String: "1", kCGWindowOwnerPID as String: 100])) == nil
+                  && CGWindowEntry(from: raw([kCGWindowNumber as String: 1, kCGWindowOwnerPID as String: "100"])) == nil
+                  && CGWindowEntry(from: raw([kCGWindowNumber as String: UInt32(2), kCGWindowOwnerPID as String: Int32(100)]))!
+                      .isOnScreen == true)
+            check("cgEntry: name 双键回退（kCGWindowName 优先）+ bounds 字典缺维补 0",
+                  {
+                      let primary = CGWindowEntry(from: raw([
+                        kCGWindowNumber as String: UInt32(3), kCGWindowOwnerPID as String: Int32(100),
+                        "kCGWindowName": "primary", "name": "fallback"]))!
+                      let fallback = CGWindowEntry(from: raw([
+                        kCGWindowNumber as String: UInt32(4), kCGWindowOwnerPID as String: Int32(100),
+                        "name": "fallback"]))!
+                      let partialBounds = CGWindowEntry(from: raw([
+                        kCGWindowNumber as String: UInt32(5), kCGWindowOwnerPID as String: Int32(100),
+                        kCGWindowBounds as String: ["Width": CGFloat(300)]]))!
+                      return primary.name == "primary"
+                          && fallback.name == "fallback"
+                          && partialBounds.bounds == CGRect(x: 0, y: 0, width: 300, height: 0)
+                  }())
+        }
+
         check("pureSweep B2: 无命中 → 空数组",
               WindowManager.filterWindowsByPID(entries: [entry(9, pid: 200)], targetPID: 100, appName: nil, bundleID: nil).isEmpty)
 
