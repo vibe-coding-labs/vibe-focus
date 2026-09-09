@@ -546,6 +546,43 @@ extension RunnerHarness {
             }
             check("bindState: 已完成绑定可被新 session 复用（completed 不算活跃冲突）", reuseOK)
         }
+
+        // SessionWindowRegistry 状态族注入式直测（B100：临时库实例——此前仅 shared 字典播种的间接消费）
+        do {
+            let dir = "/tmp/vibefocus-swr-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let reg = SessionWindowRegistry(store: WindowStateStore(dbPath: dir + "/swr.db"))
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+            reg.windowStates[50] = WindowState(
+                windowID: 50, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "repo — zsh",
+                termSessionID: nil, itermSessionID: nil, sessionID: "sx",
+                bindingType: .local, isCompleted: false, createdAt: t0, updatedAt: t0)
+            reg.touch(sessionID: "sx", message: "UPS 收到")
+            check("swrState: touch 刷新 updatedAt 且 message 上屏", {
+                let st = reg.windowStates[50]!
+                return st.updatedAt > t0 && reg.lastEventDescription == "UPS 收到"
+            }())
+            reg.sessionAliasWindowID["sx"] = 50
+            reg.markCompleted(sessionID: "sx")
+            check("swrState: markCompleted 完成置位+别名清理+描述更新",
+                  reg.windowStates[50]!.isCompleted && reg.windowStates[50]!.completedAt != nil
+                  && reg.sessionAliasWindowID["sx"] == nil
+                  && reg.lastEventDescription.contains("SessionEnd"))
+            reg.reactivate(sessionID: "sx")
+            check("swrState: reactivate 复活（isCompleted/completedAt 复位）",
+                  reg.windowStates[50]!.isCompleted == false && reg.windowStates[50]!.completedAt == nil)
+            reg.setLastEventDescription("   ")
+            check("swrState: setLastEventDescription 纯空白拒写",
+                  reg.lastEventDescription.contains("SessionEnd"))
+            reg.remapWindowID(oldWindowID: 50, newWindowID: 51)
+            check("swrState: remapWindowID 内存重映射（旧键删除新键就位+DB 同步）",
+                  reg.windowStates[50] == nil && reg.windowStates[51] != nil
+                  && reg.windowStates[51]!.windowID == 51
+                  && reg.store.findWindowState(windowID: 51) != nil
+                  && reg.store.findWindowState(windowID: 50) == nil)
+        }
     }
     }
 }
