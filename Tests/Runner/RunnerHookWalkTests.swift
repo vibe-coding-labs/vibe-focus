@@ -89,6 +89,13 @@ extension RunnerHarness {
         check("errClass: SA 缺失特征", YabaiErrorClassifier.classify(stderr: "yabai: error with the scripting-addition") == .scriptingAdditionMissing)
         check("errClass: mission-control 阻断", YabaiErrorClassifier.classify(stderr: "cannot focus space: mission-control is active!") == .missionControlBlocking)
         check("errClass: 无焦点窗口（预期）", YabaiErrorClassifier.classify(stderr: "could not retrieve window details") == .noFocusedWindow)
+        // 分类器补锁（B92：YabaiErrorClassifierTests 镜像退役——windowNotFound/兜底/大小写/优先序）
+        check("errClass: windowNotFound 与 unrecognized 兜底",
+              YabaiErrorClassifier.classify(stderr: "could not locate window") == .windowNotFound
+              && YabaiErrorClassifier.classify(stderr: "something odd") == .unrecognized)
+        check("errClass: 大小写不敏感 + 多特征命中取表序最前（SA 优先于查询类）",
+              YabaiErrorClassifier.classify(stderr: "SCRIPTING-ADDITION NOT LOADED") == .scriptingAdditionMissing
+              && YabaiErrorClassifier.classify(stderr: "mission-control .. could not locate window") == .missionControlBlocking)
         check("errClass: 窗口已关闭（预期）", YabaiErrorClassifier.classify(stderr: "could not locate window") == .windowNotFound)
         check("errClass: 未识别非空 → unrecognized", YabaiErrorClassifier.classify(stderr: "segfault somewhere") == .unrecognized)
         check("errClass: 大小写不敏感", YabaiErrorClassifier.classify(stderr: "Scripting-Addition Is Missing") == .scriptingAdditionMissing)

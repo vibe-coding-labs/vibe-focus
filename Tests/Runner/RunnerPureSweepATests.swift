@@ -752,6 +752,17 @@ extension RunnerHarness {
             check("shell: sanitizedForShell 单引号 POSIX 转义 + URL 直通",
                   "it's".sanitizedForShell() == "'it'\\''s'"
                   && "https://x/y".sanitizedForShell() == "'https://x/y'")
+            check("support: diagnosticFilePath 主应用规范路径、其它进程加后缀、空进程名规范路径",
+                  diagnosticFilePath(base: "/tmp/fatal.log", processName: "VibeFocusHotkeys") == "/tmp/fatal.log"
+                  && diagnosticFilePath(base: "/tmp/fatal.log", processName: "UnitTestRunner") == "/tmp/fatal.log-UnitTestRunner"
+                  && diagnosticFilePath(base: "/tmp/fatal.log", processName: "") == "/tmp/fatal.log")
+            check("support: elapsedMilliseconds 同刻≈0、1.5s 前≈1500（ms 取整）",
+                  elapsedMilliseconds(since: Date()) == 0
+                  && elapsedMilliseconds(since: Date().addingTimeInterval(-1.5)) == 1500)
+            check("support: verbose 旗标解析——1/true/yes 大小写不敏感为真，0/nil/其它为假",
+                  parseVerboseLoggingFlag("1") && parseVerboseLoggingFlag("True")
+                  && parseVerboseLoggingFlag("YES") && !parseVerboseLoggingFlag("0")
+                  && !parseVerboseLoggingFlag(nil) && !parseVerboseLoggingFlag("on"))
         }
     }
 
