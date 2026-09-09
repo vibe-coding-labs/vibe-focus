@@ -105,7 +105,8 @@ final class ClaudeHookServer: ObservableObject {
                     let result = self.handleHookRequest(
                         body: dataRequest.data,
                         query: request.query ?? [:],
-                        headers: request.headers
+                        headers: request.headers,
+                        peerAddress: request.remoteAddressString as String?
                     )
                     completionBlock(
                         self.makeJSONResponse(statusCode: result.statusCode, response: result.response)
@@ -142,7 +143,8 @@ final class ClaudeHookServer: ObservableObject {
     private func handleHookRequest(
         body: Data,
         query: [String: String],
-        headers: [String: String]
+        headers: [String: String],
+        peerAddress: String? = nil
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-71: hook 请求端到端总耗时（token 验证 + JSON decode + eventHandler 处理 + 响应构造；hook 路径顶层归因，配合子阶段 P-INST-38/47/54/55/56）。
         let hhrStart = Date()
@@ -196,10 +198,14 @@ final class ClaudeHookServer: ObservableObject {
 
         lastEventAt = Date()
 
-        let sourceIP = Self.resolveHeaderValue(from: headers, forKey: "X-Forwarded-For")
+        // 来源分类（B89）：代理头优先（反代部署取真实客户端）→ TCP 对端地址
+        // （loopback=本机，其它=远程直连）→ local。旧行为只看代理头——直连 LAN
+        // 请求（本应用的主要远程场景）没有这些头，全被误记为 local。
+        let proxyIP = Self.resolveHeaderValue(from: headers, forKey: "X-Forwarded-For")
             ?? Self.resolveHeaderValue(from: headers, forKey: "X-Real-IP")
-            ?? "local"
-        let isRemote = sourceIP != "local"
+        let sourceInfo = Self.classifyRequestSource(peerAddress: peerAddress, proxyIP: proxyIP)
+        let sourceIP = sourceInfo.source
+        let isRemote = sourceInfo.isRemote
         log(
             "[ClaudeHookServer] request received",
             fields: [
@@ -284,6 +290,29 @@ final class ClaudeHookServer: ObservableObject {
             return v
         }
         return nil
+    }
+
+    /// loopback 判定（纯函数）：IPv4 127/8 前缀、IPv6 ::1、IPv4-mapped ::ffff:127.*。
+    static func isLoopbackAddress(_ address: String) -> Bool {
+        let lower = address.lowercased()
+        return lower.hasPrefix("127.") || lower == "::1" || lower.hasPrefix("::ffff:127.") || lower == "::"
+    }
+
+    /// hook 请求来源分类（纯函数，B89）：代理头优先（反代部署取真实客户端）→
+    /// TCP 对端地址（loopback=本机调用；其它=局域网/远程直连）→ 未知回退 local。
+    /// 旧行为只认 X-Forwarded-For/X-Real-IP 代理头——直连 LAN 请求（本应用的主要
+    /// 远程场景）不带这些头，日志里真实远程来源全被误记为 local。
+    static func classifyRequestSource(peerAddress: String?, proxyIP: String?) -> (source: String, isRemote: Bool) {
+        if let proxy = proxyIP, !proxy.isEmpty {
+            return (proxy, !isLoopbackAddress(proxy))
+        }
+        guard let peer = peerAddress, !peer.isEmpty else {
+            return ("local", false)
+        }
+        if isLoopbackAddress(peer) {
+            return ("local", false)
+        }
+        return (peer, true)
     }
 
     /// Pure token validation — extracted for testability.
