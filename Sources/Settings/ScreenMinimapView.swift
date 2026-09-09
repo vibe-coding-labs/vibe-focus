@@ -153,7 +153,10 @@ struct ScreenMinimapView: View {
             parts.append("#\(screen.displayID)")
         }
         if let visible = screen.visibleSpaceIndex {
-            parts.append("S\(visible)")
+            // 可见工作区标注与胶囊/角标同一语言：「屏号-位次」（如 S3-1）
+            let position = ScreenLayoutMapper.positionInDisplay(of: visible, inAscendingIndexes: screen.spaces.map(\.yabaiIndex)) ?? 1
+            parts.append("S" + ScreenLayoutMapper.userVisibleSpaceLabel(
+                displayIndex: screen.yabaiDisplayIndex, positionInDisplay: position, yabaiIndex: visible))
         }
         return parts.joined(separator: "  ")
     }
@@ -189,6 +192,10 @@ struct ScreenMinimapView: View {
 
     private func spaceCapsule(_ screen: ScreenLayoutMapper.MappedScreen, _ space: ScreenLayoutMapper.MappedSpace) -> some View {
         let isTargetSpace = selected == .displaySpace(displayID: screen.displayID, spaceIndex: space.yabaiIndex)
+        // 胶囊标注 =「屏号-位次」（如 3-1 / 3-2）——与 overlay 角标/S 标注/编排目标摘要同一语言
+        let position = ScreenLayoutMapper.positionInDisplay(of: space.yabaiIndex, inAscendingIndexes: screen.spaces.map(\.yabaiIndex)) ?? 1
+        let label = ScreenLayoutMapper.userVisibleSpaceLabel(
+            displayIndex: screen.yabaiDisplayIndex, positionInDisplay: position, yabaiIndex: space.yabaiIndex)
         return RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius + 0.5, style: .continuous)
             .fill(
                 isTargetSpace ? VibeColors.accent.opacity(0.16)
@@ -204,7 +211,7 @@ struct ScreenMinimapView: View {
             )
             .frame(width: space.frame.width, height: space.frame.height)
             .overlay(
-                Text("\(space.yabaiIndex)")
+                Text(label)
                     .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(
                         isTargetSpace ? VibeColors.accent
@@ -214,13 +221,19 @@ struct ScreenMinimapView: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: Metrics.spaceCornerRadius + 0.5))
             .onTapGesture { onSelect(.displaySpace(displayID: screen.displayID, spaceIndex: space.yabaiIndex)) }
-            .help("Space \(space.yabaiIndex)\(space.isVisible ? "（当前）" : "")——切换到此工作区并设为编排目标")
-            .accessibilityLabel("屏幕 \(screen.name) Space \(space.yabaiIndex)")
+            .help("工作区 \(label)\(space.isVisible ? "（当前）" : "")——切换到此工作区并设为编排目标")
+            .accessibilityLabel("屏幕 \(screen.name) 工作区 \(label)")
             .accessibilityAddTraits(isTargetSpace ? .isSelected : [])
     }
 
     private func screenTapHelp(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
         let label = screen.yabaiDisplayIndex.map { "屏\($0)" } ?? "#\(screen.displayID)"
+        if let visible = screen.visibleSpaceIndex,
+           let position = ScreenLayoutMapper.positionInDisplay(of: visible, inAscendingIndexes: screen.spaces.map(\.yabaiIndex)) {
+            let spaceLabel = ScreenLayoutMapper.userVisibleSpaceLabel(
+                displayIndex: screen.yabaiDisplayIndex, positionInDisplay: position, yabaiIndex: visible)
+            return "编排到「\(screen.name)」（\(label)）当前工作区 \(spaceLabel)"
+        }
         if let visible = screen.visibleSpaceIndex {
             return "编排到「\(screen.name)」（\(label)）当前工作区 Space \(visible)"
         }

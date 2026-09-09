@@ -160,4 +160,20 @@ struct ScreenLayoutMapper {
         }
         return cells
     }
+
+    // MARK: 用户可见工作区编号（「屏号-位次」语言，2026-09-09 用户裁定）
+
+    /// 工作区的用户可见标注：「屏号-该屏内第几个」（如 3-1 / 3-2）——overlay 角标、
+    /// minimap Space 胶囊、S 标注、编排目标摘要四处共用同一语言。
+    /// yabai 屏号缺失（几何解析失败）时退回 yabai 全局索引。
+    static func userVisibleSpaceLabel(displayIndex: Int?, positionInDisplay: Int, yabaiIndex: Int) -> String {
+        guard let displayIndex else { return "\(yabaiIndex)" }
+        return "\(displayIndex)-\(positionInDisplay)"
+    }
+
+    /// yabai 全局索引在该屏 Space 升序列表中的屏内位次（1 起）；不在列表返回 nil。
+    /// 接受索引数组以同时服务 MappedSpace（视图侧）与 InputSpace（快照侧）。
+    static func positionInDisplay(of yabaiIndex: Int, inAscendingIndexes indexes: [Int]) -> Int? {
+        indexes.firstIndex(of: yabaiIndex).map { $0 + 1 }
+    }
 }

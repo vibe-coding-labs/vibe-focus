@@ -34,11 +34,12 @@ final class OverlayWindow: NSWindow {
     }
 
     /// Pure text and size calculation — extracted for testability.
-    /// 屏号与 Space 号与设置页 minimap（屏N / S N / Space 胶囊）同一坐标系：
-    /// - yabaiDisplayIndex 非 nil → 屏号 = yabai 显示器索引（几何精确解析，2026-09-09
-    ///   用户反馈「角标编号跟应用内部对不上」——旧实现用 NSScreen 枚举序，与本机 yabai 序相反）；
-    /// - nil（yabai 不可用/未解析）→ 回退 NSScreen 枚举序 +1（旧行为）。
-    /// spaceIndex 由刷新层传入 yabai 全局索引（跨屏连续编号），与 S 标注/胶囊一致。
+    /// 角标语言 =「屏号-位次」（如 3-1 / 3-2，2026-09-09 用户裁定）：
+    /// - 屏号：yabaiDisplayIndex 非 nil → yabai 显示器索引（几何精确解析，与设置页
+    ///   minimap「屏N」同源——旧实现用 NSScreen 枚举序，与本机 yabai 序相反）；
+    ///   nil（yabai 不可用/未解析）→ 回退 NSScreen 枚举序 +1（旧行为）。
+    /// - 位次：spaceIndex = 该屏第几个 space（刷新层 resolveScreenSpaceIndex 解出，
+    ///   与 minimap 胶囊的「屏号-位次」标注同一语言）。
     static func calculateOverlayLabel(screenIndex: Int, yabaiDisplayIndex: Int?, spaceIndex: Int) -> String {
         let displayNumber = yabaiDisplayIndex ?? (screenIndex + 1)
         return "\(displayNumber)-\(spaceIndex)"

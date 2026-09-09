@@ -285,6 +285,24 @@ extension RunnerHarness {
           && !TerminalGridPlanner.isValidSnapshotCellCount(0)
           && !TerminalGridPlanner.isValidSnapshotCellCount(65))
 
+    // MARK: 工作区用户可见编号「屏号-位次」（2026-09-09 用户裁定：胶囊/S 标注/角标/摘要同语言）
+    do {
+        func space(_ index: Int, visible: Bool) -> ScreenLayoutMapper.MappedSpace {
+            ScreenLayoutMapper.MappedSpace(yabaiIndex: index, frame: .zero, isVisible: visible)
+        }
+        // 位次 = 全局索引在该屏升序列表中的名次（1 起）
+        let spaces = [space(4, visible: true), space(5, visible: false)]
+        check("编号: 位次=升序名次（4→1、5→2、不在列表→nil）",
+              ScreenLayoutMapper.positionInDisplay(of: 4, inAscendingIndexes: spaces.map(\.yabaiIndex)) == 1
+              && ScreenLayoutMapper.positionInDisplay(of: 5, inAscendingIndexes: spaces.map(\.yabaiIndex)) == 2
+              && ScreenLayoutMapper.positionInDisplay(of: 9, inAscendingIndexes: spaces.map(\.yabaiIndex)) == nil)
+        check("编号: 屏号在 → 「屏号-位次」（3-1 / 3-2）",
+              ScreenLayoutMapper.userVisibleSpaceLabel(displayIndex: 3, positionInDisplay: 1, yabaiIndex: 4) == "3-1"
+              && ScreenLayoutMapper.userVisibleSpaceLabel(displayIndex: 3, positionInDisplay: 2, yabaiIndex: 5) == "3-2")
+        check("编号: 屏号缺失（几何解析失败）→ 回退全局索引",
+              ScreenLayoutMapper.userVisibleSpaceLabel(displayIndex: nil, positionInDisplay: 1, yabaiIndex: 4) == "4")
+    }
+
         // MARK: 编排终端选择器（feat/terminal-auto-select，真实源码）
 
     do {

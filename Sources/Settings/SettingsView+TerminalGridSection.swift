@@ -83,12 +83,21 @@ extension SettingsView {
                     // 胶囊点击 = 同时 live 切换该屏到该工作区（2026-09-07 用户报告
                     // 「点了没反应」）。复用 restore 视角链（SA 直切→聚焦带动降级），
                     // 结局如实反馈——空工作区无 SA 切不动，不许静默。
-                    if case .displaySpace(_, let spaceIndex) = target {
+                    if case .displaySpace(let displayID, let spaceIndex) = target {
+                        // 反馈文案与胶囊同语言：「屏号-位次」；快照缺失回退全局号
+                        let label: String
+                        if let screen = gridMinimapScreens.first(where: { $0.displayID == displayID }),
+                           let position = ScreenLayoutMapper.positionInDisplay(of: spaceIndex, inAscendingIndexes: screen.spaces.map(\.yabaiIndex)) {
+                            label = ScreenLayoutMapper.userVisibleSpaceLabel(
+                                displayIndex: screen.yabaiDisplayIndex, positionInDisplay: position, yabaiIndex: spaceIndex)
+                        } else {
+                            label = "Space \(spaceIndex)"
+                        }
                         let outcome = SpaceController.shared.switchToSpace(
                             spaceIndex,
                             operationID: "minimap-space-\(spaceIndex)-\(Int(Date().timeIntervalSince1970 * 1000))"
                         )
-                        gridSpaceSwitchMessage = GridSpaceSwitchFeedback.message(for: outcome, spaceIndex: spaceIndex)
+                        gridSpaceSwitchMessage = GridSpaceSwitchFeedback.message(for: outcome, label: label)
                     }
                 }
             )
@@ -126,9 +135,9 @@ extension SettingsView {
         )
     }
 
-    /// 当前编排目标的摘要胶囊文案（2026-09-08 起标注统一 yabai display index——
-    /// 与 minimap 屏标签/Space 胶囊同一坐标系，杜绝多套编号并存；查不到快照时
-    /// 回退 #CGDisplayID 老格式）
+    /// 当前编排目标的摘要胶囊文案（标注语言=「屏号-位次」，2026-09-09 用户裁定——
+    /// 与 minimap 胶囊/S 标注/overlay 角标同一语言；查不到快照时回退
+    /// #CGDisplayID / Space 全局索引老格式）
     var gridTargetSummary: String? {
         guard let target = GridTargetCode.parse(gridTargetCode) else { return nil }
         func yabaiLabel(_ displayID: UInt32) -> String {
@@ -136,6 +145,16 @@ extension SettingsView {
                 return "屏\(y)"
             }
             return "#\(displayID)"
+        }
+        // 目标工作区的用户可见标注：「屏号-位次」；快照缺失时回退全局索引
+        func spaceLabel(_ displayID: UInt32, _ globalIndex: Int) -> String {
+            guard let screen = gridMinimapScreens.first(where: { $0.displayID == displayID }),
+                  let position = ScreenLayoutMapper.positionInDisplay(
+                    of: globalIndex, inAscendingIndexes: screen.spaces.map(\.yabaiIndex)) else {
+                return "Space \(globalIndex)"
+            }
+            return ScreenLayoutMapper.userVisibleSpaceLabel(
+                displayIndex: screen.yabaiDisplayIndex, positionInDisplay: position, yabaiIndex: globalIndex)
         }
         switch target {
         case .main:
@@ -145,7 +164,7 @@ extension SettingsView {
         case .display(let displayID):
             return "→ \(yabaiLabel(displayID)) 当前 Space"
         case .displaySpace(let displayID, let spaceIndex):
-            return "→ \(yabaiLabel(displayID)) · Space \(spaceIndex)"
+            return "→ \(yabaiLabel(displayID)) · \(spaceLabel(displayID, spaceIndex))"
         }
     }
 

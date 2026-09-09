@@ -344,13 +344,14 @@ extension RunnerHarness {
 
     do {
         // GridSpaceSwitchFeedback：三态如实反馈（空工作区失败不许静默——用户报告回归锁）。
+        // 标注语言=「屏号-位次」（调用方解出 label 传入；快照缺失回退 "Space 全局号"）。
         check("switchFB: noDrift 已是当前工作区",
-              GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 3) == "Space 3 已是当前工作区")
+              GridSpaceSwitchFeedback.message(for: .noDrift, label: "3-2") == "3-2 已是当前工作区")
         check("switchFB: refocused 成功文案（postSpace 不入文案，以目标 space 表述）",
-              GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 9), spaceIndex: 5) == "已切换到 Space 5")
+              GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 9), label: "3-2") == "已切换到 3-2")
         check("switchFB: failed 失败说明含原因（不许静默）",
-              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 9), spaceIndex: 2)
-              == "无法切换到 Space 2：该工作区没有可聚焦的窗口（空工作区需要 SA 直切通道，本机未装）")
+              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 9), label: "2-1")
+              == "无法切换到 2-1：该工作区没有可聚焦的窗口（空工作区需要 SA 直切通道，本机未装）")
 
         // TitleEditor 脚本决策层：转义/模板契约/verdict 哨兵/诊断回读。
         check("titleEsc: 反斜杠与双引号转义 + 原文透传",

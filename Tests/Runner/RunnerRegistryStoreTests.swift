@@ -53,24 +53,17 @@ extension RunnerHarness {
               AllSpaceSnapshot.parseJSONArray(Data(#"{"a":1}"#.utf8)) == nil
               && AllSpaceSnapshot.parseJSONArray(Data(#"[{"index":1}]"#.utf8))?.count == 1)
 
-        // E. resolveScreenSpaceIndex 真身：返回 yabai 全局索引（2026-09-09 编号同源统一，
-        // 旧实现返回屏内位次导致角标与 minimap S 标注/Space 胶囊对不上）。
+        // E. resolveScreenSpaceIndex 真身：返回屏内位次（角标语言=「屏号-位次」，
+        // 2026-09-09 用户裁定；屏号由 calculateOverlayLabel 用 yabai displayIndex 提供）。
         let spaces = [
             AllSpaceSnapshot(index: 3, display: 1, isVisible: false, hasFocus: false),
             AllSpaceSnapshot(index: 1, display: 1, isVisible: true, hasFocus: false),
             AllSpaceSnapshot(index: 2, display: 1, isVisible: true, hasFocus: true),
         ]
-        check("overlayGate E: focused 命中 → 该 space 全局索引（2）",
+        check("overlayGate E: focused 命中 → 按升序位次（2）",
               AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 2) == 2)
-        check("overlayGate E: focused=隐藏 space 3 → 全局索引 3（旧位次语义会错给 1）",
-              AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 3) == 3)
-        check("overlayGate E: focused 属别屏 → 首个可见的全局索引（1）",
+        check("overlayGate E: focused 属别屏 → 首个可见位次（1）",
               AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 9) == 1)
-        check("overlayGate E: 首个可见全局索引 ≠ 1 时如实返回（[8 隐, 6 可见] → 6）",
-              AllSpaceSnapshot.resolveScreenSpaceIndex(
-                from: [AllSpaceSnapshot(index: 8, display: 2, isVisible: false, hasFocus: false),
-                       AllSpaceSnapshot(index: 6, display: 2, isVisible: true, hasFocus: false)],
-                focusedSpaceIndex: nil) == 6)
         check("overlayGate E: 全不可见 → nil",
               AllSpaceSnapshot.resolveScreenSpaceIndex(
                 from: [AllSpaceSnapshot(index: 2, display: 1, isVisible: false, hasFocus: false)],

@@ -632,19 +632,19 @@ extension RunnerHarness {
 
     // MARK: Minimap live 切换反馈映射（真实实现——结局→文案，Batch 32 用户报告修复）
     do {
-        check("spaceSwitch: noDrift → 已是当前工作区（含 space 号）",
-              GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 5).contains("已是当前工作区")
-              && GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 5).contains("Space 5"))
-        check("spaceSwitch: refocused → 已切换到 Space 5",
-              GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 4), spaceIndex: 5) == "已切换到 Space 5")
-        check("spaceSwitch: failed → 如实说明（含 space 号与 SA 事实，不静默）",
-              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 4), spaceIndex: 5).contains("无法切换到 Space 5")
-              && GridSpaceSwitchFeedback.message(for: .failed(postSpace: 4), spaceIndex: 5).contains("SA"))
+        check("spaceSwitch: noDrift → 已是当前工作区（含工作区标注）",
+              GridSpaceSwitchFeedback.message(for: .noDrift, label: "2-1").contains("已是当前工作区")
+              && GridSpaceSwitchFeedback.message(for: .noDrift, label: "2-1").contains("2-1"))
+        check("spaceSwitch: refocused → 已切换到 2-1",
+              GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 4), label: "2-1") == "已切换到 2-1")
+        check("spaceSwitch: failed → 如实说明（含工作区标注与 SA 事实，不静默）",
+              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 4), label: "2-1").contains("无法切换到 2-1")
+              && GridSpaceSwitchFeedback.message(for: .failed(postSpace: 4), label: "2-1").contains("SA"))
         check("spaceSwitch: 三态文案互异",
               Set([
-                  GridSpaceSwitchFeedback.message(for: .noDrift, spaceIndex: 2),
-                  GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 1), spaceIndex: 2),
-                  GridSpaceSwitchFeedback.message(for: .failed(postSpace: 1), spaceIndex: 2),
+                  GridSpaceSwitchFeedback.message(for: .noDrift, label: "2-1"),
+                  GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 1), label: "2-1"),
+                  GridSpaceSwitchFeedback.message(for: .failed(postSpace: 1), label: "2-1"),
               ]).count == 3)
     }
 
