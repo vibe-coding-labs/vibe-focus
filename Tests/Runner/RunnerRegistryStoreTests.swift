@@ -563,6 +563,15 @@ extension RunnerHarness {
               MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-2.2), now: now, cooldownSeconds: 3) == 1)
         check("cooldown: 冷却结束 remaining 归零",
               MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-5), now: now, cooldownSeconds: 3) == 0)
+        // 边界补锁（B89：MoveCooldownRegistryTests 镜像退役——默认 30s 档的真实参数化语义）
+        check("cooldown: 恰好 30s 严格 < 不在冷却、cooldown=0 永不在冷却",
+              !MoveCooldownRegistry.isInCooldown(lastMove: now.addingTimeInterval(-30), now: now, cooldownSeconds: 30)
+              && !MoveCooldownRegistry.isInCooldown(lastMove: now.addingTimeInterval(-1), now: now, cooldownSeconds: 0))
+        check("cooldown: 未来时刻视为在冷却（时钟回拨防御，宽进严出）",
+              MoveCooldownRegistry.isInCooldown(lastMove: now.addingTimeInterval(10), now: now, cooldownSeconds: 30))
+        check("cooldown: 29.9s 剩 1（向上取整）、35s 过期不返回负数",
+              MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-29.9), now: now, cooldownSeconds: 30) == 1
+              && MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-35), now: now, cooldownSeconds: 30) == 0)
     }
 
     // MARK: WindowStateStore 记录持久层（真实 SQLite——老库 PK 迁移/KV 往返，Batch 13）
