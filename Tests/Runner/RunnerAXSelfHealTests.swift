@@ -7,21 +7,30 @@ import Foundation
 
 extension RunnerHarness {
     func runAXSelfHealTests() {
-        // ===== AXSelfHeal.decide：决策表穷举 =====
+        // ===== AXSelfHeal.decide：决策表穷举（v2：detached 看护自拉起，无 keepalive 依赖） =====
         check("heal: 已授权 → proceed（不看历史）",
-              AXSelfHeal.decide(axTrusted: true, previousExitWasSelfHeal: false, keepaliveAvailable: true) == .proceedTrusted)
+              AXSelfHeal.decide(axTrusted: true, previousExitWasSelfHeal: false, isBundleInstall: true) == .proceedTrusted)
         check("heal: 已授权 + 上轮自愈 → proceed",
-              AXSelfHeal.decide(axTrusted: true, previousExitWasSelfHeal: true, keepaliveAvailable: true) == .proceedTrusted)
-        check("heal: 未授权 + 上轮非自愈 + 有 keepalive → relaunch",
-              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: false, keepaliveAvailable: true) == .relaunchViaKeepalive)
+              AXSelfHeal.decide(axTrusted: true, previousExitWasSelfHeal: true, isBundleInstall: true) == .proceedTrusted)
+        check("heal: 未授权 + 上轮非自愈 + bundle 安装 → relaunchSelf（用户态无 keepalive 也自愈）",
+              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: false, isBundleInstall: true) == .relaunchSelf)
         check("heal: 未授权 + 上轮自愈 → giveUp（防循环优先）",
-              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: true, keepaliveAvailable: true) == .giveUpPreviousHealFailed)
-        check("heal: 未授权 + 无 keepalive → giveUp（退出后无人拉起）",
-              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: false, keepaliveAvailable: false) == .giveUpNoKeepalive)
-        check("heal: 未授权 + 上轮自愈 + 无 keepalive → giveUp 防循环优先",
-              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: true, keepaliveAvailable: false) == .giveUpPreviousHealFailed)
+              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: true, isBundleInstall: true) == .giveUpPreviousHealFailed)
+        check("heal: 未授权 + 非 bundle（裸二进制 dev）→ giveUp",
+              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: false, isBundleInstall: false) == .giveUpNoBundle)
+        check("heal: 未授权 + 上轮自愈 + 非 bundle → giveUp 防循环优先",
+              AXSelfHeal.decide(axTrusted: false, previousExitWasSelfHeal: true, isBundleInstall: false) == .giveUpPreviousHealFailed)
         check("heal: 防循环 reason 常量与审计写入侧一致",
               AXSelfHeal.exitReason == "ax-selfheal-relaunch")
+
+        // ===== AXSelfHeal.relaunchScript：看护脚本构造（等死 → 退让 → open） =====
+        let script = AXSelfHeal.relaunchScript(pid: 4242, bundlePath: "/Users/u/Applications/VibeFocus.app")
+        check("watcher: 轮询本进程死亡（kill -0 pid）",
+              script.contains("while kill -0 4242") && script.contains("sleep 0.2"))
+        check("watcher: tccd 退让 3s 与 wrapper 同源",
+              script.contains("sleep 3"))
+        check("watcher: open 产物路径（带引号防空格）",
+              script.contains("open '/Users/u/Applications/VibeFocus.app'"))
 
         // ===== ExitJournal.lastExitReason(journalContents:)：上一个进程的退出原因 =====
         let lines = [

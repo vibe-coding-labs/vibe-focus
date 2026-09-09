@@ -215,17 +215,25 @@ cat > "$PLIST_PATH" <<PLIST
 PLIST
 
 # Code sign the .app bundle
-# 签名策略「证书或拒绝」（2026-09-07）：ad-hoc 二进制一旦请求 AX 会以自身 cdhash 抢建/钉死
-# TCC 行 csreq，之后正式证书构建全部 accessibility denied 且系统设置勾选显示正常——
-# 「已授权却不工作」的根因（详见 docs/bug-patterns/tcc-permission-breakage.md）。
+# 签名策略（2026-09-10 用户态分流，原「证书或拒绝」的修正）：有证书必用（授权跨版本
+# 存续）；无证书不再一刀切拒装——那会把无证书的真实用户堵死在门外。ad-hoc 照装并
+# 按首次/更新分别告知：其代价已从「静默毒化到必须 tccutil」降为「更新后一次重新勾选」
+# （app 侧自愈 AXSelfHeal + 设置页直开兜底恢复）。证书仍是首选，装完给出创建指引。
 echo "签名 .app bundle..."
+IS_UPDATE_INSTALL=0
+[ -f "$LAST_HASH_FILE" ] && IS_UPDATE_INSTALL=1
 if security find-identity -v -p codesigning 2>/dev/null | grep -F "$CERT_NAME" >/dev/null 2>&1; then
   codesign --force --deep --sign "$CERT_NAME" "$INSTALL_PATH" >/dev/null 2>&1
   echo "  使用证书: $CERT_NAME"
 else
-  echo "ERROR: 找不到签名证书 '$CERT_NAME'，拒绝以 ad-hoc 签名装机（会毒化辅助功能授权）。" >&2
-  echo "创建证书：bash scripts/setup_local_codesign.sh" >&2
-  exit 1
+  echo "  NOTE: 未找到签名证书 '$CERT_NAME'，使用 ad-hoc 签名安装。" >&2
+  if [ "$IS_UPDATE_INSTALL" = "1" ]; then
+    echo "  ⚠️ 本次为 ad-hoc 签名的更新：装后需在 系统设置 → 辅助功能 重新勾选 VibeFocus 一次。" >&2
+  else
+    echo "  首次安装按启动提示授权辅助功能即可。" >&2
+  fi
+  codesign --force --deep --sign - "$INSTALL_PATH" >/dev/null 2>&1
+  echo "      建议创建本地证书（bash scripts/setup_local_codesign.sh），此后更新授权可跨版本存续。" >&2
 fi
 
 # Remove quarantine attribute
@@ -242,6 +250,25 @@ audit_install "replaced"
 
 echo "启动应用..."
 open "$INSTALL_PATH"
+
+# 装后 AX 验证（tccd 竞态自检，2026-09-10）：竞态命中时当场自动重启一次，
+# 不留给用户「装完就坏」；残余竞态由 app 侧自愈（AXSelfHeal）兜底。
+echo "验证辅助功能授权..."
+sleep 5
+ax_state="$("$INSTALL_PATH/Contents/MacOS/$EXECUTABLE_NAME" --check-ax 2>/dev/null || true)"
+if [ "$ax_state" != "ax=true" ]; then
+  echo "  ⚠️ 新进程被 tccd 误标未授权（重装竞态，授权本体未吊销），自动重启一次..."
+  pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+  sleep 3
+  open "$INSTALL_PATH"
+  sleep 5
+  ax_state="$("$INSTALL_PATH/Contents/MacOS/$EXECUTABLE_NAME" --check-ax 2>/dev/null || true)"
+fi
+if [ "$ax_state" = "ax=true" ]; then
+  echo "  ✅ 辅助功能已授权，热键可用"
+else
+  echo "  ⛔ 重启后仍未授权：请到 系统设置 → 隐私与安全性 → 辅助功能 勾选 VibeFocus（一次性操作）"
+fi
 
 echo ""
 echo -e "${GREEN}✅ 已安装并启动${NC}"

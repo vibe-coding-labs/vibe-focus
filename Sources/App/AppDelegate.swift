@@ -80,30 +80,42 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
         // AX 竞态自愈（Sources/Support/AXSelfHeal.swift 头注释有完整实证链）：
         // 重装后 ~1s 内拉起的新进程约半数被 tccd 误判未授权且不自愈，重启进程即恢复。
+        // 自包含闭环：派生 detached 看护进程（等死→退让→open），真实用户无 keepalive 也成立。
         // 放在单实例处理之后：复用/接管路径已提前 return，不会对着健康实例自愈。
         let axSelfHealPrevReason = ExitJournal.lastExitReason()
+        let axSelfHealBundlePath = Bundle.main.bundleURL.path
         let axSelfHealDecision = AXSelfHeal.decide(
             axTrusted: AXIsProcessTrusted(),
             previousExitWasSelfHeal: axSelfHealPrevReason == AXSelfHeal.exitReason,
-            keepaliveAvailable: FileManager.default.fileExists(atPath: AXSelfHeal.wrapperPath)
+            isBundleInstall: axSelfHealBundlePath.hasSuffix(".app")
         )
         switch axSelfHealDecision {
         case .proceedTrusted:
             break
-        case .relaunchViaKeepalive:
-            log("AX self-heal: 未授权且上轮非自愈退出 → 优雅退出交 keepalive 重拉", level: .warn, fields: [
+        case .relaunchSelf:
+            log("AX self-heal: 未授权且上轮非自愈退出 → 派生看护进程后优雅退出自拉起", level: .warn, fields: [
                 "previousExitReason": axSelfHealPrevReason ?? "nil"
             ])
             CrashContextRecorder.shared.record("ax_selfheal relaunch previous=\(axSelfHealPrevReason ?? "nil")")
-            ExitJournal.recordExit(reason: AXSelfHeal.exitReason)
-            NSApp.terminate(nil)
-            return
+            let watcherOK = AXSelfHeal.spawnRelaunchWatcher(
+                pid: ProcessInfo.processInfo.processIdentifier,
+                bundlePath: axSelfHealBundlePath
+            )
+            if watcherOK {
+                ExitJournal.recordExit(reason: AXSelfHeal.exitReason)
+                NSApp.terminate(nil)
+                return
+            }
+            // 看护派生失败（罕见）：不退出（退出后无人拉起），落回人工提示路径，
+            // 且不写自愈 reason——下轮启动仍可再试自愈。
+            log("AX self-heal: 看护进程派生失败，继续启动走人工勾选提示", level: .warn, fields: [:])
+            CrashContextRecorder.shared.record("ax_selfheal watcher_spawn_failed")
         case .giveUpPreviousHealFailed:
             log("AX self-heal: 上一进程已自愈过仍未授权 → 真未授权，走人工勾选提示", level: .warn, fields: [:])
             CrashContextRecorder.shared.record("ax_selfheal give_up previous_was_selfheal")
-        case .giveUpNoKeepalive:
-            log("AX self-heal: 未授权且无 keepalive 链，不自动重启（退出后无人拉起）", level: .warn, fields: [:])
-            CrashContextRecorder.shared.record("ax_selfheal give_up no_keepalive")
+        case .giveUpNoBundle:
+            log("AX self-heal: 未授权且非 bundle 安装（裸二进制 dev 运行），不自愈", level: .warn, fields: [:])
+            CrashContextRecorder.shared.record("ax_selfheal give_up no_bundle")
         }
 
         // 获取锁（不同版本替换场景下应能成功）

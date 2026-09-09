@@ -133,16 +133,26 @@ bash scripts/dev-build.sh
 - 09-10 00:05 人工重启 → ax=true；00:15 并行会话重装 → ax=false（再中招）
 - 规律：旧进程退出后 ~1s 内拉起的新进程约半数被 tccd 误判；退让数秒后拉起则正常
 
-### 防护（fix/ax-tccd-race-hardening 批次，四层）
-1. **App 自愈**：`AXSelfHeal.decide`（纯决策表）——启动未授权且上轮非自愈退出
-   → 显式 `recordExit(ax-selfheal-relaunch)` 后优雅退出，交 keepalive 链拉起全新进程；
-   上轮已自愈过仍假 = 真未授权，防循环，落回人工勾选提示（AppDelegate ADFL 接线）
+### 防护（fix/ax-tccd-race-hardening + fix/ax-user-selfheal 批次，四层）
+1. **App 自愈（自包含，不依赖 keepalive——真实用户机器没有那条链）**：
+   `AXSelfHeal.decide`（纯决策表）——启动未授权且上轮非自愈退出 → 派生 detached
+   看护进程（`relaunchScript`：等本进程死亡 → sleep 3 退让 → open 产物）后显式
+   `recordExit(ax-selfheal-relaunch)` 优雅退出，看护进程拉起全新进程；上轮已自愈
+   过仍假 = 真未授权，防循环，落回「打开系统设置」提示（AppDelegate ADFL 接线，
+   看护派生失败则不退出、直接走人工提示）
 2. **wrapper 退让**：install-keepalive.sh 生成器在 `open -W` 返回后 `sleep 3` 再裁决/重拉，
    让 tccd 完成旧进程注销
-3. **装机后验证**：`--check-ax` 轻量探针（exit 0/3）+ deploy-release.sh 5.5/6 段——
+3. **装机后验证**：`--check-ax` 轻量探针（exit 0/3）+ run.sh / deploy-release.sh 装机尾段——
    装机脚本当场发现竞态并自动重启一次，安装会话立刻可见，不再等用户第二天报障
 4. **取证增强**：`--diagnose` 增「安装副本盘点」段（几份活体/谁在跑/各自身份 adhoc 或证书），
    「是不是又装了两个版本」一条命令出答案
+
+### 用户态签名分流（fix/ax-user-selfheal 批次）
+run.sh 无证书时不再一刀切拒装（把无证书的真实用户堵死在门外）：ad-hoc 照装并按
+首次安装/更新分别告知后续动作——ad-hoc 的代价已从「静默毒化到必须 tccutil」降为
+「更新后一次重新勾选」（app 侧自愈 + 设置页直开兜底恢复）。证书仍是首选：授权跨
+版本存续。真要面向大众分发（免勾选、免 Gatekeeper 放行），需 Apple Developer ID
+签名 + 公证——产品化阶段决策项。
 
 ### 判别口诀
 - 重启进程能好 → 竞态误判（本模式），自愈逻辑会自动处理
