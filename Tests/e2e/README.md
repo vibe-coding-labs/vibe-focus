@@ -27,6 +27,16 @@ VIBEFOCUS_SIZE_E2E=1 VIBEFOCUS_DB_PATH=/tmp/vibefocus-size-e2e.db \
   .build/debug/VibeFocusTestRunner
 ```
 
+- **TCC 身份稳定（2026-09-10 实测教训）**：`swift build -c debug` 产物默认 ad-hoc
+  签名且标识符内嵌构建哈希——每次新 .build = 新 TCC 身份，历史 Automation 授权
+  全部失效，表现为建窗类用例恒 FAIL（ShellRunner 返回 nil →「无法启动 osascript」，
+  实为 iTerm2 AppleEvent 未获授权/不响应）。跑 E2E 前先用本机证书重签一次：
+
+  ```bash
+  codesign --force --sign "VibeFocus Local Code Signing" .build/debug/VibeFocusTestRunner
+  ```
+
+  证书身份跨构建稳定，授权一次长期有效。
 - **DB 隔离**：必须以 `VIBEFOCUS_DB_PATH=/tmp/…` 注入（启动时快照环境变量，进程内
   setenv 无效），避免与真机实例的快照库互扰。SIZE_E2E 会持久写 toggle record，
   跨次运行复用同一 DB 文件属于预期（record 按 windowID 隔离）。
@@ -71,3 +81,15 @@ VIBEFOCUS_SIZE_E2E=1 VIBEFOCUS_DB_PATH=/tmp/vibefocus-size-e2e.db \
   **E2E 跑 TITLE 前先确认 iTerm2 可响应建窗 AE**（`tell app "iTerm2" to count
   windows` 快，建窗慢/超时即环境不就绪）。
 
+
+## 回归记录（2026-09-10 凌晨，本周修复批后：UPS 回原位语义/决策表记录门/LAN 重绑定/信号广播/minimap 标签）
+
+- **SIZE_E2E 1114/1114 全绿**：restore 引擎、toggle 往返、跨屏直写在全部本周改动后健康。
+- **GRID_SPACE_E2E 1099/1102（3 FAIL）**：失败点=建窗第一步 osascript 20s 无响应
+  （同 TITLE_E2E 的 iTerm2 高负载建窗 AE 受限，ShellRunner 30s 超时内未归），非代码
+  回归——**同一恢复链路已用真实 HTTP hook 事件人工验证通过**（SessionStart 绑定 →
+  Stop 拉主屏 → UserPromptSubmit `restored_to_original` 回 HONOR 2-1 原帧，yabai 实测）。
+  iTerm2 空闲时重跑即可转绿。
+- **FLOATSETTLE_E2E**：本轮未跑（无窗口创建依赖的最轻用例，需要时单跑）。
+- **基建发现**：debug runner ad-hoc 签名导致 TCC 身份随构建哈希漂移——已改证书签名
+  （见「标准跑法」TCC 身份稳定节），授权一次长期有效。
