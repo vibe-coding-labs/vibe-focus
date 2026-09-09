@@ -44,9 +44,15 @@ private final class LogTimestampFormatter: @unchecked Sendable {
 }
 
 private let logTimestampFormatter = LogTimestampFormatter()
-private let verboseLoggingEnabled: Bool = {
-    let value = ProcessInfo.processInfo.environment["VIBEFOCUS_VERBOSE_LOGS"]?.lowercased() ?? ""
+/// VIBEFOCUS_VERBOSE_LOGS 环境值解析（B92 测试缝提纯：逻辑原内联在
+/// verboseLoggingEnabled 的加载闭包里；"1"/"true"/"yes" 大小写不敏感为真）。
+func parseVerboseLoggingFlag(_ raw: String?) -> Bool {
+    let value = raw?.lowercased() ?? ""
     return value == "1" || value == "true" || value == "yes"
+}
+
+private let verboseLoggingEnabled: Bool = {
+    parseVerboseLoggingFlag(ProcessInfo.processInfo.environment["VIBEFOCUS_VERBOSE_LOGS"])
 }()
 
 private final class LogSequenceGenerator: @unchecked Sendable {
