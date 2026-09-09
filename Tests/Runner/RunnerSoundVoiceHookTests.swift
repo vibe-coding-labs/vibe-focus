@@ -63,10 +63,16 @@ extension RunnerHarness {
         check("projName: 尾斜杠容忍 + 深路径取末段",
               WindowManager.projectName(fromCwd: "/Users/me/work/app2/") == "app2"
               && WindowManager.projectName(fromCwd: "a/b/c") == "c")
-        check("projName: nil/空串/全斜杠 → nil",
+        check("projName: nil/空串/全斜杠/根路径/双斜杠 → nil",
               WindowManager.projectName(fromCwd: nil) == nil
               && WindowManager.projectName(fromCwd: "") == nil
-              && WindowManager.projectName(fromCwd: "///") == nil)
+              && WindowManager.projectName(fromCwd: "///") == nil
+              && WindowManager.projectName(fromCwd: "/") == nil
+              && WindowManager.projectName(fromCwd: "//") == nil)
+        check("projName: 内部空段取末段、单段相对路径、带空格末段仅小写化",
+              WindowManager.projectName(fromCwd: "/a//b") == "b"
+              && WindowManager.projectName(fromCwd: "solo") == "solo"
+              && WindowManager.projectName(fromCwd: "/x/My Dir") == "my dir")
 
         // ProjectSoundResolver.projectName：claudeProjectDir 优先，cwd 回落（双侧同源）
         check("resolver.projectName: claudeProjectDir 优先、缺失回落 cwd、双缺失 nil",

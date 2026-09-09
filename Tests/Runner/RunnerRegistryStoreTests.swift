@@ -368,6 +368,27 @@ extension RunnerHarness {
         check("claudeMatch: 项目名未命中回落策略2", m3?.strategy == .hostAppClaudeCodeTitle && m3?.candidate.windowID == 12)
         let noHost = WindowManager.matchClaudeCodeCandidate(candidates, projectName: "proj", isHostApp: { _ in false })
         check("claudeMatch: 无 hostApp 候选 → nil", noHost == nil)
+        // 顺序/子串/注入语义补锁（B86：ClaudeCodeWindowMatchTests 镜像退役）
+        let ordered = [
+            Cand(windowID: 21, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "Claude Code"),
+            Cand(windowID: 22, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "proj — zsh"),
+        ]
+        check("claudeMatch: 策略1 优先于策略2（claude 标题在前仍先查项目名命中 22）",
+              WindowManager.matchClaudeCodeCandidate(ordered, projectName: "proj", isHostApp: isHost)?.candidate.windowID == 22)
+        check("claudeMatch: projectName 空串跳过策略1、'claude-coded' 与 'claude code' 子串不命中",
+              WindowManager.matchClaudeCodeCandidate(ordered, projectName: "", isHostApp: isHost)?.candidate.windowID == 21
+              && WindowManager.matchClaudeCodeCandidate(
+                [Cand(windowID: 23, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "claude-coded — zsh")],
+                projectName: nil, isHostApp: isHost) == nil)
+        check("claudeMatch: 多候选同中取首位、空候选 → nil、谓词注入生效",
+              WindowManager.matchClaudeCodeCandidate(
+                [Cand(windowID: 31, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "proj — a"),
+                 Cand(windowID: 32, pid: 100, appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: "proj — b")],
+                projectName: "proj", isHostApp: isHost)?.candidate.windowID == 31
+              && WindowManager.matchClaudeCodeCandidate([], projectName: "proj", isHostApp: isHost) == nil
+              && WindowManager.matchClaudeCodeCandidate(
+                [Cand(windowID: 33, pid: 100, appName: "Ghostty", bundleIdentifier: "io.ghostty", title: "claude code")],
+                projectName: nil, isHostApp: { $0.appName == "Ghostty" })?.candidate.windowID == 33)
     }
 
     // MARK: 编排目标与终端选择解析（真实实现——B12：GridTargetCode.parse / TerminalSelectionResolver.resolve 直测）
