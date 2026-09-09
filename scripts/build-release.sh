@@ -12,12 +12,14 @@ APP_BUNDLE="$OUT_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-VERSION="$(awk -F'"' '/static let current/ {print $2}' "$SCRIPT_DIR/Sources/AppVersion.swift" 2>/dev/null || echo "0.0.0")"
+VERSION="$(awk -F'"' '/static let releaseVersion/ {print $2}' "$SCRIPT_DIR/Sources/App/AppVersion.swift" 2>/dev/null || echo "0.0.0")"
 ASSETS_DIR="$SCRIPT_DIR/assets"
 
 cd "$SCRIPT_DIR"
 echo "构建 release 二进制..."
-swift build -c release
+# --product 只编 app 产物：release 不开 testability，裸 swift build 会连带编
+# 测试目标（@testable import VibeFocusKit）直接报错（2026-09-10 实证）。
+swift build -c release --product VibeFocusHotkeys
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
