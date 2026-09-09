@@ -6,7 +6,7 @@ APP_NAME="VibeFocus"
 EXECUTABLE_NAME="VibeFocusHotkeys"
 BUNDLE_EXECUTABLE="VibeFocus"
 BUNDLE_ID="com.openai.vibe-focus"
-VERSION="$(awk -F'\"' '/static let current/ {print $2}' "$ROOT_DIR/Sources/App/AppVersion.swift")"
+VERSION="$(awk -F'\"' '/static let releaseVersion/ {print $2}' "$ROOT_DIR/Sources/App/AppVersion.swift")"
 VERSION="${VERSION:-0.0.0}"
 OUTPUT_DIR="${1:-$ROOT_DIR/dist}"
 
