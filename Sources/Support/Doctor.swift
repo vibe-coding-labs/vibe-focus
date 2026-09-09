@@ -376,7 +376,7 @@ enum Doctor {
     static func detectSignatureKind(bundlePath: String) -> String {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        proc.arguments = ["-dv", bundlePath]
+        proc.arguments = ["-dv", "--verbose=2", bundlePath]
         let pipe = Pipe()
         proc.standardOutput = Pipe()
         proc.standardError = pipe
