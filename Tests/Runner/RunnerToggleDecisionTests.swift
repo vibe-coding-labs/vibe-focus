@@ -110,6 +110,26 @@ extension RunnerHarness {
                   .isValid(mainScreenFrame: main))
         }
 
+        // ===== WindowState.hasToggleState：toggle 态半填充语义（B75：WindowStateTests 死镜像退役转真身） =====
+        do {
+            func ws(origX: CGFloat?, targetX: CGFloat?) -> WindowState {
+                WindowState(
+                    windowID: 1, pid: 100, tty: nil,
+                    axWindowNumber: nil, appName: nil, bundleIdentifier: nil, title: nil,
+                    termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                    envWindowID: nil, sessionID: nil, cwd: nil, model: nil,
+                    origX: origX, targetX: targetX,
+                    isCompleted: false, createdAt: Date(), updatedAt: Date()
+                )
+            }
+            check("toggleState: origX+targetX 齐备 → 有 toggle 态",
+                  ws(origX: 100, targetX: 200).hasToggleState)
+            check("toggleState: 缺 orig / 缺 target / 全空 → 无 toggle 态",
+                  !ws(origX: nil, targetX: 200).hasToggleState
+                  && !ws(origX: 100, targetX: nil).hasToggleState
+                  && !ws(origX: nil, targetX: nil).hasToggleState)
+        }
+
         // ===== isOnMainScreen(rect, mainScreenFrame:)：中心点归属（注入式重载，与活屏无关） =====
         do {
             let main = CGRect(x: 0, y: 0, width: 1728, height: 1117)

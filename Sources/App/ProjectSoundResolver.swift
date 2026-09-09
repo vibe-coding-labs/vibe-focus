@@ -29,7 +29,7 @@ struct ProjectSoundRule: Codable, Equatable {
     }
 }
 
-/// 项目音效解析（纯函数命名空间，fixture 可测，见 Standalone/ProjectSoundResolverTests.swift）。
+/// 项目音效解析（纯函数命名空间；解析矩阵 RunnerPureSweepBTests 直测、提取族/规则契约 RunnerSoundVoiceHookTests 直测——B75 镜像退役）。
 enum ProjectSoundResolver {
 
     /// 项目名提取：优先 claudeProjectDir，缺失回落 cwd（双侧同源）。
