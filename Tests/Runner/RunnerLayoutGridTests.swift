@@ -323,6 +323,72 @@ extension RunnerHarness {
               && TerminalSelectionResolver.supportLevel(forBundleID: "com.apple.Terminal") == .full)
     }
 
+    // MARK: 编排终端选择器——自动评分与常用警告补锁（B79：TerminalSelectionLogicTests 镜像退役，缺口语义转真身）
+
+    do {
+        let d0 = Date(timeIntervalSince1970: 1_800_000_000)
+        func cand(_ bundleID: String, _ name: String, _ support: TerminalAutomationSupportLevel,
+                  _ usageCount: Int, _ lastUsedAt: Date?, _ isRunning: Bool) -> TerminalSelectionCandidate {
+            TerminalSelectionCandidate(bundleID: bundleID, name: name, support: support,
+                                       usageCount: usageCount, lastUsedAt: lastUsedAt, isRunning: isRunning)
+        }
+        let iterm = "com.googlecode.iterm2"
+        // 自动评分：在运行加成压过激活计数差
+        check("选择器: 在运行加成压过计数差（运行 2 次 > 非运行 10 次）",
+              TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: [
+                cand("com.apple.Terminal", "Terminal.app", .full, 10, d0, false),
+                cand(iterm, "iTerm2", .partial, 2, d0, true),
+              ]).bundleID == iterm)
+        // 自动评分：同运行态按激活计数
+        check("选择器: 同运行态按激活计数选最常用",
+              TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: [
+                cand("com.apple.Terminal", "Terminal.app", .full, 1, d0, true),
+                cand(iterm, "iTerm2", .partial, 3, d0, true),
+              ]).bundleID == iterm)
+        // 自动评分：计数同 → 最近使用优先
+        check("选择器: 计数同按 lastUsedAt 新者优先",
+              TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: [
+                cand("com.apple.Terminal", "Terminal.app", .full, 3, d0, true),
+                cand(iterm, "iTerm2", .partial, 3, d0.addingTimeInterval(60), true),
+              ]).bundleID == iterm)
+        // 不支持编排的常用终端不参与自动选择（Warp 99 次在运行也被排除）
+        check("选择器: .none 支持级别不参与自动选择",
+              TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: [
+                cand("dev.warp.Warp-Stable", "Warp", .none, 99, d0, true),
+                cand(iterm, "iTerm2", .partial, 1, d0, false),
+              ]).bundleID == iterm)
+        // 全零数据 → autoDefault 兜底 Terminal.app（source 语义锁定）
+        check("选择器: 无使用数据 → autoDefault 兜底 Terminal.app",
+              TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: [
+                cand(iterm, "iTerm2", .partial, 0, nil, false),
+                cand("com.apple.Terminal", "Terminal.app", .full, 0, nil, false),
+              ]).source == .autoDefault
+              && TerminalSelectionResolver.resolve(manualBundleID: nil, candidates: []).bundleID == "com.apple.Terminal")
+
+        // unsupportedFavoriteWarning：最常用不可编排 → 提示；可编排/低于阈值 → 无提示
+        let warpFav: [(bundleID: String, count: Int, lastAt: Date)] = [
+            ("dev.warp.Warp-Stable", 10, d0), (iterm, 4, d0),
+        ]
+        check("警告: 最常用为 Warp（不可编排）→ 提示含名称与次数",
+              TerminalSelectionResolver.unsupportedFavoriteWarning(
+                usageRank: warpFav,
+                candidates: [cand("dev.warp.Warp-Stable", "Warp", .none, 10, d0, true),
+                             cand(iterm, "iTerm2", .partial, 4, d0, true)])?
+                .contains("Warp") == true)
+        check("警告: 首条不可编排但缺 candidates 记录 → 跳过继续扫描次条",
+              TerminalSelectionResolver.unsupportedFavoriteWarning(
+                usageRank: warpFav,
+                candidates: [cand(iterm, "iTerm2", .partial, 4, d0, true)]) == nil)
+        check("警告: 最常用可编排 → 无提示；低于最小次数 → 无提示",
+              TerminalSelectionResolver.unsupportedFavoriteWarning(
+                usageRank: [(iterm, 10, d0), ("dev.warp.Warp-Stable", 4, d0)],
+                candidates: [cand(iterm, "iTerm2", .partial, 10, d0, true),
+                             cand("dev.warp.Warp-Stable", "Warp", .none, 4, d0, true)]) == nil
+              && TerminalSelectionResolver.unsupportedFavoriteWarning(
+                usageRank: [("dev.warp.Warp-Stable", 3, d0)],
+                candidates: [cand("dev.warp.Warp-Stable", "Warp", .none, 3, d0, true)]) == nil)
+    }
+
     // MARK: 网格目标偏好 + 间距（真实 UserDefaults 实现）
     // 用户反馈（2026-09-06）：格子间空隙大——根因是 gap 读取 `== 0 ? 8` 把
     // "未设置"与"显式 0"混为一谈，0 永远不生效；编排总落主屏——目标只有
