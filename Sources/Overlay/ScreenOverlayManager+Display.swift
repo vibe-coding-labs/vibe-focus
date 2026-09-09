@@ -28,18 +28,21 @@ extension ScreenOverlayManager {
             // 如果 cache miss，使用默认值 1，后续 refreshSpaceIndices 异步任务会更新正确值。
             let cachedSpaceIndex = screenSpaceCache[uuid]?.spaceIndex
             let spaceIndex = cachedSpaceIndex ?? 1
+            // 屏号同源：优先已缓存的 yabai 显示器索引（与 minimap「屏N」一致），未解析时
+            // update 内部回退 NSScreen 序（零 fork，displayIndex 缓存由刷新层维护）。
+            let yabaiDisplayIndex = cachedDisplayIndices[uuid]
 
             // 诊断日志：记录 cache miss，便于后续排查
             if cachedSpaceIndex == nil {
                 log("[Overlay] showOverlays cache miss for screen \(index), using default spaceIndex=1", level: .info)
             }
 
-            overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
+            overlay.update(screenIndex: index, yabaiDisplayIndex: yabaiDisplayIndex, spaceIndex: spaceIndex, preferences: preferences)
             overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
             overlay.show()
 
             overlayWindows[uuid] = overlay
-            screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: spaceIndex)
+            screenSpaceCache[uuid] = (screenIndex: index, yabaiDisplayIndex: yabaiDisplayIndex, spaceIndex: spaceIndex)
         }
         logOperationDuration("[Overlay] showOverlays finished", startedAt: startedAt, warnThresholdMs: 100, fields: ["screenCount": String(screens.count)])
     }
@@ -95,20 +98,21 @@ extension ScreenOverlayManager {
             // FIX: 优先使用缓存，cache miss 时使用默认值 1，避免主线程同步 yabai fork。
             // refreshSpaceIndices 异步任务会在后续更新正确值。
             let spaceIndex = screenSpaceCache[uuid]?.spaceIndex ?? 1
+            let yabaiDisplayIndex = cachedDisplayIndices[uuid]
 
             if let overlay = overlayWindows[uuid] {
-                overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
+                overlay.update(screenIndex: index, yabaiDisplayIndex: yabaiDisplayIndex, spaceIndex: spaceIndex, preferences: preferences)
                 overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
                 overlay.show()
             } else {
                 let overlay = OverlayWindow(screen: screen)
-                overlay.update(screenIndex: index, spaceIndex: spaceIndex, preferences: preferences)
+                overlay.update(screenIndex: index, yabaiDisplayIndex: yabaiDisplayIndex, spaceIndex: spaceIndex, preferences: preferences)
                 overlay.updatePosition(for: screen, position: preferences.position, margin: preferences.panelMargin)
                 overlay.show()
                 overlayWindows[uuid] = overlay
             }
 
-            screenSpaceCache[uuid] = (screenIndex: index, spaceIndex: spaceIndex)
+            screenSpaceCache[uuid] = (screenIndex: index, yabaiDisplayIndex: yabaiDisplayIndex, spaceIndex: spaceIndex)
         }
 
         let staleUUIDs = overlayWindows.keys.filter { !activeUUIDs.contains($0) }

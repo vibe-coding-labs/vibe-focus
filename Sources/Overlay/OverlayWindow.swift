@@ -34,8 +34,14 @@ final class OverlayWindow: NSWindow {
     }
 
     /// Pure text and size calculation — extracted for testability.
-    static func calculateOverlayLabel(screenIndex: Int, spaceIndex: Int) -> String {
-        "\(screenIndex + 1)-\(spaceIndex)"
+    /// 屏号与 Space 号与设置页 minimap（屏N / S N / Space 胶囊）同一坐标系：
+    /// - yabaiDisplayIndex 非 nil → 屏号 = yabai 显示器索引（几何精确解析，2026-09-09
+    ///   用户反馈「角标编号跟应用内部对不上」——旧实现用 NSScreen 枚举序，与本机 yabai 序相反）；
+    /// - nil（yabai 不可用/未解析）→ 回退 NSScreen 枚举序 +1（旧行为）。
+    /// spaceIndex 由刷新层传入 yabai 全局索引（跨屏连续编号），与 S 标注/胶囊一致。
+    static func calculateOverlayLabel(screenIndex: Int, yabaiDisplayIndex: Int?, spaceIndex: Int) -> String {
+        let displayNumber = yabaiDisplayIndex ?? (screenIndex + 1)
+        return "\(displayNumber)-\(spaceIndex)"
     }
 
     /// Pure dimension calculation for overlay — extracted for testability.
@@ -110,7 +116,7 @@ final class OverlayWindow: NSWindow {
         self.textLayer = layer
     }
 
-    func update(screenIndex: Int, spaceIndex: Int, preferences: ScreenIndexPreferences) {
+    func update(screenIndex: Int, yabaiDisplayIndex: Int?, spaceIndex: Int, preferences: ScreenIndexPreferences) {
         // P-INST-130: overlay 内容更新耗时（字体/颜色/尺寸计算 + setContentSize + contentView/layer 属性设置 + textLayer frame/string 更新 + needsDisplay 重绘；updateOverlaysInPlace P-INST-74 调用，overlay 文本变化）。
         #if PERF_INSTRUMENT
         let ouStart = Date()
@@ -123,8 +129,8 @@ final class OverlayWindow: NSWindow {
         self.screenIndex = screenIndex
         self.spaceIndex = spaceIndex
 
-        // 屏幕索引从1开始（对用户更友好）
-        let text = Self.calculateOverlayLabel(screenIndex: screenIndex, spaceIndex: spaceIndex)
+        // 屏号优先 yabai 显示器索引（与 minimap「屏N」同源），yabai 不可用回退 NSScreen 序+1
+        let text = Self.calculateOverlayLabel(screenIndex: screenIndex, yabaiDisplayIndex: yabaiDisplayIndex, spaceIndex: spaceIndex)
 
         // 计算尺寸（应用面板缩放）
         let scaledFontSize = preferences.fontSize * preferences.panelScale

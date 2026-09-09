@@ -185,6 +185,7 @@ extension ScreenOverlayManager {
             let change = Self.screenCacheChange(
                 cached: screenSpaceCache[uuid],
                 currentScreenIndex: currentIndex,
+                currentYabaiDisplayIndex: displayIndex,
                 currentSpaceIndex: currentSpaceIndex
             )
             guard change.needsApply else { continue }
@@ -195,10 +196,10 @@ extension ScreenOverlayManager {
                 changedScreens.append("Screen\(currentIndex): new->\(currentSpaceIndex)")
             }
             needsRefresh = true
-            screenSpaceCache[uuid] = (screenIndex: currentIndex, spaceIndex: currentSpaceIndex)
+            screenSpaceCache[uuid] = (screenIndex: currentIndex, yabaiDisplayIndex: displayIndex, spaceIndex: currentSpaceIndex)
 
             if let overlay = overlayWindows[uuid] {
-                overlay.update(screenIndex: currentIndex, spaceIndex: currentSpaceIndex, preferences: preferences)
+                overlay.update(screenIndex: currentIndex, yabaiDisplayIndex: displayIndex, spaceIndex: currentSpaceIndex, preferences: preferences)
                 overlay.updatePosition(for: screens[currentIndex], position: preferences.position, margin: preferences.panelMargin)
                 overlay.show()
             } else {
@@ -215,12 +216,13 @@ extension ScreenOverlayManager {
         }
     }
 
-    /// 单屏 overlay 变更判定（纯函数，分支穷尽锁定于 ScreenSpaceIndexResolutionTests）。
+    /// 单屏 overlay 变更判定（纯函数，分支穷尽锁定于 RunnerRegistryStoreTests）。
     ///
     /// ## 场景
-    /// - `applyRefreshResults` 逐屏调用：缓存缺失（新屏/首轮）或 screenIndex/spaceIndex
-    ///   任一变化 → 需就地重绘并回写 cache；完全未变 → 不触碰 overlay
-    ///   （WindowServer 零干扰，2026-08-10 SIGSEGV 教训的延伸：无变化不产生窗口操作）。
+    /// - `applyRefreshResults` 逐屏调用：缓存缺失（新屏/首轮）或 screenIndex/
+    ///   yabaiDisplayIndex/spaceIndex 任一变化 → 需就地重绘并回写 cache；完全未变 →
+    ///   不触碰 overlay（WindowServer 零干扰，2026-08-10 SIGSEGV 教训的延伸：无变化不产生窗口操作）。
+    /// - yabaiDisplayIndex 纳入比较：插拔后 yabai 重排（NSScreen 序不变）时角标屏号必须重绘。
     struct ScreenCacheChange: Equatable {
         /// true = 需就地重绘该屏 overlay 并回写 cache。
         let needsApply: Bool
@@ -229,14 +231,17 @@ extension ScreenOverlayManager {
     }
 
     static func screenCacheChange(
-        cached: (screenIndex: Int, spaceIndex: Int)?,
+        cached: (screenIndex: Int, yabaiDisplayIndex: Int?, spaceIndex: Int)?,
         currentScreenIndex: Int,
+        currentYabaiDisplayIndex: Int?,
         currentSpaceIndex: Int
     ) -> ScreenCacheChange {
         guard let cached else {
             return .init(needsApply: true, oldSpaceIndex: nil)
         }
-        if cached.screenIndex == currentScreenIndex, cached.spaceIndex == currentSpaceIndex {
+        if cached.screenIndex == currentScreenIndex,
+           cached.yabaiDisplayIndex == currentYabaiDisplayIndex,
+           cached.spaceIndex == currentSpaceIndex {
             return .init(needsApply: false, oldSpaceIndex: nil)
         }
         return .init(needsApply: true, oldSpaceIndex: cached.spaceIndex)

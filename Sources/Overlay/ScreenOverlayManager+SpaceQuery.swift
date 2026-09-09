@@ -28,7 +28,8 @@ extension ScreenOverlayManager {
     ///
     /// ## 场景
     /// - refreshSpaceIndices 的 fallback 路径（displayIndex 未全缓存或全量查询失败）逐屏调用；
-    /// - spaceIndex 计算：focused space 在该 display 的位次 > 第一个可见 space > 默认 1。
+    /// - spaceIndex 计算：focused space 的 yabai 全局索引 > 第一个可见 space 的全局索引 > 默认 1
+    ///   （与设置页 minimap 的 S 标注 / Space 胶囊同一坐标系，2026-09-09 编号同源统一）。
     func getPerScreenSpaceIndexAsync(
         displayID: UInt32,
         cachedDisplayIndex: Int?,
@@ -49,7 +50,7 @@ extension ScreenOverlayManager {
             return (displayIndex, nil)
         }
 
-        // 位次裁决统一走 resolveScreenSpaceIndex（focused 位次 > 第一个可见 > 默认 1）。
+        // 裁决统一走 resolveScreenSpaceIndex（focused 全局索引 > 第一个可见的全局索引 > 默认 1）。
         return (displayIndex, SpaceSnapshot.resolveScreenSpaceIndex(
             from: displaySpaces,
             focusedSpaceIndex: focusedSpaceIndex

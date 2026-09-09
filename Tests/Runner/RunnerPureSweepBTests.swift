@@ -756,8 +756,9 @@ extension RunnerHarness {
               == CGSize(width: 232, height: 70)
               && OverlayWindow.calculateOverlaySize(textWidth: 10, textHeight: 5, scaledFontSize: 20)
               == CGSize(width: 70, height: 40))
-        check("pureSweep2 B4: 标签 = 屏序+1-工作区号",
-              OverlayWindow.calculateOverlayLabel(screenIndex: 0, spaceIndex: 5) == "1-5")
+        check("pureSweep2 B4: 标签 = yabai 屏号-工作区全局号（与 minimap 屏N/S 同源）",
+              OverlayWindow.calculateOverlayLabel(screenIndex: 0, yabaiDisplayIndex: 3, spaceIndex: 5) == "3-5"
+              && OverlayWindow.calculateOverlayLabel(screenIndex: 1, yabaiDisplayIndex: nil, spaceIndex: 2) == "2-2")
 
         // C. BindingVerifier 决策表：pid 消亡 / 窗口缺失 / PID 错位（带关联值）/ 有效。
         func winEntry(_ pid: Int32) -> CGWindowEntry {

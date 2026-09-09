@@ -53,20 +53,52 @@ extension RunnerHarness {
               AllSpaceSnapshot.parseJSONArray(Data(#"{"a":1}"#.utf8)) == nil
               && AllSpaceSnapshot.parseJSONArray(Data(#"[{"index":1}]"#.utf8))?.count == 1)
 
-        // E. resolveScreenSpaceIndex 真身：focused 位次优先 → 可见位次 → nil。
+        // E. resolveScreenSpaceIndex 真身：返回 yabai 全局索引（2026-09-09 编号同源统一，
+        // 旧实现返回屏内位次导致角标与 minimap S 标注/Space 胶囊对不上）。
         let spaces = [
             AllSpaceSnapshot(index: 3, display: 1, isVisible: false, hasFocus: false),
             AllSpaceSnapshot(index: 1, display: 1, isVisible: true, hasFocus: false),
             AllSpaceSnapshot(index: 2, display: 1, isVisible: true, hasFocus: true),
         ]
-        check("overlayGate E: focused 命中 → 按升序位次（2）",
+        check("overlayGate E: focused 命中 → 该 space 全局索引（2）",
               AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 2) == 2)
-        check("overlayGate E: focused 属别屏 → 首个可见位次（1）",
+        check("overlayGate E: focused=隐藏 space 3 → 全局索引 3（旧位次语义会错给 1）",
+              AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 3) == 3)
+        check("overlayGate E: focused 属别屏 → 首个可见的全局索引（1）",
               AllSpaceSnapshot.resolveScreenSpaceIndex(from: spaces, focusedSpaceIndex: 9) == 1)
+        check("overlayGate E: 首个可见全局索引 ≠ 1 时如实返回（[8 隐, 6 可见] → 6）",
+              AllSpaceSnapshot.resolveScreenSpaceIndex(
+                from: [AllSpaceSnapshot(index: 8, display: 2, isVisible: false, hasFocus: false),
+                       AllSpaceSnapshot(index: 6, display: 2, isVisible: true, hasFocus: false)],
+                focusedSpaceIndex: nil) == 6)
         check("overlayGate E: 全不可见 → nil",
               AllSpaceSnapshot.resolveScreenSpaceIndex(
                 from: [AllSpaceSnapshot(index: 2, display: 1, isVisible: false, hasFocus: false)],
                 focusedSpaceIndex: nil) == nil)
+
+        // E2. screenCacheChange 真身：三元组任一变化 → 需重绘；yabai 屏号纳入比较
+        // （插拔后 yabai 重排而 NSScreen 序未变时，角标屏号也必须更新）。
+        check("overlayGate E2: 缓存缺失（新屏）→ 重绘且无旧值",
+              ScreenOverlayManager.screenCacheChange(cached: nil, currentScreenIndex: 0,
+                                                     currentYabaiDisplayIndex: 3, currentSpaceIndex: 4)
+              .needsApply)
+        check("overlayGate E2: 三元组全同 → 不触碰 overlay",
+              !ScreenOverlayManager.screenCacheChange(
+                cached: (screenIndex: 1, yabaiDisplayIndex: 3, spaceIndex: 4),
+                currentScreenIndex: 1, currentYabaiDisplayIndex: 3, currentSpaceIndex: 4).needsApply)
+        check("overlayGate E2: 仅 space 变 → 重绘并携带旧 space 号",
+              ScreenOverlayManager.screenCacheChange(
+                cached: (screenIndex: 1, yabaiDisplayIndex: 3, spaceIndex: 4),
+                currentScreenIndex: 1, currentYabaiDisplayIndex: 3, currentSpaceIndex: 5)
+              == .init(needsApply: true, oldSpaceIndex: 4))
+        check("overlayGate E2: 仅 yabai 屏号变（NSScreen 序未变）→ 重绘",
+              ScreenOverlayManager.screenCacheChange(
+                cached: (screenIndex: 1, yabaiDisplayIndex: 3, spaceIndex: 4),
+                currentScreenIndex: 1, currentYabaiDisplayIndex: 2, currentSpaceIndex: 4).needsApply)
+        check("overlayGate E2: yabai 屏号由 nil 转正（首轮解析完成）→ 重绘",
+              ScreenOverlayManager.screenCacheChange(
+                cached: (screenIndex: 1, yabaiDisplayIndex: nil, spaceIndex: 4),
+                currentScreenIndex: 1, currentYabaiDisplayIndex: 3, currentSpaceIndex: 4).needsApply)
     }
 
     // MARK: SessionWindowRegistry 查找级联（真实实现 + 隔离 DB——B10：绑定查找唯一事实源）

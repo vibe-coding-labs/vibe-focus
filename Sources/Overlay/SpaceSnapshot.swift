@@ -65,27 +65,32 @@ extension AllSpaceSnapshot: SpaceIndexResolvable {}
 
 extension SpaceIndexResolvable {
 
-    /// 解析一块 display 上应显示的 space 编号（overlay 屏幕编号，1 起）。
+    /// 解析一块 display 上应显示的 space 编号（overlay 角标 Space 位）。
+    ///
+    /// 返回 **yabai 全局索引**（跨 display 连续编号）——与设置页 minimap 的
+    /// S 标注 / Space 胶囊 / 编排目标摘要同一坐标系（2026-09-09 用户反馈
+    /// 「角标编号跟应用内部对不上」：旧实现返回屏内位次，全局 3 在 2 颗胶囊的
+    /// 屏上显示为 2，用户对照两处编号永远对不上）。
     ///
     /// 优先级（历史两路实现行为收敛，语义以本函数为唯一权威）：
     ///   1) focused space（调用方从全量快照按 `hasFocus` 解出的 yabai 全局 index）
-    ///      落在本 display → 按 index 升序的位次；
-    ///   2) 否则第一个可见 space 的位次；
+    ///      落在本 display → 该 space 的全局索引；
+    ///   2) 否则第一个可见 space 的全局索引；
     ///   3) 都没有（空列表 / focused 属于别的 display / 全不可见）→ nil，
     ///      由调用方按各自契约收敛（fallback 路径 `?? 1`，快速路径保留 nil 至
     ///      applyRefreshResults `?? 1`——最终默认均为 1，与历史行为一致）。
     ///
     /// ## 场景
-    /// - 输入不保证有序（yabai 输出顺序不承诺），函数内部按 index 升序排序后再取位次；
-    /// - 分支穷尽锁定：`Tests/Standalone/ScreenSpaceIndexResolutionTests.swift`。
+    /// - 输入不保证有序（yabai 输出顺序不承诺），函数内部按 index 升序排序后选取；
+    /// - 分支穷尽锁定：`Tests/Runner/RunnerRegistryStoreTests`（真身直测）。
     static func resolveScreenSpaceIndex(from spaces: [Self], focusedSpaceIndex: Int?) -> Int? {
         let sorted = spaces.sorted { $0.index < $1.index }
         if let focused = focusedSpaceIndex,
-           let position = sorted.firstIndex(where: { $0.index == focused }) {
-            return position + 1
+           let match = sorted.first(where: { $0.index == focused }) {
+            return match.index
         }
-        if let position = sorted.firstIndex(where: { $0.isVisible }) {
-            return position + 1
+        if let visible = sorted.first(where: { $0.isVisible }) {
+            return visible.index
         }
         return nil
     }

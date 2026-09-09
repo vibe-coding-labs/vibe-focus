@@ -18,7 +18,10 @@ final class ScreenOverlayManager: ObservableObject {
     }
 
     var overlayWindows: [UUID: OverlayWindow] = [:]
-    var screenSpaceCache: [UUID: (screenIndex: Int, spaceIndex: Int)] = [:]
+    /// yabaiDisplayIndex：该屏的 yabai 显示器索引（与设置页 minimap「屏N」同一坐标系；
+    /// nil = yabai 不可用/未解析，角标回退 NSScreen 枚举序）。纳入变更判定：
+    /// 插拔后 yabai 重排而 NSScreen 序未变时角标编号也要重绘。
+    var screenSpaceCache: [UUID: (screenIndex: Int, yabaiDisplayIndex: Int?, spaceIndex: Int)] = [:]
     var refreshTimer: Timer?
     var pendingSignalRefreshWorkItems: [DispatchWorkItem] = []
     var pendingPreferenceRefreshWorkItem: DispatchWorkItem?
