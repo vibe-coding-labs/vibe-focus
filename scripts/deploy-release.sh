@@ -43,6 +43,9 @@ if [[ -d "$DST_APP" ]]; then
 fi
 
 echo "4/6 安装新 app..."
+# 拷贝产物（c8299ea 改「证书或拒绝」时误删了本行，导致 4/6 只对不存在的目标
+# 签名报 No such file——2026-09-10 部署实证后补回）
+ditto "$SRC_APP" "$DST_APP"
 # 「证书或拒绝」：ad-hoc 装机会毒化辅助功能授权（TCC csreq 被钉死，之后正式构建全 denied
 # 且系统设置勾选显示正常）。见 docs/bug-patterns/tcc-permission-breakage.md。
 if security find-identity -v -p codesigning 2>/dev/null | grep -F "VibeFocus Local Code Signing" >/dev/null 2>&1; then
