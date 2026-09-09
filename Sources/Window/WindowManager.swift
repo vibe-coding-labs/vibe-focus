@@ -61,6 +61,35 @@ final class WindowManager {
     /// UserDefaults 落账供 --diagnose 报告；首次调用仅记基线不告警。
     private static var lastKnownAXTrusted: Bool?
 
+    /// 运行期自愈「每进程一次」标记（见 AXSelfHeal.decideRuntimeFlip）。
+    private static var runtimeHealAttempted = false
+
+    /// 运行期自愈执行体：5s 复核仍假 → detached 看护自拉起；无法可靠自拉起
+    /// （非 bundle / 看护派生失败）则保持运行走人工提示，绝不无人拉起。
+    private func scheduleRuntimeSelfHeal() {
+        log("[WindowManager] runtime self-heal scheduled (5s confirm)", level: .warn)
+        CrashContextRecorder.shared.record("ax_selfheal runtime_scheduled")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            let stillUntrusted = !AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
+            guard stillUntrusted else {
+                log("[WindowManager] runtime self-heal: 复核已恢复，取消重启")
+                CrashContextRecorder.shared.record("ax_selfheal runtime_recovered_before_relaunch")
+                return
+            }
+            let bundlePath = Bundle.main.bundleURL.path
+            guard bundlePath.hasSuffix(".app"),
+                  AXSelfHeal.spawnRelaunchWatcher(pid: ProcessInfo.processInfo.processIdentifier, bundlePath: bundlePath) else {
+                log("[WindowManager] runtime self-heal: 无法可靠自拉起，保持运行走人工提示", level: .warn)
+                CrashContextRecorder.shared.record("ax_selfheal runtime_no_bundle_or_spawn_failed")
+                return
+            }
+            log("[WindowManager] runtime self-heal: 运行期未授权确认 → 派生看护后优雅退出自拉起", level: .warn)
+            CrashContextRecorder.shared.record("ax_selfheal runtime_relaunch")
+            ExitJournal.recordExit(reason: AXSelfHeal.exitReason)
+            NSApp.terminate(nil)
+        }
+    }
+
     /// Check whether the app has Accessibility permission (AXIsProcessTrusted).
     ///
     /// Called before toggle operations and at startup. Usually fast (~5ms) but
@@ -80,6 +109,20 @@ final class WindowManager {
             d.set(Date().timeIntervalSince1970, forKey: "axTrustRuntimeFlipLastAt")
             d.set(flip, forKey: "axTrustRuntimeFlipLastDirection")
             log("[WindowManager] AX trust flipped (runtime): \(flip) — 辅助功能授权状态改变，热键/移动可能失效", level: .warn)
+            // 运行期自愈挂钩（AXSelfHeal 头注释）：true→false 且本进程未自愈过
+            // → 5s 复核防抖后走 detached 看护自拉起；其余翻转只记账。
+            switch AXSelfHeal.decideRuntimeFlip(
+                nowTrusted: trusted,
+                healAlreadyAttempted: WindowManager.runtimeHealAttempted
+            ) {
+            case .healOnConfirm:
+                WindowManager.runtimeHealAttempted = true
+                scheduleRuntimeSelfHeal()
+            case .ignoreAlreadyHealed:
+                log("[WindowManager] runtime flip false：本进程已自愈过，不自愈（防循环），走人工提示", level: .warn)
+            case .ignoreFalseToTrue:
+                break
+            }
         }
         WindowManager.lastKnownAXTrusted = trusted
         #if PERF_INSTRUMENT

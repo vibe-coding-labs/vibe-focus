@@ -134,8 +134,11 @@ bash scripts/dev-build.sh
 - 规律：旧进程退出后 ~1s 内拉起的新进程约半数被 tccd 误判；退让数秒后拉起则正常
 
 ### 防护（fix/ax-tccd-race-hardening + fix/ax-user-selfheal 批次，四层）
-1. **App 自愈（自包含，不依赖 keepalive——真实用户机器没有那条链）**：
-   `AXSelfHeal.decide`（纯决策表）——启动未授权且上轮非自愈退出 → 派生 detached
+1. **App 自愈（自包含，不依赖 keepalive——真实用户机器没有那条链；启动 + 运行期双覆盖）**：
+   启动路径 `AXSelfHeal.decide`（纯决策表）——启动未授权且上轮非自愈退出 → 派生 detached；
+   运行期路径 `AXSelfHeal.decideRuntimeFlip`——WindowManager 翻转检测挂钩 true→false →
+   5s 复核防抖仍假 → 同一看护自拉起（每进程一次，防循环标记独立于启动路径）。
+   启动未授权且上轮非自愈退出 → 派生 detached
    看护进程（`relaunchScript`：等本进程死亡 → sleep 3 退让 → open 产物）后显式
    `recordExit(ax-selfheal-relaunch)` 优雅退出，看护进程拉起全新进程；上轮已自愈
    过仍假 = 真未授权，防循环，落回「打开系统设置」提示（AppDelegate ADFL 接线，

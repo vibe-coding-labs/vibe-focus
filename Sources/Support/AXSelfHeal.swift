@@ -65,3 +65,30 @@ enum AXSelfHeal {
         return .relaunchSelf
     }
 }
+
+// MARK: - 运行期翻转自愈（true→false 中途被 tccd 翻转的补环）
+//
+// 启动自愈只覆盖「启动即假」；运行期翻转（09-06 两次实证）由
+// WindowManager.hasAccessibilityPermission 的翻转检测挂钩本决策，5s 复核防抖后
+// 走同一 detached 看护自拉起。每进程最多一次（runtimeHealAttempted 标记），
+// 退出 reason 与启动自愈共用——重启后的新进程按既有防循环规则不再自愈。
+
+enum AXRuntimeHealDecision: Equatable {
+    /// true→false 且本进程未自愈过 → 5s 复核仍假则自愈
+    case healOnConfirm
+    /// true→false 但本进程已自愈过 → 只记账不自愈（防循环）
+    case ignoreAlreadyHealed
+    /// false→true：授权恢复，无需动作
+    case ignoreFalseToTrue
+}
+
+extension AXSelfHeal {
+    /// 运行期翻转决策表（纯函数，Runner 直测）。仅在检测到翻转时调用。
+    static func decideRuntimeFlip(
+        nowTrusted: Bool,
+        healAlreadyAttempted: Bool
+    ) -> AXRuntimeHealDecision {
+        if nowTrusted { return .ignoreFalseToTrue }
+        return healAlreadyAttempted ? .ignoreAlreadyHealed : .healOnConfirm
+    }
+}

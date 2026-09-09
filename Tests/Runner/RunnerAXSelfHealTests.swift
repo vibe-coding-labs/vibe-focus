@@ -32,6 +32,16 @@ extension RunnerHarness {
         check("watcher: open 产物路径（带引号防空格）",
               script.contains("open '/Users/u/Applications/VibeFocus.app'"))
 
+        // ===== AXSelfHeal.decideRuntimeFlip：运行期翻转决策表 =====
+        check("runtime: true→false 且未自愈过 → healOnConfirm",
+              AXSelfHeal.decideRuntimeFlip(nowTrusted: false, healAlreadyAttempted: false) == .healOnConfirm)
+        check("runtime: true→false 但本进程已自愈过 → ignoreAlreadyHealed（防循环）",
+              AXSelfHeal.decideRuntimeFlip(nowTrusted: false, healAlreadyAttempted: true) == .ignoreAlreadyHealed)
+        check("runtime: false→true → ignoreFalseToTrue（授权恢复无需动作）",
+              AXSelfHeal.decideRuntimeFlip(nowTrusted: true, healAlreadyAttempted: false) == .ignoreFalseToTrue)
+        check("runtime: false→true 且已自愈过 → ignoreFalseToTrue",
+              AXSelfHeal.decideRuntimeFlip(nowTrusted: true, healAlreadyAttempted: true) == .ignoreFalseToTrue)
+
         // ===== ExitJournal.lastExitReason(journalContents:)：上一个进程的退出原因 =====
         let lines = [
             ExitJournal.exitLine(pid: 11, at: "2026-09-10T00:00:00Z", reason: "sigterm-graceful", signal: nil, name: nil),
