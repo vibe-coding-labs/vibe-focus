@@ -129,6 +129,23 @@ extension RunnerHarness {
                   !ws(origX: nil, targetX: 200).hasToggleState
                   && !ws(origX: 100, targetX: nil).hasToggleState
                   && !ws(origX: nil, targetX: nil).hasToggleState)
+            // frame 取值器（B103：HookWindowModels 剩余计算属性——orig/target 各四元组齐备才成帧）
+            func wsFull(orig: CGRect?, target: CGRect?) -> WindowState {
+                WindowState(
+                    windowID: 1, pid: 100, tty: nil,
+                    axWindowNumber: nil, appName: nil, bundleIdentifier: nil, title: nil,
+                    termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                    envWindowID: nil, sessionID: nil, cwd: nil, model: nil,
+                    origX: orig?.origin.x, origY: orig?.origin.y, origW: orig?.width, origH: orig?.height,
+                    targetX: target?.origin.x, targetY: target?.origin.y,
+                    targetW: target?.width, targetH: target?.height,
+                    isCompleted: false, createdAt: Date(), updatedAt: Date()
+                )
+            }
+            check("toggleState: originalFrame/targetFrame 四元组成帧、缺 target 侧 targetFrame 为 nil",
+                  wsFull(orig: CGRect(x: 1, y: 2, width: 3, height: 4), target: CGRect(x: 5, y: 6, width: 7, height: 8)).originalFrame == CGRect(x: 1, y: 2, width: 3, height: 4)
+                  && wsFull(orig: CGRect(x: 1, y: 2, width: 3, height: 4), target: CGRect(x: 5, y: 6, width: 7, height: 8)).targetFrame == CGRect(x: 5, y: 6, width: 7, height: 8)
+                  && wsFull(orig: CGRect(x: 1, y: 2, width: 3, height: 4), target: nil).targetFrame == nil)
         }
 
         // ===== pickFallbackFrontWindow：无窗口前台兜底选取（B93：ToggleFallbackWindowTests 镜像退役转真身） =====

@@ -127,6 +127,31 @@ extension RunnerHarness {
               table.ranked(minCount: 3, now: d0).contains { $0.bundleID == "a" }
               && filtered.ranked(minCount: 3, now: d0).map { $0.bundleID } == ["hot"])
 
+        // 持久化/解码 + 注入式 tracker（B103：TerminalUsageTracker 40% 最薄面补测——
+        // Runner 进程 UserDefaults.standard 为独立域，显式清理防污染）
+        do {
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+            var src = TerminalUsageTable()
+            src.record(bundleID: "com.apple.Terminal", at: t0)
+            src.record(bundleID: "com.apple.Terminal", at: t0)
+            let data = src.encoded()
+            let back = data.flatMap { TerminalUsageTable.decode($0) }
+            check("usageIO: encoded→decode 回环保真", back?.entries["com.apple.Terminal"]?.count == 2)
+            check("usageIO: 垃圾字节 → decode nil",
+                  TerminalUsageTable.decode(Data("not-json".utf8)) == nil)
+            let tracker = TerminalUsageTracker(table: src)
+            tracker.seedUsage(bundleID: "com.googlecode.iterm2", count: 5, lastAt: t0)
+            check("usageTracker: seedUsage 直写计数与 lastAt",
+                  tracker.table.entries["com.googlecode.iterm2"]?.count == 5
+                  && tracker.table.entries["com.googlecode.iterm2"]?.lastAt == t0
+                  && tracker.table.entries["com.apple.Terminal"]?.count == 2)
+            TerminalUsageTracker.saveTable(src)
+            let loaded = TerminalUsageTracker.loadTable()
+            check("usageIO: saveTable/loadTable 往返一致",
+                  loaded.entries["com.apple.Terminal"]?.count == 2)
+            UserDefaults.standard.removeObject(forKey: TerminalUsageTable.userDefaultsKey)
+        }
+
         // ranked：半衰衰减——14 天半衰下，60 天前的旧条目权重 ≈ 0.1×，被新条目反超
         var mixed = TerminalUsageTable()
         let now = d0.addingTimeInterval(60 * 24 * 3600)
