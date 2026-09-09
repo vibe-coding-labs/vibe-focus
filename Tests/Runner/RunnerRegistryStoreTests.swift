@@ -27,6 +27,14 @@ extension RunnerHarness {
         check("overlayGate B: 连发丢弃 + 越阈放行",
               OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: last, now: last.addingTimeInterval(0.29), minInterval: 0.3)
               && !OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: last, now: last.addingTimeInterval(0.31), minInterval: 0.3))
+        // 门序锁（B80：OverlayRefreshPolicyTests 镜像退役，缺口语义转真身）：
+        // suspend 判据先于 disabled——suspend+disabled+非force 走 skipSuspended 而非 skipDisabled。
+        check("overlayGate A: 门序 suspend 先于 disabled（suspend+disabled+非force → skipSuspended）",
+              OverlayRefreshPolicy.refreshGate(suspended: true, enabled: false, force: false) == .skipSuspended)
+        // 启动首次：lastTriggerAt = distantPast → 不算重复，放行。
+        check("overlayGate B: lastTriggerAt=distantPast → 放行（启动首次）",
+              !OverlayRefreshPolicy.isDuplicateForceTrigger(
+                lastTriggerAt: .distantPast, now: Date(timeIntervalSince1970: 1000), minInterval: 0.3))
 
         // C. ScreenHotplugGuard 真身：集合相等语义 + 防御过滤。
         let u1 = UUID(), u2 = UUID(), u3 = UUID()
