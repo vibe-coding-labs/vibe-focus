@@ -12,8 +12,6 @@ extension SettingsView {
         Group {
         gridMinimapPanel
 
-        gridParamsCard
-
         terminalSessionCard
 
         // 已保存布局
@@ -139,6 +137,14 @@ extension SettingsView {
                 }
                 .padding(.top, 12)
             }
+
+            // 网格参数区内嵌本面板（原独立「网格」卡，2026-09-10 用户反馈合并）：
+            // minimap 选中屏上的预览格线就是下面行列参数的实时投影，一体呈现。
+            Divider()
+                .padding(.top, 14)
+
+            gridParamsSection
+                .padding(.top, 12)
         }
         .padding(16)
         .background(
