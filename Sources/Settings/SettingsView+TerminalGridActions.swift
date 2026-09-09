@@ -1,16 +1,25 @@
 import AppKit
 import SwiftUI
 
-// MARK: - 编排页 · 网格参数与会话偏好卡（2026-09-07 从 TerminalGridSection 拆分，行为不变）
+// MARK: - 编排页 · 网格参数与会话偏好（2026-09-07 从 TerminalGridSection 拆分；2026-09-10
+// 网格参数卡退役——参数区内嵌屏幕布局面板：minimap 预览格线就是行列参数画出来的，
+// 拆在两张卡让人看不出它们是一体工作的（用户反馈））
 extension SettingsView {
 
-    /// 网格参数 + 动作
-    var gridParamsCard: some View {
-        SettingsCard(
-            title: "网格",
-            subtitle: "行列决定 minimap 预览与落格数量；0 间距 = Rectangle 式无缝铺满。",
-            icon: "square.grid.2x2"
-        ) {
+    /// 网格参数区（内嵌屏幕布局面板底部，非独立卡片）
+    var gridParamsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("网格")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("行列决定 minimap 预览与落格数量；0 间距 = 无缝铺满")
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
             HStack(spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("行 × 列")
