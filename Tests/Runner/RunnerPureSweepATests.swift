@@ -126,6 +126,33 @@ extension RunnerHarness {
                 isRunning: true, activePort: 39277, configuredToken: "tok",
                 configuredBindToLocalhost: nil,
                 port: 39277, token: "tok", bindToLocalhost: true))
+
+        // C8. classifyRequestSource：请求来源分类（B89——直连 LAN 请求此前被
+        // 代理头判定误记为 local；代理头优先，TCP 对端 loopback 判定兜底）。
+        check("hookAuth C8a: 代理头优先且非 loopback → remote",
+              ClaudeHookServer.classifyRequestSource(peerAddress: "127.0.0.1", proxyIP: "10.1.2.3")
+              == (source: "10.1.2.3", isRemote: true))
+        check("hookAuth C8b: 代理头为 loopback → 仍判本机",
+              ClaudeHookServer.classifyRequestSource(peerAddress: "192.168.1.50", proxyIP: "127.0.0.1")
+              == (source: "127.0.0.1", isRemote: false))
+        check("hookAuth C8c: 无代理头 + 对端 LAN IP → remote（直连 LAN 主场景）",
+              ClaudeHookServer.classifyRequestSource(peerAddress: "192.168.1.83", proxyIP: nil)
+              == (source: "192.168.1.83", isRemote: true))
+        check("hookAuth C8d: 对端 loopback（本机 curl/forwarder）→ local",
+              ClaudeHookServer.classifyRequestSource(peerAddress: "127.0.0.1", proxyIP: nil)
+              == (source: "local", isRemote: false))
+        check("hookAuth C8e: 对端 IPv6 ::1 → local；IPv4-mapped loopback → local",
+              ClaudeHookServer.classifyRequestSource(peerAddress: "::1", proxyIP: nil).isRemote == false
+              && ClaudeHookServer.classifyRequestSource(peerAddress: "::ffff:127.0.0.1", proxyIP: nil).isRemote == false)
+        check("hookAuth C8f: 对端缺失 → local 兜底",
+              ClaudeHookServer.classifyRequestSource(peerAddress: nil, proxyIP: nil)
+              == (source: "local", isRemote: false))
+        check("hookAuth C8g: isLoopbackAddress 判定矩阵",
+              ClaudeHookServer.isLoopbackAddress("127.0.0.1")
+              && ClaudeHookServer.isLoopbackAddress("::ffff:127.9.9.9")
+              && ClaudeHookServer.isLoopbackAddress("::")
+              && !ClaudeHookServer.isLoopbackAddress("192.168.1.12")
+              && !ClaudeHookServer.isLoopbackAddress("::ffff:192.168.1.12"))
     }
 
     // MARK: Overlay 偏好层 + Space 解码漂移补缺（真实实现——B28：缺口审计零覆盖直测）
