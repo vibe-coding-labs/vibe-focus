@@ -222,6 +222,7 @@ final class FakeAuditor: RestoreAuditing {
         runHookModelsTests()
         runSpaceIndexTests()
         runSpaceIdentityTests()
+        runYabaiModelTests()
         runPureSweepA()
         runPureSweepB()
         runAppIdentityTests()

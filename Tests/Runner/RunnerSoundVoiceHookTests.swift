@@ -54,6 +54,40 @@ extension RunnerHarness {
         check("soundStatus: 文件删除后 → missing", CustomSoundStatus.evaluate(path: tmp) == .missing)
     }
 
+    // MARK: 项目音效域（真实实现——B75：ProjectSoundResolverTests 漂移镜像退役，提取族/规则契约转真身）
+
+    do {
+        // WindowManager.projectName(fromCwd:)：末段路径 + 小写归一（resolver 双侧归一的唯一实现）
+        check("projName: 末段提取 + 小写归一",
+              WindowManager.projectName(fromCwd: "/Users/me/github/Vibe-Focus") == "vibe-focus")
+        check("projName: 尾斜杠容忍 + 深路径取末段",
+              WindowManager.projectName(fromCwd: "/Users/me/work/app2/") == "app2"
+              && WindowManager.projectName(fromCwd: "a/b/c") == "c")
+        check("projName: nil/空串/全斜杠 → nil",
+              WindowManager.projectName(fromCwd: nil) == nil
+              && WindowManager.projectName(fromCwd: "") == nil
+              && WindowManager.projectName(fromCwd: "///") == nil)
+
+        // ProjectSoundResolver.projectName：claudeProjectDir 优先，cwd 回落（双侧同源）
+        check("resolver.projectName: claudeProjectDir 优先、缺失回落 cwd、双缺失 nil",
+              ProjectSoundResolver.projectName(claudeProjectDir: "/x/vibe-labs", cwd: "/other") == "vibe-labs"
+              && ProjectSoundResolver.projectName(claudeProjectDir: nil, cwd: "/x/app2/") == "app2"
+              && ProjectSoundResolver.projectName(claudeProjectDir: nil, cwd: nil) == nil)
+
+        // ProjectSoundRule：soundType 计算属性 + effectiveSoundType 兜底（UI Picker/试听同一事实源）
+        check("soundRule: 合法 rawValue 解出",
+              ProjectSoundRule(projectName: "p", soundType: .builtinDing).soundType == .builtinDing)
+        var corrupt = ProjectSoundRule(projectName: "p", soundType: .builtinDing)
+        corrupt.soundRawValue = "garbage"
+        check("soundRule: 非法 rawValue → soundType nil、effectiveSoundType 兜底 builtinComplete",
+              corrupt.soundType == nil && corrupt.effectiveSoundType == .builtinComplete)
+
+        // ProjectSoundRule：Codable 回环（存字符串保持 JSON 稳定）
+        let rules = [ProjectSoundRule(projectName: "vibe-focus", soundType: .custom)]
+        let round = try? JSONDecoder().decode([ProjectSoundRule].self, from: JSONEncoder().encode(rules))
+        check("soundRule: Codable 回环保持 + 解码回 .custom", round == rules && round?.first?.soundType == .custom)
+    }
+
     // MARK: 编排页提纯单元（真实实现——B3：目标摘要/终端说明文案/间距步进）
 
     do {
