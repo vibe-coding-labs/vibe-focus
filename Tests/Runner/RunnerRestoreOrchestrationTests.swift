@@ -398,6 +398,41 @@ extension RunnerHarness {
               order == .resizeThenMove)
     }
 
+    // MARK: FrameConvergence.writeOrder 分支边缘补锁（B76 家法——FrameWriteOrderTests/FrameResendPlanTests 镜像退役，缺口语义转真身）
+
+    do {
+        // 防御分支：currentSize 读不到（CGWindowList 偶发 nil）→ 历史顺序
+        check("writeOrder: currentSize=nil → moveThenResize（历史顺序防御）",
+              FrameConvergence.writeOrder(currentSize: nil, targetSize: CGSize(width: 640, height: 527))
+              == .moveThenResize)
+        // 收窄判定按任一维大于（逐维触发）
+        check("writeOrder: 收窄仅宽大于 / 仅高大于 → resizeThenMove",
+              FrameConvergence.writeOrder(currentSize: CGSize(width: 800, height: 400),
+                                          targetSize: CGSize(width: 640, height: 527)) == .resizeThenMove
+              && FrameConvergence.writeOrder(currentSize: CGSize(width: 500, height: 900),
+                                             targetSize: CGSize(width: 640, height: 527)) == .resizeThenMove)
+        // 放大/持平：新参数未传 → 历史顺序；尺寸完全相等按持平走历史序
+        check("writeOrder: 放大未传新参数 → moveThenResize；尺寸相等 → moveThenResize（持平）",
+              FrameConvergence.writeOrder(currentSize: CGSize(width: 640, height: 527),
+                                          targetSize: CGSize(width: 1649, height: 1079)) == .moveThenResize
+              && FrameConvergence.writeOrder(currentSize: CGSize(width: 640, height: 527),
+                                             targetSize: CGSize(width: 640, height: 527)) == .moveThenResize)
+        // clamp 规避宽度版：目标宽超源屏可见区同样禁用收窄序
+        check("writeOrder: 目标宽超源屏可见区 → moveThenResize（clamp 规避）",
+              FrameConvergence.writeOrder(currentSize: CGSize(width: 1000, height: 400),
+                                          targetSize: CGSize(width: 2000, height: 300),
+                                          sourceVisibleSize: CGSize(width: 1646, height: 1079))
+              == .moveThenResize)
+        // 放大序边界：中间态恰好完全贴合源屏可视区（CGRect.contains 含等缘）→ 允许先行
+        check("writeOrder: 中间态贴合源屏可视区边界 → resizeThenMove（边界包含成立）",
+              FrameConvergence.writeOrder(currentSize: CGSize(width: 600, height: 400),
+                                          targetSize: CGSize(width: 3440, height: 1415),
+                                          sourceVisibleSize: CGSize(width: 3440, height: 1415),
+                                          currentFrame: CGRect(x: -856, y: -1415, width: 600, height: 400),
+                                          sourceVisibleFrame: CGRect(x: -856, y: -1415, width: 3440, height: 1415))
+              == .resizeThenMove)
+    }
+
     // MARK: FrameConvergence.convergeFramePolling 停滞重发（真实实现——写丢失不干等整轮预算）
 
     do {
