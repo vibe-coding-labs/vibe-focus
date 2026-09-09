@@ -98,6 +98,22 @@ extension SettingsView {
                             operationID: "minimap-space-\(spaceIndex)-\(Int(Date().timeIntervalSince1970 * 1000))"
                         )
                         gridSpaceSwitchMessage = GridSpaceSwitchFeedback.message(for: outcome, label: label)
+                        // live 切换成功后必须重建 minimap 快照：isVisible 高亮与 S 标注
+                        // 都来自快照，不刷新的话旧工作区仍亮「当前」、新目标只有描边——
+                        // 两处同时高亮（2026-09-10 用户报告）。refocused 路径 yabai 状态
+                        // 落定可能略滞后于视角链返回，延迟再补刷一次兜底。
+                        switch outcome {
+                        case .noDrift:
+                            refreshGridMinimap(ignoreCache: true)
+                        case .refocused:
+                            refreshGridMinimap(ignoreCache: true)
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                                refreshGridMinimap(ignoreCache: true)
+                            }
+                        case .failed:
+                            break  // 切换未发生，快照仍与真实状态一致
+                        }
                     }
                 }
             )
@@ -170,8 +186,10 @@ extension SettingsView {
 
     /// minimap 数据构建：真实屏幕快照（Cocoa frame）+ yabai 空间快照。
     /// yabai 不可用时 Space 带为空，minimap 退化为纯屏幕选择，功能不缺失。
-    func refreshGridMinimap() {
-        let spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]] = Dictionary(grouping: (SpaceController.shared.querySpaces() ?? []).compactMap { info -> (display: Int, space: ScreenLayoutMapper.InputSpace)? in
+    /// ignoreCache=true 供胶囊 live 切换后的即时重建用——默认缓存会吐出切换前的
+    /// 可见位，高亮就停在旧工作区上（2026-09-10 用户报告）。
+    func refreshGridMinimap(ignoreCache: Bool = false) {
+        let spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]] = Dictionary(grouping: (SpaceController.shared.querySpaces(ignoreCache: ignoreCache) ?? []).compactMap { info -> (display: Int, space: ScreenLayoutMapper.InputSpace)? in
             guard let index = info.index, let display = info.display else { return nil }
             return (display, ScreenLayoutMapper.InputSpace(yabaiIndex: index, isVisible: info.isVisible ?? false))
         }, by: { $0.display }).mapValues { $0.map { $0.space }.sorted { $0.yabaiIndex < $1.yabaiIndex } }
