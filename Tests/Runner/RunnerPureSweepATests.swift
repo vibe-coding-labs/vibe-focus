@@ -87,6 +87,45 @@ extension RunnerHarness {
         check("hookAuth C6: 未提供（空串/nil）→ 拒绝",
               !ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: "")
               && !ClaudeHookServer.isTokenValid(expectedToken: "secret", providedToken: nil))
+
+        // C7. serverNeedsRestart：重启判定纯函数（2026-09-10 LAN 模块审计修复——
+        // 绑定模式曾是判定盲区：服务运行中翻转「局域网模式」不重绑定，
+        // 开 LAN 无效、关 LAN 继续暴露 0.0.0.0 直到重启 app）。
+        let baseArgs = (isRunning: true, activePort: Optional(39277),
+                        configuredToken: Optional("tok"), configuredBindToLocalhost: Optional(true))
+        check("hookAuth C7a: 同端口同 token 同绑定模式 → 不重启",
+              !ClaudeHookServer.serverNeedsRestart(
+                isRunning: baseArgs.isRunning, activePort: baseArgs.activePort,
+                configuredToken: baseArgs.configuredToken,
+                configuredBindToLocalhost: baseArgs.configuredBindToLocalhost,
+                port: 39277, token: "tok", bindToLocalhost: true))
+        check("hookAuth C7b: 仅绑定模式翻转（开/关 局域网模式）→ 必须重启重绑定",
+              ClaudeHookServer.serverNeedsRestart(
+                isRunning: baseArgs.isRunning, activePort: baseArgs.activePort,
+                configuredToken: baseArgs.configuredToken,
+                configuredBindToLocalhost: baseArgs.configuredBindToLocalhost,
+                port: 39277, token: "tok", bindToLocalhost: false))
+        check("hookAuth C7c: 端口或 token 变化 → 重启",
+              ClaudeHookServer.serverNeedsRestart(
+                isRunning: baseArgs.isRunning, activePort: baseArgs.activePort,
+                configuredToken: baseArgs.configuredToken,
+                configuredBindToLocalhost: baseArgs.configuredBindToLocalhost,
+                port: 39278, token: "tok", bindToLocalhost: true)
+              && ClaudeHookServer.serverNeedsRestart(
+                isRunning: baseArgs.isRunning, activePort: baseArgs.activePort,
+                configuredToken: baseArgs.configuredToken,
+                configuredBindToLocalhost: baseArgs.configuredBindToLocalhost,
+                port: 39277, token: "tok2", bindToLocalhost: true))
+        check("hookAuth C7d: 未运行 → 重启（首次启动）",
+              ClaudeHookServer.serverNeedsRestart(
+                isRunning: false, activePort: nil, configuredToken: nil,
+                configuredBindToLocalhost: nil,
+                port: 39277, token: "tok", bindToLocalhost: true))
+        check("hookAuth C7e: 绑定模式由 nil 转正（旧实例升级后首轮判定）→ 重启",
+              ClaudeHookServer.serverNeedsRestart(
+                isRunning: true, activePort: 39277, configuredToken: "tok",
+                configuredBindToLocalhost: nil,
+                port: 39277, token: "tok", bindToLocalhost: true))
     }
 
     // MARK: Overlay 偏好层 + Space 解码漂移补缺（真实实现——B28：缺口审计零覆盖直测）

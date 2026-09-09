@@ -17,6 +17,9 @@ final class ClaudeHookServer: ObservableObject {
     private var server: GCDWebServer?
     private var activePort: Int?
     private var configuredToken: String?
+    /// 当前监听实例的绑定模式（true=仅本机）。纳入重启判定：运行中翻转「局域网模式」
+    /// 必须重绑定，否则开 LAN 无效、关 LAN 继续暴露 0.0.0.0（2026-09-10 模块审计实锤）。
+    private var configuredBindToLocalhost: Bool?
 
     private init() {}
 
@@ -43,11 +46,21 @@ final class ClaudeHookServer: ObservableObject {
         isRunning = false
         activePort = nil
         configuredToken = nil
+        configuredBindToLocalhost = nil
         statusDescription = "未启动"
     }
 
     private func startIfNeeded(port: Int, token: String?) {
-        if isRunning, activePort == port, configuredToken == token {
+        let bindToLocalhost = !LANHookPreferences.lanMode
+        if !Self.serverNeedsRestart(
+            isRunning: isRunning,
+            activePort: activePort,
+            configuredToken: configuredToken,
+            configuredBindToLocalhost: configuredBindToLocalhost,
+            port: port,
+            token: token,
+            bindToLocalhost: bindToLocalhost
+        ) {
             return
         }
         stop()
@@ -102,7 +115,6 @@ final class ClaudeHookServer: ObservableObject {
         )
 
         do {
-            let bindToLocalhost = !LANHookPreferences.lanMode
             try webServer.start(options: [
                 GCDWebServerOption_Port: UInt(port),
                 GCDWebServerOption_BindToLocalhost: bindToLocalhost
@@ -110,6 +122,7 @@ final class ClaudeHookServer: ObservableObject {
             self.server = webServer
             self.activePort = port
             self.configuredToken = token
+            self.configuredBindToLocalhost = bindToLocalhost
             self.isRunning = true
             let bindAddr = bindToLocalhost ? "127.0.0.1" : "0.0.0.0"
             self.statusDescription = "监听中 \(bindAddr):\(port)"
@@ -243,6 +256,25 @@ final class ClaudeHookServer: ObservableObject {
     }
 
     // MARK: - Response Helpers
+
+    /// 服务器是否需要（重）启动的纯判定：未运行，或端口/token/绑定模式任一配置变化。
+    /// 绑定模式曾是判定盲区——服务运行中翻转「局域网模式」触发 applyPreferences 却
+    /// 早退返回，开 LAN 不重绑定（远程机连不上）、关 LAN 不收回 0.0.0.0（继续暴露
+    /// 局域网直到重启 app）。Runner 真身直测锁定。
+    static func serverNeedsRestart(
+        isRunning: Bool,
+        activePort: Int?,
+        configuredToken: String?,
+        configuredBindToLocalhost: Bool?,
+        port: Int,
+        token: String?,
+        bindToLocalhost: Bool
+    ) -> Bool {
+        guard isRunning else { return true }
+        return activePort != port
+            || configuredToken != token
+            || configuredBindToLocalhost != bindToLocalhost
+    }
 
     /// Case-insensitive header lookup — GCDWebServer preserves original HTTP header casing
     static func resolveHeaderValue(from headers: [String: String], forKey key: String) -> String? {
