@@ -137,3 +137,37 @@ extension RunnerHarness {
               (try? String(contentsOfFile: nested, encoding: .utf8)) == "nested\n")
     }
 }
+
+// MARK: - B139：claudePID / workingDirectory 解析边缘（runner 注入）
+
+extension RunnerHarness {
+    func runLocatorParseEdgeTests() {
+        // claudePID：垃圾行跳过后仍能命中后面的 claude 行
+        let mixed = "not-a-pid\n  7777 claude --resume abc\n  7800 -zsh"
+        check("locatorParse: 垃圾行跳过仍命中 claude pid",
+              ClaudeSessionLocator.claudePID(onTTY: "/dev/ttys1", runner: { exec, _ in
+                  exec == "/bin/ps" ? YabaiClient.YabaiResult(exitCode: 0, stdout: mixed, stderr: "") : nil
+              }) == 7777)
+        // 多个 claude 行 → 首个（阅读序首个）胜出
+        let multi = "  7001 claude one\n  7002 claude two"
+        check("locatorParse: 多 claude 行取首个",
+              ClaudeSessionLocator.claudePID(onTTY: "/dev/ttys1", runner: { exec, _ in
+                  exec == "/bin/ps" ? YabaiClient.YabaiResult(exitCode: 0, stdout: multi, stderr: "") : nil
+              }) == 7001)
+        // ps 非零退出 → nil
+        check("locatorParse: ps 非零退出 → nil",
+              ClaudeSessionLocator.claudePID(onTTY: "/dev/ttys1", runner: { _, _ in
+                  YabaiClient.YabaiResult(exitCode: 1, stdout: "", stderr: "")
+              }) == nil)
+        // workingDirectory：lsof 成功但无 n 前缀行 → nil
+        check("locatorWD: 无 n 前缀行 → nil",
+              ClaudeSessionLocator.workingDirectory(ofPID: 7, runner: { _, _ in
+                  YabaiClient.YabaiResult(exitCode: 0, stdout: "p7777\n", stderr: "")
+              }) == nil)
+        // workingDirectory：n 行正常剥前缀
+        check("locatorWD: n 行剥前缀返回路径",
+              ClaudeSessionLocator.workingDirectory(ofPID: 7, runner: { _, _ in
+                  YabaiClient.YabaiResult(exitCode: 0, stdout: "p7777\nn/tmp/vf-x", stderr: "")
+              }) == "/tmp/vf-x")
+    }
+}
