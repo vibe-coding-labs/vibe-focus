@@ -857,6 +857,24 @@ extension RunnerHarness {
                   handler.resolveRemoteBinding(label: "lab-live", sessionID: "s-x") == nil)
         }
 
+        // ensureTokenGenerated 生成/缓存契约（B120：token 稳定性有安全意义——独立域用后清键）
+        do {
+            let saved = ClaudeHookPreferences.authToken
+            defer { ClaudeHookPreferences.authToken = saved }
+            ClaudeHookPreferences.authToken = nil
+            let first = ClaudeHookPreferences.ensureTokenGenerated()
+            check("token: 缺失时生成 32 位小写十六进制并持久化",
+                  first.count == 32
+                  && first == first.lowercased()
+                  && first.allSatisfy { $0.isHexDigit }
+                  && ClaudeHookPreferences.authToken == first)
+            check("token: 已有 token 原样返回（不轮换）",
+                  ClaudeHookPreferences.ensureTokenGenerated() == first)
+            ClaudeHookPreferences.authToken = nil
+            let second = ClaudeHookPreferences.ensureTokenGenerated()
+            check("token: 清空后重新生成 → 新随机 token", second != first && second.count == 32)
+        }
+
         // binding(for:) DB-fallback 脏数据清理分支（B108：非终端 pid 的 DB 绑定被识别并清除）
         do {
             let dir = "/tmp/vibefocus-swr4-\(UUID().uuidString)"
