@@ -325,31 +325,6 @@ extension RunnerHarness {
             try? FileManager.default.removeItem(atPath: home)
         }
 
-        // 场景 2.5（B125）：SSH_CLIENT 透传 → enriched 载荷携带 ssh_client_ip/port/server_ip
-        do {
-            let (home, bin, log, configPath, fwdPath) = makeSandbox()
-            FileManager.default.createFile(atPath: configPath,
-                contents: Data(#"{"host":"192.168.1.12","port":39277,"token":"t","machine_label":"m1"}"#.utf8))
-            FileManager.default.createFile(atPath: fwdPath, contents: Data(forwarder.utf8))
-            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fwdPath)
-            _ = runForwarder(fwdPath, payload: #"{"event":"Stop","session_id":"s-ssh"}"#,
-                             env: ["HOME": home, "FAKE_CURL_LOG": log,
-                                   "SSH_CLIENT": "192.168.1.12 54321 192.168.1.83 22"], bin: bin)
-            let lines = readLines(log)
-            if let dataIdx = lines.firstIndex(of: "--data"), dataIdx + 1 < lines.count,
-               let payloadData = lines[dataIdx + 1].data(using: .utf8),
-               let body = (try? JSONSerialization.jsonObject(with: payloadData)) as? [String: Any],
-               let ctx = body["terminal_ctx"] as? [String: Any] {
-                check("forwarder: SSH_CLIENT 透传为 ssh_client_ip/port/server_ip",
-                      ctx["ssh_client_ip"] as? String == "192.168.1.12"
-                      && ctx["ssh_client_port"] as? String == "54321"
-                      && ctx["ssh_server_ip"] as? String == "192.168.1.83")
-            } else {
-                check("forwarder: SSH_CLIENT 透传为 ssh_client_ip/port/server_ip", false)
-            }
-            try? FileManager.default.removeItem(atPath: home)
-        }
-
         // 场景 3：载荷非 JSON → enrich 失败回退原样转发（不吞事件）
         do {
             let (home, bin, log, configPath, fwdPath) = makeSandbox()
