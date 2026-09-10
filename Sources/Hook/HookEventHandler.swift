@@ -99,7 +99,10 @@ final class HookEventHandler {
         sessionUPSLimiters[payload.sessionID] = limiter
 
         // 门 3/4/5 输入采集：toggle 记录（Stop 拉主屏时保存的原始位置）/ 主屏归属 / 冷却。
-        let hasToggleRecord = ToggleEngine.shared.load(windowID: identity.windowID) != nil
+        let toggleRecord = ToggleEngine.shared.load(windowID: identity.windowID)
+        let hasToggleRecord = toggleRecord != nil
+        // B126：记录由用户手动热键创建 = 窗口是用户自己放置的，UPS 不 Undo 其放置
+        let recordCreatedByUser = toggleRecord?.reason == WindowMoveReason.manualHotkey.rawValue
         let onMain = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
         let inCooldown = MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID)
         let cooldownRemaining = inCooldown ? MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID) : 0
@@ -111,6 +114,7 @@ final class HookEventHandler {
             recentUPSCount: rate.recentCount,
             maxUPSEvents: Self.upsRateMaxEvents,
             hasToggleRecord: hasToggleRecord,
+            recordCreatedByUser: recordCreatedByUser,
             isOnMainScreen: onMain,
             isInCooldown: inCooldown,
             cooldownRemainingSeconds: cooldownRemaining
@@ -118,6 +122,20 @@ final class HookEventHandler {
 
         switch decision {
         case .autoRestoreDisabled, .noBinding:
+            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+
+        case .userPlacedSkip:
+            // 用户手动热键放置的窗口：提交提示词不 Undo 其放置，原样留在原地
+            //（B126：语音输入中窗口被自动恢复甩回副屏的真机事故修复）
+            log(
+                "[HookEventHandler] UserPromptSubmit: window placed by user (manual hotkey), leaving in place",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sessionID": payload.sessionID
+                ]
+            )
             return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
 
         case .restoreToOriginal:

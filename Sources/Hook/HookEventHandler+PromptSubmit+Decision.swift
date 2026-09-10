@@ -4,7 +4,9 @@ import Foundation
 // WindowMove 决策树同款模式：纯决策 + 响应表，Runner 直测穷尽锁定）。
 //
 // 决策序 = 生产守护顺序（handleUserPromptSubmit 消费）：
-//   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 有 toggle 记录（回原位）
+//   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 有 toggle 记录（回原位；
+//   但记录若由用户手动热键创建则跳过——用户自己放置的窗口，提交提示词
+//   不得Undo其放置，2026-09-11 真机事故：语音输入中窗口被甩回副屏）
 //   → 已在主屏 → 冷却中 → 搬窗。
 // 每个决策的响应码唯一且稳定。
 //
@@ -23,6 +25,9 @@ extension HookEventHandler {
         case noBinding
         case rateLimited(recentCount: Int, maxEvents: Int)
         case restoreToOriginal
+        /// 有 toggle 记录但记录由用户手动热键创建 = 窗口是用户自己放置的，
+        /// 提交提示词不 Undo 其放置（B126）。
+        case userPlacedSkip
         case alreadyOnMain
         case cooldownActive(remainingSeconds: Int)
         case proceedToMove
@@ -36,6 +41,7 @@ extension HookEventHandler {
         recentUPSCount: Int,
         maxUPSEvents: Int,
         hasToggleRecord: Bool,
+        recordCreatedByUser: Bool,
         isOnMainScreen: Bool,
         isInCooldown: Bool,
         cooldownRemainingSeconds: Int
@@ -45,7 +51,9 @@ extension HookEventHandler {
         if rateLimited {
             return .rateLimited(recentCount: recentUPSCount, maxEvents: maxUPSEvents)
         }
-        if hasToggleRecord { return .restoreToOriginal }
+        if hasToggleRecord {
+            return recordCreatedByUser ? .userPlacedSkip : .restoreToOriginal
+        }
         if isOnMainScreen { return .alreadyOnMain }
         if isInCooldown {
             return .cooldownActive(remainingSeconds: cooldownRemainingSeconds)
@@ -89,6 +97,15 @@ extension HookEventHandler {
                 ClaudeHookResponse(
                     ok: true, code: "restore_to_original",
                     message: "Toggle record present, restoring window to original screen/space/position",
+                    sessionID: sessionID, handled: false
+                )
+            )
+        case .userPlacedSkip:
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "user_placed_skip",
+                    message: "Window was placed by user (manual hotkey); leaving it in place",
                     sessionID: sessionID, handled: false
                 )
             )
