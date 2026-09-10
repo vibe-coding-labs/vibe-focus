@@ -30,7 +30,17 @@ final class InputBubbleController: NSObject {
     private var panel: InputBubblePanel?
     private var textView: NSTextView?
 
-    private let bubbleSize = NSSize(width: 480, height: 150)
+    /// 设置窗可见性暂存（B133：气泡与设置窗都是本 app key 候选，同屏竞争时设置窗
+    /// 作为 main window 会抢走 key 使气泡收不到键盘——TitleEditor 同款解法：
+    /// 气泡存续期临时 orderOut 设置窗，气泡关闭后恢复可见性）
+    private var settingsWasVisible = false
+
+    /// B133：尺寸/回车语义从偏好读取（设置页可调）；面板按「构建参数指纹」缓存，
+    /// 指纹变化（改尺寸/改回车行为）时下次唤起重建，避免陈旧布局。
+    private var panelBuiltFor: (size: NSSize, submitOnEnter: Bool)?
+    private var bubbleSize: NSSize {
+        NSSize(width: InputBubblePreferences.bubbleWidth, height: InputBubblePreferences.bubbleHeight)
+    }
 
     /// 热键瞬间捕获的注入目标
     private struct Target {
@@ -114,6 +124,11 @@ final class InputBubbleController: NSObject {
         self.target = target
         phase = .open
 
+        // 先收起设置窗（若可见）：防止其以 main window 身份抢 key（实测存在）
+        let settingsWindow = SettingsWindowController.shared.window
+        settingsWasVisible = settingsWindow?.isVisible ?? false
+        if settingsWasVisible { settingsWindow?.orderOut(nil) }
+
         let (panel, textView) = builtPanel()
         let origin = anchorOrigin(targetCGFrame: cgFrame)
         panel.setFrameOrigin(origin)
@@ -145,6 +160,7 @@ final class InputBubbleController: NSObject {
         target = nil
         phase = .idle
         NSApp.setActivationPolicy(.accessory)
+        restoreSettingsWindowIfNeeded()
         if reactivateTarget, let t = captured {
             _ = NSRunningApplication(processIdentifier: t.pid)?.activate(options: .activateIgnoringOtherApps)
         }
@@ -259,6 +275,14 @@ final class InputBubbleController: NSObject {
         textView = nil
         target = nil
         NSApp.setActivationPolicy(.accessory)
+        restoreSettingsWindowIfNeeded()
+    }
+
+    /// 气泡关闭/提交收尾后，把之前可见的设置窗放回（TitleEditor 同款：恢复可见性不抢焦点）
+    private func restoreSettingsWindowIfNeeded() {
+        guard settingsWasVisible else { return }
+        settingsWasVisible = false
+        SettingsWindowController.shared.window?.orderFront(nil)
     }
 
     // MARK: 键击投递（NativeSpaceBridge Escape 同款 .cghidEventTap 语义）
@@ -321,10 +345,16 @@ final class InputBubbleController: NSObject {
     // MARK: 面板构建（lazy 单建；锚定每次 summon 重算）
 
     private func builtPanel() -> (InputBubblePanel, NSTextView) {
-        if let panel, let textView { return (panel, textView) }
+        let size = bubbleSize
+        let submitOnEnter = InputBubblePreferences.submitOnEnter
+        if let panel, let textView, let built = panelBuiltFor,
+           built.size == size, built.submitOnEnter == submitOnEnter {
+            return (panel, textView)
+        }
+        if let stale = panel { stale.orderOut(nil) }
 
         let panel = InputBubblePanel(
-            contentRect: NSRect(origin: .zero, size: bubbleSize),
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -338,15 +368,16 @@ final class InputBubbleController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.delegate = self
 
-        let card = BubbleCardView(frame: NSRect(origin: .zero, size: bubbleSize))
+        let card = BubbleCardView(frame: NSRect(origin: .zero, size: size))
 
-        let hint = NSTextField(labelWithString: "Enter 注入终端 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · Esc 关闭")
+        let hint = NSTextField(labelWithString: InputBubbleKeyPlan.hintText(submitOnEnter: submitOnEnter))
         hint.font = NSFont.systemFont(ofSize: 10)
         hint.textColor = Self.dynamicColor(lightHex: 0x8A7B68, darkHex: 0xA29380)
-        hint.frame = NSRect(x: 14, y: 8, width: bubbleSize.width - 28, height: 14)
+        hint.frame = NSRect(x: 14, y: 8, width: size.width - 28, height: 14)
+        hint.lineBreakMode = .byTruncatingTail
         card.addSubview(hint)
 
-        let scroll = NSScrollView(frame: NSRect(x: 12, y: 26, width: bubbleSize.width - 24, height: bubbleSize.height - 40))
+        let scroll = NSScrollView(frame: NSRect(x: 12, y: 26, width: size.width - 24, height: size.height - 40))
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
@@ -375,6 +406,7 @@ final class InputBubbleController: NSObject {
 
         self.panel = panel
         self.textView = textView
+        self.panelBuiltFor = (size, submitOnEnter)
         return (panel, textView)
     }
 
@@ -442,7 +474,11 @@ extension InputBubbleController: NSTextViewDelegate {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)):
             if mods.contains(.shift) { return false }  // 默认行为：插入换行
-            submit(mode: mods.contains(.command) ? .pasteOnly : .submit)
+            let mode = InputBubbleKeyPlan.resolveMode(
+                commandHeld: mods.contains(.command),
+                submitOnEnter: InputBubblePreferences.submitOnEnter
+            )
+            submit(mode: mode)
             return true
         case #selector(NSResponder.cancelOperation(_:)):
             dismiss(reactivateTarget: true)

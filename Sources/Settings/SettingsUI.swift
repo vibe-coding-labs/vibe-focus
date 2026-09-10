@@ -115,6 +115,7 @@ public struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     hotKeySection
+                    inputBubbleSection
                     permissionsSection
                     loginItemSection
                 }

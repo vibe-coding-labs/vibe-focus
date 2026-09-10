@@ -44,6 +44,21 @@ enum InputBubbleKeyPlan {
         case .cancel: return []
         }
     }
+
+    /// B133：Enter 键位 → 提交模式解析（唯一事实源，TextView 委托与提示文案共用）。
+    /// 基准由偏好 submitOnEnter 决定；⌘ 修饰取反（提交↔仅粘贴）；⇧ 由调用方先行放行为换行。
+    static func resolveMode(commandHeld: Bool, submitOnEnter: Bool) -> InputBubbleSubmitMode {
+        let base: InputBubbleSubmitMode = submitOnEnter ? .submit : .pasteOnly
+        guard commandHeld else { return base }
+        return base == .submit ? .pasteOnly : .submit
+    }
+
+    /// 气泡底部快捷键提示文案（随 submitOnEnter 语义同步，防文案与行为漂移）。
+    static func hintText(submitOnEnter: Bool) -> String {
+        submitOnEnter
+            ? "Enter 注入终端 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · Esc 关闭"
+            : "Enter 粘贴到终端 · Shift+Enter 换行 · ⌘Enter 粘贴并提交 · Esc 关闭"
+    }
 }
 
 /// 注入前决策门（唯一判定点，执行器照办不二次判断）。

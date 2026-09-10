@@ -107,5 +107,34 @@ extension RunnerHarness {
         // --- 时序常量存在性（执行器消费，防误删） ---
         check("timing: 轮询预算 > 间隔", InputBubbleTiming.frontmostPollBudgetMs > InputBubbleTiming.frontmostPollIntervalMs)
         check("timing: 粘贴→回车间隔与恢复延迟为正", InputBubbleTiming.pasteToReturnDelayMs > 0 && InputBubbleTiming.clipboardRestoreDelayMs > 0)
+
+        // --- B133 尺寸归一（clamp 纯函数） ---
+        check("prefs: 宽度未设置(0) → 默认 480", InputBubblePreferences.clampedWidth(0) == 480)
+        check("prefs: 宽度步进取整 483 → 480", InputBubblePreferences.clampedWidth(483) == 480)
+        check("prefs: 宽度越上界 9999 → 720", InputBubblePreferences.clampedWidth(9999) == 720)
+        check("prefs: 宽度越下界 100 → 320", InputBubblePreferences.clampedWidth(100) == 320)
+        check("prefs: 宽度合法值 600 保真", InputBubblePreferences.clampedWidth(600) == 600)
+        check("prefs: 高度未设置(0) → 默认 150", InputBubblePreferences.clampedHeight(0) == 150)
+        check("prefs: 高度步进取整 157 → 160", InputBubblePreferences.clampedHeight(157) == 160)
+        check("prefs: 高度越上界 500 → 300", InputBubblePreferences.clampedHeight(500) == 300)
+        check("prefs: 高度越下界 50 → 100", InputBubblePreferences.clampedHeight(50) == 100)
+
+        // --- B133 回车默认行为 → 模式解析矩阵 ---
+        if case .submit = InputBubbleKeyPlan.resolveMode(commandHeld: false, submitOnEnter: true) {
+            check("resolveMode: 默认提交+无修饰 → submit", true)
+        } else { check("resolveMode: 默认提交+无修饰 → submit", false) }
+        if case .pasteOnly = InputBubbleKeyPlan.resolveMode(commandHeld: true, submitOnEnter: true) {
+            check("resolveMode: 默认提交+⌘ → pasteOnly", true)
+        } else { check("resolveMode: 默认提交+⌘ → pasteOnly", false) }
+        if case .pasteOnly = InputBubbleKeyPlan.resolveMode(commandHeld: false, submitOnEnter: false) {
+            check("resolveMode: 仅粘贴模式+无修饰 → pasteOnly", true)
+        } else { check("resolveMode: 仅粘贴模式+无修饰 → pasteOnly", false) }
+        if case .submit = InputBubbleKeyPlan.resolveMode(commandHeld: true, submitOnEnter: false) {
+            check("resolveMode: 仅粘贴模式+⌘ → submit", true)
+        } else { check("resolveMode: 仅粘贴模式+⌘ → submit", false) }
+
+        // --- B133 提示文案随行为同步 ---
+        check("hint: 提交模式文案含「注入终端」", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("注入终端"))
+        check("hint: 仅粘贴模式文案含「粘贴到终端」", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("粘贴到终端"))
     }
 }
