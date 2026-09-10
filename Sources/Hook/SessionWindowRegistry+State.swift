@@ -101,6 +101,10 @@ extension SessionWindowRegistry {
             if let state = windowStates[key] {
                 log("[SessionWindowRegistry] purging closed window: wid=\(state.windowID) pid=\(state.pid) app=\(state.appName ?? "unknown")")
                 store.deleteWindowState(windowID: state.windowID)
+                // B132 补齐：窗口已清则其会话别名同步作废（stale 别名正是 B125 张冠李戴类事故的种子）
+                if let sid = state.sessionID {
+                    sessionAliasWindowID.removeValue(forKey: sid)
+                }
             }
             windowStates.removeValue(forKey: key)
         }

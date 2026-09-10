@@ -81,11 +81,14 @@ enum CodexHookPreferences {
     /// Codex 可触发事件字典：SessionStart 恒注册（远程 label 绑定自愈入口）+
     /// SessionEnd 按触发开关。Stop/UserPromptSubmit 是 Claude 特有事件，codex 无对应
     /// 事件、写入永不触发。
-    static func codexHooksDict() -> [String: Any] {
+    static func codexHooksDict(scriptPath: String = ClaudeHookPreferences.helperScriptPath) -> [String: Any] {
         var hooks: [String: Any] = [:]
-        hooks["SessionStart"] = ClaudeHookPreferences.makeHookEntry()
+        // B132 形状对齐：事件值必须为 entry 数组（与远程生成器 generateCodexHooksDictJSON
+        // 及 isHookInstalled 认可的规范形状一致）；此前裸字典让本地装机与远程通道分裂，
+        // 且 cleanVibeFocusHooks（[[String:Any]] 语义）对裸字典卸载失灵。
+        hooks["SessionStart"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
         if ClaudeHookPreferences.triggerOnSessionEnd {
-            hooks["SessionEnd"] = ClaudeHookPreferences.makeHookEntry()
+            hooks["SessionEnd"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
         }
         return hooks
     }
@@ -210,13 +213,18 @@ enum CodexHookPreferences {
         var wrapped = (document["hooks"] as? [String: Any]) ?? [:]
         wrapped = mergedHooks(
             existing: wrapped,
-            ourHooks: codexHooksDict(),
+            ourHooks: codexHooksDict(scriptPath: scriptPath),
             triggerOnSessionEnd: triggerOnSessionEnd,
             autoRestoreOnPromptSubmit: false,
             scriptPath: scriptPath,
             targetURL: targetURL
         )
         cleanVibeFocusHooks(from: &document, scriptPath: scriptPath, targetURL: targetURL)
+        // B130 语义补齐：历史错形状的顶层事件键整体降级（该形状 codex 解析失败整文件
+        // 不加载，顶层事件无可达语义；我方条目已迁入规范 hooks 层，foreign 条目一并弃置）
+        for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
+            document.removeValue(forKey: key)
+        }
         document["hooks"] = wrapped
         return (document, wrapped.keys.sorted())
     }

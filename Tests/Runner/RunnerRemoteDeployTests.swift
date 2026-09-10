@@ -38,8 +38,11 @@ extension RunnerHarness {
         let injected = RemoteInstallDeploy.scriptForArguments([flag, "10.0.0.9"], domain: injectedDomain)
         check("remoteDeploy: 假域 token/port 注入生成物",
               injected?.contains("tok-b129") == true && injected!.contains("39999"))
-        CFPreferencesSetAppValue("claudeHookToken" as CFString, kCFNull as CFTypeRef?, injectedDomain as CFString)
-        CFPreferencesSetAppValue("claudeHookPort" as CFString, kCFNull as CFTypeRef?, injectedDomain as CFString)
+        // B132 修崩：删键要传 NULL（Swift nil）而非 kCFNull——本机 macOS 24.6 实测
+        // cfprefs 对 kCFNull setValue 路径 _CFPrefsValidateValueForKey 抛 NSException
+        // （SIGABRT，纯净 main 检出复现同一位置），文档语义为「NULL 移除键」。
+        CFPreferencesSetAppValue("claudeHookToken" as CFString, nil, injectedDomain as CFString)
+        CFPreferencesSetAppValue("claudeHookPort" as CFString, nil, injectedDomain as CFString)
         CFPreferencesAppSynchronize(injectedDomain as CFString)
 
         // 5. 域为空 → token 兜底空串、port 兜底 39277（生成物仍可用）
