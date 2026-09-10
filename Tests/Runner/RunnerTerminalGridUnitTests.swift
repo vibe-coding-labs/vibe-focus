@@ -93,6 +93,65 @@ extension RunnerHarness {
               && clampedFrames[0].maxX <= visible.maxX && clampedFrames[0].maxY <= visible.maxY)
     }
 
+    // ===== coveringGrid + captureSummaryMessage：自由摆法捕获数字自洽 =====
+    // inferGrid 是几何聚类估计，自由摆法下 rows×cols 乘积≠窗口数（真机实证：16 窗聚成 3×4），
+    // 快照照存裸推断网格会让重排恢复帧不足丢窗、文案把两数并列会被读成矛盾。
+    do {
+        // 干净网格：原样保留（乘积 == 格子数不动）
+        check("covering: 干净网格 3×4/12 原样",
+              TerminalGridPlanner.coveringGrid(inferred: (3, 4), cellCount: 12) == (rows: 3, cols: 4))
+        // 欠覆盖：先扩列（2×3/7 → 2×4=8）
+        check("covering: 欠覆盖先扩列 2×3/7→2×4",
+              TerminalGridPlanner.coveringGrid(inferred: (2, 3), cellCount: 7) == (rows: 2, cols: 4))
+        // 列到顶扩行（3×4/16 → 4×4）
+        check("covering: 列到顶扩行 3×4/16→4×4",
+              TerminalGridPlanner.coveringGrid(inferred: (3, 4), cellCount: 16) == (rows: 4, cols: 4))
+        // 过覆盖但合法：不动（3×2=6 ≥ 5）
+        check("covering: 过覆盖合法网格原样",
+              TerminalGridPlanner.coveringGrid(inferred: (3, 2), cellCount: 5) == (rows: 3, cols: 2))
+        // 推断越界（fallback 1×N）：夹回上限再长到覆盖（1×16/16 → 4×4）
+        check("covering: 越界推断 1×16/16→4×4",
+              TerminalGridPlanner.coveringGrid(inferred: (1, 16), cellCount: 16) == (rows: 4, cols: 4))
+        // 超 4×4 容量：封顶 4×4（重排只放前 16 格，总量由恢复汇总如实播报）
+        check("covering: 超容量封顶 3×4/20→4×4",
+              TerminalGridPlanner.coveringGrid(inferred: (3, 4), cellCount: 20) == (rows: 4, cols: 4))
+        // 退化单格
+        check("covering: 单格原样",
+              TerminalGridPlanner.coveringGrid(inferred: (1, 1), cellCount: 1) == (rows: 1, cols: 1))
+
+        // 文案：干净网格才并列形状，自由摆法只报窗口数（不再出现「16 (3×4)」式矛盾）
+        check("summary: 干净网格带 (3×4)",
+              TerminalGridPlanner.captureSummaryMessage(cellCount: 12, rows: 3, cols: 4, sessionCount: 2)
+              == "已捕获 12 个终端窗口（3×4），其中 2 个关联到 Claude session")
+        check("summary: 乘积不符省略括号",
+              TerminalGridPlanner.captureSummaryMessage(cellCount: 16, rows: 3, cols: 4, sessionCount: 0)
+              == "已捕获 16 个终端窗口，其中 0 个关联到 Claude session")
+        check("summary: 乘积大于窗数同样省略",
+              TerminalGridPlanner.captureSummaryMessage(cellCount: 5, rows: 3, cols: 2, sessionCount: 1)
+              == "已捕获 5 个终端窗口，其中 1 个关联到 Claude session")
+        check("summary: 单行 fallback 1×N 自洽展示",
+              TerminalGridPlanner.captureSummaryMessage(cellCount: 3, rows: 1, cols: 3, sessionCount: 0)
+              == "已捕获 3 个终端窗口（1×3），其中 0 个关联到 Claude session")
+
+        // 恢复重排：旧快照存的是裸推断网格（3×4/16 格）屏失效 → 覆盖成 4×4，16 窗全有位子
+        func legacyCell(_ index: Int) -> TerminalGridCellSnapshot {
+            TerminalGridCellSnapshot(index: index, x: 10, y: 20, width: 300, height: 200,
+                                     ttyPath: nil, sessionID: nil, cwd: nil, title: nil)
+        }
+        let legacy = TerminalGridSnapshot(
+            name: "legacy", appBundleID: "com.apple.Terminal", displayID: 1,
+            displayYabaiIndex: nil, rows: 3, cols: 4,
+            cells: (0..<16).map(legacyCell),
+            launchCommand: nil
+        )
+        let legacyReplan = TerminalGridController.restoreTargetFrames(
+            snapshot: legacy, recordedDisplayStillFits: false,
+            visibleFrame: CGRect(x: 0, y: 0, width: 2000, height: 1000))
+        check("restoreFrames: 旧快照欠覆盖重排 16 窗全有位子",
+              legacyReplan.count == 16
+              && legacyReplan.allSatisfy { $0.maxX <= 2000 && $0.maxY <= 1000 })
+    }
+
     // ===== cocoaBoundsTuple：Quartz frame → Cocoa {l, t, r, b}（B65 补测） =====
     // y 轴翻转依赖活屏高（真机相关），此处锁定机器无关契约：格式/x 轴取整/高度保持/翻转方向。
     do {

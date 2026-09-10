@@ -234,8 +234,9 @@ extension TerminalGridController {
     }
 
     /// 恢复目标帧规划（restoreLayout 与 autoRestore 共用唯一事实源）：
-    /// 目标屏仍是记录屏 → 按记录 frame clamp 进可用区；失效 → 按 rows×cols 重排。
-    /// （纯决策，输入全部真值采集；Runner 穷尽锁定）
+    /// 目标屏仍是记录屏 → 按记录 frame clamp 进可用区；失效 → 覆盖网格重排。
+    /// 重排前先长成覆盖网格：旧快照存的是裸推断网格（自由摆法乘积可能 < 格子数），
+    /// 照用会帧数不足、超出的窗被静默丢掉。（纯决策，输入全部真值采集；Runner 穷尽锁定）
     static func restoreTargetFrames(
         snapshot: TerminalGridSnapshot,
         recordedDisplayStillFits: Bool,
@@ -244,9 +245,13 @@ extension TerminalGridController {
         if recordedDisplayStillFits {
             return snapshot.cells.map { TerminalGridPlanner.clampToVisible(frame: $0.frame, visibleFrame: visibleFrame) }
         }
+        let grid = TerminalGridPlanner.coveringGrid(
+            inferred: (rows: snapshot.rows, cols: snapshot.cols),
+            cellCount: snapshot.cells.count
+        )
         return TerminalGridPlanner.cells(
             visibleFrame: visibleFrame,
-            spec: .init(rows: snapshot.rows, cols: snapshot.cols, gap: TerminalGridPreferences.gap)
+            spec: .init(rows: grid.rows, cols: grid.cols, gap: TerminalGridPreferences.gap)
         )
     }
 

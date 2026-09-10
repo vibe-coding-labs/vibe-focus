@@ -115,13 +115,16 @@ extension TerminalGridController {
 
         let dominantBundleID = terminalEntries.compactMap { bundleIdentifier(ofPID: $0.ownerPID) }.first ?? "com.apple.Terminal"
         let snapshotName = name ?? "捕获布局 " + Self.dateFormatter.string(from: Date())
+        // 存覆盖网格而非裸推断网格：自由摆法下推断乘积可能小于窗口数，
+        // 照存会让重排恢复帧数不足丢窗（文案侧仍用裸推断判断是否干净网格）
+        let storedGrid = TerminalGridPlanner.coveringGrid(inferred: grid, cellCount: cells.count)
         let snapshot = TerminalGridSnapshot(
             name: snapshotName,
             appBundleID: dominantBundleID,
             displayID: displayID,
             displayYabaiIndex: SpaceController.shared.exactYabaiDisplayIndex(for: screen),
-            rows: grid.rows,
-            cols: grid.cols,
+            rows: storedGrid.rows,
+            cols: storedGrid.cols,
             cells: cells,
             launchCommand: TerminalGridPreferences.launchCommand.isEmpty ? nil : TerminalGridPreferences.launchCommand
         )
@@ -130,11 +133,12 @@ extension TerminalGridController {
             "op": op,
             "windows": String(cells.count),
             "sessions": String(sessionCount),
-            "grid": "\(grid.rows)x\(grid.cols)"
+            "grid": "\(storedGrid.rows)x\(storedGrid.cols)"
         ])
         return OperationResult(
             ok: true,
-            message: "已捕获 \(cells.count) 个终端窗口（\(grid.rows)×\(grid.cols)），其中 \(sessionCount) 个关联到 Claude session"
+            message: TerminalGridPlanner.captureSummaryMessage(
+                cellCount: cells.count, rows: grid.rows, cols: grid.cols, sessionCount: sessionCount)
         )
     }
 

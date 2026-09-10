@@ -126,4 +126,29 @@ enum TerminalGridPlanner {
         y = min(max(y, visibleFrame.minY), visibleFrame.maxY - height)
         return CGRect(x: x, y: y, width: width, height: height)
     }
+
+    /// 覆盖网格：在推断网格基础上保证 rows×cols ≥ 格子数（每窗在重排网格里都有位子）。
+    /// inferGrid 是几何聚类估计——自由摆放时乘积≠窗口数（16 窗可聚成 3 行 4 列），
+    /// 照存会导致重排恢复帧数不足而丢窗；先夹进行列上限再按「先扩列后扩行」长到覆盖。
+    /// 超过 4×4 容量的快照无处可长 → 返回 4×4（重排只放得下前 16 格，总量由恢复汇总如实播报）。
+    static func coveringGrid(inferred: (rows: Int, cols: Int), cellCount: Int) -> (rows: Int, cols: Int) {
+        var rows = max(1, min(inferred.rows, maxGridSize))
+        var cols = max(1, min(inferred.cols, maxGridSize))
+        let target = min(max(cellCount, 1), maxGridSize * maxGridSize)
+        while rows * cols < target {
+            if cols < maxGridSize {
+                cols += 1
+            } else {
+                rows += 1
+            }
+        }
+        return (rows: rows, cols: cols)
+    }
+
+    /// 捕获成功文案：括号网格仅在 rows×cols 恰等于窗口数（干净网格）时展示。
+    /// 推断网格是聚类估计，自由摆放时乘积≠窗口数，两数并列会被读成「数字对不上」。
+    static func captureSummaryMessage(cellCount: Int, rows: Int, cols: Int, sessionCount: Int) -> String {
+        let gridNote = rows * cols == cellCount ? "（\(rows)×\(cols)）" : ""
+        return "已捕获 \(cellCount) 个终端窗口\(gridNote)，其中 \(sessionCount) 个关联到 Claude session"
+    }
 }
