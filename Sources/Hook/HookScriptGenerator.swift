@@ -306,11 +306,12 @@ extension ClaudeHookPreferences {
     VF_PPID="${PPID:-}"
     VF_CPD="${CLAUDE_PROJECT_DIR:-}"
     VF_WID="${WINDOWID:-}"
+    VF_SSHC="${SSH_CLIENT:-}"
 
     VF_ENRICHED=$(printf '%s' "$VF_PAYLOAD" | python3 -c "
     import sys, json
     d = json.load(sys.stdin)
-    d['terminal_ctx'] = {
+    ctx = {
         'term_session_id': sys.argv[1],
         'iterm_session_id': sys.argv[2],
         'kitty_window_id': sys.argv[3],
@@ -321,8 +322,19 @@ extension ClaudeHookPreferences {
         'window_id': sys.argv[8],
         'machine_label': sys.argv[9]
     }
+    # SSH_CLIENT = client_ip client_port server_ip server_port
+    # client_port 是 Mac 侧 ssh 进程的本地 TCP 端口，服务端据此反查本机窗口
+    # （B125 动态绑定）。注意本段 -c 脚本被 bash 双引号包裹：python 代码与注释
+    # 内不得出现双引号/$/反引号。
+    conn = sys.argv[10].split() if len(sys.argv) > 10 else []
+    if len(conn) >= 2:
+        ctx['ssh_client_ip'] = conn[0]
+        ctx['ssh_client_port'] = conn[1]
+    if len(conn) >= 3:
+        ctx['ssh_server_ip'] = conn[2]
+    d['terminal_ctx'] = ctx
     print(json.dumps(d))
-    " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
+    " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" "$VF_SSHC" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
     VF_URL="http://$VF_HOST:$VF_PORT/claude/hook"
     VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")

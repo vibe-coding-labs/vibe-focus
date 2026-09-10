@@ -868,10 +868,45 @@ extension RunnerHarness {
             LANHookPreferences.remoteBindings = ["lab-live": 424242]
             let handler = HookEventHandler.shared
             check("remoteBind: label 未映射 → nil 且描述更新",
-                  handler.resolveRemoteBinding(label: "no-such-label", sessionID: "s-x") == nil
+                  handler.resolveRemoteBinding(label: "no-such-label", sessionID: "s-x", terminalCtx: nil) == nil
                   && SessionWindowRegistry.shared.lastEventDescription.contains("no-such-label"))
             check("remoteBind: label 已映射但窗口已消失 → nil（window_gone）",
-                  handler.resolveRemoteBinding(label: "lab-live", sessionID: "s-x") == nil)
+                  handler.resolveRemoteBinding(label: "lab-live", sessionID: "s-x", terminalCtx: nil) == nil)
+        }
+
+        // B125：SSH 连接指纹动态绑定（lsof/ps/iTerm2 枚举三段纯解析 + TerminalContext 新字段）
+        do {
+            let lsof = """
+            COMMAND   PID  USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+            ssh      9101  cc     7u  IPv4 0xabcd      0t0  TCP 192.168.1.12:54321->192.168.1.83:22 (ESTABLISHED)
+            ssh      9200  cc     7u  IPv4 0xabce      0t0  TCP 192.168.1.12:54330->192.168.1.90:22 (ESTABLISHED)
+            """
+            check("sshLink: lsof 本地端口+服务端 IP 双匹配 → pid",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.83", clientPort: "54321") == 9101)
+            check("sshLink: 端口不吻合 → nil",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.83", clientPort: "9999") == nil)
+            check("sshLink: 服务端 IP 不吻合 → nil",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.90", clientPort: "54321") == nil)
+            check("sshLink: 空端口/空 IP 拒绝（不猜测）",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.83", clientPort: "") == nil
+                  && WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "", clientPort: "54321") == nil)
+            check("sshLink: ps tty 规整（ttys→/dev/ttys；?? 拒绝）",
+                  WindowManager.SSHLinkParse.parseTTYOfPid("ttys001") == "/dev/ttys001"
+                  && WindowManager.SSHLinkParse.parseTTYOfPid("/dev/ttys002") == "/dev/ttys002"
+                  && WindowManager.SSHLinkParse.parseTTYOfPid("??") == nil)
+            let map = "3220|/dev/ttys001|chat-show\n3160|/dev/ttys000|ai-cex"
+            check("sshLink: tty→窗口映射命中与未命中",
+                  WindowManager.SSHLinkParse.parseTTYWindowMap(map, tty: "/dev/ttys001") == 3220
+                  && WindowManager.SSHLinkParse.parseTTYWindowMap(map, tty: "/dev/ttys777") == nil)
+            let newPayload = #"{"ssh_client_ip":"192.168.1.12","ssh_client_port":"54321","ssh_server_ip":"192.168.1.83"}"#
+            let ctxNew = try? JSONDecoder().decode(TerminalContext.self, from: Data(newPayload.utf8))
+            check("sshLink: TerminalContext 新字段解码",
+                  ctxNew?.sshClientPort == "54321" && ctxNew?.sshClientIP == "192.168.1.12"
+                  && ctxNew?.sshServerIP == "192.168.1.83")
+            let oldPayload = #"{"tty":"/dev/pts/1","machine_label":"remote-server-001"}"#
+            let ctxOld = try? JSONDecoder().decode(TerminalContext.self, from: Data(oldPayload.utf8))
+            check("sshLink: 旧载荷缺字段 → nil 兼容",
+                  ctxOld?.sshClientPort == nil && ctxOld?.machineLabel == "remote-server-001")
         }
 
         // ensureTokenGenerated 生成/缓存契约（B120：token 稳定性有安全意义——独立域用后清键）

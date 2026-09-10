@@ -107,7 +107,7 @@ extension HookEventHandler {
                 ]
             )
             // 远程机器：通过 machine_label 查映射表
-            let remoteResolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID)
+            let remoteResolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID, terminalCtx: terminalCtx)
             switch Self.decideSessionBind(isRemote: true, machineLabel: label, localResolved: nil, remoteResolved: remoteResolved) {
             case .bind(let identity, let bindingType):
                 return finishSessionBind(

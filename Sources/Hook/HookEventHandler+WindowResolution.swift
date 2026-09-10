@@ -114,7 +114,7 @@ extension HookEventHandler {
                     "machineLabel": label
                 ]
             )
-            guard let identity = resolveRemoteBinding(label: label, sessionID: payload.sessionID) else {
+            guard let identity = resolveRemoteBinding(label: label, sessionID: payload.sessionID, terminalCtx: payload.terminalCtx) else {
                 return .none
             }
             SessionWindowRegistry.shared.bind(

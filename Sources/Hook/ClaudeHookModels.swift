@@ -20,6 +20,13 @@ struct TerminalContext: Codable, Equatable {
     let claudeProjectDir: String?
     let windowID: String?
     let machineLabel: String?
+    /// 远程会话：SSH_CONNECTION 的客户端 ip/port（B125 动态绑定）。client_port =
+    /// Mac 侧 ssh 进程的本地 TCP 端口，据此反查会话真正所在的终端窗口。
+    /// 旧转发器/本地会话无此字段（可选，解码 nil 向后兼容；带默认值使
+    /// memberwise init 对既有调用点零涟漪）。
+    var sshClientIP: String? = nil
+    var sshClientPort: String? = nil
+    var sshServerIP: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case termSessionID = "term_session_id"
@@ -31,6 +38,9 @@ struct TerminalContext: Codable, Equatable {
         case claudeProjectDir = "claude_project_dir"
         case windowID = "window_id"
         case machineLabel = "machine_label"
+        case sshClientIP = "ssh_client_ip"
+        case sshClientPort = "ssh_client_port"
+        case sshServerIP = "ssh_server_ip"
     }
 
     /// 是否包含可用于窗口匹配的有用上下文。
