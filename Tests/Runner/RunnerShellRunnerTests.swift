@@ -171,3 +171,19 @@ extension RunnerHarness {
               }) == "/tmp/vf-x")
     }
 }
+
+// MARK: - B140：recordExit 路径注入直测（退出行落盘 + 双形态）
+
+extension RunnerHarness {
+    func runRecordExitTests() {
+        let path = "/tmp/vf-b140-exit-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        ExitJournal.recordExit(reason: "vf-test-clean", to: path)
+        ExitJournal.recordExit(reason: "vf-test-sig", signal: 11, name: "SIGSEGV", to: path)
+        let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        check("recordExit: 两次退出行按序落盘（clean 与 signal 双形态）",
+              content.contains("vf-test-clean") && content.contains("vf-test-sig")
+              && content.contains("11") && content.contains("SIGSEGV"))
+    }
+}

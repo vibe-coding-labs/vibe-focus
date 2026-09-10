@@ -176,6 +176,11 @@ enum ExitJournal {
 
     /// 退出记录：reason 如 "clean" / "lock-failed-terminate" / "reuse-existing-activate"。
     static func recordExit(reason: String, signal: Int32? = nil, name: String? = nil) {
+        recordExit(reason: reason, signal: signal, name: name, to: filePath)
+    }
+
+    /// 路径注入变体（B140）：测试以临时文件直测退出行落盘语义，不触真身审计日志。
+    static func recordExit(reason: String, signal: Int32? = nil, name: String? = nil, to path: String) {
         hasRecordedExit = true
         appendLine(exitLine(
             pid: ProcessInfo.processInfo.processIdentifier,
@@ -183,7 +188,7 @@ enum ExitJournal {
             reason: reason,
             signal: signal,
             name: name
-        ))
+        ), to: path)
     }
 
     /// atexit 兜底：未被显式路径标记过（即正常 Quit / 正常 exit）写 clean。
