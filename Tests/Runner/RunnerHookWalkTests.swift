@@ -655,6 +655,28 @@ extension RunnerHarness {
                   handler.resolveRemoteBinding(label: "lab-live", sessionID: "s-x") == nil)
         }
 
+        // binding(for:) DB-fallback 脏数据清理分支（B108：非终端 pid 的 DB 绑定被识别并清除）
+        do {
+            let dir = "/tmp/vibefocus-swr4-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr4.db")
+            let reg = SessionWindowRegistry(store: solo)
+            // 先建实例后入库（绕过 init 的 isTerminalPID 清扫，B102 实证）：pid 12345 非真实终端进程
+            var dirty = WindowState(
+                windowID: 90, pid: 12345, tty: nil, axWindowNumber: nil, appName: "Ghost",
+                bundleIdentifier: nil, title: "stale", termSessionID: nil, itermSessionID: nil,
+                sessionID: "dirty-s", bindingType: .local, isCompleted: false,
+                createdAt: Date(), updatedAt: Date())
+            dirty.isCompleted = false
+            solo.saveWindowState(dirty)
+            check("swrLookup: DB 脏绑定（非终端 pid）→ 返回 nil 并从库清除",
+                  reg.binding(for: "dirty-s") == nil
+                  && solo.findWindowStateBySession(sessionID: "dirty-s") == nil)
+            check("swrLookup: 清理后再查 → nil（幂等）",
+                  reg.binding(for: "dirty-s") == nil)
+        }
+
         // 编排目标候选装配（B106：selectionPreview 静态缝提纯——runningIDs/usageRank 接线锁定）
         do {
             let t0 = Date(timeIntervalSince1970: 1_700_000_000)
