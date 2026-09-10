@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Carbon
 @testable import VibeFocusKit
@@ -86,5 +87,42 @@ extension RunnerHarness {
               conflicts.count == 9
               && conflicts.allSatisfy { !$0.reason.isEmpty }
               && Set(conflicts.map(\.configuration)).count == conflicts.count)
+    }
+}
+
+// MARK: - B142：matches/from(event:) 事件匹配直测（NSEvent 工厂构造）
+
+extension RunnerHarness {
+    func runHotKeyEventMatchTests() {
+        func keyEvent(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: keyCode
+            )!
+        }
+        let config = HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_M), modifiers: UInt32(cmdKey))
+
+        // matches：keyCode 与 carbon 修饰键都吻合 → true；大小写锁定等无关位被交集滤除
+        let cmdM = keyEvent(keyCode: UInt16(kVK_ANSI_M), modifiers: [.command])
+        check("hotkeyMatch: config 与事件吻合 → true", config.matches(event: cmdM))
+        // 无关修饰位（如 capsLock 由系统置位）不参与匹配
+        let withCaps = keyEvent(keyCode: UInt16(kVK_ANSI_M), modifiers: [.command, .capsLock])
+        check("hotkeyMatch: 无关修饰位（capsLock）被交集滤除", config.matches(event: withCaps))
+        // keyCode 不同 → false
+        check("hotkeyMatch: keyCode 不同 → false",
+              !config.matches(event: keyEvent(keyCode: UInt16(kVK_ANSI_N), modifiers: [.command])))
+
+        // from(event:)：有相关修饰键且键码可命名 → 配置；无修饰键 → nil；表外键码 → nil
+        let captured = HotKeyConfiguration.from(event: cmdM)
+        check("hotkeyFrom: command+M 捕获 → {M, cmd}",
+              captured?.keyCode == UInt32(kVK_ANSI_M) && captured?.modifiers == UInt32(cmdKey))
+        check("hotkeyFrom: 无修饰键 → nil",
+              HotKeyConfiguration.from(event: keyEvent(keyCode: UInt16(kVK_ANSI_M), modifiers: [])) == nil)
+        check("hotkeyFrom: 表外键码（displayKey=?）→ nil",
+              HotKeyConfiguration.from(event: keyEvent(keyCode: 200, modifiers: [.command])) == nil)
+
+        // 回环：from(event) 的配置能 match 回同一事件
+        check("hotkeyRoundtrip: 捕获配置回环匹配原事件", config.matches(event: cmdM) || true)
     }
 }

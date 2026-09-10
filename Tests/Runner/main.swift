@@ -239,6 +239,7 @@ final class FakeAuditor: RestoreAuditing {
         runPureSweepB()
         runAppIdentityTests()
         runHotKeyDisplayTests()
+        runHotKeyEventMatchTests()
         runToggleDecisionTests()
         runAXSelfHealTests()
         runRemoteInstallTests()
