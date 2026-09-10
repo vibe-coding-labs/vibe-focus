@@ -142,7 +142,11 @@ enum ExitJournal {
 
     /// 信号处理器专用：安装期打开一次审计 FD（O_APPEND），handler 内只 write 不再构造。
     static func openAppendFD() -> Int32 {
-        let path = filePath
+        openAppendFD(at: filePath)
+    }
+
+    /// 路径注入变体（B146）：测试以临时文件直测 FD 打开语义，不触真身审计日志。
+    static func openAppendFD(at path: String) -> Int32 {
         let dir = (path as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         return open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644)

@@ -214,3 +214,29 @@ extension RunnerHarness {
               ((try? String(contentsOfFile: path, encoding: .utf8)) ?? "").contains("clean"))
     }
 }
+
+// MARK: - B146：openAppendFD 路径注入直测（FD 打开/写入/自动建目录）
+
+extension RunnerHarness {
+    func runJournalFDTests() {
+        let path = "/tmp/vf-b146-fd-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let fd = ExitJournal.openAppendFD(at: path)
+        check("journalFD: 打开返回有效 fd", fd >= 0)
+        let payload = "fd-line\n"
+        payload.withCString { ptr in _ = write(fd, ptr, strlen(ptr)) }
+        close(fd)
+        check("journalFD: 写入落盘（O_APPEND 语义）",
+              (try? String(contentsOfFile: path, encoding: .utf8)) == "fd-line\n")
+
+        // 二次打开追加不覆盖
+        let fd2 = ExitJournal.openAppendFD(at: path)
+        let payload2 = "fd-line-2\n"
+        payload2.withCString { ptr in _ = write(fd2, ptr, strlen(ptr)) }
+        close(fd2)
+        check("journalFD: 二次打开追加不覆盖",
+              (try? String(contentsOfFile: path, encoding: .utf8))?.contains("fd-line-2") == true
+              && (try? String(contentsOfFile: path, encoding: .utf8))?.contains("fd-line\n") == true)
+    }
+}
