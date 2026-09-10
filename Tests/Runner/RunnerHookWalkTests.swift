@@ -788,6 +788,30 @@ extension RunnerHarness {
                   Set(twice.keys) == Set(fresh.keys))
         }
 
+        // generateHooksDict 三开关组合（B117：默认四事件字典契约——Stop 恒注册）
+        do {
+            let saved = (ClaudeHookPreferences.triggerOnStop,
+                         ClaudeHookPreferences.triggerOnSessionEnd,
+                         ClaudeHookPreferences.autoRestoreOnPromptSubmit)
+            defer {
+                ClaudeHookPreferences.triggerOnStop = saved.0
+                ClaudeHookPreferences.triggerOnSessionEnd = saved.1
+                ClaudeHookPreferences.autoRestoreOnPromptSubmit = saved.2
+            }
+            ClaudeHookPreferences.triggerOnStop = true
+            ClaudeHookPreferences.triggerOnSessionEnd = true
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = true
+            let all = ClaudeHookPreferences.generateHooksDict()
+            check("hooksDict: 三开关全开 → 四事件键齐且条目嵌 hooks 含 helper 命令",
+                  Set(all.keys) == ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"]
+                  && ((all["Stop"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])?.first?["command"] != nil)
+            ClaudeHookPreferences.triggerOnSessionEnd = false
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = false
+            let trimmed = ClaudeHookPreferences.generateHooksDict()
+            check("hooksDict: 开关关 → SessionEnd/UserPromptSubmit 不注册、Stop 恒注册",
+                  Set(trimmed.keys) == ["SessionStart", "Stop"])
+        }
+
         // uninstallHookFromCodexSettings（B114：卸载路径——外部条目保留/缺文件免卸载/坏 JSON 拒绝）
         do {
             let dir = "/tmp/vibefocus-codex2-\(UUID().uuidString)"

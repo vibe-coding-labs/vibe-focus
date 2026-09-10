@@ -182,3 +182,4 @@
 | B114 | uninstallHookFromCodexSettings 卸载路径直测（CodexHookInstaller 卸载按钮路径）：混合设置（我方 url 条目+外部 command 条目+他方顶层键）卸载后我方条目清除、外部条目与他方键保留、返回成功；缺文件与坏 JSON 均按「视为已卸载」返回 true（实现语义如实锁定）→ HookWalkTests +3 断言。Standalone 8/8；Runner 1283→1286 | ✅ 2026-09-10 |
 | B115 | 收尾微批：clearAllBindings 四清直测（内存/别名/描述/DB）+ TerminalUsageTracker.start 二次调用幂等 → HookWalkTests +2 断言。Standalone 8/8；Runner 1286→1288 | ✅ 2026-09-10 |
 | B116 | binding(for:) 直命中/alias 优先级与无命中 nil 直测（单条目确定性夹具），HookWalkTests +2 断言。Standalone 8/8；Runner 1288→1290 | ✅ 2026-09-10 |
+| B117 | generateHooksDict 三开关组合直测（HookInstaller/ClaudeHookPreferences 交界默认字典）：三开关全开四事件键齐且条目嵌 hooks 含 helper 命令 / SessionEnd·UserPromptSubmit 开关关不注册而 Stop 恒注册（handleStop 内部按 remoteOnly 分流的产品语义）→ HookWalkTests +2 断言（偏好独立域种子化用后还原）。Standalone 8/8；Runner 1290→1292 | ✅ 2026-09-10 |
