@@ -122,6 +122,17 @@ extension HotKeyManager {
             }
         }
 
+        // B129 输入气泡 ⌥⌘B：仅 keyDown 非连拍 + 功能开启 + 未被主键/摆位键占用时消费
+        //（冲突让位原则：用户把主键或摆位键绑成 ⌥⌘B 时，气泡自动让位；tapDisabled 自愈
+        // 路径不走此分支，仍归下方 gate 处理）。
+        if type == .keyDown, !isAutorepeat,
+           InputBubblePreferences.isEnabled,
+           InputBubbleHotKey.matches(keyCode: keyCode, carbonModifiers: modifiers),
+           !primaryMatch, layoutMatch == nil {
+            HotKeyManager.triggerInputBubble()
+            return nil
+        }
+
         // Batch 17：事件路由判定提纯为 ToggleTriggerGate.cgEventRoute
         //（tapDisabled 自愈 / 连发与非 keyDown 放行 / 主键与摆位命中消费，优先级与拆分前一致）。
         switch ToggleTriggerGate.cgEventRoute(

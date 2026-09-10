@@ -99,6 +99,39 @@ extension HotKeyManager {
             log("[HotKey] Failed to register title editor Carbon hotkey: \(titleEditorStatus)", level: .warn)
         }
 
+        // B129: Register input bubble Carbon hotkey ⌥⌘B — 主键/摆位键占用时让位不注册
+        //（Carbon 同组合重复注册行为未定义，启动时一次性判定最稳）
+        if let inputBubbleHotKeyRef {
+            UnregisterEventHotKey(inputBubbleHotKeyRef)
+            self.inputBubbleHotKeyRef = nil
+        }
+        let bubbleClaimed = (currentHotKey.keyCode == InputBubbleHotKey.keyCode
+            && currentHotKey.modifiers == InputBubbleHotKey.carbonModifiers)
+            || (LayoutPreferences.isEnabled
+                && LayoutAction.allCases.contains { action in
+                    guard let hotKey = layoutTable.hotKey(for: action) else { return false }
+                    return hotKey.keyCode == InputBubbleHotKey.keyCode
+                        && hotKey.modifiers == InputBubbleHotKey.carbonModifiers
+                })
+        if bubbleClaimed {
+            log("[HotKey] Input bubble Carbon hotkey skipped: combo claimed by primary/layout binding", level: .debug)
+        } else {
+            let bubbleHotKeyID = EventHotKeyID(signature: hotkeySignature, id: 3)
+            let bubbleStatus = RegisterEventHotKey(
+                InputBubbleHotKey.keyCode,
+                InputBubbleHotKey.carbonModifiers,
+                bubbleHotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &inputBubbleHotKeyRef
+            )
+            if bubbleStatus == noErr {
+                log("[HotKey] Registered input bubble Carbon hotkey ⌥⌘B")
+            } else {
+                log("[HotKey] Failed to register input bubble Carbon hotkey: \(bubbleStatus)", level: .warn)
+            }
+        }
+
         registerLayoutHotKeys()
     }
 
@@ -177,6 +210,11 @@ extension HotKeyManager {
 
         if hotKeyID.id == 2 {
             HotKeyManager.triggerTitleEditor()
+            return noErr
+        }
+
+        if hotKeyID.id == 3 {
+            HotKeyManager.triggerInputBubble()
             return noErr
         }
 

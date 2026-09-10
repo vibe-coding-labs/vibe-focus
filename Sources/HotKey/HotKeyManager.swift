@@ -25,6 +25,8 @@ public final class HotKeyManager: ObservableObject {
     let hotkeyIdentifier: UInt32 = 1
     var hotKeyRef: EventHotKeyRef?
     var titleEditorHotKeyRef: EventHotKeyRef?
+    /// B129 输入气泡 ⌥⌘B Carbon 注册表（CGEventTap 不可用时的兜底通道）
+    var inputBubbleHotKeyRef: EventHotKeyRef?
     /// 摆位热键 Carbon 注册表：carbonHotKeyID → ref（registerLayoutHotKeys 维护）
     var layoutHotKeyRefs: [UInt32: EventHotKeyRef] = [:]
     var handlerRef: EventHandlerRef?
@@ -61,6 +63,15 @@ public final class HotKeyManager: ObservableObject {
         log("[HotKey] Title editor hotkey detected, dispatching editTitle")
         DispatchQueue.main.async {
             TitleEditorService.shared.editTitle()
+        }
+    }
+
+    /// Nonisolated entry point for input bubble hotkey (⌥⌘B) — CGEventTap C callback 域调用，
+    /// TitleEditor 同款模式：绕 @MainActor，main 队列转回隔离域（summon 内自查偏好开关）。
+    nonisolated static func triggerInputBubble() {
+        log("[HotKey] Input bubble ⌥⌘B matched")
+        DispatchQueue.main.async {
+            InputBubbleController.shared.summon()
         }
     }
 
