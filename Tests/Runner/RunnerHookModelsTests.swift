@@ -70,6 +70,17 @@ extension RunnerHarness {
         check("hookModels: response nil sessionID 键整体省略",
               w2["session_id"] == nil && w2.count == 4)
 
+        // E. BindingType 持久化契约（B109：bindingType 落 SQLite/审计行的 rawValue 稳定性）
+        do {
+            check("bindType: rawValue local/remote 契约 + 非法值拒绝",
+                  WindowState.BindingType(rawValue: "local") == .local
+                  && WindowState.BindingType(rawValue: "remote") == .remote
+                  && WindowState.BindingType(rawValue: "sideways") == nil)
+            let enc = try? JSONEncoder().encode(["bindingType": WindowState.BindingType.remote])
+            let decoded = enc.flatMap { try? JSONDecoder().decode([String: WindowState.BindingType].self, from: $0) }
+            check("bindType: Codable 回环保持 remote", decoded?["bindingType"] == .remote)
+        }
+
         // D. WindowIdentity Codable 回环（全字段含 capturedAt 同值过码）+ 可选缺省。
         let ident = WindowIdentity(windowID: 42, pid: 1234, bundleIdentifier: "com.apple.Terminal",
                                    appName: "Terminal", windowNumber: 7, title: "bash — 80x24")
