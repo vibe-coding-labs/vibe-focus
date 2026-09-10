@@ -1063,3 +1063,29 @@ extension RunnerHarness {
     }
     }
 }
+
+// MARK: - B144：installHelperScript 路径注入直测（0755/原子写/幂等覆盖，真身脚本零触碰）
+
+extension RunnerHarness {
+    func runHelperInstallTests() {
+        let dir = "/tmp/vf-b144-install-\(UUID().uuidString)"
+        let path = dir + "/hook-forwarder.sh"
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let first = ClaudeHookPreferences.installHelperScript(content: "#!/bin/bash\necho v1", to: path)
+        check("helperInstall: 首次安装成功且 0755",
+              first.0 && FileManager.default.isExecutableFile(atPath: path))
+        let second = ClaudeHookPreferences.installHelperScript(content: "#!/bin/bash\necho v2", to: path)
+        check("helperInstall: 幂等覆盖重装（内容更新）",
+              second.0 && (try? String(contentsOfFile: path, encoding: .utf8))?.contains("v2") == true)
+        check("helperInstall: 父目录缺失自动创建",
+              FileManager.default.fileExists(atPath: dir))
+    }
+}
+
+/// 测试用安装探针：转发 installHelperScript 注入变体（避免测试直接构造 ClaudeHookPreferences 域状态）
+struct ClaudeHookPipelineInstallProbe {
+    func install(content: String, to path: String) -> (Bool, String) {
+        ClaudeHookPreferences.installHelperScript(content: content, to: path)
+    }
+}

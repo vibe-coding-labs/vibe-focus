@@ -66,26 +66,27 @@ extension ClaudeHookPreferences {
         }
         #endif
         log("ClaudeHookPreferences.installHelperScript() entered", level: .debug)
-        let dir = helperScriptDir
+        return installHelperScript(content: generateHelperScriptContent(), to: helperScriptPath)
+    }
+
+    /// 路径注入变体（B144）：测试以临时文件直测安装语义（0755/原子写/幂等覆盖），
+    /// 不触真身脚本。dir 创建失败如实报错。
+    static func installHelperScript(content: String, to path: String) -> (Bool, String) {
+        let dir = (path as NSString).deletingLastPathComponent
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         } catch {
-            log("ClaudeHookPreferences.installHelperScript() failed to create dir", level: .debug, fields: ["error": error.localizedDescription])
             return (false, "无法创建目录: \(error.localizedDescription)")
         }
-
-        let content = generateHelperScriptContent()
         guard let data = content.data(using: .utf8) else {
-            log("ClaudeHookPreferences.installHelperScript() failed to encode script", level: .debug)
             return (false, "无法生成辅助脚本")
         }
         do {
-            try data.write(to: URL(fileURLWithPath: helperScriptPath), options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helperScriptPath)
-            log("[ClaudeHookPreferences] helper script installed to \(helperScriptPath)")
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+            log("[ClaudeHookPreferences] helper script installed to \(path)")
             return (true, "辅助脚本已安装")
         } catch {
-            log("ClaudeHookPreferences.installHelperScript() write failed", level: .debug, fields: ["error": error.localizedDescription])
             return (false, "安装辅助脚本失败: \(error.localizedDescription)")
         }
     }
