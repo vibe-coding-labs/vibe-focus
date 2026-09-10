@@ -672,6 +672,43 @@ extension RunnerHarness {
                   withToken == "http://127.0.0.1:39277/claude/hook?token=tok123")
         }
 
+        // Codex 配置路径/安装检测 + lanMode 往返 + supportTable 全表（B113 薄面收尾）
+        do {
+            let dir = "/tmp/vibefocus-codex-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            check("codexPath: home 注入派生目录与 hooks.json 路径",
+                  CodexHookPreferences.codexConfigDir(home: dir) == dir + "/.codex"
+                  && CodexHookPreferences.codexConfigPath(home: dir) == dir + "/.codex/hooks.json")
+            let settingsPath = CodexHookPreferences.codexConfigPath(home: dir)
+            let sp = ClaudeHookPreferences.helperScriptPath
+            let installedJSON = "{\"Stop\":[{\"hooks\":[{\"command\":\"" + sp + " --run\"}]}]}"
+            try? FileManager.default.createDirectory(atPath: dir + "/.codex", withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: settingsPath, contents: Data(installedJSON.utf8))
+            check("codexInstalled: command 含 helperScriptPath → true；缺失/无匹配 → false",
+                  CodexHookPreferences.isHookInstalled(at: settingsPath) == true
+                  && !CodexHookPreferences.isHookInstalled(at: dir + "/missing.json"))
+            let savedLan = LANHookPreferences.lanMode
+            defer { LANHookPreferences.lanMode = savedLan }
+            LANHookPreferences.lanMode = true
+            check("lanMode: set/get 往返", LANHookPreferences.lanMode == true)
+            LANHookPreferences.lanMode = false
+            check("lanMode: 复位 false", LANHookPreferences.lanMode == false)
+        }
+        do {
+            // supportTable 九终端全表契约（设置页 Picker 名单与自动化分级的唯一事实源）
+            let expected: [String: TerminalAutomationSupportLevel] = [
+                "com.apple.Terminal": .full, "com.googlecode.iterm2": .partial,
+                "dev.warp.Warp-Stable": .none, "com.mitchellh.ghostty": .none,
+                "io.alacritty": .none, "net.kovidgoyal.kitty": .none,
+                "com.github.wez.wezterm": .none, "com.electron.hyper": .none,
+                "org.tabby": .none,
+            ]
+            check("supportTable: 九终端全表逐项锁定（新增/删除/改级都红）",
+                  TerminalSelectionResolver.supportTable == expected
+                  && TerminalSelectionResolver.supportTable.count == 9)
+        }
+
         // mergedHooks 合并+开关裁剪（B112：CodexHookInstaller 52% 薄面——幂等/外部保留/开关移除）
         do {
             let targetURL = "http://127.0.0.1:39277/claude/hook"
