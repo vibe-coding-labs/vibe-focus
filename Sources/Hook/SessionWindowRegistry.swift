@@ -33,6 +33,10 @@ final class SessionWindowRegistry: ObservableObject {
     /// 测试注入临时 `WindowStateStore(dbPath:)` 实现无环境门控的直测。
     let store: WindowStateStore
 
+    /// B131 注入缝：CG 窗口枚举来源（purgeClosedWindows 判活用）。
+    /// 默认真身 CG 枚举；测试注入固定列表即可离线穷尽保留/清理分支。
+    var windowsProvider: () -> [CGWindowEntry] = cgWindowListAll
+
     init(store: WindowStateStore = .shared) {
         self.store = store
         let loaded = store.loadAllWindowStates()

@@ -681,3 +681,56 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B131：purgeClosedWindows 注入缝直测（活/完成/离屏三态保留清理语义）
+
+extension RunnerHarness {
+    func runRegistryPurgeTests() {
+        do {
+            let dir = "/tmp/vf-b131-purge-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let reg = SessionWindowRegistry(store: WindowStateStore(dbPath: dir + "/swr.db"))
+
+            func cgEntry(_ id: UInt32) -> CGWindowEntry {
+                CGWindowEntry(from: [
+                    kCGWindowNumber as String: id,
+                    kCGWindowOwnerPID as String: pid_t(487),
+                    kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 100, "Height": 80],
+                ])!
+            }
+            func mkState(_ id: UInt32, completed: Bool) -> WindowState {
+                WindowState(
+                    windowID: id, pid: 487, tty: nil, axWindowNumber: nil,
+                    appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2",
+                    title: nil, termSessionID: nil, itermSessionID: nil,
+                    sessionID: "s-\(id)", bindingType: .remote,
+                    isCompleted: completed, createdAt: Date(), updatedAt: Date())
+            }
+
+            // 注入固定 CG 枚举：活窗 100/200（300/400 不在屏幕上）
+            reg.windowsProvider = { [cgEntry(100), cgEntry(200)] }
+            reg.windowStates[100] = mkState(100, completed: false)   // 活窗 → 保留
+            reg.windowStates[200] = mkState(200, completed: true)    // 已完成且活 → 保留
+            reg.windowStates[300] = mkState(300, completed: false)   // 未完成且离屏 → 清理
+            reg.windowStates[400] = mkState(400, completed: true)    // 已完成且离屏 → 保留
+            reg.sessionAliasWindowID["s-300"] = 300
+
+            reg.purgeClosedWindows()
+
+            check("purge: 未完成且不在活列表 → 清理（含 DB 行）",
+                  reg.windowStates[300] == nil && reg.sessionAliasWindowID["s-300"] == nil)
+            check("purge: 活窗未完成 / 离屏但已完成 / 活窗已完成 → 全保留",
+                  reg.windowStates[100] != nil && reg.windowStates[200] != nil
+                  && reg.windowStates[400] != nil)
+
+            // touch：消息分支更新描述；无消息不覆盖
+            reg.touch(sessionID: "s-100", message: "vf-touch-msg")
+            check("purge: touch 携带消息 → 描述更新",
+                  reg.lastEventDescription == "vf-touch-msg")
+            reg.touch(sessionID: "s-100", message: nil)
+            check("purge: touch 无消息 → 描述不被覆盖",
+                  reg.lastEventDescription == "vf-touch-msg")
+        }
+    }
+}

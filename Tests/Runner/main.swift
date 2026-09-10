@@ -220,6 +220,7 @@ final class FakeAuditor: RestoreAuditing {
         runTerminalDialectTests()
         runSoundVoiceHookTests()
         runRegistryStoreTests()
+        runRegistryPurgeTests()
         runHookWalkTests()
         runHookModelsTests()
         runSpaceIndexTests()
