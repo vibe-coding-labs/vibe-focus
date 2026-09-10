@@ -11,12 +11,12 @@
 
 | 模块 | 职责 | 镜像测试 | 真身 Runner |
 |---|---|---|---|
-| `CoordinateKit` | 坐标换算/漂移和/收敛判定 | ✓ QuartzConversionTests 等 | ✓ |
-| `WindowSettle` | 等待时长常量唯一事实源 | ✓ WindowSettleTimingTests | ✓ |
-| `FrameConvergence.writeOrder` | 两段写序决策（收窄/放大/clamp/源屏先行） | ✓ FrameWriteOrderTests | ✓ |
-| `FrameConvergence.convergeFrame/convergeFramePolling` | 收敛循环唯一骨架（停滞重发） | ✓ FrameConvergenceLoopTests | ✓ |
-| `FrameConvergence.shortfalls` | 偏差维判定唯一事实源（Batch 2 新增） | ✓ FrameResendPlanTests | ✓（含与 CoordinateKit 交叉验证） |
-| `FrameConvergence.resendSegments` | 补发段序列决策（Batch 2 新增） | ✓ FrameResendPlanTests | ✓ |
+| `CoordinateKit` | 坐标换算/漂移和/收敛判定 | ✓ RunnerRegistryStoreTests coord 块 + RunnerCoordinateTypesTests（B78/B102） | ✓ |
+| `WindowSettle` | 等待时长常量唯一事实源 | ✓ RunnerRegistryStoreTests settle 块（B113 基准值+关系不变量） | ✓ |
+| `FrameConvergence.writeOrder` | 两段写序决策（收窄/放大/clamp/源屏先行） | ✓ RunnerRestoreOrchestrationTests writeOrder 块（B76 补边缘） | ✓ |
+| `FrameConvergence.convergeFrame/convergeFramePolling` | 收敛循环唯一骨架（停滞重发） | ✓ RunnerConvergencePipelineTests convergeFrame 块（C1~C6）Tests | ✓ |
+| `FrameConvergence.shortfalls` | 偏差维判定唯一事实源（Batch 2 新增） | ✓ RunnerConvergencePipelineTests shortfalls 块（含与 CoordinateKit 对拍） | ✓（含与 CoordinateKit 交叉验证） |
+| `FrameConvergence.resendSegments` | 补发段序列决策（Batch 2 新增） | ✓ RunnerConvergencePipelineTests resendSegments 块 | ✓ |
 
 ## Batch 3 度量（refactor/frame-write-executor）
 
@@ -124,7 +124,7 @@
   0→88%（Bool/Int 双形态防御解析、缺字段跳过、resolveScreenSpaceIndex 三级
   位次判定）——刷新风暴与 overlay 编号错乱两类历史事故的判定层自此有锁；
 - 其余 Overlay 文件（GCD 调度/NSView/NSPanel 编排）按既定模型属行为验收域；
-- 测试：镜像 OverlayRefreshPolicyTests 16 断言（门矩阵 8 组合穷举 + 去重边界
+- 测试：RunnerRegistryStoreTests overlayGate 块真身直测（门矩阵穷举 + 去重边界；原镜像 OverlayRefreshPolicyTests 已退役，B80 补门序/首次触发）
   + 热插拔矩阵）+ Runner 真身 13 断言（含 parseJSONArray 形状不符防御）。
 
 ## Batch 13 度量（test/store-db-lock）
@@ -185,7 +185,7 @@
   Window 编排域最大文件）按「决策/编排」缝拆分——RestoreOutcome/isMoveFailureRetryable/
   SourceSpacePreSwitch 决策四件套独立 `+Restore+Decision.swift`（与 Hook 域 +Decision
   命名惯例对齐），原文件保留视角守卫 + performRestore 编排；纯代码搬移零行为变更，
-  既有双通道锁（RestoreRefocusCandidateTests + Runner 分支穷举）即行为契约，无需新增
+  既有双通道锁（RunnerRegistryStoreTests refocus/preSwitch 真身直测）即行为契约，无需新增
   测试；顺带实修 sessionBind B 断言 capturedAt 偶发假失败（043aa95）；
 - **Batch 29**（ae40ad1，1dcb74e 合并）：`TitleEditorService` 标题写入脚本
   决策表提纯——applyViaAppleScript（~167 行）内联的 AppleScript 模板收敛为
@@ -315,7 +315,7 @@
   的代价是下游 queryWindow 吃到 float 前旧值）；restore 等待从固定 300ms 升级
   为 waitForRelayout（下限 120ms 防静默假稳定 + 两读稳定早返回 + 300ms 预算
   兜底），全仓 float 等待策略回到一档；
-- 测试：新增镜像 `FloatSettleSequenceTests`（17 断言：序列顺序/零浪费跳过/
+- 测试：RunnerConvergencePipelineTests floatsettle 块真身直测（序列顺序/零浪费跳过/
   预算兜底/容差接线/读失败不终止）+ Runner 真身 8 断言 + 真机 E2E
   （`VIBEFOCUS_FLOATSETTLE_E2E=1`，真实 iTerm2 测试窗：真 toggle 157~164ms
   有界落定 + isFloating 翻转 + 等待后两读稳定；已 float 零耗时跳过）；
