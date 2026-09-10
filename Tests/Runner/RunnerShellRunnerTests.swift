@@ -187,3 +187,30 @@ extension RunnerHarness {
               && content.contains("11") && content.contains("SIGSEGV"))
     }
 }
+
+// MARK: - B145：recordLaunch / recordCleanExitIfUnrecorded 路径注入直测
+
+extension RunnerHarness {
+    func runJournalB145Tests() {
+        let path = "/tmp/vf-b145-journal-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        // recordLaunch：exe 属性采集（mtime/inode）+ bundleID/version/ax 字段落行
+        let exe = "/bin/echo"
+        ExitJournal.recordLaunch(bundleID: "test.b145", version: "9.9", exePath: exe, to: path)
+        let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        check("journalB145: launch 行含 pid/exe/bundleID/version",
+              content.contains("test.b145") && content.contains("9.9") && content.contains(exe))
+
+        // recordCleanExitIfUnrecorded 注入变体：hasRecorded=true 守卫（不重复写 clean）
+        let before = content
+        ExitJournal.recordCleanExitIfUnrecorded(hasRecorded: true, to: path)
+        check("journalB145: hasRecorded=true → 不重复写 clean",
+              (try? String(contentsOfFile: path, encoding: .utf8)) == before)
+
+        // hasRecorded=false → 写 clean 行
+        ExitJournal.recordCleanExitIfUnrecorded(hasRecorded: false, to: path)
+        check("journalB145: hasRecorded=false → 写 clean 行",
+              ((try? String(contentsOfFile: path, encoding: .utf8)) ?? "").contains("clean"))
+    }
+}

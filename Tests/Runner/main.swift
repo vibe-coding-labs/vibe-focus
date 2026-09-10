@@ -219,6 +219,7 @@ final class FakeAuditor: RestoreAuditing {
         runJournalAppendTests()
         runLocatorParseEdgeTests()
         runRecordExitTests()
+        runJournalB145Tests()
         runHelperInstallTests()
         runB134SmallTopUps()
         runDisplayWorkAreaTests()

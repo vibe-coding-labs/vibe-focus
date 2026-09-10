@@ -152,6 +152,12 @@ enum ExitJournal {
     /// 死法都能与「本实例存在过」对上账）。axTrusted 一并落账——重装替换二进制
     /// 后辅助功能授权失效（2026-09-06 实锤），ax 时间线让失效时刻可归因。
     static func recordLaunch(bundleID: String?, version: String?, exePath: String) {
+        recordLaunch(bundleID: bundleID, version: version, exePath: exePath, to: filePath)
+    }
+
+    /// 路径注入变体（B145）：测试以临时文件直测 launch 行落盘语义（mtime/inode 采集、
+    /// axTrusted 探针），不触真身审计日志。
+    static func recordLaunch(bundleID: String?, version: String?, exePath: String, to path: String) {
         let pid = ProcessInfo.processInfo.processIdentifier
         var mtime: Int?
         var inode: UInt64?
@@ -171,7 +177,7 @@ enum ExitJournal {
             bundleID: bundleID,
             version: version,
             axTrusted: AXIsProcessTrusted()
-        ))
+        ), to: path)
     }
 
     /// 退出记录：reason 如 "clean" / "lock-failed-terminate" / "reuse-existing-activate"。
@@ -194,7 +200,20 @@ enum ExitJournal {
     /// atexit 兜底：未被显式路径标记过（即正常 Quit / 正常 exit）写 clean。
     static func recordCleanExitIfUnrecorded() {
         guard !hasRecordedExit else { return }
-        recordExit(reason: "clean")
+        recordExit(reason: "clean", signal: nil, name: nil)
+    }
+
+    /// 已记录标志注入变体（B145）：hasRecorded=true 时验证「不重复写 clean」的守卫语义，
+    /// false 时走 recordExit 写入注入路径——生产入口只透传真身标志与日志路径。
+    static func recordCleanExitIfUnrecorded(hasRecorded: Bool, to path: String) {
+        guard !hasRecorded else { return }
+        appendLine(exitLine(
+            pid: ProcessInfo.processInfo.processIdentifier,
+            at: timestamp(),
+            reason: "clean",
+            signal: nil,
+            name: nil
+        ), to: path)
     }
 }
 
