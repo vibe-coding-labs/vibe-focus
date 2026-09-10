@@ -11,7 +11,12 @@ import Foundation
 // 2. hook-config.json 四字段精确（host/port/token/machine_label）。
 // 3. forwarder.sh 可执行且含鉴权头/配置读取/terminal_ctx 注入。
 // 4. settings.json 合并保留既有 hooks、注册触发事件、SessionEnd 按偏好缺席。
-// 5. 无 jq 环境 → settings.json 原样保留 + 警告 + 手动 JSON 回显（降级分支）。
+// 5. 无 jq 环境 → settings.json 走 python3 降级合并（同语义，不再只警告跳过——
+//    真机 local-server-002 无 jq，旧降级导致 hooks 注册被静默跳过）。
+// 6. ~/.codex/hooks.json 规范形状（codex 0.153.4 实证：事件字典必须包在顶层
+//    "hooks" 字段下，顶层只接受 description/hooks）且只注册 codex 可触发事件
+//    （SessionStart[+SessionEnd]；Claude 的 Stop/UserPromptSubmit 在 codex 无
+//    对应事件、写入永不触发）。
 
 extension RunnerHarness {
 
@@ -97,7 +102,7 @@ extension RunnerHarness {
             check("remoteInstall[jq]: 脚本零错误退出", exit == 0)
                 check("remoteInstall[jq]: 既有 PreToolUse hook 保留",
                       readJSON(home + "/.claude/settings.json")?["hooks"] != nil
-                      && output.contains("[4/4] Updated"))
+                      && output.contains("[4/6] Updated"))
 
                 let hooks = (readJSON(home + "/.claude/settings.json")?["hooks"] as? [String: Any]) ?? [:]
                 // 种子 PreToolUse + 生成的三事件并存（合并语义）
@@ -124,17 +129,30 @@ extension RunnerHarness {
                       FileManager.default.isExecutableFile(atPath: fwd))
                 check("remoteInstall[jq]: 完成标记与 label 回显",
                       output.contains("Installation Complete") && output.contains("remote-192-168-1-12"))
+
+                // Codex 产物：规范形状（事件包在顶层 "hooks" 字段下）+ 只注册可触发事件
+                let codexDoc = readJSON(home + "/.codex/hooks.json") ?? [:]
+                let codexHooks = (codexDoc["hooks"] as? [String: Any]) ?? [:]
+                check("remoteInstall[jq]: codex hooks.json 规范形状（事件包在 hooks 字段下）",
+                      !codexDoc.isEmpty && codexDoc["hooks"] != nil
+                      && codexHooks["SessionStart"] != nil)
+                check("remoteInstall[jq]: codex 只注册可触发事件（无 Stop/UserPromptSubmit）",
+                      codexHooks["Stop"] == nil && codexHooks["UserPromptSubmit"] == nil)
+                check("remoteInstall[jq]: codex 步骤回显",
+                      output.contains("[5/6] Updated ~/.codex/hooks.json"))
                 try? FileManager.default.removeItem(atPath: home)
             }
         }
 
-        // 场景 2：无 jq（沙盒 bin 只放脚本所需工具，不含 jq）→ settings.json 原样保留 + 降级警告
+        // 场景 2：无 jq（沙盒 bin 只放脚本所需工具，不含 jq）→ settings.json 走
+        // python3 降级合并（同语义；真机 002 无 jq，旧「只警告跳过」会让 hooks
+        // 注册静默缺失，远程链路断在半路）
         do {
             let home = "/tmp/vibefocus-b83-ri-nojq-\(UUID().uuidString)"
             try? FileManager.default.createDirectory(atPath: home + "/.claude", withIntermediateDirectories: true)
             let seeded = #"{"hooks":{"PreToolUse":[{"hooks":[{"command":"echo keep-me","type":"command"}]}]}}"#
-            let seededData = Data(seeded.utf8)
-            FileManager.default.createFile(atPath: home + "/.claude/settings.json", contents: seededData)
+            FileManager.default.createFile(atPath: home + "/.claude/settings.json",
+                                           contents: Data(seeded.utf8))
 
             // 沙盒 bin：只放安装脚本所需工具（python3/mkdir/cat/chmod），不含 jq
             let binDir = home + "/bin"
@@ -147,12 +165,16 @@ extension RunnerHarness {
 
             let (exit, output) = runInstaller(home: home, path: binDir)
 
-            check("remoteInstall[nojq]: 脚本零错误退出（jq 缺失走降级）", exit == 0)
-            let settingsAfter = FileManager.default.contents(atPath: home + "/.claude/settings.json")
-            check("remoteInstall[nojq]: settings.json 原样保留（不破坏用户配置）",
-                  settingsAfter == seededData)
-            check("remoteInstall[nojq]: 输出含降级警告与手动 JSON",
-                  output.contains("jq not found") && output.contains("hooks"))
+            check("remoteInstall[nojq]: 脚本零错误退出（jq 缺失走 python3 降级）", exit == 0)
+            let nojqHooks = (readJSON(home + "/.claude/settings.json")?["hooks"] as? [String: Any]) ?? [:]
+            check("remoteInstall[nojq]: python3 合并——种子保留 + 三事件注册",
+                  nojqHooks.keys.sorted() == ["PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
+            check("remoteInstall[nojq]: 输出 python3 降级标记",
+                  output.contains("(via python3)"))
+            // codex 路径同样只依赖 python3，无 jq 环境下照常落盘
+            let nojqCodex = ((readJSON(home + "/.codex/hooks.json") ?? [:])["hooks"] as? [String: Any]) ?? [:]
+            check("remoteInstall[nojq]: codex hooks.json 照常落盘（SessionStart）",
+                  nojqCodex["SessionStart"] != nil)
             try? FileManager.default.removeItem(atPath: home)
         }
 
@@ -167,6 +189,8 @@ extension RunnerHarness {
             check("remoteInstall[fresh]: config + forwarder 落盘",
                   FileManager.default.fileExists(atPath: home + "/.vibefocus/hook-config.json")
                   && FileManager.default.isExecutableFile(atPath: home + "/.vibefocus/hook-forwarder.sh"))
+            check("remoteInstall[fresh]: codex hooks.json 落盘",
+                  FileManager.default.fileExists(atPath: home + "/.codex/hooks.json"))
             try? FileManager.default.removeItem(atPath: home)
         }
     }

@@ -164,7 +164,7 @@ struct LANSettingsView: View {
                 Image(systemName: "info.circle")
                     .foregroundStyle(VibeColors.accent)
                     .font(.system(size: 12))
-                Text("复制以下命令，在运行 Claude Code 的远程机器终端执行即可。")
+                Text("复制以下命令，在运行 Claude Code / Codex 的远程机器终端执行即可（自动注册两家的 hooks）。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -235,7 +235,7 @@ struct LANSettingsView: View {
                     .foregroundStyle(remoteInstallSucceeded ? VibeColors.success : VibeColors.danger)
             }
 
-            Text("注意：安装命令包含认证 Token，仅在可信网络中使用。卸载需在远程机器手动清理 ~/.vibefocus 和 ~/.claude/settings.json。")
+            Text("注意：安装命令包含认证 Token，仅在可信网络中使用。卸载需在远程机器手动清理 ~/.vibefocus 及 ~/.claude/settings.json、~/.codex/hooks.json 中的 VibeFocus hook 条目。")
                 .font(.system(size: 11))
                 .foregroundStyle(VibeColors.warning)
                 .fixedSize(horizontal: false, vertical: true)

@@ -47,5 +47,13 @@ struct VibeFocusApp: App {
             fflush(stdout)
             exit(trusted ? 0 : 3)
         }
+        // 远程部署通道：`VibeFocusHotkeys --print-remote-install-script [host] [label]`
+        // 打印远程一键安装脚本后即退（不进事件循环、不取单实例锁）。生成与偏好域
+        // 读取细节见 RemoteInstallDeploy（kit 侧单一事实源）。
+        if let script = RemoteInstallDeploy.scriptForArguments(CommandLine.arguments) {
+            print(script)
+            fflush(stdout)
+            exit(0)
+        }
     }
 }

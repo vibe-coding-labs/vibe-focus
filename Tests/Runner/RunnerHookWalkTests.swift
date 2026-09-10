@@ -733,6 +733,23 @@ extension RunnerHarness {
             check("codexInstalled: command 含 helperScriptPath → true；缺失/无匹配 → false",
                   CodexHookPreferences.isHookInstalled(at: settingsPath) == true
                   && !CodexHookPreferences.isHookInstalled(at: dir + "/missing.json"))
+            // B123 双形状：0.153.4 规范形状（事件包在顶层 "hooks" 字段下）同样识别；
+            // 历史错形状（顶层事件键，codex 解析失败整文件不加载）也识别以支持迁移
+            let wrappedJSON = "{\"description\":\"keep\",\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"command\":\"" + sp + " --run\"}]}]}}"
+            let wrappedPath = settingsPath + "-wrapped"
+            FileManager.default.createFile(atPath: wrappedPath, contents: Data(wrappedJSON.utf8))
+            check("codexInstalled: 规范形状（hooks 包裹层）识别且 description 字段共存",
+                  CodexHookPreferences.isHookInstalled(at: wrappedPath) == true)
+            // codex 可触发事件集：SessionStart 恒注册、SessionEnd 按开关、
+            // Stop/UserPromptSubmit 为 Claude 特有不写（codex 0.153.4 实证）
+            let savedSessionEnd = ClaudeHookPreferences.triggerOnSessionEnd
+            defer { ClaudeHookPreferences.triggerOnSessionEnd = savedSessionEnd }
+            ClaudeHookPreferences.triggerOnSessionEnd = false
+            check("codexHooks: SessionEnd 关 → 仅 SessionStart（无 Stop/UserPromptSubmit）",
+                  Set(CodexHookPreferences.codexHooksDict().keys) == ["SessionStart"])
+            ClaudeHookPreferences.triggerOnSessionEnd = true
+            check("codexHooks: SessionEnd 开 → SessionStart+SessionEnd",
+                  Set(CodexHookPreferences.codexHooksDict().keys) == ["SessionEnd", "SessionStart"])
             let savedLan = LANHookPreferences.lanMode
             defer { LANHookPreferences.lanMode = savedLan }
             LANHookPreferences.lanMode = true

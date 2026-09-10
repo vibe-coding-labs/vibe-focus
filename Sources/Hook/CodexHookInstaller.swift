@@ -1,9 +1,13 @@
 // CodexHookInstaller.swift
 // VibeFocus — Codex CLI Hook 安装/卸载逻辑
-// Codex 的 hooks.json schema 与 Claude Code settings.json 的 hooks 字段同构
-// （PascalCase 事件键名 + matcher/hooks/command 嵌套），故复用 generateHooksDict / makeHookEntry。
-// 差异：Codex 配置在 ~/.codex/hooks.json 独立文件（config.toml 用 hooks = "./hooks.json" 引用），
-// 且 Codex 有 hook trust 机制，首次运行需用户在 TUI 确认信任。
+// Codex hooks.json 文件形状（codex-cli 0.153.4 真机实证）：顶层只接受 description /
+// hooks 字段，事件字典必须包在顶层 "hooks" 下；事件键 PascalCase。codex 事件集为
+// PreToolUse/PermissionRequest/PostToolUse/PreCompact/PostCompact/SessionStart/
+// SessionEnd/SubagentStart/SubagentStop/Interrupt——没有 Claude 的 Stop 与
+// UserPromptSubmit（写入也永不触发）。故只注册 codex 可触发的事件
+// （SessionStart 恒装 + SessionEnd 按开关），文件统一写规范形状；历史版本曾写
+// 顶层事件键（codex 解析失败、hooks 整体不加载），读取/清理双形状兼容以迁移。
+// Codex 有 hook trust 机制，首次运行需用户在 TUI 确认信任。
 
 import Foundation
 
@@ -35,11 +39,32 @@ enum CodexHookPreferences {
         }
         #endif
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
         let scriptPath = ClaudeHookPreferences.helperScriptPath
-        for (_, entries) in json {
+        for layer in codexHookLayers(in: document) {
+            if layerContainsVibeFocusHooks(layer, scriptPath: scriptPath) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// codex 文档的事件字典层（双形状兼容，规范层在前）：0.153.4 规范形状 = 事件键
+    /// 包在顶层 "hooks" 字段下；历史安装器曾把事件键写文档顶层（codex 解析失败、
+    /// hooks 整体不加载）——两层都参与安装识别与卸载清理，旧坏文件可被迁移。
+    static func codexHookLayers(in document: [String: Any]) -> [[String: Any]] {
+        var layers: [[String: Any]] = []
+        if let wrapped = document["hooks"] as? [String: Any] {
+            layers.append(wrapped)
+        }
+        layers.append(document)
+        return layers
+    }
+
+    private static func layerContainsVibeFocusHooks(_ hooks: [String: Any], scriptPath: String) -> Bool {
+        for (_, entries) in hooks {
             guard let entryList = entries as? [[String: Any]] else { continue }
             for entry in entryList {
                 guard let hookList = entry["hooks"] as? [[String: Any]] else { continue }
@@ -51,6 +76,18 @@ enum CodexHookPreferences {
             }
         }
         return false
+    }
+
+    /// Codex 可触发事件字典：SessionStart 恒注册（远程 label 绑定自愈入口）+
+    /// SessionEnd 按触发开关。Stop/UserPromptSubmit 是 Claude 特有事件，codex 无对应
+    /// 事件、写入永不触发。
+    static func codexHooksDict() -> [String: Any] {
+        var hooks: [String: Any] = [:]
+        hooks["SessionStart"] = ClaudeHookPreferences.makeHookEntry()
+        if ClaudeHookPreferences.triggerOnSessionEnd {
+            hooks["SessionEnd"] = ClaudeHookPreferences.makeHookEntry()
+        }
+        return hooks
     }
 
     // MARK: - Install / Uninstall
@@ -90,34 +127,42 @@ enum CodexHookPreferences {
             return (false, "无法创建目录: \(error.localizedDescription)")
         }
 
-        // Codex hooks.json 是独立文件，顶层就是事件键名 → entry list 的映射
-        // 读取现有内容（不存在则从空字典开始），保留用户其他 hook 条目
-        var hooks: [String: Any] = [:]
+        // Codex hooks.json 规范形状（0.153.4 实证）：事件字典包在顶层 "hooks" 字段下，
+        // 顶层另可含 description 等字段。读取现有内容（不存在则空文档起），保留用户
+        // 其它字段与 hook 条目；历史安装器写的顶层事件键（坏形状）顺手迁移清理。
+        var document: [String: Any] = [:]
         if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
            let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            hooks = existing
-            log("[CodexHookPreferences] read existing hooks.json, keys: \(hooks.keys.sorted().joined(separator: ","))")
+            document = existing
+            log("[CodexHookPreferences] read existing hooks.json, topKeys: \(document.keys.sorted().joined(separator: ","))")
         }
 
-        hooks = mergedHooks(
-            existing: hooks,
-            ourHooks: ClaudeHookPreferences.generateHooksDict(),
+        // 规范层合并（codex 可触发事件集；autoRestoreOnPromptSubmit 裁剪的
+        // UserPromptSubmit 不在 codex 事件集，恒传 false 仅走形式）
+        var wrapped = (document["hooks"] as? [String: Any]) ?? [:]
+        wrapped = mergedHooks(
+            existing: wrapped,
+            ourHooks: codexHooksDict(),
             triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd,
-            autoRestoreOnPromptSubmit: ClaudeHookPreferences.autoRestoreOnPromptSubmit,
+            autoRestoreOnPromptSubmit: false,
             scriptPath: ClaudeHookPreferences.helperScriptPath,
             targetURL: ClaudeHookPreferences.endpointURLString()
         )
+        // 历史错形状迁移：清理可能残留在文档顶层的事件键（"hooks" 字段本身是
+        // 字典非条目列表，cleanVibeFocusHooks 的列表判据自然跳过）
+        cleanVibeFocusHooks(from: &document, scriptPath: ClaudeHookPreferences.helperScriptPath, targetURL: ClaudeHookPreferences.endpointURLString())
+        document["hooks"] = wrapped
 
         log(
             "[CodexHookPreferences] installing hooks",
             fields: [
                 "path": path,
-                "hookEvents": hooks.keys.sorted().joined(separator: ","),
+                "hookEvents": wrapped.keys.sorted().joined(separator: ","),
                 "helperScript": ClaudeHookPreferences.helperScriptPath
             ]
         )
 
-        guard let data = try? JSONSerialization.data(withJSONObject: hooks, options: [.prettyPrinted, .sortedKeys]) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys]) else {
             return (false, "无法序列化 JSON")
         }
         do {
@@ -146,16 +191,21 @@ enum CodexHookPreferences {
         }
         #endif
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              var hooks = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              var document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             // 文件不存在视为已卸载
             return (true, "Codex 配置不存在，无需卸载")
         }
 
-        cleanVibeFocusHooks(from: &hooks, scriptPath: scriptPath, targetURL: targetURL)
+        // 双形状清理：规范层（顶层 "hooks" 字段下）+ 历史错形状的顶层事件键
+        if var wrapped = document["hooks"] as? [String: Any] {
+            cleanVibeFocusHooks(from: &wrapped, scriptPath: scriptPath, targetURL: targetURL)
+            document["hooks"] = wrapped
+        }
+        cleanVibeFocusHooks(from: &document, scriptPath: scriptPath, targetURL: targetURL)
 
-        log("[CodexHookPreferences] uninstalling hooks from \(path)", fields: ["remainingEvents": hooks.keys.sorted().joined(separator: ",")])
+        log("[CodexHookPreferences] uninstalling hooks from \(path)", fields: ["topKeys": document.keys.sorted().joined(separator: ",")])
 
-        guard let outputData = try? JSONSerialization.data(withJSONObject: hooks, options: [.prettyPrinted, .sortedKeys]) else {
+        guard let outputData = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys]) else {
             return (false, "无法序列化配置")
         }
         do {
