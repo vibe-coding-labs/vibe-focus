@@ -808,6 +808,16 @@ extension RunnerHarness {
                   && TerminalSelectionResolver.supportTable.count == 9)
         }
 
+        // B138：isTerminalPID 守卫边缘（pid<=0 与非终端活进程）
+        do {
+            check("terminalPID: pid<=0 一律 false",
+                  TerminalRegistry.isTerminalPID(0) == false
+                  && TerminalRegistry.isTerminalPID(-7) == false)
+            let own = ProcessInfo.processInfo.processIdentifier
+            check("terminalPID: 活着的非终端进程 → false",
+                  TerminalRegistry.isTerminalPID(own) == false)
+        }
+
         // mergedHooks 合并+开关裁剪（B112：CodexHookInstaller 52% 薄面——幂等/外部保留/开关移除）
         do {
             let targetURL = "http://127.0.0.1:39277/claude/hook"
