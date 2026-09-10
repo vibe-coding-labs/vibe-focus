@@ -687,6 +687,25 @@ extension RunnerHarness {
             check("swrPrune: 幂等——再跑无新过期（removed=0 时内存过滤不误伤）",
                   reg.windowStates.count == 2)
         }
+
+        // binding(for:) 直命中与 alias 优先级（B116 收尾：单条目确定性夹具）
+        do {
+            let dir = "/tmp/vibefocus-swr7-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr7.db")
+            let reg = SessionWindowRegistry(store: solo)
+            reg.windowStates[96] = WindowState(
+                windowID: 96, pid: 100, tty: nil, axWindowNumber: nil, appName: "T",
+                bundleIdentifier: nil, title: nil, termSessionID: nil, itermSessionID: nil,
+                sessionID: "direct-s", bindingType: .local, isCompleted: false,
+                createdAt: Date(), updatedAt: Date())
+            reg.sessionAliasWindowID["direct-s"] = 96
+            check("swrLookup: 直命中优先于别名（同 sessionID 两者并存时取直绑定）",
+                  reg.binding(for: "direct-s")?.windowID == 96)
+            check("swrLookup: 无任何命中 → nil",
+                  reg.binding(for: "nope") == nil)
+        }
         do {
             // endpointURLString：token 缺省纯端点；配置 token 追加查询串（用后清键）
             check("hookEndpoint: 无 token → 纯端点",

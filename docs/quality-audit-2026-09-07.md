@@ -181,3 +181,4 @@
 | B113 | 薄面收尾微批（Codex 路径/安装检测 + lanMode 往返 + supportTable 全表）：codexConfigDir/Path home 注入派生（.codex/hooks.json）、isHookInstalled 语义直测（command 含 helperScriptPath → true、缺失/无匹配 → false，注意 createFile 不建中间目录）、lanMode set/get 往返（独立域用后复位）、supportTable 九终端全表逐项锁定（新增/删除/改级都红）→ HookWalkTests +5 断言。Standalone 8/8；Runner 1278→1283 | ✅ 2026-09-10 |
 | B114 | uninstallHookFromCodexSettings 卸载路径直测（CodexHookInstaller 卸载按钮路径）：混合设置（我方 url 条目+外部 command 条目+他方顶层键）卸载后我方条目清除、外部条目与他方键保留、返回成功；缺文件与坏 JSON 均按「视为已卸载」返回 true（实现语义如实锁定）→ HookWalkTests +3 断言。Standalone 8/8；Runner 1283→1286 | ✅ 2026-09-10 |
 | B115 | 收尾微批：clearAllBindings 四清直测（内存/别名/描述/DB）+ TerminalUsageTracker.start 二次调用幂等 → HookWalkTests +2 断言。Standalone 8/8；Runner 1286→1288 | ✅ 2026-09-10 |
+| B116 | binding(for:) 直命中/alias 优先级与无命中 nil 直测（单条目确定性夹具），HookWalkTests +2 断言。Standalone 8/8；Runner 1288→1290 | ✅ 2026-09-10 |
