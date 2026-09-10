@@ -199,3 +199,4 @@
 | B141~B142 | hook 请求门提纯（tokenGateRejected/decodePayload 纯判定：query 优先 header 兜底、未配置放行、401 不计数口径不变）+ HotKey matches/from(event:) NSEvent 工厂直测（吻合/capsLock 交集滤除/无修饰键 nil/表外键码 nil/回环）。NSEvent 测试构造坑：keyDownEvent(with:) 不存在，正解 keyEvent(with:.keyDown,...)；NSEvent 需 import AppKit | ✅ 2026-09-11 |
 | B143 | 质量台账补录本批（B121~B143 行）；llvm-cov 快照：TOTAL 行覆盖 40.32%（函数 52.79%），较 B120 时点 21.73% 基数口径变化后按可比段持续为正增量；逻辑层目标文件：ShellRunner 92%、CodexHookInstaller 函数 92%、注册表家族 69-91%、SessionWindowRegistry+State 84% | ✅ 2026-09-11 |
 | B143 附注 | 门禁验证方法教训：`swift run | tail` 会漏掉中段 FAIL 与进程中止（管道 exit=0 掩盖非零退出、kCFNull 崩时 summary 缺失）——门禁必须 grep summary 行+FAIL 计数+退出码三重确认；zsh 双引号 commit message 会展开 $HOME；python 批量插断言锚点若为复合断言中间行会切断表达式（插入后必须立刻 swift build 验证） | ✅ 2026-09-11 |
+| B143 续 | hook-config.json 形状契约直测：makeConfigData 提纯（port/token 恒在、lanMode 时附 host=currentLANIP）——该 JSON 是远程转发器解析的唯一契约，此前仅由装机流程隐式覆盖 → HookWalkTests +2 断言（四字段精确/host 缺省不含键）。Standalone 8/8；Runner 1423→1432 | ✅ 2026-09-11 |
