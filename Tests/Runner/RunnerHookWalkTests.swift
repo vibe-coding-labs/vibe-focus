@@ -743,6 +743,33 @@ extension RunnerHarness {
                   Set(twice.keys) == Set(fresh.keys))
         }
 
+        // uninstallHookFromCodexSettings（B114：卸载路径——外部条目保留/缺文件免卸载/坏 JSON 拒绝）
+        do {
+            let dir = "/tmp/vibefocus-codex2-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let settingsPath = dir + "/.codex/hooks.json"
+            try? FileManager.default.createDirectory(atPath: dir + "/.codex", withIntermediateDirectories: true)
+            let targetURL = "http://127.0.0.1:39277/claude/hook"
+            let scriptPath = "/opt/vibefocus/helper.sh"
+            let mixed = "{\"Stop\":[{\"hooks\":[{\"url\":\"" + targetURL + "\"}]},{\"hooks\":[{\"command\":\"/usr/bin/other\"}]}],\"Other\":[{\"hooks\":[{\"command\":\"keep-me\"}]}]}"
+            FileManager.default.createFile(atPath: settingsPath, contents: Data(mixed.utf8))
+            let (ok1, _) = CodexHookPreferences.uninstallHookFromCodexSettings(
+                at: settingsPath, scriptPath: scriptPath, targetURL: targetURL)
+            let after = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: settingsPath))) as? [String: Any]) ?? [:]
+            check("codexUninstall: 我方条目清除、外部条目保留、返回成功",
+                  ok1 && after["Stop"] != nil && after["Other"] != nil)
+            let stopHooks = (after["Stop"] as? [[String: Any]])?.flatMap { $0["hooks"] as? [[String: Any]] ?? [] } ?? []
+            check("codexUninstall: Stop 内仅剩外部 command 条目",
+                  stopHooks.count == 1
+                  && (stopHooks.first?["command"] as? String) == "/usr/bin/other")
+            check("codexUninstall: 缺文件与坏 JSON 均视为已卸载 true",
+                  CodexHookPreferences.uninstallHookFromCodexSettings(
+                    at: dir + "/missing.json", scriptPath: scriptPath, targetURL: targetURL).0
+                  && CodexHookPreferences.uninstallHookFromCodexSettings(
+                    at: dir + "/.codex/bad.json", scriptPath: scriptPath, targetURL: targetURL).0)
+        }
+
         // resolveRemoteBinding 真实查找路径（B107：label 未映射/映射窗口已消失两分支——
         // remoteBindings 种子化进独立 UserDefaults 域，用后清键）
         do {
