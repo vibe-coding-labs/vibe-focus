@@ -124,7 +124,11 @@ enum ExitJournal {
     // MARK: - 写入
 
     static func appendLine(_ line: String) {
-        let path = filePath
+        appendLine(line, to: filePath)
+    }
+
+    /// 路径注入变体（B137）：测试以临时文件直测追加语义，不触真身审计日志。
+    static func appendLine(_ line: String, to path: String) {
         let dir = (path as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644)

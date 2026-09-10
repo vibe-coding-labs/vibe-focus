@@ -116,3 +116,24 @@ extension RunnerHarness {
         try? fm.removeItem(atPath: home)
     }
 }
+
+// MARK: - B137：ExitJournal.appendLine 追加语义（路径注入直测，不触真身日志）
+
+extension RunnerHarness {
+    func runJournalAppendTests() {
+        let path = "/tmp/vf-b137-journal-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        ExitJournal.appendLine("line-1", to: path)
+        ExitJournal.appendLine("line-2", to: path)
+        let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        check("journalAppend: 两次追加按序落盘且各带换行",
+              content == "line-1\nline-2\n")
+
+        // 父目录缺失 → 自动创建
+        let nested = path + ".d/nested.jsonl"
+        ExitJournal.appendLine("nested", to: nested)
+        check("journalAppend: 缺失父目录自动创建",
+              (try? String(contentsOfFile: nested, encoding: .utf8)) == "nested\n")
+    }
+}
