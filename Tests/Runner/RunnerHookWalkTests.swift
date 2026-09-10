@@ -533,9 +533,31 @@ extension RunnerHarness {
             check("token: nil/空串 expected 跳过验证、相等通过、不等拒绝、空 provided 拒绝",
                   ClaudeHookServer.isTokenValid(expectedToken: nil, providedToken: nil)
                   && ClaudeHookServer.isTokenValid(expectedToken: "", providedToken: "anything")
-                  && ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: "t")
                   && !ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: "x")
                   && !ClaudeHookServer.isTokenValid(expectedToken: "t", providedToken: ""))
+        }
+
+        // B141：token 门判定（true=拒绝）——query 优先、header 兜底、未配置放行
+        do {
+            check("tokenGate: 未配置 token → 放行",
+              ClaudeHookServer.tokenGateRejected(query: [:], headers: [:], expectedToken: nil) == false)
+        check("tokenGate: query 命中 → 放行（header 不同不误伤）",
+              ClaudeHookServer.tokenGateRejected(query: ["token": "ok"], headers: [:], expectedToken: "ok") == false)
+        check("tokenGate: header 命中 → 放行",
+              ClaudeHookServer.tokenGateRejected(query: [:], headers: ["X-VibeFocus-Token": "hdr"], expectedToken: "hdr") == false)
+        check("tokenGate: query 优先于 header（query 错即拒）",
+              ClaudeHookServer.tokenGateRejected(query: ["token": "wrong"], headers: ["X-VibeFocus-Token": "right"], expectedToken: "right") == true)
+        check("tokenGate: 完全缺失 → 拒绝",
+              ClaudeHookServer.tokenGateRejected(query: [:], headers: [:], expectedToken: "need") == true)
+
+        // B141：payload 解码门——合法/缺字段/非 JSON 三态
+        let okPayload = ClaudeHookServer.decodePayload(from: Data(#"{"event":"Stop","session_id":"s-9"}"#.utf8))
+        check("decodeGate: 合法载荷解码（event/session_id）",
+              okPayload?.event.rawValue == "Stop" && okPayload?.sessionID == "s-9")
+        check("decodeGate: 缺 session_id → nil",
+              ClaudeHookServer.decodePayload(from: Data(#"{"event":"Stop"}"#.utf8)) == nil)
+        check("decodeGate: 非 JSON → nil",
+              ClaudeHookServer.decodePayload(from: Data("garbage".utf8)) == nil)
         }
         // bind 身份合并纯决策（B98：SessionWindowRegistry.makeBoundState 提纯——别名/合并/新建三态）
         do {

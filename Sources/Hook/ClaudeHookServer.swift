@@ -155,7 +155,7 @@ final class ClaudeHookServer: ObservableObject {
         // token 验证：provided 取值与判定走纯函数（2.16a 第十六刀影子接线——
         // 此前生产内联同一逻辑、纯函数零调用，两份语义漂移风险）。
         let providedToken = Self.resolveProvidedToken(query: query, headers: headers)
-        if !Self.isTokenValid(expectedToken: configuredToken, providedToken: providedToken) {
+        if Self.tokenGateRejected(query: query, headers: headers, expectedToken: configuredToken) {
             let headerToken = Self.resolveHeaderValue(from: headers, forKey: "X-VibeFocus-Token")?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             log(
@@ -179,8 +179,7 @@ final class ClaudeHookServer: ObservableObject {
 
         totalRequestCount += 1
 
-        let decoder = JSONDecoder()
-        guard let payload = try? decoder.decode(ClaudeHookPayload.self, from: body) else {
+        guard let payload = Self.decodePayload(from: body) else {
             log(
                 "[ClaudeHookServer] payload decode failed",
                 level: .warn,
@@ -330,6 +329,19 @@ final class ClaudeHookServer: ObservableObject {
             return true // No token configured → skip validation
         }
         return providedToken == expectedToken
+    }
+
+    /// token 门判定（B141 提纯）：true = 拒绝（401）。
+    /// 语义 = !(resolveProvidedToken → isTokenValid)，拒绝时未计数（totalRequestCount
+    /// 只统计通过 token 门的请求——401 不计入总量，与历史口径一致）。
+    static func tokenGateRejected(query: [String: String], headers: [String: String], expectedToken: String?) -> Bool {
+        let provided = resolveProvidedToken(query: query, headers: headers)
+        return !isTokenValid(expectedToken: expectedToken, providedToken: provided)
+    }
+
+    /// payload 解码门（B141 提纯）：非法/缺失 event+session_id → nil（调用方回 400）。
+    static func decodePayload(from body: Data) -> ClaudeHookPayload? {
+        try? JSONDecoder().decode(ClaudeHookPayload.self, from: body)
     }
 
     private func makeJSONResponse(statusCode: Int, response: ClaudeHookResponse) -> GCDWebServerDataResponse {
