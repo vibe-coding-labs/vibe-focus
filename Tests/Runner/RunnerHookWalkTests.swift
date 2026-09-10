@@ -626,6 +626,41 @@ extension RunnerHarness {
             reg.persistToDB(windowID: 80)
             check("swrLookup: persistToDB 落库往返", reg.store.findWindowState(windowID: 80)?.sessionID == "main-s")
         }
+
+        // pruneExpiredBindings 内存+DB 双层清理（B111：保留期 24h 活跃/4h 完成，removed>0 才触发内存过滤）
+        do {
+            let dir = "/tmp/vibefocus-swr5-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr5.db")
+            let reg = SessionWindowRegistry(store: solo)
+            let now = Date()
+            func st(_ wid: UInt32, sid: String, completed: Bool, hoursAgo: Double) -> WindowState {
+                var x = WindowState(
+                    windowID: wid, pid: 100, tty: nil, axWindowNumber: nil, appName: "T",
+                    bundleIdentifier: nil, title: "t", termSessionID: nil, itermSessionID: nil,
+                    sessionID: sid, bindingType: .local, isCompleted: completed,
+                    createdAt: now.addingTimeInterval(-hoursAgo * 3600),
+                    updatedAt: now.addingTimeInterval(-hoursAgo * 3600))
+                if completed { x.completedAt = now.addingTimeInterval(-hoursAgo * 3600) }
+                return x
+            }
+            // 先建实例后入库（绕过 init isTerminalPID 清扫）+ 内存字典镜像播种
+            let rows = [st(1, sid: "a", completed: false, hoursAgo: 25),
+                        st(2, sid: "b", completed: false, hoursAgo: 1),
+                        st(3, sid: "c", completed: true, hoursAgo: 5),
+                        st(4, sid: "d", completed: true, hoursAgo: 2)]
+            for r in rows { solo.saveWindowState(r); reg.windowStates[r.windowID] = r }
+            reg.pruneExpiredBindings(shouldPersist: false)
+            check("swrPrune: DB 与内存双层按保留期清理（活跃 24h/完成 4h）——A/C 清、B/D 留",
+                  solo.findWindowState(windowID: 1) == nil && solo.findWindowState(windowID: 3) == nil
+                  && solo.findWindowState(windowID: 2) != nil && solo.findWindowState(windowID: 4) != nil
+                  && reg.windowStates[1] == nil && reg.windowStates[3] == nil
+                  && reg.windowStates[2] != nil && reg.windowStates[4] != nil)
+            reg.pruneExpiredBindings(shouldPersist: false)
+            check("swrPrune: 幂等——再跑无新过期（removed=0 时内存过滤不误伤）",
+                  reg.windowStates.count == 2)
+        }
         do {
             // endpointURLString：token 缺省纯端点；配置 token 追加查询串（用后清键）
             check("hookEndpoint: 无 token → 纯端点",
