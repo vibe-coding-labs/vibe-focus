@@ -99,6 +99,20 @@ extension RunnerHarness {
             fileManager: fm, now: now, home: home)
         check("locator: tty 上无 claude 进程 → nil",
               miss == nil)
+
+        // B136：claude 进程在但 lsof cwd 失败 → projectDir 空 → nil
+        let noCwd = ClaudeSessionLocator.locateSessionID(
+            ttyPath: "/dev/ttys099",
+            runner: makeRunner(psOut: "  7777 claude", lsofCWD: nil),
+            fileManager: fm, now: now, home: home)
+        check("locator: claude 在但 lsof 失败 → nil", noCwd == nil)
+
+        // B136：claude+cwd 在但 projects 目录无会话 → nil
+        let noSession = ClaudeSessionLocator.locateSessionID(
+            ttyPath: "/dev/ttys099",
+            runner: makeRunner(psOut: "  7777 claude", lsofCWD: "/tmp/vf-never"),
+            fileManager: fm, now: now, home: home)
+        check("locator: claude+cwd 在但无会话目录 → nil", noSession == nil)
         try? fm.removeItem(atPath: home)
     }
 }
