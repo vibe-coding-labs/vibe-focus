@@ -114,6 +114,39 @@ extension HookEventHandler {
                     "machineLabel": label
                 ]
             )
+            // B125 绑定时机：UPS = 用户正在敲提示词的瞬间，此刻聚焦窗必然是
+            // 会话所在的终端窗（ControlMaster 复用下连接级身份不可判别，静态
+            // label 映射多窗并发必张冠李戴）。仅认终端类 App，防止把浏览器等
+            // 前台应用误绑；Stop/SessionEnd 不做此绑定（claude 自行完成时用户
+            // 可能在看别处，聚焦窗无意义）。
+            if case .userPromptSubmit = payload.event,
+               let focused = WindowManager.shared.captureFocusedWindowIdentity(),
+               TerminalRegistry.isTerminalBundleID(focused.bundleIdentifier ?? "") {
+                SessionWindowRegistry.shared.bind(
+                    sessionID: payload.sessionID,
+                    windowIdentity: focused,
+                    terminalTTY: payload.terminalCtx?.tty,
+                    terminalSessionID: payload.terminalCtx?.termSessionID,
+                    itermSessionID: payload.terminalCtx?.itermSessionID,
+                    cwd: payload.cwd,
+                    model: payload.model,
+                    bindingType: .remote
+                )
+                log(
+                    "[HookEventHandler] resolveSessionBinding: auto-bound to focused terminal window",
+                    level: .info,
+                    fields: [
+                        "traceID": traceID,
+                        "sessionID": payload.sessionID,
+                        "windowID": String(focused.windowID),
+                        "title": focused.title ?? "nil"
+                    ]
+                )
+                guard let boundNow = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+                    return .none
+                }
+                return .bound(boundNow)
+            }
             guard let identity = resolveRemoteBinding(label: label, sessionID: payload.sessionID) else {
                 return .none
             }

@@ -107,11 +107,10 @@ extension HookEventHandler {
                 ]
             )
             // 远程机器：通过 machine_label 查映射表
-                        // B125 主通道：SessionStart 瞬间的聚焦窗 == 用户刚敲 `claude` 的那个
-            // ssh 窗（ControlMaster 复用下 TCP 指纹不可用，聚焦窗是唯一可靠身份）。
-            // 每条会话各自绑定自己的窗，多窗多会话互不串扰。
+                        // B125：SessionStart 不做聚焦窗绑定（此刻用户可能在看别处，会误绑）。
+            // 真正的绑定时机 = 第一次 UPS（用户敲提示词，聚焦窗必为会话所在终端窗），
+            // 见 resolveSessionBinding。静态映射仅作显式兜底。
             let remoteResolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID)
-                ?? WindowManager.shared.captureFocusedWindowIdentity()
             switch Self.decideSessionBind(isRemote: true, machineLabel: label, localResolved: nil, remoteResolved: remoteResolved) {
             case .bind(let identity, let bindingType):
                 return finishSessionBind(
