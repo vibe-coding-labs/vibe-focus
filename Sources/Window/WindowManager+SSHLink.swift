@@ -13,10 +13,13 @@ import Foundation
 extension WindowManager {
 
     struct SSHLinkParse {
-        /// lsof -nP -iTCP:<port> -sTCP:ESTABLISHED 输出 → 本地端口吻合的 ssh 进程 pid。
-        /// 行形如：`ssh 9101 user 7u IPv4 ... TCP 192.168.1.12:54321->192.168.1.83:22 (ESTABLISHED)`
-        static func parseEstablishedSSHPid(_ output: String, serverIP: String, clientPort: String) -> pid_t? {
-            guard !clientPort.isEmpty, !serverIP.isEmpty else { return nil }
+        /// lsof -nP -iTCP:<port> -sTCP:ESTABLISHED 输出 → 本地端口吻合的 ssh 进程 pid 列表。
+        /// 行形如：`ssh 9101 user 7u IPv4 ... TCP 192.168.1.12:54321->192.168.1.83:22 (ESTABLISHED)`。
+        /// 同一连接可能被两个进程持有（交互客户端带 tty + ControlMaster master 无 tty），
+        /// 全部返回由调用方按「有无 tty」甄别。
+        static func parseEstablishedSSHPids(_ output: String, serverIP: String, clientPort: String) -> [pid_t] {
+            guard !clientPort.isEmpty, !serverIP.isEmpty else { return [] }
+            var pids: [pid_t] = []
             for line in output.split(whereSeparator: \.isNewline) {
                 guard let tcp = line.range(of: " TCP ") else { continue }
                 let namePart = line[tcp.upperBound...]
@@ -28,9 +31,9 @@ extension WindowManager {
                 guard localPort == clientPort else { continue }
                 let parts = line.split(separator: " ", omittingEmptySubsequences: true)
                 guard parts.count >= 2, let pid = pid_t(parts[1]) else { continue }
-                return pid
+                pids.append(pid)
             }
-            return nil
+            return pids
         }
 
         /// `ps -o tty=` 输出 → 规整 tty 设备路径（"ttys001" → "/dev/ttys001"；"??" 无 tty）。
@@ -70,16 +73,31 @@ extension WindowManager {
         guard let lsofOut = runShellCommand("/usr/sbin/lsof", args: [
             "-nP", "-iTCP:22", "-sTCP:ESTABLISHED"
         ]) else { return nil }
-        guard let sshPid = SSHLinkParse.parseEstablishedSSHPid(lsofOut, serverIP: serverIP, clientPort: clientPort) else {
+        let candidatePids = SSHLinkParse.parseEstablishedSSHPids(lsofOut, serverIP: serverIP, clientPort: clientPort)
+        guard !candidatePids.isEmpty else {
             log("[WindowManager] resolveWindowBySSHLink: no established ssh match", level: .debug, fields: [
                 "clientPort": clientPort, "serverIP": serverIP
             ])
             return nil
         }
 
-        // 2) 进程 tty
-        guard let psOut = runShellCommand("/bin/ps", args: ["-o", "tty=", "-p", String(sshPid)]),
-              let tty = SSHLinkParse.parseTTYOfPid(psOut) else { return nil }
+        // 2) 进程 tty：同端口可能被「带 tty 的交互客户端 + 无 tty 的 mux master」
+        // 同时持有，取有 tty 的那个；全无 tty（纯 mux）则无法定位窗口。
+        var tty: String?
+        var sshPid: pid_t?
+        for pid in candidatePids {
+            guard let psOut = runShellCommand("/bin/ps", args: ["-o", "tty=", "-p", String(pid)]),
+                  let candidate = SSHLinkParse.parseTTYOfPid(psOut) else { continue }
+            tty = candidate
+            sshPid = pid
+            break
+        }
+        guard let tty, let sshPid else {
+            log("[WindowManager] resolveWindowBySSHLink: matched pids have no tty (mux master only)", level: .debug, fields: [
+                "pids": candidatePids.map(String.init).joined(separator: ",")
+            ])
+            return nil
+        }
 
         // 3) iTerm2 tty→窗口映射（AppleScript 窗口 id == CGWindowID，真机互查实证）
         let script = """

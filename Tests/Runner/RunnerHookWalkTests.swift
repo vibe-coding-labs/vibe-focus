@@ -881,15 +881,19 @@ extension RunnerHarness {
             ssh      9101  cc     7u  IPv4 0xabcd      0t0  TCP 192.168.1.12:54321->192.168.1.83:22 (ESTABLISHED)
             ssh      9200  cc     7u  IPv4 0xabce      0t0  TCP 192.168.1.12:54330->192.168.1.90:22 (ESTABLISHED)
             """
-            check("sshLink: lsof 本地端口+服务端 IP 双匹配 → pid",
-                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.83", clientPort: "54321") == 9101)
-            check("sshLink: 端口不吻合 → nil",
-                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.83", clientPort: "9999") == nil)
-            check("sshLink: 服务端 IP 不吻合 → nil",
-                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.90", clientPort: "54321") == nil)
+            check("sshLink: lsof 本地端口+服务端 IP 双匹配 → [pid]",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPids(lsof, serverIP: "192.168.1.83", clientPort: "54321") == [9101])
+            // mux master 与交互客户端共享同一连接 → 同端口两 pid 全返回（调用方按 tty 甄别）
+            let muxLsof = lsof + "\nssh      9300  cc     3u  IPv4 0xabcf      0t0  TCP 192.168.1.12:54321->192.168.1.83:22 (ESTABLISHED)"
+            check("sshLink: 同端口多进程（mux 共享）全收集",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPids(muxLsof, serverIP: "192.168.1.83", clientPort: "54321") == [9101, 9300])
+            check("sshLink: 端口不吻合 → 空",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPids(lsof, serverIP: "192.168.1.83", clientPort: "9999") == [])
+            check("sshLink: 服务端 IP 不吻合 → 空",
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPids(lsof, serverIP: "192.168.1.90", clientPort: "54321") == [])
             check("sshLink: 空端口/空 IP 拒绝（不猜测）",
-                  WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "192.168.1.83", clientPort: "") == nil
-                  && WindowManager.SSHLinkParse.parseEstablishedSSHPid(lsof, serverIP: "", clientPort: "54321") == nil)
+                  WindowManager.SSHLinkParse.parseEstablishedSSHPids(lsof, serverIP: "192.168.1.83", clientPort: "") == []
+                  && WindowManager.SSHLinkParse.parseEstablishedSSHPids(lsof, serverIP: "", clientPort: "54321") == [])
             check("sshLink: ps tty 规整（ttys→/dev/ttys；?? 拒绝）",
                   WindowManager.SSHLinkParse.parseTTYOfPid("ttys001") == "/dev/ttys001"
                   && WindowManager.SSHLinkParse.parseTTYOfPid("/dev/ttys002") == "/dev/ttys002"
