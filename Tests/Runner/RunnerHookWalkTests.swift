@@ -572,6 +572,32 @@ extension RunnerHarness {
             check("bindState: 已完成绑定可被新 session 复用（completed 不算活跃冲突）", reuseOK)
         }
 
+        // clearAllBindings + tracker.start 幂等（B115：SessionWindowRegistry+State/Tracker 收尾）
+        do {
+            let dir = "/tmp/vibefocus-swr6-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr6.db")
+            let reg = SessionWindowRegistry(store: solo)
+            reg.windowStates[95] = WindowState(
+                windowID: 95, pid: 100, tty: nil, axWindowNumber: nil, appName: "T",
+                bundleIdentifier: nil, title: nil, termSessionID: nil, itermSessionID: nil,
+                sessionID: "clear-s", bindingType: .local, isCompleted: false,
+                createdAt: Date(), updatedAt: Date())
+            reg.sessionAliasWindowID["alias-c"] = 95
+            solo.saveWindowState(reg.windowStates[95]!)
+            reg.clearAllBindings()
+            check("swrState: clearAllBindings 内存/别名/描述/DB 四清",
+                  reg.windowStates.isEmpty && reg.sessionAliasWindowID.isEmpty
+                  && reg.lastEventDescription == "所有绑定已清除"
+                  && solo.findWindowState(windowID: 95) == nil)
+            // TerminalUsageTracker.start 幂等（二次调用不炸不重复注册——observer 私有，锁不崩与表不丢）
+            let tracker = TerminalUsageTracker(table: TerminalUsageTable())
+            tracker.start()
+            tracker.start()
+            check("usageTracker: start 二次调用幂等", tracker.table.entries.isEmpty)
+        }
+
         // SessionWindowRegistry 状态族注入式直测（B100：临时库实例——此前仅 shared 字典播种的间接消费）
         do {
             let dir = "/tmp/vibefocus-swr-\(UUID().uuidString)"

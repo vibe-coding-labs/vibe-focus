@@ -180,3 +180,4 @@
 | B112 | mergedHooks 合并+开关裁剪直测（CodexHookPreferences/CodexHookInstaller 52.63% 薄面）：全新安装三事件就位且外部键保留 / 开关关闭移除 SessionEnd·UserPromptSubmit 而 Stop 留存 / 幂等重装不叠加（键集一致），HookWalkTests +3 断言。Standalone 8/8；Runner 1275→1278 | ✅ 2026-09-10 |
 | B113 | 薄面收尾微批（Codex 路径/安装检测 + lanMode 往返 + supportTable 全表）：codexConfigDir/Path home 注入派生（.codex/hooks.json）、isHookInstalled 语义直测（command 含 helperScriptPath → true、缺失/无匹配 → false，注意 createFile 不建中间目录）、lanMode set/get 往返（独立域用后复位）、supportTable 九终端全表逐项锁定（新增/删除/改级都红）→ HookWalkTests +5 断言。Standalone 8/8；Runner 1278→1283 | ✅ 2026-09-10 |
 | B114 | uninstallHookFromCodexSettings 卸载路径直测（CodexHookInstaller 卸载按钮路径）：混合设置（我方 url 条目+外部 command 条目+他方顶层键）卸载后我方条目清除、外部条目与他方键保留、返回成功；缺文件与坏 JSON 均按「视为已卸载」返回 true（实现语义如实锁定）→ HookWalkTests +3 断言。Standalone 8/8；Runner 1283→1286 | ✅ 2026-09-10 |
+| B115 | 收尾微批：clearAllBindings 四清直测（内存/别名/描述/DB）+ TerminalUsageTracker.start 二次调用幂等 → HookWalkTests +2 断言。Standalone 8/8；Runner 1286→1288 | ✅ 2026-09-10 |
