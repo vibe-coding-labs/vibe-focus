@@ -96,7 +96,7 @@ enum TerminalRegistry {
         // P-INST-59: findTerminalPID 进程树遍历耗时（循环最多 10 次，每次 isTerminalPID + getParentPID 各一次 ps fork；findWindowByTerminalContext P-INST-39 的进程树解析核心，ps fork 累积是 SessionStart 耗时主因）。
         let ftpStart = Date()
         // 行走语义走纯函数（2.16a 第二十刀）：isTerminalPID/getParentPID 作为谓词注入，
-        // ps fork 仍由本函数的私有查询承担，fork 次数契约见 TerminalTreeWalkTests。
+        // ps fork 仍由本函数的私有查询承担，walkToTerminalPID 直测在 RunnerHookWalkTests。
         let walk = walkToTerminalPID(
             startPID: startPID,
             parentPID: getParentPID,

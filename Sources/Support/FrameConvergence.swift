@@ -24,7 +24,8 @@ enum FrameWriteOutcome: Equatable {
     }
 }
 
-/// move/resize 两段写入的顺序决策（纯函数，FrameWriteOrderTests 分支穷尽锁定）。
+/// move/resize 两段写入的顺序决策（纯函数；分支穷尽锁定于
+/// RunnerRestoreOrchestrationTests writeOrder 块）。
 ///
 /// ## 场景（2026-09-03 跨屏乱蹦修复）
 /// yabai `--move abs` 与 `--resize abs` 是两条命令，先后生效之间存在中间态窗口
@@ -68,7 +69,7 @@ struct FrameShortfall: OptionSet, Equatable {
 
 /// 帧写入收敛循环唯一骨架。
 ///
-/// ## 语义契约（FrameConvergenceLoopTests 锁定）
+/// ## 语义契约（RunnerConvergencePipelineTests convergeFrame 块锁定）
 /// - 每轮严格 write → settle → read → 判据：读回必须等写落定，settle 不跳过；
 /// - 读失败视为本轮未收敛，继续下一轮重试（不提前放弃——读回原语偶发 nil 不该终止收敛）；
 /// - 写硬失败（write 返回 false）立即短路，当轮不再 settle/read；

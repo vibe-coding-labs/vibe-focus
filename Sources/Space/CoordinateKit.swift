@@ -103,7 +103,7 @@ struct QuartzRect: Equatable, CustomStringConvertible {
 @MainActor
 enum CoordinateKit {
 
-    /// AppKit 全局 y → Quartz 全局 y（纯函数，QuartzConversionTests 锁定）。
+    /// AppKit 全局 y → Quartz 全局 y（纯函数，RunnerRegistryStoreTests coord 块锁定）。
     /// AppKit 主屏左下为原点 y 向上，Quartz 主屏左上为原点 y 向下：
     /// quartzY = 主屏 AppKit maxY − 矩形 AppKit maxY。
     /// 对主屏与非主屏统一成立（主屏即历史主屏分支公式 screenMaxY − visibleMaxY）。

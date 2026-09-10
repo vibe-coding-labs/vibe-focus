@@ -81,7 +81,7 @@ extension WindowManager {
             // 2026-09-02 诚实化：失败/放弃不再伪装成功。aborted = 移动前放弃；
             // Retryable = record 保留，再次触发即重试；Permanent = record 已清除，
             // 下次 toggle 走 stuck 解堵。标签派生见 RestoreOutcome.outcomeLabel
-            // （RestoreRefocusCandidateTests 分支穷尽锁定）。
+            // （RunnerRegistryStoreTests refocus 决策块分支穷尽锁定）。
             let outcomeLabel = outcome.outcomeLabel
             log("[WindowManager] restore failed: \(outcomeLabel)", level: .error, fields: [
                 "op": op,

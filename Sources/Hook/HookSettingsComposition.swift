@@ -5,7 +5,7 @@
 // 用户自装的外部 hook 一律保留。
 // 消费者：HookInstaller.installHookToClaudeSettings / uninstallHookFromClaudeSettings、
 //         ClaudeHookPreferences.isHookInstalled。
-// 测试：Tests/Standalone/HookSettingsCompositionTests.swift（分支穷尽 + bug 修复锁定）。
+// 测试：RunnerPureSweepA settingsCompose 块真身直测（分支穷尽 + bug 修复锁定）。
 
 import Foundation
 

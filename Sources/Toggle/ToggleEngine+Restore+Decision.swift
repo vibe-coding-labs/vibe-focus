@@ -4,7 +4,7 @@ import Foundation
 // 文件分层（2026-09-07 拆分，行为不变）：
 //   +Restore+Decision.swift（本文件） — 结局类型 + record 处置/源屏预切回纯决策
 //   +Restore.swift                    — 视角守卫 + 生产入口 + performRestore 编排
-// 全部声明为纯函数/纯类型（无 IO、无实例状态），RestoreRefocusCandidateTests 与
+// 全部声明为纯函数/纯类型（无 IO、无实例状态），分支穷尽锁定于
 // Tests/Runner performRestore 分支穷举双通道锁定；本拆分为纯代码搬移，锁不失效。
 
 @MainActor
@@ -28,7 +28,7 @@ extension ToggleEngine {
         case moveFailedPermanent
 
         /// 机器可读结局标签（WindowManager 失败日志与 CrashContextRecorder 用；
-        /// RestoreRefocusCandidateTests 分支穷尽锁定）。
+        /// RunnerRegistryStoreTests 序列锁分支穷尽）。
         var outcomeLabel: String {
             switch self {
             case .restored(let spaceExact):
@@ -43,13 +43,13 @@ extension ToggleEngine {
         }
     }
 
-    /// 失败时 record 处置的纯决策（RestoreRefocusCandidateTests 锁定）。
+    /// 失败时 record 处置的纯决策（RunnerRegistryStoreTests retryable 直测锁定）。
     /// origFrame 中心仍落在某块现有屏上 → 瞬时失败保留 record；已不在任何屏 → 清除。
     static func isMoveFailureRetryable(origFrameOnAnyDisplay: Bool) -> Bool {
         origFrameOnAnyDisplay
     }
 
-    /// 4-pre 源屏预切回决策（纯函数，RestoreRefocusCandidateTests 分支穷尽锁定）。
+    /// 4-pre 源屏预切回决策（纯函数，RunnerRegistryStoreTests preSwitch 直测锁定）。
     enum SourceSpacePreSwitch: Equatable {
         /// record 无 space/display 上下文（0 值）——无从预切，spaceExact=nil。
         case noContext

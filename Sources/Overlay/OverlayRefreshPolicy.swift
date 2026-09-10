@@ -9,7 +9,7 @@ import Foundation
 /// 堆积占用 yabai 单进程）。防风暴的两道门此前内联在编排函数里，语义只活在现场；
 /// 提取为纯判定后由镜像 + Runner 双锁穷尽锁定，编排层只做门结果分派。
 ///
-/// ## 门序契约（OverlayRefreshPolicyTests 穷尽锁定）
+/// ## 门序契约（RunnerRegistryStoreTests overlayGate 块穷尽锁定）
 /// 1. `refreshGate`：suspend 先于 enabled——「已 suspend 且非 force」最优先短路
 ///    （toggle 期间的自动刷新抑制，P3.6 语义）；force 穿透 suspend 但不穿透
 ///    disabled（用户关掉 overlay 后任何刷新都不该发生）。

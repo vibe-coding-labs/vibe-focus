@@ -19,7 +19,7 @@ enum SoundPlayGateDecision: Equatable {
     case quietHours
 }
 
-/// 提示音播放门控（纯函数命名空间，fixture 可测，见 Standalone/SoundPlayGateTests.swift）。
+/// 提示音播放门控（纯函数命名空间；决策表 RunnerPureSweepBTests 真身直测锁定）。
 enum SoundPlayGate {
 
     /// 判定是否放行提示音。

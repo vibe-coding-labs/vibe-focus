@@ -4,7 +4,8 @@ import Foundation
 // 提取自 applyViaAppleScript 内联模板（2026-09-07，行为不变）：AppleScript 模板构造、
 // 定向 verdict 哨兵判定、Terminal 诊断回读模板均为纯字符串决策，与 NSAppleScript 执行
 // 分离。模板内嵌真实回归史（tty 寻址铁律/verdict 哨兵/转义），Tests/Standalone/
-// TitleEditorScriptDecisionTests 镜像锁定，Runner 直测段补齐中。
+// 四分支模板与全部铁律不变量由 Runner 真身直测锁定（makeTitleScript/isMatchedVerdict
+// 等：RunnerPureSweepBTests/RunnerHookWalkTests；B112 镜像退役）。
 
 @MainActor
 extension TitleEditorService {

@@ -13,7 +13,7 @@ import CoreGraphics
 ///   （AX 路径、restore）——float 已改变 yabai 侧 isFloating/frame，漏清的
 ///   下游 queryWindow 吃到 float 前旧值，是竞态温床。
 ///
-/// ## 序列契约（Tests/Standalone/FloatSettleSequenceTests 镜像 + Runner 真身双锁）
+/// ## 序列契约（RunnerConvergencePipelineTests floatsettle 块真身直测锁定）
 /// 1. setFloat 恰好调一次：knownWindowInfo 透传（nil 时由通道内部查询，fork 数
 ///    不变）；已 float / unmanaged / disabled 的跳过决策在通道内纯函数完成
 ///    （SpaceController.floatToggleDecision），本原语不重复判定；

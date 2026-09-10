@@ -8,7 +8,7 @@ import Foundation
 
 extension TerminalGridController {
 
-    /// 单窗投递决策（纯函数，Standalone GridSpaceDeliveryTests 锁定）。
+    /// 单窗投递决策（纯函数，RunnerSoundVoiceHookTests delivery 块锁定）。
     enum SpaceDeliveryDecision: Equatable {
         case notNeeded              // 已在目标 space
         case notApplicable          // 非显式 space 目标（display 级 / 主屏 / 焦点屏）

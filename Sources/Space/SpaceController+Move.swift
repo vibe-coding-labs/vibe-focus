@@ -22,7 +22,8 @@ extension SpaceController {
         var didToggle: Bool { self == .toggled }
     }
 
-    /// float 脱管跳过/执行的纯决策（分支穷尽锁定于 Standalone FloatToggleDecisionTests）。
+    /// float 脱管跳过/执行的纯决策（分支穷尽锁定于 RunnerRegistryStoreTests
+    /// floatToggle 块，含守卫序）。
     /// info 用 @autoclosure 保持惰性：disabled 时不得发起 queryWindow fork（fork ~ms，
     /// 热键路径白耗时）。决策序与 2026-09-02 重构前行为一致：
     /// disabled → query_nil → already_floating → unmanaged → toggled。
