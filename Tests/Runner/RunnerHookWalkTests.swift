@@ -672,6 +672,40 @@ extension RunnerHarness {
                   withToken == "http://127.0.0.1:39277/claude/hook?token=tok123")
         }
 
+        // mergedHooks 合并+开关裁剪（B112：CodexHookInstaller 52% 薄面——幂等/外部保留/开关移除）
+        do {
+            let targetURL = "http://127.0.0.1:39277/claude/hook"
+            let scriptPath = "/opt/vibefocus/helper.sh"
+            let ourEntry: [String: Any] = ["hooks": [["url": targetURL, "timeout": 10]]]
+            let foreignEntry: [String: Any] = ["hooks": [["command": "/usr/bin/other-tool"]]]
+            let ourHooks: [String: Any] = [
+                "Stop": ourEntry, "SessionEnd": ourEntry, "UserPromptSubmit": ourEntry,
+            ]
+            // 全新安装：三事件就位；外部键原样保留
+            let fresh = CodexHookPreferences.mergedHooks(
+                existing: ["Other": foreignEntry], ourHooks: ourHooks,
+                triggerOnSessionEnd: true, autoRestoreOnPromptSubmit: true,
+                scriptPath: scriptPath, targetURL: targetURL)
+            check("mergedHooks: 全新安装三事件就位且外部键保留",
+                  fresh["Stop"] != nil && fresh["SessionEnd"] != nil
+                  && fresh["UserPromptSubmit"] != nil && fresh["Other"] != nil)
+            // 开关裁剪：SessionEnd/UserPromptSubmit 按开关移除
+            let trimmed = CodexHookPreferences.mergedHooks(
+                existing: [:], ourHooks: ourHooks,
+                triggerOnSessionEnd: false, autoRestoreOnPromptSubmit: false,
+                scriptPath: scriptPath, targetURL: targetURL)
+            check("mergedHooks: 开关关闭 → SessionEnd/UserPromptSubmit 移除、Stop 留存",
+                  trimmed["SessionEnd"] == nil && trimmed["UserPromptSubmit"] == nil
+                  && trimmed["Stop"] != nil)
+            // 幂等：对合并结果再合并一次 → 结果不变（防重装叠加）
+            let twice = CodexHookPreferences.mergedHooks(
+                existing: fresh, ourHooks: ourHooks,
+                triggerOnSessionEnd: true, autoRestoreOnPromptSubmit: true,
+                scriptPath: scriptPath, targetURL: targetURL)
+            check("mergedHooks: 幂等——重装不叠加（键集与 fresh 一致）",
+                  Set(twice.keys) == Set(fresh.keys))
+        }
+
         // resolveRemoteBinding 真实查找路径（B107：label 未映射/映射窗口已消失两分支——
         // remoteBindings 种子化进独立 UserDefaults 域，用后清键）
         do {
