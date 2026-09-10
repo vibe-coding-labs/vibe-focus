@@ -214,6 +214,7 @@ final class FakeAuditor: RestoreAuditing {
         runConvergencePipelineTests()
         runTitleE2E()
         runTerminalGridUnitTests()
+        runShellRunnerTests()
         runDisplayWorkAreaTests()
         runTerminalDialectTests()
         runSoundVoiceHookTests()
