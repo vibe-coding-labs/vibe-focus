@@ -11,6 +11,17 @@ extension ClaudeHookPreferences {
     // MARK: - Config & Helper Script
 
     /// 写入辅助脚本配置文件（端口和 Token）
+    /// hook-config.json 内容组装（纯函数，B143 提纯）：port/token 恒在；
+    /// lanMode 时附 host=本机活跃 LAN IP（远程转发器指向依据）。
+    static func makeConfigData(port: Int, token: String, host: String?) -> Data? {
+        var config: [String: Any] = [
+            "port": port,
+            "token": token
+        ]
+        if let host { config["host"] = host }
+        return try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
+    }
+
     static func writeConfigFile() {
         // P-INST-87: hook 辅助脚本配置写入耗时（createDirectory + JSONSerialization.data + data.write(.atomic) 写 hook-config.json；applyPreferences P-INST-77 / installHookToClaudeSettings P-INST-78 子阶段；token/port 同步）。
         #if PERF_INSTRUMENT

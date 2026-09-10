@@ -816,6 +816,19 @@ extension RunnerHarness {
             LANHookPreferences.lanMode = false
             check("lanMode: 复位 false", LANHookPreferences.lanMode == false)
         }
+
+        // B143：hook-config.json 形状契约（双机契约——远程转发器解析的唯一依据）
+        do {
+            let data = ClaudeHookPreferences.makeConfigData(port: 39277, token: "tok-b143", host: "192.168.1.83")
+            let parsed = try? JSONSerialization.jsonObject(with: data ?? Data()) as? [String: Any]
+            check("configData: 四字段精确（port/token/host）",
+                  parsed?["port"] as? Int == 39277
+                  && parsed?["token"] as? String == "tok-b143"
+                  && parsed?["host"] as? String == "192.168.1.83")
+            let noHost = ClaudeHookPreferences.makeConfigData(port: 39277, token: "t", host: nil)
+            check("configData: host 缺省 → 不含 host 键",
+                  ((try? JSONSerialization.jsonObject(with: noHost ?? Data()) as? [String: Any]) ?? [:])["host"] == nil)
+        }
         do {
             // supportTable 九终端全表契约（设置页 Picker 名单与自动化分级的唯一事实源）
             let expected: [String: TerminalAutomationSupportLevel] = [
