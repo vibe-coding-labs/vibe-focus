@@ -61,3 +61,28 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B135：SpaceController+Yabai 纯工具直测（单值/首元素解码 + 错误消息格式）
+
+extension RunnerHarness {
+    func runYabaiUtilsTests() {
+        struct Probe: Decodable, Equatable { let id: Int }
+
+        // staticDecodeSingleOrFirst：单对象 / 数组首元素 / 垃圾输入 三态
+        let single = SpaceController.staticDecodeSingleOrFirst(Probe.self, from: #"{"id":7}"#)
+        check("yabaiUtil: 单对象 JSON 解码命中", single == Probe(id: 7))
+        let array = SpaceController.staticDecodeSingleOrFirst(Probe.self, from: #"[{"id":1},{"id":2}]"#)
+        check("yabaiUtil: 数组 JSON 取首元素", array == Probe(id: 1))
+        check("yabaiUtil: 垃圾输入 → nil",
+              SpaceController.staticDecodeSingleOrFirst(Probe.self, from: "not-json") == nil)
+
+        // formatErrorMessage：stderr 优先 → stdout 兜底 → 双空常量
+        check("yabaiFmt: stderr 非空优先",
+              SpaceController.formatErrorMessage(stdout: "out", stderr: "  err  ") == "err")
+        check("yabaiFmt: stderr 空退 stdout（trim）",
+              SpaceController.formatErrorMessage(stdout: "\n  out \n", stderr: "") == "out")
+        check("yabaiFmt: 双空 → 固定常量",
+              SpaceController.formatErrorMessage(stdout: "  ", stderr: "\n")
+              == "yabai returned empty error output")
+    }
+}
