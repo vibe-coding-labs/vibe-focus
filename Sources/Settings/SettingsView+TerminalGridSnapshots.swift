@@ -27,14 +27,17 @@ extension SettingsView {
     /// 快照行：mini 格位图 + 名称/元数据 + 动作
     func gridSnapshotRow(_ snapshot: TerminalGridSnapshot) -> some View {
         HStack(spacing: 12) {
-            GridSnapshotThumbnail(rows: snapshot.rows, cols: snapshot.cols)
+            // 显示用覆盖网格而非裸存值：旧快照（推断 3×4 · 16 窗）直接展示存值
+            // 会复现「数字对不上」，且与恢复重排实际使用的网格不一致
+            let displayGrid = snapshot.displayGrid
+            GridSnapshotThumbnail(rows: displayGrid.rows, cols: displayGrid.cols)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(snapshot.name)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text("\(snapshot.rows)×\(snapshot.cols)")
+                    Text("\(displayGrid.rows)×\(displayGrid.cols)")
                     Text("·")
                     Text("\(snapshot.cells.count) 窗")
                     Text("·")

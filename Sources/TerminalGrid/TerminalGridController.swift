@@ -85,7 +85,8 @@ final class TerminalGridController {
                 ])
                 return OperationResult(
                     ok: false,
-                    message: "第 \(index + 1) 个终端窗口创建失败：\(detail)（若为自动化权限问题，请在 系统设置 → 隐私与安全性 → 自动化 中允许 VibeFocus 控制终端）"
+                    message: TerminalGridPlanner.cellCreationFailureMessage(
+                        failedIndex: index, createdCount: createdWindowIDs.count, detail: detail)
                 )
             }
             if placement.corrected { correctedCells += 1 }

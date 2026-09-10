@@ -171,7 +171,16 @@ extension TerminalGridController {
             }
         }
 
-        let summary = "自动恢复：新建 \(created)、注入 \(injected)、跳过运行中 \(skipped)" + (failures > 0 ? "、失败 \(failures)" : "")
+        // 记账诚实化：plan 对超出重排帧数的格子会截断（>4×4 容量快照），差额
+        // 必须在汇总里显式交代，否则四类去处加起来 < 格子数却看不出有格子被丢
+        let unprocessed = max(0, snapshot.cells.count - actions.count)
+        let summary = TerminalGridPlanner.autoRestoreSummaryMessage(
+            created: created,
+            injected: injected,
+            skipped: skipped,
+            failures: failures,
+            unprocessed: unprocessed
+        )
         return OperationResult(ok: failures == 0 || created + injected + skipped > 0, message: summary)
     }
 

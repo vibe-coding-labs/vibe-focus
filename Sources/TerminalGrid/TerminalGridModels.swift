@@ -71,3 +71,12 @@ struct TerminalGridSnapshot: Codable, Equatable {
         self.capturedAt = capturedAt
     }
 }
+
+extension TerminalGridSnapshot {
+    /// 显示口径网格：与 restoreTargetFrames 重排同走 coveringGrid。旧快照存的是
+    /// 裸推断网格（自由摆法乘积可 < 格子数），列表若直接展示存值会继续出现
+    /// 「3×4 · 16 窗」式矛盾——显示侧自适应长成覆盖网格，与恢复实际行为一致。
+    var displayGrid: (rows: Int, cols: Int) {
+        TerminalGridPlanner.coveringGrid(inferred: (rows: rows, cols: cols), cellCount: cells.count)
+    }
+}

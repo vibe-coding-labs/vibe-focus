@@ -152,6 +152,51 @@ extension RunnerHarness {
               && legacyReplan.allSatisfy { $0.maxX <= 2000 && $0.maxY <= 1000 })
     }
 
+    // ===== B122~B124 文案/记账诚实化：displayGrid / autoRestoreSummary / cellCreationFailure =====
+    do {
+        func auditCell(_ index: Int) -> TerminalGridCellSnapshot {
+            TerminalGridCellSnapshot(index: index, x: 10, y: 20, width: 300, height: 200,
+                                     ttyPath: nil, sessionID: nil, cwd: nil, title: nil)
+        }
+        func auditSnapshot(rows: Int, cols: Int, cells: Int) -> TerminalGridSnapshot {
+            TerminalGridSnapshot(
+                name: "audit", appBundleID: "com.apple.Terminal", displayID: 1,
+                displayYabaiIndex: nil, rows: rows, cols: cols,
+                cells: (0..<cells).map(auditCell),
+                launchCommand: nil
+            )
+        }
+        // displayGrid：旧快照（裸推断 3×4 · 16 格）显示侧长成 4×4，与恢复重排同口径；干净网格原样
+        check("displayGrid: 旧快照欠覆盖 3×4/16 → 4×4",
+              auditSnapshot(rows: 3, cols: 4, cells: 16).displayGrid == (rows: 4, cols: 4))
+        check("displayGrid: 干净网格 3×4/12 原样",
+              auditSnapshot(rows: 3, cols: 4, cells: 12).displayGrid == (rows: 3, cols: 4))
+        check("displayGrid: 覆盖网格幂等 2×4/8 原样",
+              auditSnapshot(rows: 2, cols: 4, cells: 8).displayGrid == (rows: 2, cols: 4))
+
+        // autoRestore 汇总：四类去处之外的超容量格子必须显式记账
+        check("autoSummary: 全部有去处不添尾注",
+              TerminalGridPlanner.autoRestoreSummaryMessage(created: 3, injected: 2, skipped: 4, failures: 0, unprocessed: 0)
+              == "自动恢复：新建 3、注入 2、跳过运行中 4")
+        check("autoSummary: 失败计数并列",
+              TerminalGridPlanner.autoRestoreSummaryMessage(created: 1, injected: 0, skipped: 2, failures: 5, unprocessed: 0)
+              == "自动恢复：新建 1、注入 0、跳过运行中 2、失败 5")
+        check("autoSummary: 超容量差额显式交代",
+              TerminalGridPlanner.autoRestoreSummaryMessage(created: 12, injected: 0, skipped: 0, failures: 0, unprocessed: 4)
+              == "自动恢复：新建 12、注入 0、跳过运行中 0；另有 4 格超出网格容量（4×4）未处理")
+        check("autoSummary: 失败+超容并存",
+              TerminalGridPlanner.autoRestoreSummaryMessage(created: 0, injected: 1, skipped: 0, failures: 2, unprocessed: 3)
+              == "自动恢复：新建 0、注入 1、跳过运行中 0、失败 2；另有 3 格超出网格容量（4×4）未处理")
+
+        // 建格失败：序号 1 起与阅读序一致；已建成窗不回收、必须交代去向
+        check("cellFail: 首格失败无尾注",
+              TerminalGridPlanner.cellCreationFailureMessage(failedIndex: 0, createdCount: 0, detail: "超时")
+              == "第 1 个终端窗口创建失败：超时（若为自动化权限问题，请在 系统设置 → 隐私与安全性 → 自动化 中允许 VibeFocus 控制终端）")
+        check("cellFail: 前 3 窗已建成的诚实尾注",
+              TerminalGridPlanner.cellCreationFailureMessage(failedIndex: 3, createdCount: 3, detail: "超时")
+              == "第 4 个终端窗口创建失败：超时（若为自动化权限问题，请在 系统设置 → 隐私与安全性 → 自动化 中允许 VibeFocus 控制终端）；前 3 个窗口已创建并保留在屏上")
+    }
+
     // ===== cocoaBoundsTuple：Quartz frame → Cocoa {l, t, r, b}（B65 补测） =====
     // y 轴翻转依赖活屏高（真机相关），此处锁定机器无关契约：格式/x 轴取整/高度保持/翻转方向。
     do {
