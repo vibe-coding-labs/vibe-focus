@@ -762,6 +762,31 @@ extension RunnerHarness {
             ClaudeHookPreferences.triggerOnSessionEnd = true
             check("codexHooks: SessionEnd 开 → SessionStart+SessionEnd",
                   Set(CodexHookPreferences.codexHooksDict().keys) == ["SessionEnd", "SessionStart"])
+
+            // B130：安装/卸载文档纯变换（真机形状 0.153.4 实证——事件包顶层 "hooks" 下）
+            let spB130 = "/opt/vf/fwd.sh"
+            let ourEntry: [String: Any] = ["matcher": "", "hooks": [["type": "command", "command": "bash \"\(spB130)\"", "timeout": 10]]]
+            let foreignEntry: [String: Any] = ["hooks": [["command": "/usr/bin/other-tool"]]]
+            func doc(_ d: [String: Any]) -> Data { try! JSONSerialization.data(withJSONObject: d) }
+            // 安装：全新 + 带 description 的旧文档
+            let freshDoc = CodexHookPreferences.installedDocument(
+                existingData: nil, triggerOnSessionEnd: false, scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
+            check("codexDoc: 全新安装 → 规范形状顶层仅 hooks 字段",
+                  freshDoc.document.keys.sorted() == ["hooks"]
+                  && freshDoc.hookEvents == ["SessionStart"])
+            let legacy = doc(["description": "keep", "Stop": [foreignEntry], "SessionStart": [ourEntry]])
+            let migrated = CodexHookPreferences.installedDocument(
+                existingData: legacy, triggerOnSessionEnd: true, scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
+            check("codexDoc: 历史顶层事件键迁移清理 + description 保留",
+                  migrated.document["description"] as? String == "keep"
+                  && (migrated.document["Stop"] as? [[String: Any]]) == nil
+                  && migrated.hookEvents == ["SessionEnd", "SessionStart"])
+            // 卸载：我方条目清除、外部条目与 description 保留
+            let afterUninstall = CodexHookPreferences.uninstalledDocument(
+                existingData: doc(migrated.document), scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
+            check("codexDoc: 卸载后我方事件清空、description 保留",
+                  (afterUninstall["hooks"] as? [String: Any])?.isEmpty == true
+                  && afterUninstall["description"] as? String == "keep")
             let savedLan = LANHookPreferences.lanMode
             defer { LANHookPreferences.lanMode = savedLan }
             LANHookPreferences.lanMode = true

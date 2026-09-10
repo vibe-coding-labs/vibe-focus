@@ -127,37 +127,21 @@ enum CodexHookPreferences {
             return (false, "无法创建目录: \(error.localizedDescription)")
         }
 
-        // Codex hooks.json 规范形状（0.153.4 实证）：事件字典包在顶层 "hooks" 字段下，
-        // 顶层另可含 description 等字段。读取现有内容（不存在则空文档起），保留用户
-        // 其它字段与 hook 条目；历史安装器写的顶层事件键（坏形状）顺手迁移清理。
-        var document: [String: Any] = [:]
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            document = existing
-            log("[CodexHookPreferences] read existing hooks.json, topKeys: \(document.keys.sorted().joined(separator: ","))")
-        }
-
-        // 规范层合并（codex 可触发事件集；autoRestoreOnPromptSubmit 裁剪的
-        // UserPromptSubmit 不在 codex 事件集，恒传 false 仅走形式）
-        var wrapped = (document["hooks"] as? [String: Any]) ?? [:]
-        wrapped = mergedHooks(
-            existing: wrapped,
-            ourHooks: codexHooksDict(),
+        // 文档变换提纯（B130）：installInstalledDocument 纯字典变换，测试直测；
+        // 本函数只负责真实 IO（读旧文档 → 变换 → 原子写）。
+        let existingData = try? Data(contentsOf: URL(fileURLWithPath: path))
+        let (document, hookEvents) = installedDocument(
+            existingData: existingData,
             triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd,
-            autoRestoreOnPromptSubmit: false,
             scriptPath: ClaudeHookPreferences.helperScriptPath,
             targetURL: ClaudeHookPreferences.endpointURLString()
         )
-        // 历史错形状迁移：清理可能残留在文档顶层的事件键（"hooks" 字段本身是
-        // 字典非条目列表，cleanVibeFocusHooks 的列表判据自然跳过）
-        cleanVibeFocusHooks(from: &document, scriptPath: ClaudeHookPreferences.helperScriptPath, targetURL: ClaudeHookPreferences.endpointURLString())
-        document["hooks"] = wrapped
 
         log(
             "[CodexHookPreferences] installing hooks",
             fields: [
                 "path": path,
-                "hookEvents": wrapped.keys.sorted().joined(separator: ","),
+                "hookEvents": hookEvents.joined(separator: ","),
                 "helperScript": ClaudeHookPreferences.helperScriptPath
             ]
         )
@@ -190,19 +174,11 @@ enum CodexHookPreferences {
             ])
         }
         #endif
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              var document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             // 文件不存在视为已卸载
             return (true, "Codex 配置不存在，无需卸载")
         }
-
-        // 双形状清理：规范层（顶层 "hooks" 字段下）+ 历史错形状的顶层事件键
-        if var wrapped = document["hooks"] as? [String: Any] {
-            cleanVibeFocusHooks(from: &wrapped, scriptPath: scriptPath, targetURL: targetURL)
-            document["hooks"] = wrapped
-        }
-        cleanVibeFocusHooks(from: &document, scriptPath: scriptPath, targetURL: targetURL)
-
+        let document = uninstalledDocument(existingData: data, scriptPath: scriptPath, targetURL: targetURL)
         log("[CodexHookPreferences] uninstalling hooks from \(path)", fields: ["topKeys": document.keys.sorted().joined(separator: ",")])
 
         guard let outputData = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys]) else {
@@ -216,6 +192,46 @@ enum CodexHookPreferences {
             log("[CodexHookPreferences] uninstall write failed: \(error.localizedDescription)", level: .error)
             return (false, "写入失败: \(error.localizedDescription)")
         }
+    }
+
+    /// 安装后的 codex 文档（纯变换，B130）：读旧文档数据 → 规范形状合并 +
+    /// 历史错形状迁移清理。返回 (新文档, 实际注册事件集)。
+    static func installedDocument(
+        existingData: Data?,
+        triggerOnSessionEnd: Bool,
+        scriptPath: String,
+        targetURL: String
+    ) -> (document: [String: Any], hookEvents: [String]) {
+        var document: [String: Any] = [:]
+        if let existingData,
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
+            document = existing
+        }
+        var wrapped = (document["hooks"] as? [String: Any]) ?? [:]
+        wrapped = mergedHooks(
+            existing: wrapped,
+            ourHooks: codexHooksDict(),
+            triggerOnSessionEnd: triggerOnSessionEnd,
+            autoRestoreOnPromptSubmit: false,
+            scriptPath: scriptPath,
+            targetURL: targetURL
+        )
+        cleanVibeFocusHooks(from: &document, scriptPath: scriptPath, targetURL: targetURL)
+        document["hooks"] = wrapped
+        return (document, wrapped.keys.sorted())
+    }
+
+    /// 卸载后的 codex 文档（纯变换，B130）：双形状清理我方条目，其余原样保留。
+    static func uninstalledDocument(existingData: Data, scriptPath: String, targetURL: String) -> [String: Any] {
+        guard var document = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] else {
+            return [:]
+        }
+        if var wrapped = document["hooks"] as? [String: Any] {
+            cleanVibeFocusHooks(from: &wrapped, scriptPath: scriptPath, targetURL: targetURL)
+            document["hooks"] = wrapped
+        }
+        cleanVibeFocusHooks(from: &document, scriptPath: scriptPath, targetURL: targetURL)
+        return document
     }
 
     /// 合并语义唯一事实源（纯字典变换，B32 提纯）：清理旧 VibeFocus 条目 → 并入新条目 →

@@ -15,15 +15,20 @@ public enum RemoteInstallDeploy {
     /// 旗标不存在返回 nil（调用方继续正常启动）。host 缺省取本机活跃 LAN IP，
     /// label 缺省由 host 派生（remote-<点转横杠>）。
     public static func scriptForArguments(_ args: [String]) -> String? {
+        scriptForArguments(args, domain: AppIdentity.bundleID)
+    }
+
+    /// domain 注入缝：生产读装机应用偏好域；测试注入假域即可覆盖 token/port
+    /// 注入路径（不触碰真实偏好域）。
+    public static func scriptForArguments(_ args: [String], domain: String) -> String? {
         guard let flagIdx = args.firstIndex(of: "--print-remote-install-script") else { return nil }
         func positional(_ offset: Int) -> String? {
             let i = flagIdx + offset
             return args.count > i && !args[i].hasPrefix("-") ? args[i] : nil
         }
         let host = positional(1) ?? LANHookPreferences.currentLANIP()
-        let domain = AppIdentity.bundleID as CFString
-        let token = CFPreferencesCopyAppValue("claudeHookToken" as CFString, domain) as? String
-        let port = CFPreferencesCopyAppValue("claudeHookPort" as CFString, domain) as? Int
+        let token = CFPreferencesCopyAppValue("claudeHookToken" as CFString, domain as CFString) as? String
+        let port = CFPreferencesCopyAppValue("claudeHookPort" as CFString, domain as CFString) as? Int
         return ClaudeHookPreferences.generateRemoteInstallScript(
             host: host,
             port: port ?? ClaudeHookPreferences.listenPort,
