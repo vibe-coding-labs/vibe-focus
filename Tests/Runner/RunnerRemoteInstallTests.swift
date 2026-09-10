@@ -140,6 +140,20 @@ extension RunnerHarness {
                       codexHooks["Stop"] == nil && codexHooks["UserPromptSubmit"] == nil)
                 check("remoteInstall[jq]: codex 步骤回显",
                       output.contains("[5/6] Updated ~/.codex/hooks.json"))
+
+                // B124 回归锁：远程 hook 命令必须 $HOME 形态——真身绝对路径
+                //（/Users/...）在远程机器不存在，hook 静默空转（真机 002 实锤）
+                func firstCommand(_ dict: [String: Any]?, event: String) -> String? {
+                    guard let entries = dict?[event] as? [[String: Any]],
+                          let hooks = entries.first?["hooks"] as? [[String: Any]] else { return nil }
+                    return hooks.first?["command"] as? String
+                }
+                let claudeCmd = firstCommand(hooks, event: "Stop")
+                let codexCmd = firstCommand(codexHooks, event: "SessionStart")
+                check("remoteInstall[jq]: 远程 hook 命令为 $HOME 形态（杜绝 Mac 绝对路径）",
+                      claudeCmd == "bash \"$HOME/.vibefocus/hook-forwarder.sh\""
+                      && codexCmd == "bash \"$HOME/.vibefocus/hook-forwarder.sh\""
+                      && output.contains("/Users/") == false)
                 try? FileManager.default.removeItem(atPath: home)
             }
         }

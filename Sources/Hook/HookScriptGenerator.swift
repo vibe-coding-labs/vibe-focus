@@ -112,8 +112,10 @@ extension ClaudeHookPreferences {
         let hookConfig = hookConfigJSON(host: host, port: port, token: token, machineLabel: label)
 
         let scriptContent = generateRemoteHelperScriptContent()
-        let hooksJSON = generateHooksDictJSON()
-        let codexHooksJSON = generateCodexHooksDictJSON()
+        // hook 命令路径必须 $HOME 形态：远程家目录 ≠ Mac 家目录，
+        // 真身绝对路径在远程不存在，hook 会静默空转（真机 002 实锤）
+        let hooksJSON = generateHooksDictJSON(scriptPath: remoteHelperScriptPath)
+        let codexHooksJSON = generateCodexHooksDictJSON(scriptPath: remoteHelperScriptPath)
         let codexEvents = triggerOnSessionEnd ? "SessionStart + SessionEnd" : "SessionStart"
 
         return """
@@ -334,30 +336,39 @@ extension ClaudeHookPreferences {
 
     // MARK: - Hooks JSON Generation
 
-    static func makeHookEntry() -> [String: Any] {
+    static func makeHookEntry(scriptPath: String = helperScriptPath) -> [String: Any] {
         [
             "matcher": "",
             "hooks": [
-                ["type": "command", "command": "bash \"\(helperScriptPath)\"", "timeout": 10]
+                ["type": "command", "command": "bash \"\(scriptPath)\"", "timeout": 10]
             ]
         ]
     }
 
-    static func generateHooksDict() -> [String: Any] {
+    /// 远程安装脚本的 hook 命令路径：远程机器的家目录与 Mac 不同，必须用 $HOME
+    /// 形态——写 Mac 绝对路径（真身 helperScriptPath）在远程是致命静默断链
+    ///（路径不存在、hook 命令空转、事件零转发）。
+    static let remoteHelperScriptPath = "$HOME/.vibefocus/hook-forwarder.sh"
+
+    static func makeRemoteHookEntry() -> [String: Any] {
+        makeHookEntry(scriptPath: remoteHelperScriptPath)
+    }
+
+    static func generateHooksDict(scriptPath: String = helperScriptPath) -> [String: Any] {
         log("ClaudeHookPreferences.generateHooksDict() entered", level: .debug, fields: [
             "triggerOnStop": String(triggerOnStop),
             "triggerOnSessionEnd": String(triggerOnSessionEnd),
             "autoRestoreOnPromptSubmit": String(autoRestoreOnPromptSubmit)
         ])
         var hooks: [String: Any] = [:]
-        hooks["SessionStart"] = [makeHookEntry()]
+        hooks["SessionStart"] = [makeHookEntry(scriptPath: scriptPath)]
         // Stop 始终注册：handleStop 内部根据 remoteOnly 区分本地/远程 session
-        hooks["Stop"] = [makeHookEntry()]
+        hooks["Stop"] = [makeHookEntry(scriptPath: scriptPath)]
         if triggerOnSessionEnd {
-            hooks["SessionEnd"] = [makeHookEntry()]
+            hooks["SessionEnd"] = [makeHookEntry(scriptPath: scriptPath)]
         }
         if autoRestoreOnPromptSubmit {
-            hooks["UserPromptSubmit"] = [makeHookEntry()]
+            hooks["UserPromptSubmit"] = [makeHookEntry(scriptPath: scriptPath)]
         }
         log("ClaudeHookPreferences.generateHooksDict() returning", level: .debug, fields: [
             "hookEvents": hooks.keys.sorted().joined(separator: ",")
@@ -390,8 +401,8 @@ extension ClaudeHookPreferences {
     /// `.hooks += $hooks` 的右侧必须是「事件名 → 条目」字典本身；传整个 settings
     /// 形状会嵌套出 "hooks" 键、三个真正的事件全部静默丢失（B84 实锤复现于
     /// 沙盒 HOME 行为测试）。
-    static func generateHooksDictJSON() -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: generateHooksDict(), options: [.sortedKeys]),
+    static func generateHooksDictJSON(scriptPath: String = helperScriptPath) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: generateHooksDict(scriptPath: scriptPath), options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8) else {
             return "{}"
         }
@@ -404,11 +415,11 @@ extension ClaudeHookPreferences {
     /// （PreToolUse/PermissionRequest/PostToolUse/PreCompact/PostCompact/SessionStart/
     /// SessionEnd/SubagentStart/SubagentStop/Interrupt）没有 Claude 的 Stop 与
     /// UserPromptSubmit，写了也永不触发，白条目不写。
-    static func generateCodexHooksDictJSON() -> String {
+    static func generateCodexHooksDictJSON(scriptPath: String = helperScriptPath) -> String {
         var hooks: [String: Any] = [:]
-        hooks["SessionStart"] = [makeHookEntry()]
+        hooks["SessionStart"] = [makeHookEntry(scriptPath: scriptPath)]
         if triggerOnSessionEnd {
-            hooks["SessionEnd"] = [makeHookEntry()]
+            hooks["SessionEnd"] = [makeHookEntry(scriptPath: scriptPath)]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: hooks, options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8) else {
