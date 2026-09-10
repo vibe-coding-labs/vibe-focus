@@ -51,3 +51,54 @@ extension RunnerHarness {
               ShellRunner.runShell(" vf-双引号\"断裂") == nil)
     }
 }
+
+// MARK: - B134：ExitJournal 信号行编码 + ClaudeSessionLocator 组合链（home 注入）
+
+extension RunnerHarness {
+    func runB134SmallTopUps() {
+        // ExitJournal.cCharLineForSignal：CChar 数组可无损还原为 exitLine + 换行、无 NUL 尾巴
+        let chars = ExitJournal.cCharLineForSignal(pid: 4242, signal: 11, name: "SIGSEGV")
+        let restored = String(cString: chars + [0])
+        check("exitJournal: 信号行编码含 pid/signal/name 且无 NUL 尾巴",
+              restored.contains("4242") && restored.contains("11") && restored.contains("SIGSEGV")
+              && restored.hasSuffix("\n"))
+        check("exitJournal: 编码长度 = 行内容 utf8 精确长度（utf8CString 去尾 NUL）",
+              chars.count == restored.utf8.count)
+
+        // ClaudeSessionLocator.locateSessionID 组合链（runner/home 双注入）
+        let fm = FileManager.default
+        let home = NSTemporaryDirectory() + "vf-b134-loc-\(UUID().uuidString)"
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let proj = home + "/.claude/projects/-tmp-vf-b134"
+        try? fm.createDirectory(atPath: proj, withIntermediateDirectories: true)
+        fm.createFile(atPath: proj + "/sid-b134.jsonl", contents: Data("{}".utf8))
+        try? fm.setAttributes([.modificationDate: now.addingTimeInterval(-30)], ofItemAtPath: proj + "/sid-b134.jsonl")
+
+        func makeRunner(psOut: String?, lsofCWD: String?) -> (String, [String]) -> YabaiClient.YabaiResult? {
+            { exec, _ in
+                if exec == "/bin/ps", let psOut {
+                    return YabaiClient.YabaiResult(exitCode: 0, stdout: psOut, stderr: "")
+                }
+                if exec == "/usr/sbin/lsof", let lsofCWD {
+                    return YabaiClient.YabaiResult(exitCode: 0, stdout: "p7777\nn\(lsofCWD)", stderr: "")
+                }
+                return YabaiClient.YabaiResult(exitCode: 1, stdout: "", stderr: "")
+            }
+        }
+
+        let hit = ClaudeSessionLocator.locateSessionID(
+            ttyPath: "/dev/ttys099",
+            runner: makeRunner(psOut: "  7777 claude --resume sid-b134\n  7800 -zsh", lsofCWD: "/tmp/vf-b134"),
+            fileManager: fm, now: now, home: home)
+        check("locator: tty→claude 进程→lsof cwd→最新会话 jsonl 三段全通",
+              hit != nil && hit!.sessionID == "sid-b134" && hit!.cwd == "/tmp/vf-b134")
+
+        let miss = ClaudeSessionLocator.locateSessionID(
+            ttyPath: "/dev/ttys099",
+            runner: makeRunner(psOut: "  7800 -zsh", lsofCWD: nil),
+            fileManager: fm, now: now, home: home)
+        check("locator: tty 上无 claude 进程 → nil",
+              miss == nil)
+        try? fm.removeItem(atPath: home)
+    }
+}

@@ -216,6 +216,7 @@ final class FakeAuditor: RestoreAuditing {
         runTerminalGridUnitTests()
         runShellRunnerTests()
         runRemoteDeployTests()
+        runB134SmallTopUps()
         runDisplayWorkAreaTests()
         runTerminalDialectTests()
         runSoundVoiceHookTests()

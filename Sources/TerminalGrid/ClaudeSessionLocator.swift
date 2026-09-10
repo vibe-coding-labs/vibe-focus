@@ -149,14 +149,15 @@ enum ClaudeSessionLocator {
         ttyPath: String,
         runner: (String, [String]) -> YabaiClient.YabaiResult? = { ShellRunner.run(executable: $0, arguments: $1) },
         fileManager: FileManager = .default,
-        now: Date = Date()
+        now: Date = Date(),
+        home: String = NSHomeDirectory()
     ) -> (sessionID: String, cwd: String?)? {
         guard let pid = claudePID(onTTY: ttyPath, runner: runner) else { return nil }
         let cwd = workingDirectory(ofPID: pid, runner: runner)
         let projectDir = cwd.map { escapedProjectDir(forCWD: $0) } ?? ""
         let sessionID: String?
         if !projectDir.isEmpty {
-            sessionID = latestSessionID(inProjectDir: projectDir, now: now, fileManager: fileManager)
+            sessionID = latestSessionID(inProjectDir: projectDir, home: home, now: now, fileManager: fileManager)
         } else {
             sessionID = nil
         }
