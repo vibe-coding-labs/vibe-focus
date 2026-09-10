@@ -228,28 +228,20 @@ final class HookEventHandler {
             )
             return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
 
-        case .proceedToMove:
-            // 窗口不在主屏 → 移到主屏（单向操作，不会推离主屏）。
+        case .stayOnCurrentScreen:
+            // B126：用户在副屏/其它屏提交提示词 = 正在该屏交互，窗口原地不动。
+            // 「拉主屏」只归 Stop（claude 完成时）；提交即搬窗是用户明令禁止的
+            // 复现行为（2026-09-11：副屏输入回车被拉主屏）。
             log(
-                "[HookEventHandler] UserPromptSubmit: moving window to main screen",
+                "[HookEventHandler] UserPromptSubmit: staying on current screen (user interacting)",
                 level: .info,
                 fields: [
                     "traceID": traceID,
                     "windowID": String(identity.windowID),
-                    "app": identity.appName ?? "unknown",
                     "sessionID": payload.sessionID
                 ]
             )
-            let moved = WindowManager.shared.moveWindowToMainScreen(
-                identity: identity,
-                reason: .userPromptSubmit,
-                sessionID: payload.sessionID
-            )
-            if moved {
-                MoveCooldownRegistry.shared.setCooldown(windowID: identity.windowID)
-                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-            }
-            return Self.promptMoveOutcomeResponse(moved: moved, sessionID: payload.sessionID)
+            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
         }
     }
 

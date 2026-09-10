@@ -242,12 +242,12 @@ extension RunnerHarness {
                                                 recordCreatedByUser: false,
                                                 isOnMainScreen: false,
                                                 isInCooldown: true, cooldownRemainingSeconds: 7) == .cooldownActive(remainingSeconds: 7))
-        check("ups A6: 无记录全门通过 → proceedToMove",
+        check("ups A6: 无记录非主屏 → stayOnCurrentScreen（UPS 永不搬窗，拉主屏只归 Stop）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
                                                 recordCreatedByUser: false,
                                                 isOnMainScreen: false,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .proceedToMove)
+                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .stayOnCurrentScreen)
         check("ups A7: 无记录已在主屏 → alreadyOnMain",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
@@ -265,7 +265,7 @@ extension RunnerHarness {
               && code(HookEventHandler.promptHttpResponse(for: .userPlacedSkip, sessionID: "s")) == "user_placed_skip"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s")) == "already_on_main_screen"
               && code(HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 3), sessionID: "s")) == "cooldown_active"
-              && code(HookEventHandler.promptHttpResponse(for: .proceedToMove, sessionID: "s")) == "proceed_to_move")
+              && code(HookEventHandler.promptHttpResponse(for: .stayOnCurrentScreen, sessionID: "s")) == "stay_on_current_screen")
         let rr = HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")
         check("ups B: 限流文案含计数与阈值、handled=false、状态码 200",
               rr.statusCode == 200 && rr.response.handled == false
@@ -276,7 +276,7 @@ extension RunnerHarness {
         // B+. 字段级收口（B65）：六决策全部 ok=true/200/sessionID 透传 + 常量分支文案逐字锁定。
         let allDecisions: [HookEventHandler.PromptMoveDecision] = [
             .autoRestoreDisabled, .noBinding, .rateLimited(recentCount: 2, maxEvents: 20),
-            .alreadyOnMain, .cooldownActive(remainingSeconds: 4), .proceedToMove,
+            .alreadyOnMain, .cooldownActive(remainingSeconds: 4), .stayOnCurrentScreen,
         ]
         check("ups B+: 六决策响应 ok=true、状态码 200、sessionID 逐项透传",
               allDecisions.allSatisfy { d in
@@ -287,19 +287,8 @@ extension RunnerHarness {
               HookEventHandler.promptHttpResponse(for: .autoRestoreDisabled, sessionID: "s").response.message == "UserPromptSubmit received, auto restore disabled"
               && HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s").response.message == "Could not resolve window identity"
               && HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s").response.message == "Window already on main screen, no action needed"
-              && HookEventHandler.promptHttpResponse(for: .proceedToMove, sessionID: "s").response.message == "Proceeding to move window")
+              && HookEventHandler.promptHttpResponse(for: .stayOnCurrentScreen, sessionID: "s").response.message == "User is interacting on current display; window stays put")
 
-        // C. 搬窗结果二分。
-        check("ups C: moved → moved_to_main/handled=true",
-              HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "s").response.code == "moved_to_main"
-              && HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "s").response.handled == true)
-        check("ups C: 失败 → move_failed/handled=false",
-              HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "s").response.code == "move_failed"
-              && HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "s").response.handled == false)
-        check("ups C+: 结果响应文案与 sessionID 透传",
-              HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "op-9").response.message == "Window moved to main screen"
-              && HookEventHandler.promptMoveOutcomeResponse(moved: true, sessionID: "op-9").response.sessionID == "op-9"
-              && HookEventHandler.promptMoveOutcomeResponse(moved: false, sessionID: "op-9").response.message == "Failed to move window to main screen")
 
         // D. UPSRateLimiter 滑动窗口（100% 分支）。
         var lim = UPSRateLimiter(windowDuration: 600, maxEvents: 3)

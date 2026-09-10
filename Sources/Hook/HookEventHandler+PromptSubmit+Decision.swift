@@ -7,7 +7,8 @@ import Foundation
 //   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 有 toggle 记录（回原位；
 //   但记录若由用户手动热键创建则跳过——用户自己放置的窗口，提交提示词
 //   不得Undo其放置，2026-09-11 真机事故：语音输入中窗口被甩回副屏）
-//   → 已在主屏 → 冷却中 → 搬窗。
+//   → 留在当前屏（UPS 永不搬窗：用户正在副屏/其它屏交互时拉去主屏 =
+//   2026-09-11 用户明令禁止的复现行为；「拉主屏」只归 Stop）。
 // 每个决策的响应码唯一且稳定。
 //
 // 「回原位」语义（2026-09-10 用户定案，恢复 0f0a3bc 移除的承诺）：存在 toggle
@@ -30,7 +31,8 @@ extension HookEventHandler {
         case userPlacedSkip
         case alreadyOnMain
         case cooldownActive(remainingSeconds: Int)
-        case proceedToMove
+        /// 用户正在当前屏交互（提交即证明），窗口原地不动；「拉主屏」只归 Stop。
+        case stayOnCurrentScreen
     }
 
     /// 守护顺序裁决（顺序即契约：前一道门不满足时不看后一道）。
@@ -58,7 +60,7 @@ extension HookEventHandler {
         if isInCooldown {
             return .cooldownActive(remainingSeconds: cooldownRemainingSeconds)
         }
-        return .proceedToMove
+        return .stayOnCurrentScreen
     }
 
     /// 决策 → HTTP 响应映射表（每个决策的码/文案唯一且稳定）。
@@ -127,28 +129,17 @@ extension HookEventHandler {
                     sessionID: sessionID, handled: false
                 )
             )
-        case .proceedToMove:
+        case .stayOnCurrentScreen:
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "proceed_to_move",
-                    message: "Proceeding to move window",
+                    ok: true, code: "stay_on_current_screen",
+                    message: "User is interacting on current display; window stays put",
                     sessionID: sessionID, handled: false
                 )
             )
         }
     }
 
-    /// 搬窗结果二分响应（moved → 200 window_focused；失败 → 200 move_failed，
-    /// handled 反映是否真的动了窗）。
-    static func promptMoveOutcomeResponse(moved: Bool, sessionID: String) -> (statusCode: Int, response: ClaudeHookResponse) {
-        (
-            200,
-            ClaudeHookResponse(
-                ok: true, code: moved ? "moved_to_main" : "move_failed",
-                message: moved ? "Window moved to main screen" : "Failed to move window to main screen",
-                sessionID: sessionID, handled: moved
-            )
-        )
-    }
+
 }
