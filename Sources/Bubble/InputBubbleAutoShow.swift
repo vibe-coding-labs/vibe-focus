@@ -117,9 +117,11 @@ final class InputBubbleAutoShow {
         case .skipNotEnabled, .skipBubbleActive:
             break
         }
-        // B160 诊断：终端前台且未弹出时落一行（归因 tick 链路；summon 分支已有专属日志）
+        // B160 诊断：终端前台且未弹出时落一行（归因 tick 链路；summon 分支已有专属日志）。
+        // B165 降 debug：此行终端前台稳态下每秒一条（skipSameWindow 常态），INFO 级
+        // 意味着生产日志每天 8.6 万行同值洪水、淹没真信号——与 P-INST-119 日志自激同病。
         if frontIsTerminal, outcome != .summon, controller.isIdle {
-            log("[InputBubble] auto-show tick skip", fields: [
+            log("[InputBubble] auto-show tick skip", level: .debug, fields: [
                 "outcome": String(describing: outcome),
                 "topWindowID": topWindowID.map(String.init) ?? "nil",
                 "last": lastEvaluatedWindowID.map(String.init) ?? "nil"
