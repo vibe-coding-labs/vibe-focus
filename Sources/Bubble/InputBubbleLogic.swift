@@ -35,6 +35,23 @@ enum InputBubbleHotKeyPlan {
     }
 }
 
+/// summon 对前台 app 的处置（B164 三态）：快捷键按下的瞬间按前台 bundle 裁决。
+/// ownApp = 前台就是 VibeFocus 自己（用户在设置窗试键/录制）——静默退场不 beep，
+/// beep 会被误读为「热键失灵」（真机实锤 01:11 四连）；reject = 非终端前台，beep 拒绝；
+/// proceed = 终端前台，继续捕获目标窗。
+enum InputBubbleSummonDisposition: Equatable {
+    case ownApp
+    case reject
+    case proceed
+}
+
+enum InputBubbleSummonGate {
+    static func disposition(frontBundleID: String?, isTerminalApp: Bool) -> InputBubbleSummonDisposition {
+        if frontBundleID == AppIdentity.bundleID { return .ownApp }
+        return isTerminalApp ? .proceed : .reject
+    }
+}
+
 /// 键击序列计划：注入执行器按序投递（唯一事实源，执行器不自带分支）。
 enum InputBubbleKeyPlan {
     enum Step: Equatable {

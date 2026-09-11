@@ -233,3 +233,63 @@ extension RunnerHarness {
         check("prune: 容量裁剪保留最新 32 条", capacityPruned.count == 32 && capacityPruned["39"] != nil && capacityPruned["7"] == nil)
     }
 }
+
+// MARK: - B164：唤起快捷键录制修复（录制器契约 / 录制让位标志 / summon 前台处置）
+
+extension RunnerHarness {
+    func runBubbleHotkeyRecorderTests() {
+        print("\n=== BubbleHotkeyRecorder (B164) ===")
+
+        // 录制器同款 NSEvent 工厂（B142 模式）
+        func keyEvent(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: keyCode
+            )!
+        }
+
+        // --- 录制转换契约：from(event:) 产出 Carbon 位，过校验、命中默认 ⌘B ---
+        // 回归锁：旧实现直接塞 NSEvent.ModifierFlags.rawValue（⌘=1<<20），与 Carbon 位
+        // （⌘=1<<8）完全错位——校验必败，三处录制自诞生起从未生效（用户报障根因）。
+        let captured = HotKeyConfiguration.from(event: keyEvent(keyCode: UInt16(kVK_ANSI_B), modifiers: [.command]))
+        check("recorder: ⌘B 捕获 keyCode = B", captured?.keyCode == UInt32(kVK_ANSI_B))
+        check("recorder: ⌘B 捕获修饰位 = Carbon cmdKey（非 NSEvent 位）",
+              captured?.modifiers == UInt32(cmdKey)
+              && captured?.modifiers != UInt32(NSEvent.ModifierFlags.command.rawValue))
+        check("recorder: 捕获配置与默认唤起键全等", captured == InputBubbleHotKeyPlan.defaultConfig)
+        check("recorder: 捕获配置通过校验（旧 bug 卡死的一步）",
+              captured != nil && HotKeyManager.validationError(for: captured!) == nil)
+        check("recorder: 捕获配置命中气泡匹配", InputBubbleHotKeyPlan.matches(
+            config: InputBubbleHotKeyPlan.defaultConfig,
+            keyCode: captured?.keyCode ?? 0,
+            carbonModifiers: captured?.modifiers ?? 0))
+        // 自定义组合同样走通：⌃⌥R 捕获 → 过校验
+        let customCaptured = HotKeyConfiguration.from(
+            event: keyEvent(keyCode: UInt16(kVK_ANSI_R), modifiers: [.control, .option]))
+        check("recorder: ⌃⌥R 捕获过校验",
+              customCaptured?.modifiers == UInt32(controlKey | optionKey)
+              && HotKeyManager.validationError(for: customCaptured!) == nil)
+        check("recorder: 零修饰 keyDown 不捕获（维持录制）", HotKeyConfiguration.from(
+            event: keyEvent(keyCode: UInt16(kVK_ANSI_R), modifiers: [])) == nil)
+
+        // --- 录制让位标志（进程级，测后复位防泄漏到其他域） ---
+        check("recordingState: 默认非录制", !ShortcutRecordingState.isRecording)
+        ShortcutRecordingState.isRecording = true
+        check("recordingState: 置位可见", ShortcutRecordingState.isRecording)
+        ShortcutRecordingState.isRecording = false
+        check("recordingState: 复位可见", !ShortcutRecordingState.isRecording)
+
+        // --- summon 前台处置三态（ownApp 静默 / reject beep / proceed 捕获） ---
+        check("summonGate: 自家 app 前台 → ownApp 静默", InputBubbleSummonGate.disposition(
+            frontBundleID: AppIdentity.bundleID, isTerminalApp: false) == .ownApp)
+        check("summonGate: 自家 bundle 优先于终端判定", InputBubbleSummonGate.disposition(
+            frontBundleID: AppIdentity.bundleID, isTerminalApp: true) == .ownApp)
+        check("summonGate: 他 app 非终端 → reject", InputBubbleSummonGate.disposition(
+            frontBundleID: "com.apple.Safari", isTerminalApp: false) == .reject)
+        check("summonGate: 终端前台 → proceed", InputBubbleSummonGate.disposition(
+            frontBundleID: "com.googlecode.iterm2", isTerminalApp: true) == .proceed)
+        check("summonGate: nil bundle 非终端 → reject", InputBubbleSummonGate.disposition(
+            frontBundleID: nil, isTerminalApp: false) == .reject)
+    }
+}
