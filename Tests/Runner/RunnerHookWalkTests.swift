@@ -770,7 +770,13 @@ extension RunnerHarness {
             fakeTerm.arguments = ["-c", "while sleep 30; do :; done"]
             try? fakeTerm.run()
             let termPid = Int32(fakeTerm.processIdentifier)
-            defer { if fakeTerm.isRunning { fakeTerm.terminate() } }
+            // 收尸契约：terminate 后必须 waitUntilExit（termPid>0 守卫 run 失败路径），
+            // 否则夹具进程要等 Runner 退出被孤儿收养才消失——门禁运行中途 ps 里仍会
+            // 出现 /tmp/*/iTerm2 条目，正是实例枚举误报检测器的触发源（B169）。
+            defer {
+                if fakeTerm.isRunning { fakeTerm.terminate() }
+                if termPid > 0 { fakeTerm.waitUntilExit() }
+            }
             check("bind149: 前置——改名 bash 进程经 comm basename 判为终端",
                   fakeTerm.isRunning && TerminalRegistry.isTerminalPID(termPid) == true)
 
