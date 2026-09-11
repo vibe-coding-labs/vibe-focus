@@ -109,6 +109,14 @@ final class InputBubbleAutoShow {
         case .skipNotEnabled, .skipBubbleActive:
             break
         }
+        // B160 诊断：终端前台且未弹出时落一行（归因 tick 链路；summon 分支已有专属日志）
+        if frontIsTerminal, outcome != .summon, controller.isIdle {
+            log("[InputBubble] auto-show tick skip", fields: [
+                "outcome": String(describing: outcome),
+                "topWindowID": topWindowID.map(String.init) ?? "nil",
+                "last": lastEvaluatedWindowID.map(String.init) ?? "nil"
+            ])
+        }
     }
 
     /// 前台终端 app 的最顶层 onscreen 常规窗（CGWindowList 顺序即 z 序，非阻塞）

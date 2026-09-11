@@ -45,19 +45,21 @@ enum InputBubbleKeyPlan {
         }
     }
 
-    /// B133：Enter 键位 → 提交模式解析（唯一事实源，TextView 委托与提示文案共用）。
-    /// 基准由偏好 submitOnEnter 决定；⌘ 修饰取反（提交↔仅粘贴）；⇧ 由调用方先行放行为换行。
-    static func resolveMode(commandHeld: Bool, submitOnEnter: Bool) -> InputBubbleSubmitMode {
-        let base: InputBubbleSubmitMode = submitOnEnter ? .submit : .pasteOnly
-        guard commandHeld else { return base }
-        return base == .submit ? .pasteOnly : .submit
+    /// B133/B161：Enter 键位 → 回车解析（唯一事实源，TextView 委托与提示文案共用）。
+    /// 返回 nil = 不注入、插入字面换行。B161 默认交互：Enter 换行、⌘Enter 发送；
+    /// 「回车即提交」开启时反转：Enter 发送、⌘Enter 仅粘贴。
+    static func resolveEnterAction(commandHeld: Bool, submitOnEnter: Bool) -> InputBubbleSubmitMode? {
+        if submitOnEnter {
+            return commandHeld ? .pasteOnly : .submit
+        }
+        return commandHeld ? .submit : nil
     }
 
-    /// 气泡底部快捷键提示文案（随 submitOnEnter 语义同步，防文案与行为漂移）。
+    /// 气泡底部快捷键提示文案（随回车语义同步，防文案与行为漂移）。
     static func hintText(submitOnEnter: Bool) -> String {
         submitOnEnter
-            ? "Enter 注入终端 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · Esc 关闭"
-            : "Enter 粘贴到终端 · Shift+Enter 换行 · ⌘Enter 粘贴并提交 · Esc 关闭"
+            ? "Enter 注入并提交 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · Esc 关闭"
+            : "Enter 换行 · ⌘Enter 注入并提交 · Esc 关闭"
     }
 }
 

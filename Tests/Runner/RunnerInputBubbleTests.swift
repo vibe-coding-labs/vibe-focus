@@ -119,23 +119,21 @@ extension RunnerHarness {
         check("prefs: 高度越上界 500 → 300", InputBubblePreferences.clampedHeight(500) == 300)
         check("prefs: 高度越下界 50 → 100", InputBubblePreferences.clampedHeight(50) == 100)
 
-        // --- B133 回车默认行为 → 模式解析矩阵 ---
-        if case .submit = InputBubbleKeyPlan.resolveMode(commandHeld: false, submitOnEnter: true) {
-            check("resolveMode: 默认提交+无修饰 → submit", true)
-        } else { check("resolveMode: 默认提交+无修饰 → submit", false) }
-        if case .pasteOnly = InputBubbleKeyPlan.resolveMode(commandHeld: true, submitOnEnter: true) {
-            check("resolveMode: 默认提交+⌘ → pasteOnly", true)
-        } else { check("resolveMode: 默认提交+⌘ → pasteOnly", false) }
-        if case .pasteOnly = InputBubbleKeyPlan.resolveMode(commandHeld: false, submitOnEnter: false) {
-            check("resolveMode: 仅粘贴模式+无修饰 → pasteOnly", true)
-        } else { check("resolveMode: 仅粘贴模式+无修饰 → pasteOnly", false) }
-        if case .submit = InputBubbleKeyPlan.resolveMode(commandHeld: true, submitOnEnter: false) {
-            check("resolveMode: 仅粘贴模式+⌘ → submit", true)
-        } else { check("resolveMode: 仅粘贴模式+⌘ → submit", false) }
+        // --- B133/B161 回车行为 → 解析矩阵（nil = 插入字面换行不注入） ---
+        if case .submit = InputBubbleKeyPlan.resolveEnterAction(commandHeld: false, submitOnEnter: true) {
+            check("enterAction: 回车即提交+无修饰 → submit", true)
+        } else { check("enterAction: 回车即提交+无修饰 → submit", false) }
+        if case .pasteOnly = InputBubbleKeyPlan.resolveEnterAction(commandHeld: true, submitOnEnter: true) {
+            check("enterAction: 回车即提交+⌘ → pasteOnly", true)
+        } else { check("enterAction: 回车即提交+⌘ → pasteOnly", false) }
+        check("enterAction: 默认（关）+无修饰 → nil 换行", InputBubbleKeyPlan.resolveEnterAction(commandHeld: false, submitOnEnter: false) == nil)
+        if case .submit = InputBubbleKeyPlan.resolveEnterAction(commandHeld: true, submitOnEnter: false) {
+            check("enterAction: 默认（关）+⌘ → submit 发送", true)
+        } else { check("enterAction: 默认（关）+⌘ → submit 发送", false) }
 
-        // --- B133 提示文案随行为同步 ---
-        check("hint: 提交模式文案含「注入终端」", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("注入终端"))
-        check("hint: 仅粘贴模式文案含「粘贴到终端」", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("粘贴到终端"))
+        // --- B133/B161 提示文案随行为同步 ---
+        check("hint: 提交模式文案含「注入并提交」", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("注入并提交"))
+        check("hint: 默认模式文案含「Enter 换行」与「⌘Enter 注入并提交」", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("Enter 换行") && InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("⌘Enter 注入并提交"))
 
         // --- B160 聚焦自动弹出决策门（判序：开关→气泡占用→终端→窗口变化→活跃绑定） ---
         func gate(_ auto: Bool, _ idle: Bool, _ term: Bool, _ changed: Bool, _ live: Bool) -> InputBubbleAutoShowGate.Outcome {

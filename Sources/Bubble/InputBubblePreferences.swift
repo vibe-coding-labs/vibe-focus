@@ -9,6 +9,7 @@ enum InputBubblePreferences {
     private static let heightKey = "inputBubbleHeight"
     private static let submitOnEnterKey = "inputBubbleSubmitOnEnter"
     private static let autoShowKey = "inputBubbleAutoShowOnFocus"
+    private static let defaultPrefixKey = "inputBubbleDefaultPrefix"
 
     /// 尺寸合法域与步长（设置页滑杆与 clamp 共用同一事实源）
     static let widthRange: (min: Double, max: Double, step: Double) = (320, 720, 20)
@@ -37,14 +38,21 @@ enum InputBubblePreferences {
         set { UserDefaults.standard.set(clampedHeight(newValue), forKey: heightKey) }
     }
 
-    /// Enter 默认行为：true=注入并提交（默认）；false=仅粘贴不提交（⌘Enter 反转）。
+    /// Enter 默认行为：false（默认，B161）=Enter 换行、⌘Enter 注入并提交；
+    /// true=Enter 注入并提交、⌘Enter 仅粘贴。
     static var submitOnEnter: Bool {
         get {
             UserDefaults.standard.object(forKey: submitOnEnterKey) != nil
                 ? UserDefaults.standard.bool(forKey: submitOnEnterKey)
-                : true
+                : false
         }
         set { UserDefaults.standard.set(newValue, forKey: submitOnEnterKey) }
+    }
+
+    /// B161：气泡打开时预填的默认前缀（如 "/goal "，重复性输入免手打；原样保留尾随空格）。
+    static var defaultPrefix: String {
+        get { UserDefaults.standard.string(forKey: defaultPrefixKey) ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: defaultPrefixKey) }
     }
 
     /// B160：焦点落到活跃 Claude 会话所在终端窗时自动弹出气泡（默认开；

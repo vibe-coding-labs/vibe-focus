@@ -85,8 +85,12 @@ extension SessionWindowRegistry {
 
     /// B160：窗口是否有活跃（未结束）会话绑定——输入气泡聚焦自动弹出的闸门。
     /// 绑定随 hook（SessionStart/UPS）写入、随会话结束置 completed，天然反映「这窗在跑 Claude」。
+    /// 内存未命中回落 DB（findWindowStateByWindowID）：app 重启后增量绑定不丢、外部写库即时生效。
     func hasLiveSessionBinding(windowID: UInt32) -> Bool {
-        guard let state = windowStates[windowID] else { return false }
+        if let state = windowStates[windowID] {
+            return !state.isCompleted
+        }
+        guard let state = store.findWindowStateByWindowID(windowID) else { return false }
         return !state.isCompleted
     }
 

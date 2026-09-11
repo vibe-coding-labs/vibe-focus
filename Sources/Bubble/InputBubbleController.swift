@@ -131,7 +131,10 @@ final class InputBubbleController: NSObject {
         let (panel, textView) = builtPanel()
         let origin = anchorOrigin(targetCGFrame: cgFrame)
         panel.setFrameOrigin(origin)
-        textView.string = ""
+        // B161：预填默认前缀（如 "/goal "），光标落到末尾待续写
+        let prefix = InputBubblePreferences.defaultPrefix
+        textView.string = prefix
+        textView.setSelectedRange(NSRange(location: (prefix as NSString).length, length: 0))
         panel.makeKeyAndOrderFront(nil)
 
         // 收键盘三件套：切 regular（accessory 不收 key）→ 激活自己 → textView 成第一响应者
@@ -198,11 +201,14 @@ extension InputBubbleController: NSTextViewDelegate {
         let mods = NSApp.currentEvent?.modifierFlags.intersection([.shift, .command]) ?? []
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)):
-            if mods.contains(.shift) { return false }  // 默认行为：插入换行
-            let mode = InputBubbleKeyPlan.resolveMode(
+            // B161：解析 nil = 插入字面换行（默认交互）；⇧ 恒为换行
+            if mods.contains(.shift) { return false }
+            guard let mode = InputBubbleKeyPlan.resolveEnterAction(
                 commandHeld: mods.contains(.command),
                 submitOnEnter: InputBubblePreferences.submitOnEnter
-            )
+            ) else {
+                return false
+            }
             submit(mode: mode)
             return true
         case #selector(NSResponder.cancelOperation(_:)):

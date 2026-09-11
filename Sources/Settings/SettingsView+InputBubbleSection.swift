@@ -21,6 +21,7 @@ private struct InputBubbleSectionView: View {
     @State private var height = InputBubblePreferences.bubbleHeight
     @State private var submitOnEnter = InputBubblePreferences.submitOnEnter
     @State private var autoShowOnFocus = InputBubblePreferences.autoShowOnFocus
+    @State private var defaultPrefix = InputBubblePreferences.defaultPrefix
 
     var body: some View {
         SettingsCard(
@@ -109,7 +110,7 @@ private struct InputBubbleSectionView: View {
 
             SettingsRow(
                 title: "回车即提交",
-                detail: "开启后 Enter 注入并回车提交、⌘Enter 仅粘贴；关闭后 Enter 仅粘贴、⌘Enter 提交。"
+                detail: "默认关闭：Enter 换行、⌘Enter 注入并提交；开启后 Enter 注入并提交、⌘Enter 仅粘贴。"
             ) {
                 Toggle("", isOn: $submitOnEnter)
                     .labelsHidden()
@@ -117,6 +118,22 @@ private struct InputBubbleSectionView: View {
                     .disabled(!enabled)
                     .onChange(of: submitOnEnter) { newValue in
                         InputBubblePreferences.submitOnEnter = newValue
+                    }
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "默认前缀",
+                detail: "气泡打开时预填的文本（如「/goal 」），适合重复性输入；可随时清空或修改。"
+            ) {
+                TextField("例如：/goal ", text: $defaultPrefix)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+                    .font(.system(size: 12, design: .monospaced))
+                    .disabled(!enabled)
+                    .onChange(of: defaultPrefix) { newValue in
+                        InputBubblePreferences.defaultPrefix = newValue
                     }
             }
         }
