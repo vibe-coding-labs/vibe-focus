@@ -18,15 +18,16 @@ extension TerminalGridController {
         return result
     }
 
-    /// 实例环境守卫的运行时采集：NSWorkspace 枚举该 bundleID 的全部运行实例。
+    /// 实例环境守卫的运行时采集：进程表扫描（exec 路径 basename 与正式安装版一致
+    /// 即视为该终端的实例）。NSWorkspace.runningApplications 枚举不到 E2E 直接
+    /// exec 的裸二进制副本——真机实证 2026-09-11：/tmp 临时 iTerm2 双副本并存时
+    /// NSWorkspace 只报正式实例，守卫被绕过；进程表才是全量真值。
     /// 返回 nil = 放行；非 nil = 用户可读的拒绝原因（同时写入 lastScriptError
     /// 供失败消息带走）。
     /// - Parameter allowNotRunning: 开机自动恢复靠 AppleEvent 冷拉起未运行的终端
     ///   （既有行为），传 true 保留该路径；手动操作传 false，未运行直接诚实拒绝。
     func automationInstanceRefusal(appBundleID: String, allowNotRunning: Bool = false) -> String? {
-        let instances = NSWorkspace.shared.runningApplications
-            .filter { $0.bundleIdentifier == appBundleID }
-            .map { (pid: pid_t($0.processIdentifier), executablePath: $0.executableURL?.path) }
+        let instances = Self.terminalInstances(bundleID: appBundleID)
         let verdict = TerminalAutomationScript.automationInstanceVerdict(instances: instances)
         if case .notRunning = verdict, allowNotRunning {
             return nil
@@ -40,6 +41,42 @@ extension TerminalGridController {
         }
         let appName = TerminalSelectionResolver.knownNames[appBundleID] ?? appBundleID
         return TerminalAutomationScript.instanceGuardFailureMessage(for: verdict, appName: appName)
+    }
+
+    /// 进程表里属于目标终端的全部实例：(pid, exec 路径)。
+    /// 无法解析正式安装位置（未安装/LS 记录异常）→ 空表，走 notRunning 拒绝链。
+    static func terminalInstances(bundleID: String) -> [(pid: pid_t, executablePath: String?)] {
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
+              let bundle = Bundle(url: appURL),
+              let execName = bundle.executableURL?.lastPathComponent else {
+            return []
+        }
+        return allProcessExecutablePaths().compactMap { entry in
+            TerminalAutomationScript.processPathMatchesCanonicalExec(entry.path, canonicalExecName: execName)
+                ? (pid: entry.pid, executablePath: entry.path)
+                : nil
+        }
+    }
+
+    /// 全进程 exec 路径扫描（KERN_PROC_ALL + proc_pidpath；同 uid 进程无需特权）
+    private static func allProcessExecutablePaths() -> [(pid: pid_t, path: String)] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        // 多留一倍余量：采样与读取之间可能有进程生灭导致二次调用失败
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 64)
+        var actualSize = procs.count * MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 3, &procs, &actualSize, nil, 0) == 0 else { return [] }
+        let count = actualSize / MemoryLayout<kinfo_proc>.stride
+        var result: [(pid: pid_t, path: String)] = []
+        result.reserveCapacity(count)
+        for i in 0..<count {
+            let pid = procs[i].kp_proc.p_pid
+            var pathbuf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            guard proc_pidpath(pid, &pathbuf, UInt32(MAXPATHLEN)) > 0 else { continue }
+            result.append((pid: pid, path: String(cString: pathbuf)))
+        }
+        return result
     }
 
     /// 建一个终端窗口并确保落到目标格子：

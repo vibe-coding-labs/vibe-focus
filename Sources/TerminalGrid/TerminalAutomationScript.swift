@@ -211,6 +211,12 @@ enum TerminalAutomationScript {
         path.hasPrefix("/tmp/") || path.hasPrefix("/private/tmp/") || path.hasPrefix("/var/folders/")
     }
 
+    /// 进程 exec 路径是否属于目标终端：basename 与正式安装版可执行文件名一致
+    /// （iTerm.app 的可执行名是 iTerm2；副本不论落在哪个目录都会撞上同名 basename）
+    static func processPathMatchesCanonicalExec(_ path: String, canonicalExecName: String) -> Bool {
+        (path as NSString).lastPathComponent == canonicalExecName
+    }
+
     /// instances = 该 bundleID 当前全部运行实例的（pid, 可执行路径）
     static func automationInstanceVerdict(
         instances: [(pid: pid_t, executablePath: String?)]

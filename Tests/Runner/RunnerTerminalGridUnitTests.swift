@@ -466,6 +466,23 @@ extension RunnerHarness {
             check("instanceGuard: notRunning 文案带应用名",
                   TerminalAutomationScript.instanceGuardFailureMessage(for: .notRunning, appName: "iTerm2")?
                   .contains("iTerm2") == true)
+
+            // ===== 进程路径归属（basename 对比正式安装版；NSWorkspace 看不到裸副本的补丁） =====
+            check("procPath: 正式安装版路径命中",
+                  TerminalAutomationScript.processPathMatchesCanonicalExec(
+                      "/Applications/iTerm.app/Contents/MacOS/iTerm2", canonicalExecName: "iTerm2"))
+            check("procPath: /tmp 副本同 basename 命中（这正是要抓的形态）",
+                  TerminalAutomationScript.processPathMatchesCanonicalExec(
+                      "/tmp/vibefocus-b149-UUID/iTerm2", canonicalExecName: "iTerm2"))
+            check("procPath: iTermServer 守护/其它进程不误命中",
+                  !TerminalAutomationScript.processPathMatchesCanonicalExec(
+                      "/Users/x/Library/Application Support/iTerm2/iTermServer-3.6.10", canonicalExecName: "iTerm2")
+                  && !TerminalAutomationScript.processPathMatchesCanonicalExec(
+                      "/Applications/Safari.app/Contents/MacOS/Safari", canonicalExecName: "iTerm2"))
+            check("procPath: Terminal.app 可执行名对齐",
+                  TerminalAutomationScript.processPathMatchesCanonicalExec(
+                      "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+                      canonicalExecName: "Terminal"))
         }
 
         // ===== 建窗重试表与失败明细（瞬时 AE 故障退避重试；挂起类不重试） =====
