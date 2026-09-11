@@ -74,26 +74,30 @@ extension ScreenOverlayManager {
             log("[Overlay] triggerForceRefresh finished", level: .debug, fields: ["reason": reason, "durationMs": String(elapsedMilliseconds(since: tfrStart))])
         }
         #endif
-        guard !automaticRefreshSuspended else {
-            log("[FORCE_REFRESH] Skipped while automatic refresh is suspended, reason=\(reason)")
-            return
-        }
         let now = Date()
         // Batch 12：去重判定提纯为 OverlayRefreshPolicy.isDuplicateForceTrigger（语义不变）。
-        if OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: lastForceRefreshTriggerAt, now: now, minInterval: minForceRefreshTriggerInterval) {
+        let duplicate = OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: lastForceRefreshTriggerAt, now: now, minInterval: minForceRefreshTriggerInterval)
+        // 2026-09-11 停格修复：挂起闸门只准吞 overlay 重活，不准吞 space-state 广播。
+        // 设置窗持焦期间 overlay 本就隐藏，而编排页 minimap 恰在此时依赖广播自愈
+        // （旧代码在广播之前 return，SIGUSR1/toggle 的变化永远到不了设置页）。
+        switch OverlayRefreshPolicy.forceRefreshDecision(suspended: automaticRefreshSuspended, duplicate: duplicate) {
+        case .skipDuplicate:
             log("[FORCE_REFRESH] Skip duplicated trigger reason=\(reason)")
             return
+        case .broadcastOnly:
+            log("[FORCE_REFRESH] Suspended: delivering space-state broadcast only, reason=\(reason)")
+            NotificationCenter.default.post(name: .vibefocusSpaceStateMayHaveChanged, object: nil)
+        case .broadcastAndRefresh:
+            lastForceRefreshTriggerAt = now
+            log("[FORCE_REFRESH] Triggered by reason=\(reason), clearing caches and refreshing")
+            // 广播给非 overlay 消费方（设置页 minimap 等）：去重闸之后发出，
+            // 频率已与本函数的真实刷新率一致，不会放大 yabai fork。
+            NotificationCenter.default.post(name: .vibefocusSpaceStateMayHaveChanged, object: nil)
+            cancelPendingSignalRefreshes()
+            clearSpaceIndexCache()
+            refreshSpaceIndices(force: true)
+            scheduleSignalFollowUpRefreshes()
         }
-        lastForceRefreshTriggerAt = now
-
-        log("[FORCE_REFRESH] Triggered by reason=\(reason), clearing caches and refreshing")
-        // 广播给非 overlay 消费方（设置页 minimap 等）：去重闸之后发出，
-        // 频率已与本函数的真实刷新率一致，不会放大 yabai fork。
-        NotificationCenter.default.post(name: .vibefocusSpaceStateMayHaveChanged, object: nil)
-        cancelPendingSignalRefreshes()
-        clearSpaceIndexCache()
-        refreshSpaceIndices(force: true)
-        scheduleSignalFollowUpRefreshes()
     }
 
     /// P3.6: toggle 后 force refresh debounce。连续 toggle（主场景）取消前一个 work item，只在 toggle 停止
