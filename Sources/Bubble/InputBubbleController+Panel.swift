@@ -45,7 +45,11 @@ extension InputBubbleController {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
 
-        let textView = NSTextView(frame: scroll.bounds)
+        let textView = InputBubbleTextView(frame: scroll.bounds)
+        // B162：Enter/⌘Enter 走 keyDown 层拦截回调（doCommandBy 收不到 ⌘Enter）
+        textView.onEnterKey = { [weak self] commandHeld in
+            self?.handleEnter(commandHeld: commandHeld)
+        }
         textView.font = NSFont.systemFont(ofSize: 13)
         textView.textColor = Self.dynamicColor(lightHex: 0x40362B, darkHex: 0xF1E9DE)
         textView.drawsBackground = false
@@ -86,6 +90,24 @@ extension InputBubbleController {
             bubbleSize: bubbleSize,
             visibleFrame: visibleFrame,
             margin: 16
+        )
+    }
+
+    /// B162：唤起位置 = 用户拖动记忆优先（origin 夹进目标屏可视区，防跨屏/屏外悬空）；
+    /// 从未拖过回落目标窗锚点。
+    func restoredOrigin(targetCGFrame: CGRect) -> CGPoint {
+        let fallback = anchorOrigin(targetCGFrame: targetCGFrame)
+        guard let saved = InputBubblePreferences.userPlacedOrigin else { return fallback }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let appKitFrame = InputBubbleLayout.appKitFrame(
+            fromCGFrame: targetCGFrame,
+            primaryScreenHeight: primaryHeight
+        )
+        let visibleFrame = containingScreenVisibleFrame(for: appKitFrame)
+        return InputBubbleLayout.clampedOrigin(
+            position: saved,
+            bubbleSize: bubbleSize,
+            visibleFrame: visibleFrame
         )
     }
 

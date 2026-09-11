@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// 输入气泡功能偏好（B129 开关 + B133 设置页：尺寸/回车默认行为）。
@@ -10,6 +11,9 @@ enum InputBubblePreferences {
     private static let submitOnEnterKey = "inputBubbleSubmitOnEnter"
     private static let autoShowKey = "inputBubbleAutoShowOnFocus"
     private static let defaultPrefixKey = "inputBubbleDefaultPrefix"
+    private static let hotKeyKey = "inputBubbleHotKeyConfiguration"
+    private static let autoShowOnMoveToMainKey = "inputBubbleAutoShowOnMoveToMain"
+    private static let userPlacedFrameKey = "inputBubbleUserFrame"
 
     /// 尺寸合法域与步长（设置页滑杆与 clamp 共用同一事实源）
     static let widthRange: (min: Double, max: Double, step: Double) = (320, 720, 20)
@@ -56,7 +60,7 @@ enum InputBubblePreferences {
     }
 
     /// B160：焦点落到活跃 Claude 会话所在终端窗时自动弹出气泡（默认开；
-    /// ⌥⌘B 手动唤起不受此开关影响）。
+    /// 快捷键手动唤起不受此开关影响）。
     static var autoShowOnFocus: Bool {
         get {
             UserDefaults.standard.object(forKey: autoShowKey) != nil
@@ -64,6 +68,52 @@ enum InputBubblePreferences {
                 : true
         }
         set { UserDefaults.standard.set(newValue, forKey: autoShowKey) }
+    }
+
+    /// B162：唤起热键（默认 ⌘B，设置页可自定义；JSON 持久化，
+    /// 解析失败回落 defaultConfig——手写 defaults 不致崩）。
+    static var hotKey: HotKeyConfiguration {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: hotKeyKey),
+                  let decoded = try? JSONDecoder().decode(HotKeyConfiguration.self, from: data) else {
+                return InputBubbleHotKeyPlan.defaultConfig
+            }
+            return decoded
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: hotKeyKey)
+            }
+        }
+    }
+
+    /// B162：窗口被移动到主屏（Stop hook 拉回成功）时自动弹出气泡（默认开）。
+    static var autoShowOnMoveToMain: Bool {
+        get {
+            UserDefaults.standard.object(forKey: autoShowOnMoveToMainKey) != nil
+                ? UserDefaults.standard.bool(forKey: autoShowOnMoveToMainKey)
+                : true
+        }
+        set { UserDefaults.standard.set(newValue, forKey: autoShowOnMoveToMainKey) }
+    }
+
+    /// B162：用户拖动气泡后的记忆位置（AppKit 全局坐标 origin；nil = 从未拖过，
+    /// 走目标窗锚点）。存 origin 而非整 frame：尺寸随设置实时变化，恢复时重夹取。
+    static var userPlacedOrigin: CGPoint? {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: userPlacedFrameKey) else { return nil }
+            return InputBubbleLayout.decodeFrame(raw).map { $0.origin }
+        }
+        set {
+            guard let origin = newValue else {
+                UserDefaults.standard.removeObject(forKey: userPlacedFrameKey)
+                return
+            }
+            UserDefaults.standard.set(
+                InputBubbleLayout.encodeFrame(CGRect(origin: origin, size: .zero)),
+                forKey: userPlacedFrameKey
+            )
+        }
     }
 
     // MARK: - 归一（纯函数，Runner 直测）

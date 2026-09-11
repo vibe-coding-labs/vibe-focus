@@ -99,34 +99,36 @@ extension HotKeyManager {
             log("[HotKey] Failed to register title editor Carbon hotkey: \(titleEditorStatus)", level: .warn)
         }
 
-        // B129: Register input bubble Carbon hotkey ⌥⌘B — 主键/摆位键占用时让位不注册
-        //（Carbon 同组合重复注册行为未定义，启动时一次性判定最稳）
+        // B129/B162: Register input bubble Carbon hotkey（默认 ⌘B，设置页可自定义）
+        // — 主键/摆位键占用时让位不注册（Carbon 同组合重复注册行为未定义，
+        // 注册时一次性判定最稳）
         if let inputBubbleHotKeyRef {
             UnregisterEventHotKey(inputBubbleHotKeyRef)
             self.inputBubbleHotKeyRef = nil
         }
-        let bubbleClaimed = (currentHotKey.keyCode == InputBubbleHotKey.keyCode
-            && currentHotKey.modifiers == InputBubbleHotKey.carbonModifiers)
+        let bubbleHotKey = InputBubblePreferences.hotKey
+        let bubbleClaimed = (currentHotKey.keyCode == bubbleHotKey.keyCode
+            && currentHotKey.modifiers == bubbleHotKey.modifiers)
             || (LayoutPreferences.isEnabled
                 && LayoutAction.allCases.contains { action in
                     guard let hotKey = layoutTable.hotKey(for: action) else { return false }
-                    return hotKey.keyCode == InputBubbleHotKey.keyCode
-                        && hotKey.modifiers == InputBubbleHotKey.carbonModifiers
+                    return hotKey.keyCode == bubbleHotKey.keyCode
+                        && hotKey.modifiers == bubbleHotKey.modifiers
                 })
         if bubbleClaimed {
             log("[HotKey] Input bubble Carbon hotkey skipped: combo claimed by primary/layout binding", level: .debug)
         } else {
             let bubbleHotKeyID = EventHotKeyID(signature: hotkeySignature, id: 3)
             let bubbleStatus = RegisterEventHotKey(
-                InputBubbleHotKey.keyCode,
-                InputBubbleHotKey.carbonModifiers,
+                bubbleHotKey.keyCode,
+                bubbleHotKey.modifiers,
                 bubbleHotKeyID,
                 GetApplicationEventTarget(),
                 0,
                 &inputBubbleHotKeyRef
             )
             if bubbleStatus == noErr {
-                log("[HotKey] Registered input bubble Carbon hotkey ⌥⌘B")
+                log("[HotKey] Registered input bubble Carbon hotkey \(bubbleHotKey.displayString)")
             } else {
                 log("[HotKey] Failed to register input bubble Carbon hotkey: \(bubbleStatus)", level: .warn)
             }

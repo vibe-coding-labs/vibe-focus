@@ -5,6 +5,8 @@ import Foundation
 extension Notification.Name {
     static let hotKeyConfigurationDidChange = Notification.Name("HotKeyConfigurationDidChange")
     static let hookServerStateChanged = Notification.Name("ClaudeHookServerStateChanged")
+    /// B162：输入气泡唤起热键变更（applyBubbleShortcut/resetBubbleShortcut 发布）
+    static let inputBubbleHotKeyDidChange = Notification.Name("InputBubbleHotKeyDidChange")
 }
 
 /// Describes a conflict between the configured hotkey and a system shortcut.

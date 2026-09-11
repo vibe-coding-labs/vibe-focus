@@ -25,7 +25,7 @@ public final class HotKeyManager: ObservableObject {
     let hotkeyIdentifier: UInt32 = 1
     var hotKeyRef: EventHotKeyRef?
     var titleEditorHotKeyRef: EventHotKeyRef?
-    /// B129 输入气泡 ⌥⌘B Carbon 注册表（CGEventTap 不可用时的兜底通道）
+    /// B129/B162 输入气泡唤起热键 Carbon 注册表（CGEventTap 不可用时的兜底通道）
     var inputBubbleHotKeyRef: EventHotKeyRef?
     /// 摆位热键 Carbon 注册表：carbonHotKeyID → ref（registerLayoutHotKeys 维护）
     var layoutHotKeyRefs: [UInt32: EventHotKeyRef] = [:]
@@ -66,10 +66,10 @@ public final class HotKeyManager: ObservableObject {
         }
     }
 
-    /// Nonisolated entry point for input bubble hotkey (⌥⌘B) — CGEventTap C callback 域调用，
+    /// Nonisolated entry point for input bubble hotkey（B162 默认 ⌘B）— CGEventTap C callback 域调用，
     /// TitleEditor 同款模式：绕 @MainActor，main 队列转回隔离域（summon 内自查偏好开关）。
     nonisolated static func triggerInputBubble() {
-        log("[HotKey] Input bubble ⌥⌘B matched")
+        log("[HotKey] Input bubble hotkey matched")
         DispatchQueue.main.async {
             InputBubbleController.shared.summon()
         }
@@ -323,5 +323,38 @@ public final class HotKeyManager: ObservableObject {
         registerHotKey()
         NotificationCenter.default.post(name: .layoutHotKeyTableDidChange, object: nil)
         CrashContextRecorder.shared.record("layout_hotkey_enabled value=\(enabled)")
+    }
+
+    // MARK: 输入气泡唤起热键（B162：默认 ⌘B，设置页可自定义）
+
+    /// 录制气泡唤起热键。返回错误信息（nil = 成功）。
+    /// 校验链：修饰键/系统冲突（validate）→ 与主 toggle 键撞车 → 与摆位键撞车。
+    @discardableResult
+    func applyBubbleShortcut(_ hotKey: HotKeyConfiguration) -> String? {
+        log("[HotKey] applyBubbleShortcut requested: \(hotKey.displayString)")
+        if let validationError = Self.validationError(for: hotKey) {
+            return validationError
+        }
+        if hotKey.keyCode == currentHotKey.keyCode && hotKey.modifiers == currentHotKey.modifiers {
+            return "组合键与主开关快捷键 \(currentHotKey.displayString) 冲突"
+        }
+        if LayoutPreferences.isEnabled,
+           LayoutAction.allCases.contains(where: { layoutTable.hotKey(for: $0) == hotKey }) {
+            return "组合键已被摆位快捷键占用：\(hotKey.displayString)"
+        }
+
+        InputBubblePreferences.hotKey = hotKey
+        registerHotKey()
+        NotificationCenter.default.post(name: .inputBubbleHotKeyDidChange, object: nil)
+        CrashContextRecorder.shared.record("bubble_hotkey_apply key=\(hotKey.displayString)")
+        return nil
+    }
+
+    /// 恢复气泡唤起热键默认值（⌘B）。
+    func resetBubbleShortcut() {
+        InputBubblePreferences.hotKey = InputBubbleHotKeyPlan.defaultConfig
+        registerHotKey()
+        NotificationCenter.default.post(name: .inputBubbleHotKeyDidChange, object: nil)
+        CrashContextRecorder.shared.record("bubble_hotkey_reset key=\(InputBubbleHotKeyPlan.defaultConfig.displayString)")
     }
 }

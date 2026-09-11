@@ -62,6 +62,24 @@ extension HookEventHandler {
                     "app": identity.appName ?? "unknown"
                 ]
             )
+            // B162：移动到主屏自动弹出气泡（设置可关；目标窗=刚被移动的会话绑定窗，
+            // 决策门纯函数直测在 RunnerInputBubbleTests）。
+            let autoShowOutcome = InputBubbleAutoShowGate.decideMoveToMainAutoShow(
+                autoShowEnabled: InputBubblePreferences.autoShowOnMoveToMain,
+                phaseIdle: InputBubbleController.shared.isIdle
+            )
+            if case .summon = autoShowOutcome {
+                InputBubbleController.shared.summonForMovedWindow(
+                    windowID: identity.windowID,
+                    pid: identity.pid,
+                    appName: identity.appName
+                )
+            } else {
+                log("[HookEventHandler] move-to-main bubble auto-show skip", level: .debug, fields: [
+                    "outcome": String(describing: autoShowOutcome),
+                    "windowID": String(identity.windowID)
+                ])
+            }
             Task { @MainActor in
                 SoundManager.shared.playCompletionSound(
                     projectName: ProjectSoundResolver.projectName(

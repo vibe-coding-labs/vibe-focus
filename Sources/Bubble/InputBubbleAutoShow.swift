@@ -30,6 +30,14 @@ enum InputBubbleAutoShowGate {
         guard hasLiveSessionBinding else { return .skipNoLiveSession }
         return .summon
     }
+
+    /// B162：「窗口被移动到主屏（Stop hook 拉回成功等）→ 气泡自动出现」决策门。
+    /// 调用方已保证目标窗身份（hook 绑定仅认终端窗），此处只看开关与气泡占用。
+    static func decideMoveToMainAutoShow(autoShowEnabled: Bool, phaseIdle: Bool) -> Outcome {
+        guard autoShowEnabled else { return .skipNotEnabled }
+        guard phaseIdle else { return .skipBubbleActive }
+        return .summon
+    }
 }
 
 // MARK: - 焦点观察器

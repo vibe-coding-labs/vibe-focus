@@ -122,12 +122,12 @@ extension HotKeyManager {
             }
         }
 
-        // B129 输入气泡 ⌥⌘B：仅 keyDown 非连拍 + 功能开启 + 未被主键/摆位键占用时消费
-        //（冲突让位原则：用户把主键或摆位键绑成 ⌥⌘B 时，气泡自动让位；tapDisabled 自愈
-        // 路径不走此分支，仍归下方 gate 处理）。
+        // B129/B162 输入气泡唤起热键（默认 ⌘B）：仅 keyDown 非连拍 + 功能开启 +
+        // 未被主键/摆位键占用时消费（冲突让位原则：用户把主键或摆位键绑成同组合时，
+        // 气泡自动让位；tapDisabled 自愈路径不走此分支，仍归下方 gate 处理）。
         if type == .keyDown, !isAutorepeat,
            InputBubblePreferences.isEnabled,
-           InputBubbleHotKey.matches(keyCode: keyCode, carbonModifiers: modifiers),
+           InputBubbleHotKeyPlan.matches(config: InputBubblePreferences.hotKey, keyCode: keyCode, carbonModifiers: modifiers),
            !primaryMatch, layoutMatch == nil {
             HotKeyManager.triggerInputBubble()
             return nil

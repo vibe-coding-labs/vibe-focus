@@ -4,7 +4,7 @@ import CoreGraphics
 import Foundation
 
 // MARK: - 输入气泡控制器（B129）
-// 生命周期：⌥⌘B 唤起（仅聚焦终端窗时）→ 本地打字 → Enter/⌘Enter 注入 → 焦点还给终端。
+// 生命周期：快捷键唤起（默认 ⌘B，仅聚焦终端窗时）→ 本地打字 → Enter/⌘Enter 注入 → 焦点还给终端。
 // 行为约束：
 // - 目标在弹 UI 前捕获（TitleEditor 2026-09-07 焦点劫持教训：弹 UI 后前台已是 VibeFocus，
 //   再按前台取目标必盲射）；
@@ -15,6 +15,8 @@ import Foundation
 // - 纯决策全部在 InputBubbleLogic（Runner 直测），本文件只做 IO 编排。
 // B151 按域拆分（逐字搬移零行为变更）：面板构建/锚定 → +Panel，提交链机械 → +Submission，
 // 剪贴板快照恢复 → +Clipboard，气泡视图族 → InputBubbleViews；本文件保留状态、生命周期与委托。
+// B162：Enter/⌘Enter 改 keyDown 层拦截（doCommandBy 收不到 ⌘Enter，noop: 实锤）+
+// 草稿按窗保留（InputBubbleDraftStore）+ 用户拖动位置记忆 + Stop 拉回主屏定向弹出。
 
 @MainActor
 final class InputBubbleController: NSObject {
@@ -33,6 +35,10 @@ final class InputBubbleController: NSObject {
     /// 作为 main window 会抢走 key 使气泡收不到键盘——TitleEditor 同款解法：
     /// 气泡存续期临时 orderOut 设置窗，气泡关闭后恢复可见性）
     var settingsWasVisible = false
+
+    /// B162：程序化定位期间的 windowDidMove 抑制标记（区分程序摆放 vs 用户拖动）。
+    /// setFrameOrigin 的 didMove 通知同步派发，布尔标记即足够。
+    var suppressMoveTracking = false
 
     /// B133：尺寸/回车语义从偏好读取（设置页可调）；面板按「构建参数指纹」缓存，
     /// 指纹变化（改尺寸/改回车行为）时下次唤起重建，避免陈旧布局。
@@ -68,7 +74,7 @@ final class InputBubbleController: NSObject {
 
     // MARK: 唤起 / 关闭
 
-    /// ⌥⌘B：开着则关（toggle）；没开则捕获聚焦终端窗并弹气泡。
+    /// 快捷键唤起（默认 ⌘B）：开着则关（toggle）；没开则捕获聚焦终端窗并弹气泡。
     /// 前台不是可识别终端时 beep 拒绝（静默吞键会让用户以为失灵，与摆位热键同款反馈）。
     func summon() {
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"
@@ -119,6 +125,29 @@ final class InputBubbleController: NSObject {
         CrashContextRecorder.shared.record("input_bubble_summon windowID=\(windowID) pid=\(pid)")
     }
 
+    /// B162：窗口被移动到主屏（Stop hook 拉回成功等）后的定向弹出。
+    /// 目标窗以入参为准——此刻前台未必是该终端，不能走前台捕获路径；
+    /// 身份兜底校验（终端判定/窗口还在屏上）通过后复用 showPanel。
+    func summonForMovedWindow(windowID: UInt32, pid: pid_t, appName: String?) {
+        guard InputBubblePreferences.isEnabled, phase == .idle else { return }
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              TerminalRegistry.isTerminalOrIDEApp(appName: app.localizedName, bundleIdentifier: app.bundleIdentifier) else {
+            log("[InputBubble] moved-window summon: app not terminal", level: .debug, fields: [
+                "windowID": String(windowID), "pid": String(pid)
+            ])
+            return
+        }
+        guard let cgFrame = cgWindowBounds(for: windowID) else {
+            log("[InputBubble] moved-window summon: window not onscreen", level: .debug, fields: [
+                "windowID": String(windowID)
+            ])
+            return
+        }
+        let target = Target(pid: pid, bundleID: app.bundleIdentifier, windowID: windowID, title: appName)
+        showPanel(target: target, cgFrame: cgFrame)
+        CrashContextRecorder.shared.record("input_bubble_summon_moved windowID=\(windowID) pid=\(pid)")
+    }
+
     private func showPanel(target: Target, cgFrame: CGRect) {
         self.target = target
         phase = .open
@@ -129,12 +158,17 @@ final class InputBubbleController: NSObject {
         if settingsWasVisible { settingsWindow?.orderOut(nil) }
 
         let (panel, textView) = builtPanel()
-        let origin = anchorOrigin(targetCGFrame: cgFrame)
+        // B162：位置记忆优先——用户拖动过则出现在记忆位置（夹进目标屏可视区），
+        // 从未拖过回落目标窗锚点。
+        let origin = restoredOrigin(targetCGFrame: cgFrame)
+        suppressMoveTracking = true
         panel.setFrameOrigin(origin)
-        // B161：预填默认前缀（如 "/goal "），光标落到末尾待续写
-        let prefix = InputBubblePreferences.defaultPrefix
-        textView.string = prefix
-        textView.setSelectedRange(NSRange(location: (prefix as NSString).length, length: 0))
+        suppressMoveTracking = false
+        // B161→B162：预填默认前缀，草稿优先——同一目标窗关了再开，打到一半的内容还在
+        let savedDraft = InputBubbleDraftStore.shared.draft(for: target.windowID)
+        let initial = InputBubbleKeyPlan.resolveInitialText(savedDraft: savedDraft, prefix: InputBubblePreferences.defaultPrefix)
+        textView.string = initial
+        textView.setSelectedRange(NSRange(location: (initial as NSString).length, length: 0))
         panel.makeKeyAndOrderFront(nil)
 
         // 收键盘三件套：切 regular（accessory 不收 key）→ 激活自己 → textView 成第一响应者
@@ -147,7 +181,9 @@ final class InputBubbleController: NSObject {
             "windowID": String(target.windowID),
             "pid": String(target.pid),
             "bundleID": target.bundleID ?? "nil",
-            "title": truncateForLog(target.title ?? "", limit: 60)
+            "title": truncateForLog(target.title ?? "", limit: 60),
+            "origin": "\(Int(origin.x)),\(Int(origin.y))",
+            "restoredDraft": String(savedDraft != nil)
         ])
     }
 
@@ -194,37 +230,59 @@ final class InputBubbleController: NSObject {
     }
 }
 
-// MARK: - 文本事件（Enter/⌘Enter/Shift+Enter/Esc）
+// MARK: - 文本事件（Enter/⌘Enter 在 keyDown 层拦截[B162]，Esc 走 doCommandBy，编辑实时存草稿）
 
 extension InputBubbleController: NSTextViewDelegate {
-    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        let mods = NSApp.currentEvent?.modifierFlags.intersection([.shift, .command]) ?? []
-        switch commandSelector {
-        case #selector(NSResponder.insertNewline(_:)):
-            // B161：解析 nil = 插入字面换行（默认交互）；⇧ 恒为换行
-            if mods.contains(.shift) { return false }
-            guard let mode = InputBubbleKeyPlan.resolveEnterAction(
-                commandHeld: mods.contains(.command),
-                submitOnEnter: InputBubblePreferences.submitOnEnter
-            ) else {
-                return false
-            }
+    /// B162：InputBubbleTextView.keyDown 的 Enter/⌘Enter 拦截回调。
+    /// 解析 nil = 不注入、插字面换行（默认交互 Enter 换行；⇧Enter 不会到达此处）。
+    func handleEnter(commandHeld: Bool) {
+        guard phase == .open else { return }
+        if let mode = InputBubbleKeyPlan.resolveEnterAction(
+            commandHeld: commandHeld,
+            submitOnEnter: InputBubblePreferences.submitOnEnter
+        ) {
             submit(mode: mode)
-            return true
+        } else {
+            textView?.insertNewline(nil)
+        }
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // 到此的 insertNewline 只有 ⇧Enter / IME 路径（⌘Enter 在文本系统派发 noop:，
+        // 从未到过这层——B129~B161 静默失效根因），一律默认行为：插入字面换行。
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            return false
+        }
+        switch commandSelector {
         case #selector(NSResponder.cancelOperation(_:)):
+            // Esc：关闭不注入，草稿保留（输入跟窗绑定，回来接着打）
             dismiss(reactivateTarget: true)
             return true
         default:
             return false
         }
     }
+
+    /// B162：编辑实时落草稿（按目标窗绑定；提交成功由 inject 清除）
+    func textDidChange(_ notification: Notification) {
+        guard phase == .open, let target = target, let textView else { return }
+        InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
+    }
 }
 
-// MARK: - 面板失焦即关（用户点了终端 = 放弃气泡，不注入）
+// MARK: - 面板失焦即关（用户点了终端 = 放弃气泡，不注入）；拖动位置记忆
 
 extension InputBubbleController: NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         guard phase == .open else { return }  // submitting 路径自己管理面板，不在此关
         dismiss(reactivateTarget: false)
+    }
+
+    /// B162：用户拖动气泡 → 记忆位置（下次唤起优先用）。程序化定位被
+    /// suppressMoveTracking 抑制；非当前面板的 didMove 忽略。
+    func windowDidMove(_ notification: Notification) {
+        guard phase == .open, !suppressMoveTracking else { return }
+        guard let moved = notification.object as? NSWindow, moved === panel else { return }
+        InputBubblePreferences.userPlacedOrigin = moved.frame.origin
     }
 }

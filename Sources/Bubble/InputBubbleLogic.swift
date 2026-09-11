@@ -18,15 +18,20 @@ enum InputBubbleSubmitMode: Equatable {
     case cancel
 }
 
-/// 气泡热键 ⌥⌘B 常量与匹配（kVK_ANSI_B = 11）。
-enum InputBubbleHotKey {
-    static let keyCode: UInt32 = 11
-    static let carbonModifiers: UInt32 = UInt32(optionKey | cmdKey)
+/// 气泡唤起热键计划（B162：默认 ⌘B + 设置页可自定义；三通道共用匹配）。
+/// 组合键唯一事实源在 InputBubblePreferences.hotKey（持久化），此处的默认值
+/// 与匹配纯函数供 Carbon/CGEventTap/NSEvent fallback 与 Runner 直测共用。
+/// 冲突让位（主键/摆位键占用组合时不注册/不消费）在各注册通道内联判定。
+enum InputBubbleHotKeyPlan {
+    /// B162 默认 ⌘B（历史 ⌥⌘B 退役——用户指定默认改 ⌘B）。
+    static let defaultConfig = HotKeyConfiguration(
+        keyCode: UInt32(kVK_ANSI_B),
+        modifiers: UInt32(cmdKey)
+    )
 
-    /// 纯匹配：Carbon / NSEvent fallback 通道用（carbon 修饰位语义）。
-    /// CGEventTap 通道冲突感知（主键/摆位键让位）在 handleCGEvent 内联判定。
-    static func matches(keyCode: UInt32, carbonModifiers: UInt32) -> Bool {
-        keyCode == Self.keyCode && carbonModifiers == Self.carbonModifiers
+    /// 纯匹配：Carbon / CGEventTap / NSEvent fallback 三通道共用（carbon 修饰位语义）。
+    static func matches(config: HotKeyConfiguration, keyCode: UInt32, carbonModifiers: UInt32) -> Bool {
+        keyCode == config.keyCode && carbonModifiers == config.modifiers
     }
 }
 
@@ -60,6 +65,16 @@ enum InputBubbleKeyPlan {
         submitOnEnter
             ? "Enter 注入并提交 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · Esc 关闭"
             : "Enter 换行 · ⌘Enter 注入并提交 · Esc 关闭"
+    }
+
+    /// B162：气泡打开的初始文本 = 目标窗草稿优先（输入跟窗绑定，关了再开不丢）；
+    /// 无草稿（含空白草稿）回落默认前缀。
+    static func resolveInitialText(savedDraft: String?, prefix: String) -> String {
+        if let draft = savedDraft,
+           !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return draft
+        }
+        return prefix
     }
 }
 
@@ -136,6 +151,29 @@ enum InputBubbleLayout {
         let yUpper = max(visibleFrame.maxY - bubbleSize.height - margin, yLower)
         return CGPoint(x: min(max(rawX, xLower), xUpper),
                        y: min(max(rawY, yLower), yUpper))
+    }
+
+    // MARK: 位置记忆（B162）
+
+    /// 用户拖动记忆 frame 的持久化编码（AppKit 全局坐标 "x,y,w,h"）。
+    static func encodeFrame(_ frame: CGRect) -> String {
+        "\(frame.origin.x),\(frame.origin.y),\(frame.width),\(frame.height)"
+    }
+
+    /// 位置记忆解码；格式不符回落 nil（按无记忆处理走锚点）。
+    static func decodeFrame(_ raw: String) -> CGRect? {
+        let parts = raw.split(separator: ",").compactMap { Double($0) }
+        guard parts.count == 4 else { return nil }
+        return CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
+    }
+
+    /// 用户记忆位置 → 目标屏 visibleFrame 内夹取（尺寸用当前气泡尺寸；
+    /// 记忆位置在另一块屏/屏外时拉回屏内，退化同 anchorOrigin 取下限）。
+    static func clampedOrigin(position: CGPoint, bubbleSize: CGSize, visibleFrame: CGRect) -> CGPoint {
+        let xUpper = max(visibleFrame.maxX - bubbleSize.width, visibleFrame.minX)
+        let yUpper = max(visibleFrame.maxY - bubbleSize.height, visibleFrame.minY)
+        return CGPoint(x: min(max(position.x, visibleFrame.minX), xUpper),
+                       y: min(max(position.y, visibleFrame.minY), yUpper))
     }
 }
 

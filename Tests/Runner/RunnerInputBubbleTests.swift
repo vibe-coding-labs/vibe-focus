@@ -12,19 +12,19 @@ extension RunnerHarness {
     func runInputBubbleTests() {
         print("\n=== InputBubble (B129) ===")
 
-        // --- ⌥⌘B 匹配矩阵 ---
-        check("bubble hotkey: ⌥⌘B 命中", InputBubbleHotKey.matches(
-            keyCode: 11, carbonModifiers: UInt32(optionKey | cmdKey)))
-        check("bubble hotkey: 仅 ⌥ 不命中", !InputBubbleHotKey.matches(
-            keyCode: 11, carbonModifiers: UInt32(optionKey)))
-        check("bubble hotkey: 仅 ⌘ 不命中", !InputBubbleHotKey.matches(
-            keyCode: 11, carbonModifiers: UInt32(cmdKey)))
-        check("bubble hotkey: ⌃⌥⌘ 不命中", !InputBubbleHotKey.matches(
-            keyCode: 11, carbonModifiers: UInt32(controlKey | optionKey | cmdKey)))
-        check("bubble hotkey: ⌥⌘+⇧ 不命中", !InputBubbleHotKey.matches(
-            keyCode: 11, carbonModifiers: UInt32(optionKey | cmdKey | shiftKey)))
-        check("bubble hotkey: 其他键 ⌥⌘ 不命中", !InputBubbleHotKey.matches(
-            keyCode: UInt32(kVK_ANSI_C), carbonModifiers: UInt32(optionKey | cmdKey)))
+        // --- B162 唤起热键：默认 ⌘B 契约 + 配置化匹配矩阵 ---
+        check("bubble hotkey: 默认配置 = ⌘B", InputBubbleHotKeyPlan.defaultConfig
+            == HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_B), modifiers: UInt32(cmdKey)))
+        let bk = InputBubbleHotKeyPlan.defaultConfig
+        check("bubble hotkey: ⌘B 命中", InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(cmdKey)))
+        check("bubble hotkey: 仅 ⌥ 不命中（⌥⌘B 退役）", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(optionKey)))
+        check("bubble hotkey: ⌥⌘ 不命中（旧默认退役）", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(optionKey | cmdKey)))
+        check("bubble hotkey: ⌃⌘ 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(controlKey | cmdKey)))
+        check("bubble hotkey: ⌘+⇧ 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(cmdKey | shiftKey)))
+        check("bubble hotkey: 其他键 ⌘ 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_C), carbonModifiers: UInt32(cmdKey)))
+        check("bubble hotkey: 自定义配置按值匹配", InputBubbleHotKeyPlan.matches(
+            config: HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_K), modifiers: UInt32(controlKey | optionKey)),
+            keyCode: UInt32(kVK_ANSI_K), carbonModifiers: UInt32(controlKey | optionKey)))
 
         // --- 键序计划 ---
         check("keyPlan: submit = paste+return", InputBubbleKeyPlan.steps(for: .submit) == [.paste, .returnKey])
@@ -166,5 +166,70 @@ extension RunnerHarness {
         if case .skipBubbleActive = bubbleActiveOutcome {
             check("autoshow: 气泡开着+非终端 → 冻结优先于清标记", true)
         } else { check("autoshow: 气泡开着+非终端 → 冻结优先于清标记", false) }
+
+        // --- B162 移回主屏自动弹出决策门 ---
+        if case .summon = InputBubbleAutoShowGate.decideMoveToMainAutoShow(autoShowEnabled: true, phaseIdle: true) {
+            check("moveToMain: 开+空闲 → summon", true)
+        } else { check("moveToMain: 开+空闲 → summon", false) }
+        if case .skipNotEnabled = InputBubbleAutoShowGate.decideMoveToMainAutoShow(autoShowEnabled: false, phaseIdle: true) {
+            check("moveToMain: 开关关 → skipNotEnabled", true)
+        } else { check("moveToMain: 开关关 → skipNotEnabled", false) }
+        if case .skipBubbleActive = InputBubbleAutoShowGate.decideMoveToMainAutoShow(autoShowEnabled: true, phaseIdle: false) {
+            check("moveToMain: 气泡占用 → skipBubbleActive", true)
+        } else { check("moveToMain: 气泡占用 → skipBubbleActive", false) }
+
+        // --- B162 草稿预填解析（草稿优先，空白草稿回落前缀） ---
+        check("prefill: 无草稿 → 前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "/goal ") == "/goal ")
+        check("prefill: 草稿优先于前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: "打到一半", prefix: "/goal ") == "打到一半")
+        check("prefill: 空白草稿视为无草稿", InputBubbleKeyPlan.resolveInitialText(savedDraft: "  \n ", prefix: "/goal ") == "/goal ")
+        check("prefill: 双空 → 空串", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "") == "")
+
+        // --- B162 位置记忆编解码 + 夹取 ---
+        let saved = CGRect(x: -1920.5, y: 100.25, width: 480, height: 150)
+        check("frame: 编解码往返保真", InputBubbleLayout.decodeFrame(InputBubbleLayout.encodeFrame(saved)) == saved)
+        check("frame: 非法串 → nil", InputBubbleLayout.decodeFrame("not-a-frame") == nil)
+        check("frame: 分量不足 → nil", InputBubbleLayout.decodeFrame("1,2,3") == nil)
+        let posVisible = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+        check("clamped: 屏内原样保留", InputBubbleLayout.clampedOrigin(position: CGPoint(x: 300, y: 200), bubbleSize: bubble, visibleFrame: posVisible) == CGPoint(x: 300, y: 200))
+        check("clamped: 越右缘拉回", InputBubbleLayout.clampedOrigin(position: CGPoint(x: 2000, y: 200), bubbleSize: bubble, visibleFrame: posVisible).x == 1728 - 480)
+        check("clamped: 越下缘拉回", InputBubbleLayout.clampedOrigin(position: CGPoint(x: 300, y: -500), bubbleSize: bubble, visibleFrame: posVisible).y == 0)
+        check("clamped: 宽超屏 x 贴左缘 y 屏内保留", InputBubbleLayout.clampedOrigin(position: CGPoint(x: 50, y: 50), bubbleSize: CGSize(width: 9000, height: 900), visibleFrame: posVisible) == CGPoint(x: 0, y: 50))
+        check("clamped: 双轴退化全贴原点", InputBubbleLayout.clampedOrigin(position: CGPoint(x: 50, y: 50), bubbleSize: CGSize(width: 9000, height: 9000), visibleFrame: posVisible) == CGPoint(x: 0, y: 0))
+
+        // --- B162 草稿存储（隔离 suite，真实存取行为） ---
+        let suiteName = "RunnerInputBubbleDraftTests-\(UUID().uuidString)"
+        let draftDefaults = UserDefaults(suiteName: suiteName)!
+        let store = InputBubbleDraftStore(defaults: draftDefaults)
+        store.save("窗口 A 的半截话", for: 1111)
+        store.save("窗口 B 的内容", for: 2222)
+        check("draft: 按窗读取各自独立", store.draft(for: 1111) == "窗口 A 的半截话" && store.draft(for: 2222) == "窗口 B 的内容")
+        store.save("窗口 A 更新", for: 1111)
+        check("draft: 同窗覆盖更新", store.draft(for: 1111) == "窗口 A 更新")
+        // 跨实例（重启语义）：同 suite 重建 store 仍可读
+        let store2 = InputBubbleDraftStore(defaults: draftDefaults)
+        check("draft: 持久化跨实例可读", store2.draft(for: 2222) == "窗口 B 的内容")
+        store2.clear(for: 1111)
+        check("draft: clear 后读 nil", store2.draft(for: 1111) == nil && store2.draft(for: 2222) == "窗口 B 的内容")
+        store2.save("   ", for: 2222)
+        check("draft: 空白保存等价清除", store2.draft(for: 2222) == nil)
+        check("draft: 全清后存储键移除", draftDefaults.data(forKey: "inputBubbleDrafts") == nil)
+        draftDefaults.removePersistentDomain(forName: suiteName)
+
+        // --- B162 草稿惰性清理（纯函数） ---
+        let now = Date()
+        func entry(ageSeconds: TimeInterval) -> InputBubbleDraftEntry {
+            InputBubbleDraftEntry(text: "t", at: now.addingTimeInterval(-ageSeconds))
+        }
+        let pruned = InputBubbleDraftStore.prune(
+            ["a": entry(ageSeconds: 8 * 24 * 3600), "b": entry(ageSeconds: 1 * 3600)],
+            now: now, maxAge: 7 * 24 * 3600, capacity: 32)
+        check("prune: 过期剔除", !pruned.keys.contains("a") && pruned.keys.contains("b"))
+        var aged: [String: InputBubbleDraftEntry] = [:]
+        for index in 0..<40 {
+            // 越大越新（index 秒前写入）
+            aged[String(index)] = InputBubbleDraftEntry(text: "t\(index)", at: now.addingTimeInterval(TimeInterval(index)))
+        }
+        let capacityPruned = InputBubbleDraftStore.prune(aged, now: now, maxAge: 7 * 24 * 3600, capacity: 32)
+        check("prune: 容量裁剪保留最新 32 条", capacityPruned.count == 32 && capacityPruned["39"] != nil && capacityPruned["7"] == nil)
     }
 }

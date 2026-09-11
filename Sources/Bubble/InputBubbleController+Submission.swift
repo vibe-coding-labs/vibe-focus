@@ -52,6 +52,8 @@ extension InputBubbleController {
             "pid": String(target.pid)
         ])
         CrashContextRecorder.shared.record("input_bubble_inject windowID=\(target.windowID) steps=\(steps.count)")
+        // B162：注入放行即消费草稿（abort 不清——文本保留在草稿里，重开气泡可续）
+        InputBubbleDraftStore.shared.clear(for: target.windowID)
 
         for (index, step) in steps.enumerated() {
             let delayMs = index * InputBubbleTiming.pasteToReturnDelayMs
