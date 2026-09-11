@@ -848,6 +848,73 @@ extension RunnerHarness {
         try? FileManager.default.removeItem(atPath: home)
     }
 
+    // MARK: 安装编排注入缝直测（真实实现——B155：installHookToClaudeSettings 此前硬绑真实
+    // 路径零覆盖，与卸载侧 B33 不对称；核心抽 installHooks(at:dir:...) 后穷举合并/冷却/落盘）
+    do {
+        let home = "/tmp/vibefocus-b155-home-\(UUID().uuidString)"
+        let settingsPath = home + "/.claude/settings.json"
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        var recorded: [Date] = []
+        let url = "http://127.0.0.1:39277/claude/hook"
+        let script = "/Users/x/.vibefocus/hook-forwarder.sh"
+        func gen(_ events: [String]) -> [String: Any] {
+            // 形状契约：generated[key] 直接是 entry 数组（与 generateHooksDict 一致），非 {"hooks": …} 包裹
+            Dictionary(uniqueKeysWithValues: events.map {
+                ($0, [["hooks": [["url": url, "timeout": 10]]]] as [[String: Any]])
+            })
+        }
+        func readJSON(_ path: String) -> [String: Any]? {
+            (try? JSONSerialization.jsonObject(with: try Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any]
+        }
+
+        // ① 全新安装：目录自动创建 + 生成事件全落盘 + recordInstall 记账
+        let r1 = ClaudeHookPreferences.installHooks(
+            at: settingsPath, dir: home + "/.claude", scriptPath: script, targetURL: url,
+            generated: gen(["SessionStart", "Stop"]), now: t0, lastInstall: .distantPast,
+            recordInstall: { recorded.append($0) })
+        let j1 = readJSON(settingsPath)
+        check("installSeam: 全新安装建目录落盘，事件齐且 recordInstall 记账",
+              r1.0 == true && FileManager.default.fileExists(atPath: settingsPath)
+              && (j1?["hooks"] as? [String: Any])?.keys.sorted() == ["SessionStart", "Stop"]
+              && recorded == [t0])
+
+        // ② 冷却内无变化重装 → 跳过且不重复记账
+        let r2 = ClaudeHookPreferences.installHooks(
+            at: settingsPath, dir: home + "/.claude", scriptPath: script, targetURL: url,
+            generated: gen(["SessionStart", "Stop"]), now: t0.addingTimeInterval(1), lastInstall: t0,
+            recordInstall: { recorded.append($0) })
+        check("installSeam: 冷却内内容一致 → 跳过（配置无变化）不记账",
+              r2.0 == true && r2.1.contains("无变化") && recorded.count == 1)
+
+        // ③ 冷却内内容变化（关 SessionEnd）→ 必须落盘（静默不一致 bug 的回归锁）
+        let r3 = ClaudeHookPreferences.installHooks(
+            at: settingsPath, dir: home + "/.claude", scriptPath: script, targetURL: url,
+            generated: gen(["SessionStart"]), now: t0.addingTimeInterval(1), lastInstall: t0,
+            recordInstall: { recorded.append($0) })
+        check("installSeam: 冷却内内容变化破冷却落盘（开关切换不被吞）",
+              r3.0 == true && r3.1.contains("已安装")
+              && (readJSON(settingsPath)?["hooks"] as? [String: Any])?.keys.sorted() == ["SessionStart"]
+              && recorded.count == 2)
+
+        // ④ 冷却过期 + 既有外部 hook/顶层键合并保留（2.16a 第十七刀语义）
+        var seeded = gen(["SessionStart"])
+        seeded["Stop"] = [["hooks": [["type": "command", "command": "/usr/bin/user-own"]]]]
+        if let seedData = try? JSONSerialization.data(withJSONObject: ["hooks": seeded, "model": "claude-opus"]) {
+            try? seedData.write(to: URL(fileURLWithPath: settingsPath))
+        }
+        let r4 = ClaudeHookPreferences.installHooks(
+            at: settingsPath, dir: home + "/.claude", scriptPath: script, targetURL: url,
+            generated: gen(["SessionStart", "Stop"]), now: t0.addingTimeInterval(10), lastInstall: t0,
+            recordInstall: { recorded.append($0) })
+        let j4 = readJSON(settingsPath)
+        let stopEntries = (j4?["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]]
+        check("installSeam: 冷却过期重装合并——他方 command 条目与无关键保留、我方注册",
+              r4.0 == true && j4?["model"] as? String == "claude-opus"
+              && stopEntries?.count == 2
+              && stopEntries?.allSatisfy({ ($0["hooks"] as? [[String: Any]]) != nil }) == true)
+    }
+
     // MARK: SettingsUI 拆分前置（真实实现——B34：34 @State 枢纽的决策逻辑提纯为可测纯类型）
 
     do {

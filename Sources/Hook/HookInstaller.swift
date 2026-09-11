@@ -146,6 +146,32 @@ extension ClaudeHookPreferences {
         // 写入配置文件（端口和 Token）
         writeConfigFile()
 
+        let lastInstall = UserDefaults.standard.object(forKey: lastInstallAtKey) as? Date ?? .distantPast
+        return installHooks(
+            at: path,
+            dir: dir,
+            scriptPath: helperScriptPath,
+            targetURL: endpointURLString(),
+            generated: generateHooksDict(),
+            now: Date(),
+            lastInstall: lastInstall,
+            recordInstall: { UserDefaults.standard.set($0, forKey: lastInstallAtKey) }
+        )
+    }
+
+    /// 安装编排核心（B155 注入缝，与卸载侧 B33 对称）：建目录→读盘→composeDesiredHooks
+    /// 合并（2.16a 第十七刀）→3s 冷却→原子写。真实辅助脚本安装、hook-config 写入与
+    /// UserDefaults 时间戳留在生产壳；测试注入 temp 目录穷举合并/冷却/落盘语义。
+    static func installHooks(
+        at path: String,
+        dir: String,
+        scriptPath: String,
+        targetURL: String,
+        generated: [String: Any],
+        now: Date = Date(),
+        lastInstall: Date = .distantPast,
+        recordInstall: (Date) -> Void = { _ in }
+    ) -> (Bool, String) {
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         } catch {
@@ -166,9 +192,9 @@ extension ClaudeHookPreferences {
         // 用户自装的同事件 hook——真 bug，随本刀修复）。
         let desiredHooks = HookSettingsComposition.composeDesiredHooks(
             existing: existingHooks,
-            generated: generateHooksDict(),
-            targetURL: endpointURLString(),
-            scriptPath: helperScriptPath
+            generated: generated,
+            targetURL: targetURL,
+            scriptPath: scriptPath
         )
         settings["hooks"] = desiredHooks
 
@@ -178,8 +204,7 @@ extension ClaudeHookPreferences {
 
         // 冷却判定放在内容计算之后：只有期望内容与磁盘字节一致（真正的无变化重装）
         // 才允许跳过；lastInstallAt 也只在真实落盘时更新
-        let lastInstall = UserDefaults.standard.object(forKey: lastInstallAtKey) as? Date ?? .distantPast
-        if Date().timeIntervalSince(lastInstall) < installCooldown,
+        if now.timeIntervalSince(lastInstall) < installCooldown,
            let existingData = try? Data(contentsOf: URL(fileURLWithPath: path)),
            existingData == data {
             log("[ClaudeHookPreferences] install skipped: cooldown active, content unchanged")
@@ -192,13 +217,13 @@ extension ClaudeHookPreferences {
                 "path": path,
                 "hookEvents": desiredHooks.keys.sorted().joined(separator: ","),
                 "totalSettingsKeys": String(settings.count),
-                "helperScript": helperScriptPath
+                "helperScript": scriptPath
             ]
         )
 
         do {
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-            UserDefaults.standard.set(Date(), forKey: lastInstallAtKey)
+            recordInstall(now)
             log("[ClaudeHookPreferences] hooks installed successfully to \(path)")
             return (true, "已安装到 \(path)")
         } catch {
