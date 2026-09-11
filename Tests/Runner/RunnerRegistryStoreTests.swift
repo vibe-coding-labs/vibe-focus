@@ -572,6 +572,26 @@ extension RunnerHarness {
         check("cooldown: 29.9s 剩 1（向上取整）、35s 过期不返回负数",
               MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-29.9), now: now, cooldownSeconds: 30) == 1
               && MoveCooldownRegistry.remainingSeconds(lastMove: now.addingTimeInterval(-35), now: now, cooldownSeconds: 30) == 0)
+
+        // B153：实例 ops 直测（注入时钟；不动 .shared——防跨检查污染）
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let clock = { t0 }
+        let reg = MoveCooldownRegistry()
+        reg.now = clock
+        check("cooldownInst: 新实例无记录 → 不在冷却且剩余 0",
+              !reg.isInCooldown(windowID: 1) && reg.remainingSeconds(windowID: 1) == 0)
+        reg.setCooldown(windowID: 1)
+        check("cooldownInst: set 以注入时钟落账；29s 在冷却、恰 30s 出冷却",
+              reg.isInCooldown(windowID: 1)
+              && reg.remainingSeconds(windowID: 1) == 30
+              && !{ reg.now = { t0.addingTimeInterval(30) }; return reg.isInCooldown(windowID: 1) }())
+        reg.now = clock
+        reg.clearCooldown(windowID: 1)
+        check("cooldownInst: clear 即出冷却且剩余归零",
+              !reg.isInCooldown(windowID: 1) && reg.remainingSeconds(windowID: 1) == 0)
+        reg.clearCooldown(windowID: 42)
+        check("cooldownInst: clear 未知窗幂等不崩",
+              !reg.isInCooldown(windowID: 42))
     }
 
     // MARK: WindowStateStore 记录持久层（真实 SQLite——老库 PK 迁移/KV 往返，Batch 13）

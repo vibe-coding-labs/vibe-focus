@@ -74,6 +74,33 @@ extension RunnerHarness {
               && LayoutAction.action(forCarbonHotKeyID: 999) == nil)
     }
 
+    // B153：LayoutAction 自身薄面——displayName 全表 / defaultBindings 契约 / rawValue 编解码
+    do {
+        let names = Dictionary(uniqueKeysWithValues: LayoutAction.allCases.map { ($0, $0.displayName) })
+        check("摆位动作: displayName 全表 11 项锁定（新动作漏文案即红）",
+              names.count == 11
+              && names[.leftHalf] == "左半屏" && names[.rightHalf] == "右半屏"
+              && names[.topHalf] == "上半屏" && names[.bottomHalf] == "下半屏"
+              && names[.topLeftQuarter] == "左上四分" && names[.topRightQuarter] == "右上四分"
+              && names[.bottomLeftQuarter] == "左下四分" && names[.bottomRightQuarter] == "右下四分"
+              && names[.maximize] == "最大化" && names[.center] == "居中"
+              && names[.nextDisplay] == "移到下一屏")
+        let bindings = LayoutAction.defaultBindings
+        let ctlOpt = UInt32(controlKey | optionKey)
+        check("摆位动作: defaultBindings 键集覆盖全部 action 且修饰键恒 ⌃⌥",
+              Set(bindings.keys) == Set(LayoutAction.allCases)
+              && bindings.values.allSatisfy { $0.modifiers == ctlOpt })
+        check("摆位动作: 默认键码抽查（←/→/Return/N 对齐 Rectangle ⌃⌥ 惯例）",
+              bindings[.leftHalf]?.keyCode == UInt32(kVK_LeftArrow)
+              && bindings[.rightHalf]?.keyCode == UInt32(kVK_RightArrow)
+              && bindings[.maximize]?.keyCode == UInt32(kVK_Return)
+              && bindings[.nextDisplay]?.keyCode == UInt32(kVK_ANSI_N))
+        check("摆位动作: rawValue 往返（Codable 语义即字符串表契约）",
+              LayoutAction.allCases.allSatisfy { LayoutAction(rawValue: $0.rawValue) == $0 }
+              && LayoutAction(rawValue: "nextDisplay") == .nextDisplay
+              && LayoutAction(rawValue: "nope") == nil)
+    }
+
     // 默认键位表：全覆盖、无表内重复、不撞已知系统冲突与默认 toggle 键
     do {
         let table = LayoutHotKeyTable.withDefaults
