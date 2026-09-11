@@ -88,6 +88,7 @@ let rules: [ConformanceRule] = [
             "WindowManager+Layout.swift",
             "ToggleEngine+Restore.swift",
             "TerminalGridController+SpaceDelivery.swift",
+            "ToggleEngine+Restore+Stages.swift", // B157：restore 四阶段机械拆出 +Stages.swift（调用点搬家非新增，2026-09-11）
         ]
     ),
     ConformanceRule(
@@ -118,6 +119,7 @@ let rules: [ConformanceRule] = [
             "RestoreSwitchOrchestration.swift",
             "ToggleEngine+Restore.swift",
             "WindowManager+Layout.swift",
+            "ToggleEngine+Restore+Stages.swift",
         ]
     ),
     ConformanceRule(
@@ -125,7 +127,8 @@ let rules: [ConformanceRule] = [
         description: "FloatSettle.floatAndSettle( 只许两处生产接线（新增=新手抄）",
         patterns: ["FloatSettle.floatAndSettle("],
         contextAnyPatterns: [],
-        allowedFiles: ["FloatSettle.swift", "WindowManager+Layout.swift", "ToggleEngine+Restore.swift"]
+        allowedFiles: ["FloatSettle.swift", "WindowManager+Layout.swift", "ToggleEngine+Restore.swift",
+                       "ToggleEngine+Restore+Stages.swift"]
     ),
     ConformanceRule(
         id: "R9",
