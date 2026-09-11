@@ -843,6 +843,16 @@ extension RunnerHarness {
                   && TerminalSelectionResolver.supportTable.count == 9)
         }
 
+        // B148：离屏救援判定纯函数（on-screen 不救援；离屏+已知 space 才救援；space 未知不盲切）
+        do {
+            check("offScreenRescue: 在屏 → 不救援",
+                  WindowManager.needsSpaceRescue(isOnScreen: true, yabaiSpace: 3) == false)
+            check("offScreenRescue: 离屏且有 space → 救援",
+                  WindowManager.needsSpaceRescue(isOnScreen: false, yabaiSpace: 3) == true)
+            check("offScreenRescue: space 未知 → 不救援",
+                  WindowManager.needsSpaceRescue(isOnScreen: false, yabaiSpace: nil) == false)
+        }
+
         // B138：isTerminalPID 守卫边缘（pid<=0 与非终端活进程）
         do {
             check("terminalPID: pid<=0 一律 false",

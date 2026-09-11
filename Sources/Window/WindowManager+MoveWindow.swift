@@ -244,6 +244,7 @@ extension WindowManager {
         // 真机实测），先聚焦带动把该窗所在 space 切到前台，等上屏后管线才能 resolve/move。
         rescueOffScreenWindowIfNeeded(windowID: identity.windowID, op: op)
 
+
         // Batch 7：阶段顺序/失败短路/双路径 float 一次的执行骨架在 MoveToMainPipeline
         // （Support/，Runner 假 IO 序列断言锁定场景 A~J），本壳只做通道接线与汇总日志。
         let result = MoveToMainPipeline.run(
@@ -351,4 +352,11 @@ extension WindowManager {
             "windowID": String(windowID), "space": String(space), "op": op
         ])
     }
+
+    /// 救援判定（纯）：窗不在屏 && yabai space 已知 → 需要救援。
+    /// （离屏=AX 不可见；space 未知=无法定位目标，不盲切。）
+    static func needsSpaceRescue(isOnScreen: Bool, yabaiSpace: Int?) -> Bool {
+        !isOnScreen && yabaiSpace != nil
+    }
 }
+
