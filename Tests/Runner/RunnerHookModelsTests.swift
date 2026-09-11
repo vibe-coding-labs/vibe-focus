@@ -106,24 +106,36 @@ extension RunnerHarness {
         let ctxBack = try? JSONDecoder().decode(TerminalContext.self, from: JSONEncoder().encode(ctx))
         check("hookModels: terminalContext Codable 回环保真", ctxBack == ctx)
 
-        // F. 脚本生成族：lanMode 测试缝 + 标签/配置 JSON 命名事实源 + install 脚本集成。
-        let helperLocal = ClaudeHookPreferences.generateHelperScriptContent(lanMode: false)
-        let helperLAN = ClaudeHookPreferences.generateHelperScriptContent(lanMode: true)
-        check("hookModels: helper 脚本 lanMode=false 本机直连（无 VF_HOST 采集块）",
-              helperLocal.contains("http://127.0.0.1:$VF_PORT/claude/hook")
-              && !helperLocal.contains("VF_HOST=$(python3"))
-        check("hookModels: helper 脚本 lanMode=true 走 VF_HOST 变量",
-              helperLAN.contains("VF_HOST=$(python3")
-              && helperLAN.contains("http://$VF_HOST:$VF_PORT/claude/hook"))
+        // F. 脚本生成族：本机脚本恒直连 127.0.0.1（B168 去 lanMode 缝——不随 LAN IP 漂移）
+        //    + 标签/配置 JSON 命名事实源 + install 脚本集成。
+        let helper = ClaudeHookPreferences.generateHelperScriptContent()
+        check("hookModels: helper 脚本本机恒直连 127.0.0.1（无 host 采集）",
+              helper.contains("http://127.0.0.1:$VF_PORT/claude/hook")
+              && !helper.contains("VF_HOST")
+              && helper.contains("--connect-timeout 1"))
         check("hookModels: machineLabel 点转连字符",
               ClaudeHookPreferences.machineLabel(forHost: "192.168.1.83") == "remote-192-168-1-83")
-        check("hookModels: hookConfigJSON 四键模板逐字",
+        check("hookModels: hookConfigJSON 四键模板逐字（extraHosts 空保持旧形状）",
               ClaudeHookPreferences.hookConfigJSON(host: "h", port: 1, token: "t", machineLabel: "m")
               == "{\n  \"host\": \"h\",\n  \"port\": 1,\n  \"token\": \"t\",\n  \"machine_label\": \"m\"\n}")
+        check("hookModels: hookConfigJSON extraHosts 附 hosts 数组且 host 保持主地址",
+              ClaudeHookPreferences.hookConfigJSON(host: "h", port: 1, token: "t", machineLabel: "m", extraHosts: ["h2", "h3"])
+              == "{\n  \"host\": \"h\",\n  \"hosts\": [\n    \"h2\",\n    \"h3\"\n  ],\n  \"port\": 1,\n  \"token\": \"t\",\n  \"machine_label\": \"m\"\n}")
         let install = ClaudeHookPreferences.generateRemoteInstallScript(host: "192.168.1.83")
         check("hookModels: 远程安装脚本集成（config JSON/标签/目标行同源）",
               install.contains("\"machine_label\": \"remote-192-168-1-83\"")
               && install.contains("Machine label: remote-192-168-1-83")
               && install.contains("hook-config.json"))
+        let installMulti = ClaudeHookPreferences.generateRemoteInstallScript(
+            host: "192.168.1.83", port: 39277, token: "tok", labelOverride: nil,
+            extraHosts: ["10.9.0.2"])
+        check("hookModels: 远程安装脚本多候选（hosts 数组入 config 且排除主地址重复）",
+              installMulti.contains("\"host\": \"192.168.1.83\"")
+              && installMulti.contains("\"hosts\": [")
+              && installMulti.contains("\"10.9.0.2\""))
+        check("hookModels: 远程安装脚本多候选 extraHosts 与主地址重复时去重（不生成 hosts 键）",
+              !ClaudeHookPreferences.generateRemoteInstallScript(
+                host: "192.168.1.83", port: 39277, token: "tok", labelOverride: nil,
+                extraHosts: ["192.168.1.83"]).contains("\"hosts\""))
     }
 }

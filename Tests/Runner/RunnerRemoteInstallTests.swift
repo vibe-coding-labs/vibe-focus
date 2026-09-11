@@ -52,6 +52,129 @@ extension RunnerHarness {
               && helper.contains("http://$VF_HOST:$VF_PORT/claude/hook")
               && helper.contains("hook-config.json"))
 
+        check("remoteInstall: forwarder 多候选试连（connect-timeout+last-good 记忆）",
+              helper.contains("--connect-timeout 1 -m 4")
+              && helper.contains(".forwarder-host")
+              && helper.contains("VF_ORDERED"))
+        check("remoteInstall: forwarder hosts 数组优先、单 host 回退、loopback 兜底",
+              helper.contains("d.get('hosts')")
+              && helper.contains("str(d.get('host') or '127.0.0.1')")
+              && helper.contains("VF_HOSTS_RAW=\"127.0.0.1\""))
+
+        // ===== 多候选失效切换（沙盒真实执行——B168 死地址→活地址）=====
+        func runForwarder(home: String, path: String, payload: String) -> (exit: Int32, output: String) {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+            proc.arguments = [home + "/.vibefocus/hook-forwarder.sh"]
+            proc.environment = ["HOME": home, "PATH": path, "SSH_CLIENT": "203.0.113.9 51000 192.168.1.12 22"]
+            let inPipe = Pipe()
+            let out = Pipe()
+            proc.standardInput = inPipe
+            proc.standardOutput = out
+            proc.standardError = out
+            let script = ClaudeHookPreferences.generateRemoteHelperScriptContent()
+            try? FileManager.default.createDirectory(atPath: home + "/.vibefocus", withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: home + "/.vibefocus/hook-forwarder.sh",
+                                           contents: Data(script.utf8))
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home + "/.vibefocus/hook-forwarder.sh")
+            do { try proc.run() } catch { return (1, "spawn failed") }
+            inPipe.fileHandleForWriting.write(Data(payload.utf8))
+            try? inPipe.fileHandleForWriting.close()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            return (proc.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        }
+
+        func pollUntil(_ path: String, timeout: TimeInterval) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if FileManager.default.fileExists(atPath: path) { return true }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            return false
+        }
+
+        if FileManager.default.fileExists(atPath: "/usr/bin/python3") {
+            let home = "/tmp/vibefocus-b165-failover-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: home + "/.vibefocus", withIntermediateDirectories: true)
+            let catcherPath = home + "/catcher.py"
+            let portFile = home + "/catcher.port"
+            let requestFile = home + "/catcher.request"
+            let catcherSource = """
+            import socket, sys
+            s = socket.socket()
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(('127.0.0.1', 0))
+            s.listen(1)
+            open(sys.argv[1], 'w').write(str(s.getsockname()[1]))
+            for i in (1, 2):
+                conn, _ = s.accept()
+                data = conn.recv(65536)
+                conn.sendall(b'HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok')
+                conn.close()
+                open(sys.argv[2] + '.' + str(i), 'wb').write(data)
+            """
+            FileManager.default.createFile(atPath: catcherPath, contents: Data(catcherSource.utf8))
+
+            let catcher = Process()
+            catcher.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            catcher.arguments = [catcherPath, portFile, requestFile]
+            try? catcher.run()
+
+            let portReady = pollUntil(portFile, timeout: 10)
+            check("remoteInstall[failover]: catcher 起监听", portReady)
+            if portReady {
+                let livePort = String(data: FileManager.default.contents(atPath: portFile) ?? Data(), encoding: .utf8) ?? ""
+                let config = ClaudeHookPreferences.hookConfigJSON(
+                    host: "192.0.2.1", port: Int(livePort) ?? 39277, token: "tok-failover",
+                    machineLabel: "remote-failover-test", extraHosts: [])
+                // hosts 序 = [死地址(192.0.2.1 TEST-NET 必超时), 127.0.0.1(活)]
+                let configWithLive = config
+                    .replacingOccurrences(of: "\"host\": \"192.0.2.1\",",
+                                          with: "\"host\": \"192.0.2.1\",\"hosts\": [\"192.0.2.1\",\"127.0.0.1\"],")
+                FileManager.default.createFile(atPath: home + "/.vibefocus/hook-config.json",
+                                               contents: Data(configWithLive.utf8))
+
+                let payload = "{\"session_id\":\"b165-failover\",\"hook_event_name\":\"UserPromptSubmit\",\"prompt\":\"hi\",\"cwd\":\"/tmp\"}"
+                let fEnvPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+                let t0 = Date()
+                let (exit, output) = runForwarder(home: home, path: fEnvPath, payload: payload)
+                let elapsed = Date().timeIntervalSince(t0)
+
+                if exit != 0 { print("[诊断-b165-failover] exit=\(exit) output<<\n\(output.prefix(800))\n>>") }
+                check("remoteInstall[failover]: 死地址后回退 127.0.0.1 投递成功", exit == 0)
+                check("remoteInstall[failover]: catcher 收到请求体（terminal_ctx/鉴权头/label）",
+                      pollUntil(requestFile + ".1", timeout: 10)
+                      && (FileManager.default.contents(atPath: requestFile + ".1") as Data?).map { body in
+                          let raw = String(decoding: body, as: UTF8.self)
+                          return raw.contains("b165-failover") && raw.contains("terminal_ctx")
+                              && raw.contains("tok-failover") && raw.contains("remote-failover-test")
+                      } == true)
+                check("remoteInstall[failover]: last-good 落盘为 127.0.0.1",
+                      (try? String(contentsOfFile: home + "/.vibefocus/.forwarder-host", encoding: .utf8))?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) == "127.0.0.1")
+                check("remoteInstall[failover]: 死地址消耗在 connect-timeout 量级（<8s）", elapsed < 8)
+
+                // 快路径：配置只剩死地址时，last-good 提前仍可达
+                let deadOnly = "{\n  \"host\": \"192.0.2.1\",\n  \"port\": \(livePort),\n  \"token\": \"tok-failover\",\n  \"machine_label\": \"remote-failover-test\"\n}"
+                FileManager.default.createFile(atPath: home + "/.vibefocus/hook-config.json",
+                                               contents: Data(deadOnly.utf8))
+                let (exit2, _) = runForwarder(home: home, path: fEnvPath, payload: payload)
+                // exit 码区分不了投递（全死也零退出），用第二笔请求落账锁死投递语义
+                check("remoteInstall[failover]: 配置退化只剩死地址时 last-good 仍投递成功",
+                      exit2 == 0 && pollUntil(requestFile + ".2", timeout: 10))
+
+                // 无 last-good + 全死 → 静默失败退出 0（hook 链不卡 Claude Code）
+                try? FileManager.default.removeItem(atPath: home + "/.vibefocus/.forwarder-host")
+                let (exit3, _) = runForwarder(home: home, path: fEnvPath, payload: payload)
+                Thread.sleep(forTimeInterval: 1.5)
+                check("remoteInstall[failover]: 无 last-good 且全死时零退出且无第三笔投递",
+                      exit3 == 0 && !FileManager.default.fileExists(atPath: requestFile + ".3"))
+            }
+            catcher.waitUntilExit()
+            try? FileManager.default.removeItem(atPath: home)
+        }
+
         // ===== 受控偏好下的完整沙盒安装 =====
         func jqAvailable() -> Bool {
             let r = ShellRunner.run(executable: "/usr/bin/env", arguments: ["which", "jq"])
@@ -60,7 +183,11 @@ extension RunnerHarness {
         let hasJQ = jqAvailable()
 
         func runInstaller(home: String, path: String) -> (exit: Int32, output: String) {
-            let script = ClaudeHookPreferences.generateRemoteInstallScript(host: "192.168.1.12")
+            // B168: 显式注入受控值——此前经全局 authToken 读回，在本域新增的沙盒子进程
+            // 孵化（failover 场景）介入后出现过时序性 nil（cfprefs 读回竞态），注入后
+            // 本域确定性；偏好 getter 自身由其它域直测。
+            let script = ClaudeHookPreferences.generateRemoteInstallScript(
+                host: "192.168.1.12", port: 39277, token: "test-token-b84")
             let scriptPath = home + "/install.sh"
             try? FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: scriptPath, contents: Data(script.utf8))

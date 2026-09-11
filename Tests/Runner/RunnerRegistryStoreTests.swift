@@ -300,6 +300,31 @@ extension RunnerHarness {
               LANHookPreferences.selectLANIP(from: [ip("bridge0", "10.0.0.1")]) == nil)
     }
 
+    // MARK: 对外可达地址候选序（B168——远程转发器多候选试连的排序事实源）
+
+    do {
+        func ip(_ interface: String, _ address: String) -> (interface: String, ip: String) {
+            (interface, address)
+        }
+        check("addrCandidates: en0 → 其它 enX → 虚拟口殿后",
+              LANHookPreferences.orderedAddressCandidates(from: [
+                ip("utun5", "10.9.0.2"), ip("en1", "192.168.7.7"), ip("en0", "192.168.3.37"),
+              ]) == ["192.168.3.37", "192.168.7.7", "10.9.0.2"])
+        check("addrCandidates: loopback/链路本地/198.18/0.0 全排除",
+              LANHookPreferences.orderedAddressCandidates(from: [
+                ip("en0", "127.0.0.1"), ip("en1", "169.254.1.2"),
+                ip("utun4", "198.18.0.1"), ip("bridge0", "0.0.0.0"), ip("en2", "192.168.1.12"),
+              ]) == ["192.168.1.12"])
+        check("addrCandidates: 同 IP 多网卡条目去重保首序",
+              LANHookPreferences.orderedAddressCandidates(from: [
+                ip("en0", "192.168.3.37"), ip("en0", "192.168.3.37"), ip("utun5", "10.9.0.2"),
+              ]) == ["192.168.3.37", "10.9.0.2"])
+        check("addrCandidates: 全被排除 → 空数组",
+              LANHookPreferences.orderedAddressCandidates(from: [ip("lo0", "127.0.0.1")]) == [])
+        check("addrCandidates: 空候选 → 空数组",
+              LANHookPreferences.orderedAddressCandidates(from: []) == [])
+    }
+
     // MARK: 终端上下文匹配族 + Claude 窗口定位（真实实现——B11：镜像转直测）
 
     do {

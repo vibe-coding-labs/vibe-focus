@@ -38,13 +38,12 @@ extension ClaudeHookPreferences {
         ])
         let dir = helperScriptDir
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        // B168: 本机配置不再写 host——本机脚本恒直连 127.0.0.1（服务端 bind 0.0.0.0），
+        // 不随 LAN IP 漂移失效；LAN IP 只属于远程机配置（远程安装脚本/复制配置通道）。
         var config: [String: Any] = [
             "port": listenPort,
             "token": authToken ?? ""
         ]
-        if LANHookPreferences.lanMode {
-            config["host"] = LANHookPreferences.currentLANIP()
-        }
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) else {
             log("ClaudeHookPreferences.writeConfigFile() failed to serialize config", level: .debug)
             return

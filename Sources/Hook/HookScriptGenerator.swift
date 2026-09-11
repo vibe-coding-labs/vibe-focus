@@ -8,14 +8,12 @@ import Foundation
 
 extension ClaudeHookPreferences {
 
-    /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点
-    /// （默认入口读 LANHookPreferences.lanMode；lanMode 参数版是 P-INST-144 的测试缝，直测免 UserDefaults）
+    /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点。
+    /// 本机脚本恒直连 127.0.0.1（B168）：服务端 bind 0.0.0.0，loopback 永可达，
+    /// 不随 LAN IP 漂移失效；且本机事件经 loopback 进来 source=local，
+    /// SessionStart 绑定通道（TTY/PPID）走对分支。
     static func generateHelperScriptContent() -> String {
-        generateHelperScriptContent(lanMode: LANHookPreferences.lanMode)
-    }
-
-    static func generateHelperScriptContent(lanMode: Bool) -> String {
-        // P-INST-198: hook 辅助脚本内容生成耗时（读 LANHookPreferences.lanMode P-INST-144 + hostBlock/hostDefault 三元 + 多行 bash 字符串插值；installHelperScript P-INST-88 调用，写 hook-forwarder.sh）。
+        // P-INST-198: hook 辅助脚本内容生成耗时（多行 bash 字符串插值；installHelperScript P-INST-88 调用，写 hook-forwarder.sh）。
         #if PERF_INSTRUMENT
         let ghscStart = Date()
         defer {
@@ -23,11 +21,6 @@ extension ClaudeHookPreferences {
             if durMs >= 5 { log("[HookScriptGenerator] generateHelperScriptContent slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
         #endif
-        let hostBlock = lanMode ? """
-        VF_HOST=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('host','127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
-
-""" : ""
-        let hostDefault = lanMode ? "$VF_HOST" : "127.0.0.1"
         return """
         #!/bin/bash
         set -euo pipefail
@@ -38,7 +31,6 @@ extension ClaudeHookPreferences {
         VF_CONFIG="$HOME/.vibefocus/hook-config.json"
         VF_PORT=39277
         VF_TOKEN=""
-        \(hostBlock)
         if [ -f "$VF_CONFIG" ]; then
             VF_PORT=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('port',39277))" 2>/dev/null || echo "39277")
             VF_TOKEN=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('token',''))" 2>/dev/null || echo "")
@@ -71,8 +63,8 @@ extension ClaudeHookPreferences {
         print(json.dumps(d))
         " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
-        VF_URL="http://\(hostDefault):$VF_PORT/claude/hook"
-        VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
+        VF_URL="http://127.0.0.1:$VF_PORT/claude/hook"
+        VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json" --connect-timeout 1 -m 4)
         if [ -n "$VF_TOKEN" ]; then
             VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
         fi
@@ -81,7 +73,12 @@ extension ClaudeHookPreferences {
         """
     }
 
-    /// 生成远程用的 hook-forwarder.sh 内容（始终从 config 读取 host，指向 VibeFocus 机器）
+    /// 生成远程用的 hook-forwarder.sh 内容：按 hook-config.json 的候选主机序
+    /// 逐个试连（B168）。hosts 数组优先，回退单 host 字段，再回退 loopback——
+    /// Mac 换网段后 LAN 地址不可达而 VPN 隧道地址可达的实例（B168 真机复盘）
+    /// 证明单一 host 字段覆盖不了全部拓扑。上次成功地址记入
+    /// ~/.vibefocus/.forwarder-host 并在下次提到最前，避免每个事件都先白等
+    /// 死地址 connect-timeout。curl 成功（任意 HTTP 应答，含 4xx）即视为可达。
     static func generateRemoteHelperScriptContent() -> String {
         return """
     #!/bin/bash
@@ -91,16 +88,26 @@ extension ClaudeHookPreferences {
     # Captures terminal context and forwards Claude Code hook events to remote VibeFocus
 
     VF_CONFIG="$HOME/.vibefocus/hook-config.json"
-    VF_HOST="127.0.0.1"
     VF_PORT=39277
     VF_TOKEN=""
     VF_LABEL=""
+    VF_LASTHOST_FILE="$HOME/.vibefocus/.forwarder-host"
 
     if [ -f "$VF_CONFIG" ]; then
-        VF_HOST=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('host','127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
+        VF_HOSTS_RAW=$(python3 -c "
+    import json
+    d = json.load(open('$VF_CONFIG'))
+    hs = d.get('hosts')
+    out = [str(x) for x in hs if isinstance(x, str) and x] if isinstance(hs, list) else []
+    if not out:
+        out = [str(d.get('host') or '127.0.0.1')]
+    print(chr(10).join(out))
+    " 2>/dev/null || echo "127.0.0.1")
         VF_PORT=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('port',39277))" 2>/dev/null || echo "39277")
         VF_TOKEN=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('token',''))" 2>/dev/null || echo "")
         VF_LABEL=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('machine_label',''))" 2>/dev/null || echo "")
+    else
+        VF_HOSTS_RAW="127.0.0.1"
     fi
 
     VF_PAYLOAD=$(cat)
@@ -143,13 +150,42 @@ extension ClaudeHookPreferences {
     print(json.dumps(d))
     " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" "$VF_SSHC" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
-    VF_URL="http://$VF_HOST:$VF_PORT/claude/hook"
-    VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
-    if [ -n "$VF_TOKEN" ]; then
-        VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
+    # 候选主机序：上次成功地址优先（快路径），其余按配置序。
+    VF_HOSTS=()
+    while IFS= read -r VF_LINE; do
+        if [ -n "$VF_LINE" ]; then
+            VF_HOSTS+=("$VF_LINE")
+        fi
+    done <<< "$VF_HOSTS_RAW"
+    if [ ${#VF_HOSTS[@]} -eq 0 ]; then
+        VF_HOSTS=("127.0.0.1")
     fi
-    VF_CURL_ARGS+=(--data "$VF_ENRICHED")
-    curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1 || true
+    VF_LAST=""
+    if [ -f "$VF_LASTHOST_FILE" ]; then
+        VF_LAST=$(head -n 1 "$VF_LASTHOST_FILE" 2>/dev/null || true)
+    fi
+    VF_ORDERED=()
+    if [ -n "$VF_LAST" ]; then
+        VF_ORDERED+=("$VF_LAST")
+    fi
+    for VF_H in "${VF_HOSTS[@]}"; do
+        if [ "$VF_H" != "$VF_LAST" ]; then
+            VF_ORDERED+=("$VF_H")
+        fi
+    done
+
+    for VF_HOST in "${VF_ORDERED[@]}"; do
+        VF_URL="http://$VF_HOST:$VF_PORT/claude/hook"
+        VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json" --connect-timeout 1 -m 4)
+        if [ -n "$VF_TOKEN" ]; then
+            VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
+        fi
+        VF_CURL_ARGS+=(--data "$VF_ENRICHED")
+        if curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1; then
+            printf '%s\n' "$VF_HOST" > "$VF_LASTHOST_FILE" 2>/dev/null || true
+            break
+        fi
+    done
     """
     }
 
