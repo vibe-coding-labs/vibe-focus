@@ -135,6 +135,12 @@ extension HotKeyManager {
             return false
         }
 
+        // B164 录制让位：录制期间 monitor 通道不消费不触发（返回 false 事件原样继续，
+        // 本地 monitor 域内事件照常到达录制器；全局 monitor 只见他 app，录制中必为本 app 前台）。
+        if ShortcutRecordingState.isRecording {
+            return false
+        }
+
         let eventKeyCode = UInt32(event.keyCode)
         let eventModifiers = event.modifierFlags.intersection(.hotKeyRelevantFlags).carbonHotKeyModifiers
         let matches = currentHotKey.matches(event: event)

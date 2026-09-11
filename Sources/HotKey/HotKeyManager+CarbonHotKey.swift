@@ -204,6 +204,12 @@ extension HotKeyManager {
             return noErr
         }
 
+        // B164 录制让位：Carbon 注册在系统层消费事件、无法放行给录制器，录制期间
+        // 至少不触发动作，防录制已注册组合时引发 toggle/summon 副作用。
+        if ShortcutRecordingState.isRecording {
+            return noErr
+        }
+
         if hotKeyID.id == hotkeyIdentifier {
             log("[HotKey] Carbon hotkey \(currentHotKey.displayString) triggered")
             triggerToggleIfNeeded(source: "carbon_hotkey")

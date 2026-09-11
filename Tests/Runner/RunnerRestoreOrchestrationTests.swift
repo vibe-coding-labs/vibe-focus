@@ -1008,5 +1008,69 @@ extension RunnerHarness {
                   outcome == .aborted(reason: "no_toggle_record"))
         }
     }
+
+    // MARK: switchCapsuleToSpace（B164 胶囊 live 切换编排：按目标屏可见性判成功）
+
+    do {
+        // 真机事故（2026-09-12 用户实测）：屏2 已显示 2-1（yabai index 2），键盘焦点在屏1
+        // （全局焦点 space=1），点 2-1 胶囊被旧全局漂移判定误判成需要切换，空工作区上
+        // 双通道全失败 → 误导性拒绝。已可见 = 视角在位，零动作直接成功。
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
+        let spaces = [
+            YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true),
+            YabaiSpaceInfo(id: 5, index: 2, display: 2, isVisible: true),
+            YabaiSpaceInfo(id: 6, index: 3, display: 2, isVisible: false),
+        ]
+        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+            channels: ch, targetSpace: 2, spaces: spaces, operationID: "t")
+        check("capsule: 目标 space 已在其所属屏可见 → noDrift，零切换动作（不受全局焦点影响）",
+              outcome == .noDrift && ch.calls == [])
+    }
+    do {
+        // 目标 space 不可见 → 委托 restore 视角链（SA 直切优先）。
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 5)
+        ch.focusResult = true
+        let spaces = [
+            YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true),
+            YabaiSpaceInfo(id: 5, index: 2, display: 2, isVisible: false),
+        ]
+        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+            channels: ch, targetSpace: 2, spaces: spaces, operationID: "t")
+        check("capsule: 目标不可见 → 委托视角链，SA 直切成功 refocused(5)",
+              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "focus", "clearCache"]
+              && ch.focusReceived == .yabaiIndex(2))
+    }
+    do {
+        // 真机 17:17 复现链：目标不可见 + SA 不可用 + 空工作区（无聚焦带动候选）→ failed。
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 1)
+        ch.refocusResult = false
+        ch.spaceWindows = []
+        let spaces = [
+            YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true),
+            YabaiSpaceInfo(id: 5, index: 2, display: 2, isVisible: false),
+        ]
+        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+            channels: ch, targetSpace: 2, spaces: spaces, operationID: "t")
+        check("capsule: 不可见+SA 不可用+空工作区 → failed（如实拒绝）",
+              outcome == .failed(postSpace: 1) && ch.calls == ["current", "refocus"])
+    }
+    do {
+        // spaces 查询失败（nil）→ 退回旧判定（currentSpace==target 即 noDrift），不崩。
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 2)
+        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+            channels: ch, targetSpace: 2, spaces: nil, operationID: "t")
+        check("capsule: spaces 查询失败 → 退回视角链判定，查询即真（noDrift）",
+              outcome == .noDrift && ch.calls == ["current"])
+    }
+    do {
+        // spaces 有列表但不含目标 index（快照过期）→ 委托视角链兜底。
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 3)
+        ch.refocusResult = true
+        let spaces = [YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true)]
+        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+            channels: ch, targetSpace: 4, spaces: spaces, operationID: "t")
+        check("capsule: 目标不在快照列表 → 委托视角链，聚焦带动成功",
+              outcome == .refocused(postSpace: 3) && ch.calls == ["current", "refocus", "clearCache"])
+    }
     }
 }
