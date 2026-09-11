@@ -1,5 +1,5 @@
 // RemoteSpoolDrain.swift
-// VibeFocus — 远程事件兜底通道（B169）：spool 落盘 + Mac 主动 SSH 拉取
+// VibeFocus — 远程事件兜底通道（B171）：spool 落盘 + Mac 主动 SSH 拉取
 //
 // 背景：VPN/单向 NAT 场景下远程机器回程不可达——hook-config.json 里的 Mac 地址
 // 从服务端路由不通（2026-09-12 真机实锤：001 的 config 指向 10.9.0.2，curl 三路
@@ -280,18 +280,19 @@ final class RemoteSpoolDrainer: ObservableObject {
         process.standardOutput = outPipe
         process.standardError = errPipe
 
-        var outAccumulator = Data()
-        var errAccumulator = Data()
-        let lock = NSLock()
+        // 跨线程累积器（readabilityHandler 队列写 / 本线程读）：锁守护，
+        // @unchecked Sendable 压掉闭包捕获告警——运行期竞态由锁排除。
+        let outAccumulator = LockedDataAccumulator()
+        let errAccumulator = LockedDataAccumulator()
         outPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty { handle.readabilityHandler = nil; return }
-            lock.lock(); outAccumulator.append(chunk); lock.unlock()
+            outAccumulator.append(chunk)
         }
         errPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty { handle.readabilityHandler = nil; return }
-            lock.lock(); errAccumulator.append(chunk); lock.unlock()
+            errAccumulator.append(chunk)
         }
 
         do {
@@ -313,14 +314,28 @@ final class RemoteSpoolDrainer: ObservableObject {
         outPipe.fileHandleForReading.readabilityHandler = nil
         errPipe.fileHandleForReading.readabilityHandler = nil
 
-        lock.lock()
-        let stdout = outAccumulator
-        let stderr = errAccumulator
-        lock.unlock()
         return (
             exitCode: process.terminationStatus,
-            stdout: String(data: stdout, encoding: .utf8) ?? "",
-            stderr: String(data: stderr, encoding: .utf8) ?? ""
+            stdout: String(data: outAccumulator.value, encoding: .utf8) ?? "",
+            stderr: String(data: errAccumulator.value, encoding: .utf8) ?? ""
         )
+    }
+}
+
+/// 跨线程 Data 累积器（锁守护；runProcess 的 readabilityHandler 专用）。
+final class LockedDataAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    var value: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
     }
 }

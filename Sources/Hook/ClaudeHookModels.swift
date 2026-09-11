@@ -27,7 +27,7 @@ struct TerminalContext: Codable, Equatable {
     var sshClientIP: String? = nil
     var sshClientPort: String? = nil
     var sshServerIP: String? = nil
-    /// 远程机当前用户（B169 spool 拉取自注册：与 sshServerIP 拼成
+    /// 远程机当前用户（B171 spool 拉取自注册：与 sshServerIP 拼成
     /// "user@ip" 注册 drain 主机。旧转发器无此字段，解码 nil 向后兼容）。
     var sshUser: String? = nil
 

@@ -1,7 +1,7 @@
 import Foundation
 @testable import VibeFocusKit
 
-// Tests/Runner/RunnerSpoolDrainTests.swift — B169：远程事件 spool 兜底通道
+// Tests/Runner/RunnerSpoolDrainTests.swift — B171：远程事件 spool 兜底通道
 // （VPN/单向 NAT + sshd AllowTcpForwarding no 下远程事件的唯一通路）。
 //
 // 三层锁定：
@@ -125,7 +125,7 @@ extension RunnerHarness {
               && forwarder.contains(".tmp-$VF_STAMP")
               && forwarder.contains("mv \"$VF_SPOOL_DIR/.tmp-$VF_STAMP\""))
         check("spoolDrain: forwarder 直投带快速超时（connect-timeout 1）",
-              forwarder.contains("--connect-timeout 1") && forwarder.contains("--max-time 4"))
+              forwarder.contains("--connect-timeout 1") && forwarder.contains("-m 4"))
         check("spoolDrain: forwarder 含 channel-hint 跳过与自愈",
               forwarder.contains("VF_HINT_FILE") && forwarder.contains("VF_HINT_TTL=600"))
         check("spoolDrain: forwarder 上报 ssh_user 供自注册",

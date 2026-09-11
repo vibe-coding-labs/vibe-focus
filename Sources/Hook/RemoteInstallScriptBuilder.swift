@@ -18,11 +18,18 @@ extension ClaudeHookPreferences {
         "remote-\(host.replacingOccurrences(of: ".", with: "-"))"
     }
 
-    /// 远程 hook-config.json 模板（install 脚本写入远程 ~/.vibefocus/hook-config.json 的唯一形状）
-    static func hookConfigJSON(host: String, port: Int, token: String, machineLabel: String) -> String {
-        """
+    /// 远程 hook-config.json 模板（install 脚本写入远程 ~/.vibefocus/hook-config.json 的唯一形状）。
+    /// extraHosts 非空时附 "hosts" 候选数组（B170）：host 仍是主地址（旧版转发器
+    /// 兼容字段），hosts = 主地址 + 备选（VPN 隧道地址等），转发器按序逐个试连。
+    static func hookConfigJSON(host: String, port: Int, token: String, machineLabel: String, extraHosts: [String] = []) -> String {
+        var hostSection = "  \"host\": \"\(host)\","
+        if !extraHosts.isEmpty {
+            let items = extraHosts.map { "    \"\($0)\"" }.joined(separator: ",\n")
+            hostSection += "\n  \"hosts\": [\n\(items)\n  ],"
+        }
+        return """
         {
-          "host": "\(host)",
+        \(hostSection)
           "port": \(port),
           "token": "\(token)",
           "machine_label": "\(machineLabel)"
@@ -36,9 +43,10 @@ extension ClaudeHookPreferences {
         generateRemoteInstallScript(host: host, port: listenPort, token: authToken ?? "")
     }
 
-    static func generateRemoteInstallScript(host: String, port: Int, token: String, labelOverride: String? = nil) -> String {
+    static func generateRemoteInstallScript(host: String, port: Int, token: String, labelOverride: String? = nil, extraHosts: [String] = []) -> String {
         let label = labelOverride ?? machineLabel(forHost: host)
-        let hookConfig = hookConfigJSON(host: host, port: port, token: token, machineLabel: label)
+        let fallbackHosts = extraHosts.filter { $0 != host }
+        let hookConfig = hookConfigJSON(host: host, port: port, token: token, machineLabel: label, extraHosts: fallbackHosts)
 
         let scriptContent = generateRemoteHelperScriptContent()
         // hook 命令路径必须 $HOME 形态：远程家目录 ≠ Mac 家目录，

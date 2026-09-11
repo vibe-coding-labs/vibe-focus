@@ -75,7 +75,7 @@ extension ClaudeHookServer {
         let sourceIP = sourceInfo.source
         let isRemote = sourceInfo.isRemote
 
-        // B169: 直投可达时顺路自注册 spool 拉取主机。注册决策要求事件 TCP 对端
+        // B171: 直投可达时顺路自注册 spool 拉取主机。注册决策要求事件 TCP 对端
         // == forwarder 上报的 ssh_server_ip（防伪造），对端 nil（spool 回灌通道）
         // 自然不注册——那时主机清单来自设置页手动添加/装机预置。
         if let ctx = payload.terminalCtx {

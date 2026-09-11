@@ -26,14 +26,20 @@ public enum RemoteInstallDeploy {
             let i = flagIdx + offset
             return args.count > i && !args[i].hasPrefix("-") ? args[i] : nil
         }
-        let host = positional(1) ?? LANHookPreferences.currentLANIP()
+        // B170: 显式 host 仍是主地址；其余本机可达地址（含 VPN 隧道口）按候选序
+        // 作为 extraHosts 附入远程配置——Mac 在不同网段间迁移时转发器自动试连。
+        let explicitHost = positional(1)
+        let candidates = LANHookPreferences.orderedAddressCandidates()
+        let host = explicitHost ?? candidates.first ?? LANHookPreferences.currentLANIP()
+        let extraHosts = candidates.filter { $0 != host }
         let token = CFPreferencesCopyAppValue("claudeHookToken" as CFString, domain as CFString) as? String
         let port = CFPreferencesCopyAppValue("claudeHookPort" as CFString, domain as CFString) as? Int
         return ClaudeHookPreferences.generateRemoteInstallScript(
             host: host,
             port: port ?? ClaudeHookPreferences.listenPort,
             token: token ?? "",
-            labelOverride: positional(2)
+            labelOverride: positional(2),
+            extraHosts: extraHosts
         )
     }
 }

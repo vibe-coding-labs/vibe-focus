@@ -7,7 +7,7 @@ struct LANSettingsView: View {
     @State var newMachineLabel = ""
     @State var remoteInstallMessage: String?
     @State var remoteInstallSucceeded = true
-    // B169: spool 兜底拉取主机（VPN/单向网络下远程事件的唯一通道）
+    // B171: spool 兜底拉取主机（VPN/单向网络下远程事件的唯一通道）
     @ObservedObject private var drainer = RemoteSpoolDrainer.shared
     @State var spoolHosts: [String] = RemoteSpoolHosts.loadHosts()
     @State var newSpoolHost = ""
@@ -46,7 +46,7 @@ struct LANSettingsView: View {
         }
     }
 
-    /// B169: 远程主机兜底拉取（spool 通道）。直投不可达（VPN/单向 NAT）时远程
+    /// B171: 远程主机兜底拉取（spool 通道）。直投不可达（VPN/单向 NAT）时远程
     /// 事件落盘服务器 ~/.vibefocus/spool/，本机定时 ssh 拉取回灌。主机清单来源：
     /// 直投事件自注册（LAN 时期自动记住）/ 此处手动添加 / 装机预置。
     private var spoolDrainSection: some View {
