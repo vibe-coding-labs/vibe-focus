@@ -355,6 +355,66 @@ extension RunnerHarness {
                                                                bundleIDOf: noTerm, displayIDOf: onMain))
         check("captureFilter: 目标 display 不符拒绝",
               !TerminalGridController.isCapturableTerminalEntry(entry(6), targetDisplayID: 1,
-                                                               bundleIDOf: isTerm, displayIDOf: onOther))
+                                                                bundleIDOf: isTerm, displayIDOf: onOther))
+    }
+
+    // MARK: TerminalUsageTable 纯表操作（B150：record/ranked/编码解码此前零直测——
+    // 「自动：最近常用」排序唯一数据源；注释自称「表操作可完整单测」但从未兑现）
+    func runUsageTableTests() {
+        do {
+            // record：首次建档 / 累加 / lastAt 只前进不后退（乱序旧日期不能拖回——实测踩坑语义）
+            var table = TerminalUsageTable()
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+            table.record(bundleID: "com.googlecode.iterm2", at: t0)
+            check("usageTable: 首次记录建档 count=1",
+                  table.entries["com.googlecode.iterm2"]?.count == 1
+                  && table.entries["com.googlecode.iterm2"]?.lastAt == t0)
+            table.record(bundleID: "com.googlecode.iterm2", at: t0.addingTimeInterval(3600))
+            check("usageTable: 新记录累加且 lastAt 前进",
+                  table.entries["com.googlecode.iterm2"]?.count == 2
+                  && table.entries["com.googlecode.iterm2"]?.lastAt == t0.addingTimeInterval(3600))
+            table.record(bundleID: "com.googlecode.iterm2", at: t0)
+            check("usageTable: 乱序旧日期 count 照累加但 lastAt 不回退",
+                  table.entries["com.googlecode.iterm2"]?.count == 3
+                  && table.entries["com.googlecode.iterm2"]?.lastAt == t0.addingTimeInterval(3600))
+        }
+        do {
+            // ranked：minCount 过滤 / 衰减权重排序（近期低频压过高频陈旧）/ count 保持原始累计口径
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            var table = TerminalUsageTable()
+            let recent = now.addingTimeInterval(-3600)          // 1h 前
+            let stale = now.addingTimeInterval(-30 * 24 * 3600) // 30d 前（14d 半衰下权重≈0.226×）
+            table.entries["com.apple.Terminal"] = .init(count: 10, lastAt: stale)
+            table.entries["com.googlecode.iterm2"] = .init(count: 3, lastAt: recent)
+            table.entries["com.marpisoft.ghostty"] = .init(count: 0, lastAt: recent)
+            let ranked = table.ranked(minCount: 1, now: now)
+            check("usageTable: ranked——衰减后近期低频（3×1h）压过高频陈旧（10×30d）",
+                  ranked.first?.bundleID == "com.googlecode.iterm2"
+                  && ranked.count == 2)
+            check("usageTable: ranked——count 仍为原始累计（展示口径不衰减）",
+                  ranked.last?.bundleID == "com.apple.Terminal" && ranked.last?.count == 10)
+            check("usageTable: ranked——minCount 过滤零噪声",
+                  table.ranked(minCount: 4, now: now).map(\.bundleID) == ["com.apple.Terminal"])
+            // 未来时间戳（负年龄）夹 0：权重=原始次数；等次数下比 lastAt 更新者先
+            var clamped = TerminalUsageTable()
+            clamped.entries["com.apple.Terminal"] = .init(count: 3, lastAt: now.addingTimeInterval(3600))
+            clamped.entries["com.googlecode.iterm2"] = .init(count: 3, lastAt: now.addingTimeInterval(-3600))
+            let future = clamped.ranked(minCount: 1, now: now, halfLifeDays: 14)
+            check("usageTable: ranked——未来 lastAt 负年龄夹 0，等次数比 lastAt 新者先",
+                  future.first?.bundleID == "com.apple.Terminal"
+                  && future.dropFirst().first?.bundleID == "com.googlecode.iterm2")
+        }
+        do {
+            // encoded/decode：往返保真 + 坏数据 nil
+            var table = TerminalUsageTable()
+            let at = Date(timeIntervalSince1970: 1_750_000_000)
+            table.entries["com.googlecode.iterm2"] = .init(count: 7, lastAt: at)
+            let roundtrip = TerminalUsageTable.decode(table.encoded() ?? Data())
+            check("usageTable: 编码解码往返保真",
+                  roundtrip == table
+                  && roundtrip?.entries["com.googlecode.iterm2"]?.lastAt == at)
+            check("usageTable: 坏数据解码 → nil 不抛",
+                  TerminalUsageTable.decode(Data("not json".utf8)) == nil)
+        }
     }
 }

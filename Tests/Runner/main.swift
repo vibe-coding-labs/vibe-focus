@@ -238,6 +238,7 @@ final class FakeAuditor: RestoreAuditing {
         runYabaiModelTests()
         runPruneExpiryTests()
         runCaptureFilterTests()
+        runUsageTableTests()
         runPureSweepA()
         runPureSweepB()
         runAppIdentityTests()
