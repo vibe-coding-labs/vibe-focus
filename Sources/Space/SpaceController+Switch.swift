@@ -108,15 +108,18 @@ extension SpaceController {
     }
 
     /// Minimap 胶囊点击 live 切换（2026-09-07，用户报告「点胶囊切不过去」）：
-    /// 复用 restore 视角链（RestoreSwitchOrchestration.refocusPerspective）——
-    /// SA 直切（本机无 SA 必败）→ 聚焦带动降级（要求目标 space 上有可管理窗口）。
+    /// 复用 restore 视角链（RestoreSwitchOrchestration.switchCapsuleToSpace）——
+    /// B164：先按「目标 space 在其所属屏是否已可见」判定（此前拿全局焦点 space 判漂移，
+    /// 目标屏已显示目标 space、只要键盘焦点在另一块屏就被误判成需要切换，空工作区上
+    /// 给出误导性失败）；真需切换时 SA 直切 → 聚焦带动降级。
     /// .failed 时调用方必须给用户明确反馈（空工作区切不动是平台事实，不许静默）。
     @discardableResult
     func switchToSpace(_ yabaiIndex: Int, operationID: String) -> RestoreSwitchOrchestration.PerspectiveRefocusOutcome {
-        RestoreSwitchOrchestration.refocusPerspective(
+        let spaces = querySpaces(ignoreCache: true)
+        return RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: self,
-            preMoveSpace: yabaiIndex,
-            excludingWindowID: 0,
+            targetSpace: yabaiIndex,
+            spaces: spaces,
             operationID: operationID
         )
     }

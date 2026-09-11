@@ -351,7 +351,7 @@ extension RunnerHarness {
               GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 9), label: "3-2") == "已切换到 3-2")
         check("switchFB: failed 失败说明含原因（不许静默）",
               GridSpaceSwitchFeedback.message(for: .failed(postSpace: 9), label: "2-1")
-              == "无法切换到 2-1：该工作区没有可聚焦的窗口（空工作区需要 SA 直切通道，本机未装）")
+              == "无法切换到 2-1：该工作区没有可聚焦的窗口，且 SA 直切通道不可用（SIP 拦截）——空工作区只能通过 SA 切换")
 
         // TitleEditor 脚本决策层：转义/模板契约/verdict 哨兵/诊断回读。
         check("titleEsc: 反斜杠与双引号转义 + 原文透传",

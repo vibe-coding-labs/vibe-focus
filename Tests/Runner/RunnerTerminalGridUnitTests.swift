@@ -493,6 +493,22 @@ extension RunnerHarness {
                   TerminalAutomationScript.processPathMatchesCanonicalExec(
                       "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
                       canonicalExecName: "Terminal"))
+
+            // ===== 已删除镜像过滤（E 态僵尸夹具堵死守卫的对症锁，2026-09-12） =====
+            // 真机事故形态：夹具目录已被 defer 清理，但进程卡内核 E 态不消亡，
+            // KERN_PROCARGS2 仍报旧路径——守卫必须不计入，否则创建网格被永久拒绝。
+            let zombieEntries: [(pid: pid_t, executablePath: String?)] = [
+                (pid: 100, executablePath: "/Applications/iTerm.app/Contents/MacOS/iTerm2"),
+                (pid: 200, executablePath: "/tmp/vibefocus-b149-GONE/iTerm2"),
+                (pid: 300, executablePath: nil),
+            ]
+            let survived = TerminalAutomationScript.filterRoutableInstances(zombieEntries) { $0 == "/Applications/iTerm.app/Contents/MacOS/iTerm2" }
+            check("zombieFilter: 在场镜像保留 + 已删除镜像剔除",
+                  survived.count == 2 && survived[0].pid == 100 && survived[1].pid == 300)
+            check("zombieFilter: 空表透传（notRunning 判定不受影响）",
+                  TerminalAutomationScript.filterRoutableInstances([], fileExists: { _ in false }).isEmpty)
+            check("zombieFilter: 全在场全保留",
+                  TerminalAutomationScript.filterRoutableInstances(zombieEntries, fileExists: { _ in true }).count == 3)
         }
 
         // ===== 建窗重试表与失败明细（瞬时 AE 故障退避重试；挂起类不重试） =====
