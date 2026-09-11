@@ -817,6 +817,88 @@ extension RunnerHarness {
                   && reg.windowStates[1503]?.sessionID == "b149-d")
         }
         do {
+            // B154：ClaudeHookServer HTTP 壳回环直测（此前 15%——真实 GCDWebServer 起服 +
+            // URLSession 打环回；只走 401 token 门 → 400 解码失败 → SessionEnd 无绑定跳过
+            // 三通道，零绑定写入。红线：applyPreferences 会写真实 ~/.vibefocus 配置与
+            // settings.json，测试严禁调用；SessionWindowRegistry.shared 触碰有 B133 先例）。
+            final class HTTPResult: @unchecked Sendable {
+                var status = -1
+                var ok: Bool?
+                var code: String?
+                var error: String?
+            }
+            func httpPost(_ port: Int, query: String, body: String) -> HTTPResult {
+                let res = HTTPResult()
+                var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/claude/hook\(query)")!)
+                req.httpMethod = "POST"
+                req.httpBody = Data(body.utf8)
+                req.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+                req.timeoutInterval = 5
+                let sem = DispatchSemaphore(value: 0)
+                URLSession.shared.dataTask(with: req) { data, resp, err in
+                    res.status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                    res.error = err.map(String.init(describing:))
+                    if let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        res.ok = obj["ok"] as? Bool
+                        res.code = obj["code"] as? String
+                    }
+                    sem.signal()
+                }.resume()
+                // 短片等待 + 泵主 RunLoop：服务端 handler 在 MainActor（主队列），
+                // 长阻塞 wait 会饿死它（实测客户端 -1001 超时而服务端已处理）。
+                let deadline = Date().addingTimeInterval(10)
+                while Date() < deadline {
+                    if sem.wait(timeout: .now() + 0.05) == .success { break }
+                    RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+                }
+                return res
+            }
+            let savedLAN = LANHookPreferences.lanMode
+            let savedAutoFocus = ClaudeHookPreferences.autoFocusOnSessionEnd
+            defer {
+                LANHookPreferences.lanMode = savedLAN
+                ClaudeHookPreferences.autoFocusOnSessionEnd = savedAutoFocus
+                ClaudeHookServer.shared.stop()
+            }
+            LANHookPreferences.lanMode = false  // 绑 127.0.0.1，不暴露 LAN
+            ClaudeHookPreferences.autoFocusOnSessionEnd = true  // SessionEnd 走 no-binding 只读路径（避免 touch 写）
+
+            var port = 40000 + Int.random(in: 0..<20000)
+            var tries = 0
+            while tries < 4 {
+                ClaudeHookServer.shared.startIfNeeded(port: port, token: "tk-b154")
+                if ClaudeHookServer.shared.isRunning { break }
+                tries += 1
+                port = 40000 + Int.random(in: 0..<20000)
+            }
+            check("hookSrv: 回环起服成功（isRunning + 描述含 127.0.0.1）",
+                  ClaudeHookServer.shared.isRunning
+                  && ClaudeHookServer.shared.statusDescription.contains("127.0.0.1"))
+
+            let r401 = httpPost(port, query: "", body: "{\"event\":\"SessionEnd\",\"session_id\":\"s\"}")
+            check("hookSrv: 无 token → 401 unauthorized 且不计数（门在计数之前）",
+                  r401.status == 401 && r401.ok == false && r401.code == "unauthorized"
+                  && ClaudeHookServer.shared.totalRequestCount == 0)
+
+            let r400 = httpPost(port, query: "?token=tk-b154", body: "not-json")
+            check("hookSrv: 垃圾 body → 400 invalid_payload 且计数 +1",
+                  r400.status == 400 && r400.code == "invalid_payload"
+                  && ClaudeHookServer.shared.totalRequestCount == 1)
+
+            let rSkip = httpPost(port, query: "?token=tk-b154",
+                                 body: "{\"event\":\"SessionEnd\",\"session_id\":\"b154-unknown\"}")
+            check("hookSrv: 无绑定 SessionEnd → 200 no_binding_skip 入 unmatched、handled 恒 0",
+                  rSkip.status == 200 && rSkip.ok == true && rSkip.code == "no_binding_skip"
+                  && ClaudeHookServer.shared.totalRequestCount == 2
+                  && ClaudeHookServer.shared.unmatchedSessionCount == 1
+                  && ClaudeHookServer.shared.handledRequestCount == 0)
+
+            ClaudeHookServer.shared.stop()
+            check("hookSrv: stop 复位监听状态",
+                  ClaudeHookServer.shared.isRunning == false
+                  && ClaudeHookServer.shared.statusDescription == "未启动")
+        }
+        do {
             // endpointURLString：token 缺省纯端点；配置 token 追加查询串（用后清键）
             check("hookEndpoint: 无 token → 纯端点",
                   ClaudeHookPreferences.endpointURLString(port: 39277) == "http://127.0.0.1:39277/claude/hook")

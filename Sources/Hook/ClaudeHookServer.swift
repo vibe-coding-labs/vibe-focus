@@ -50,7 +50,9 @@ final class ClaudeHookServer: ObservableObject {
         statusDescription = "未启动"
     }
 
-    private func startIfNeeded(port: Int, token: String?) {
+    /// 测试注入缝（B154）：HTTP 壳回环直测须显式起服。⚠️ 生产入口是 applyPreferences()；
+    /// 测试严禁调用 applyPreferences——它会写真实 ~/.vibefocus 配置与 settings.json。
+    func startIfNeeded(port: Int, token: String?) {
         let bindToLocalhost = !LANHookPreferences.lanMode
         if !Self.serverNeedsRestart(
             isRunning: isRunning,
