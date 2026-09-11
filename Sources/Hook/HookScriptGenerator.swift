@@ -82,6 +82,12 @@ extension ClaudeHookPreferences {
     }
 
     /// 生成远程用的 hook-forwarder.sh 内容（始终从 config 读取 host，指向 VibeFocus 机器）
+    ///
+    /// B169 双通道投递：直投 HTTP（--connect-timeout 1 快速失败）→ 失败落盘
+    /// ~/.vibefocus/spool/（原子改名防半截读），Mac 侧 RemoteSpoolDrainer 定时
+    /// ssh 拉取回灌。channel-hint 记录直投最近失败时刻，10 分钟内跳过直投
+    /// （VPN 场景免每次白等 1s 超时），过期自愈重试。服务器 IP 与 ssh 用户随
+    /// terminal_ctx 上报（直投可达时 Mac 顺路自注册 drain 主机）。
     static func generateRemoteHelperScriptContent() -> String {
         return """
     #!/bin/bash
@@ -114,6 +120,7 @@ extension ClaudeHookPreferences {
     VF_CPD="${CLAUDE_PROJECT_DIR:-}"
     VF_WID="${WINDOWID:-}"
     VF_SSHC="${SSH_CLIENT:-}"
+    VF_USER=$(whoami 2>/dev/null || echo "")
 
     VF_ENRICHED=$(printf '%s' "$VF_PAYLOAD" | python3 -c "
     import sys, json
@@ -131,7 +138,8 @@ extension ClaudeHookPreferences {
     }
     # SSH_CLIENT = client_ip client_port server_ip server_port
     # client_port 是 Mac 侧 ssh 进程的本地 TCP 端口，服务端据此反查本机窗口
-    # （B125 动态绑定）。注意本段 -c 脚本被 bash 双引号包裹：python 代码与注释
+    # （B125 动态绑定）。server_ip + whoami 供 Mac 自注册 spool 拉取主机
+    # （B169）。注意本段 -c 脚本被 bash 双引号包裹：python 代码与注释
     # 内不得出现双引号/$/反引号。
     conn = sys.argv[10].split() if len(sys.argv) > 10 else []
     if len(conn) >= 2:
@@ -139,17 +147,53 @@ extension ClaudeHookPreferences {
         ctx['ssh_client_port'] = conn[1]
     if len(conn) >= 3:
         ctx['ssh_server_ip'] = conn[2]
+    if len(sys.argv) > 11 and sys.argv[11]:
+        ctx['ssh_user'] = sys.argv[11]
     d['terminal_ctx'] = ctx
     print(json.dumps(d))
-    " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" "$VF_SSHC" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
+    " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" "$VF_SSHC" "$VF_USER" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
+
+    # ---- B169 双通道投递：直投 → 落盘（Mac 侧定时 ssh 拉取）----
+    VF_SPOOL_DIR="$HOME/.vibefocus/spool"
+    VF_HINT_FILE="$HOME/.vibefocus/direct-hint"
+    VF_HINT_TTL=600
+
+    VF_TRY_DIRECT=1
+    if [ -f "$VF_HINT_FILE" ]; then
+        VF_HINT_AT=$(cat "$VF_HINT_FILE" 2>/dev/null || echo 0)
+        case "$VF_HINT_AT" in ''|*[!0-9]*) VF_HINT_AT=0 ;; esac
+        VF_NOW=$(date +%s)
+        if [ "$VF_NOW" -lt $((VF_HINT_AT + VF_HINT_TTL)) ]; then
+            VF_TRY_DIRECT=0
+        fi
+    fi
 
     VF_URL="http://$VF_HOST:$VF_PORT/claude/hook"
-    VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
-    if [ -n "$VF_TOKEN" ]; then
-        VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
+    VF_SENT=0
+    if [ "$VF_TRY_DIRECT" = "1" ]; then
+        VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
+        if [ -n "$VF_TOKEN" ]; then
+            VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
+        fi
+        VF_CURL_ARGS+=(--data "$VF_ENRICHED" --connect-timeout 1 --max-time 4)
+        if curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1; then
+            VF_SENT=1
+            rm -f "$VF_HINT_FILE" 2>/dev/null || true
+        else
+            date +%s > "$VF_HINT_FILE" 2>/dev/null || true
+        fi
     fi
-    VF_CURL_ARGS+=(--data "$VF_ENRICHED")
-    curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1 || true
+
+    if [ "$VF_SENT" = "0" ]; then
+        mkdir -p "$VF_SPOOL_DIR" 2>/dev/null || true
+        VF_STAMP="$(date +%s)-$$-${RANDOM:-0}"
+        printf '%s\n' "$VF_ENRICHED" > "$VF_SPOOL_DIR/.tmp-$VF_STAMP" 2>/dev/null || true
+        mv "$VF_SPOOL_DIR/.tmp-$VF_STAMP" "$VF_SPOOL_DIR/$VF_STAMP.json" 2>/dev/null || true
+        # 挤压积压上限：只留最新 200 个（Mac 长期失联时防无限膨胀）
+        ls -t "$VF_SPOOL_DIR" 2>/dev/null | tail -n +201 | while IFS= read -r f; do
+            rm -f "$VF_SPOOL_DIR/$f" 2>/dev/null || true
+        done
+    fi
     """
     }
 

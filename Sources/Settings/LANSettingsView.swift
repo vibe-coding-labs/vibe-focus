@@ -7,6 +7,10 @@ struct LANSettingsView: View {
     @State var newMachineLabel = ""
     @State var remoteInstallMessage: String?
     @State var remoteInstallSucceeded = true
+    // B169: spool 兜底拉取主机（VPN/单向网络下远程事件的唯一通道）
+    @ObservedObject private var drainer = RemoteSpoolDrainer.shared
+    @State var spoolHosts: [String] = RemoteSpoolHosts.loadHosts()
+    @State var newSpoolHost = ""
 
     var body: some View {
         SettingsCard(
@@ -35,8 +39,114 @@ struct LANSettingsView: View {
             if lanMode {
                 lanDetailSection
             }
+
+            Divider()
+
+            spoolDrainSection
         }
     }
+
+    /// B169: 远程主机兜底拉取（spool 通道）。直投不可达（VPN/单向 NAT）时远程
+    /// 事件落盘服务器 ~/.vibefocus/spool/，本机定时 ssh 拉取回灌。主机清单来源：
+    /// 直投事件自注册（LAN 时期自动记住）/ 此处手动添加 / 装机预置。
+    private var spoolDrainSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("远程主机兜底拉取")
+                    .font(.system(size: 13, weight: .medium))
+                Spacer()
+                Button("立即拉取") {
+                    RemoteSpoolDrainer.shared.drainNow()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(spoolHosts.isEmpty)
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundStyle(VibeColors.accent)
+                    .font(.system(size: 12))
+                Text("远程机器直投不可达（VPN、单向网络）时，事件暂存其 ~/.vibefocus/spool/，本机定时 SSH 拉取。添加运行 Claude Code 的远程机器（SSH 目标，如 user@host）。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 4)
+
+            if spoolHosts.isEmpty {
+                Text("暂无远程主机（直投可达时会自动登记）")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(spoolHosts, id: \.self) { host in
+                HStack(spacing: 8) {
+                    Image(systemName: "server.rack")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(host)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        spoolStatusText(for: host)
+                    }
+
+                    Spacer()
+
+                    Button("删除") {
+                        RemoteSpoolHosts.removeHost(host)
+                        spoolHosts = RemoteSpoolHosts.loadHosts()
+                        RemoteSpoolDrainer.shared.applyPreferences()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundStyle(VibeColors.danger)
+                }
+            }
+
+            HStack {
+                TextField("user@host", text: $newSpoolHost)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .font(.system(size: 12, design: .monospaced))
+                Button("添加") {
+                    if RemoteSpoolHosts.registerHost(newSpoolHost) {
+                        spoolHosts = RemoteSpoolHosts.loadHosts()
+                        RemoteSpoolDrainer.shared.applyPreferences()
+                    }
+                    newSpoolHost = ""
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(newSpoolHost.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func spoolStatusText(for host: String) -> some View {
+        if let status = drainer.statuses[host] {
+            if let error = status.lastError, !error.isEmpty {
+                Text("拉取失败：\(error)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(VibeColors.danger)
+            } else if let at = status.lastDrainAt {
+                let timeText = Self.drainTimeFormatter.string(from: at)
+                Text(status.lastEventCount > 0
+                     ? "上次拉取 \(timeText) · 取回 \(status.lastEventCount) 条"
+                     : "上次拉取 \(timeText)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static let drainTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
 
     private var lanDetailSection: some View {
         VStack(alignment: .leading, spacing: 12) {
