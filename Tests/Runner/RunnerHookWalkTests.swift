@@ -741,6 +741,82 @@ extension RunnerHarness {
                   reg.binding(for: "nope") == nil)
         }
         do {
+            // B149：bind() 编排三通道直测（B32 只锁了拒绝分支；created/alias/merged、
+            // DB 落行与摘要文案此前零覆盖）。终端 PID 用真实短进程：拷贝 /bin/sleep 改名
+            // iTerm2 后运行，ps -o comm= 的 basename 命中 terminalAppNames——与生产
+            // getProcessComm 同一判定路径（NSRunningApplication 对非 GUI 进程返回 nil，
+            // 落到 comm 兜底，恰好锁住该兜底语义）。
+            let dir = "/tmp/vibefocus-b149-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let exePath = dir + "/iTerm2"
+            try? FileManager.default.copyItem(atPath: "/bin/sleep", toPath: exePath)
+            let fakeTerm = Process()
+            fakeTerm.executableURL = URL(fileURLWithPath: exePath)
+            fakeTerm.arguments = ["30"]
+            try? fakeTerm.run()
+            let termPid = Int32(fakeTerm.processIdentifier)
+            defer { if fakeTerm.isRunning { fakeTerm.terminate() } }
+            check("bind149: 前置——改名 sleep 进程经 comm basename 判为终端",
+                  fakeTerm.isRunning && TerminalRegistry.isTerminalPID(termPid) == true)
+
+            let store = WindowStateStore(dbPath: dir + "/swr.db")
+            let reg = SessionWindowRegistry(store: store)
+            let ident = WindowIdentity(windowID: 1501, pid: termPid,
+                                       bundleIdentifier: "com.googlecode.iterm2",
+                                       appName: "iTerm2", windowNumber: 77, title: "b149")
+
+            // created：新窗新 session——内存落位 + axWindowNumber 直存 + DB 落行 + 绑定文案
+            reg.bind(sessionID: "b149-a", windowIdentity: ident, cwd: "/tmp/a", model: "m1")
+            check("bind149: created——内存+DB 落位，session/编号/上下文字段精确",
+                  reg.windowStates[1501]?.sessionID == "b149-a"
+                  && reg.windowStates[1501]?.axWindowNumber == 77
+                  && reg.windowStates[1501]?.cwd == "/tmp/a"
+                  && store.findWindowState(windowID: 1501)?.sessionID == "b149-a"
+                  && reg.sessionAliasWindowID["b149-a"] == nil
+                  && reg.binding(for: "b149-a")?.windowID == 1501)
+            check("bind149: created——lastEventDescription 绑定文案",
+                  reg.lastEventDescription.contains("绑定窗口"))
+
+            // alias：同窗被其他活跃 session 复用——原绑定不动，新 session 只记别名不落行
+            reg.bind(sessionID: "b149-b", windowIdentity: ident)
+            check("bind149: alias——原绑定不动，新 session 入别名表且不覆盖直绑",
+                  reg.windowStates[1501]?.sessionID == "b149-a"
+                  && reg.sessionAliasWindowID["b149-b"] == 1501
+                  && reg.binding(for: "b149-b")?.windowID == 1501
+                  && store.findWindowState(windowID: 1501)?.sessionID == "b149-a")
+            check("bind149: alias——lastEventDescription 别名文案",
+                  reg.lastEventDescription.contains("别名绑定"))
+
+            // merged：同 session 重绑——身份/上下文刷新复活，不产生别名
+            reg.bind(sessionID: "b149-a", windowIdentity: ident, cwd: "/tmp/new", model: "opus")
+            check("bind149: merged——cwd/model 刷新复活且无别名",
+                  reg.windowStates[1501]?.cwd == "/tmp/new"
+                  && reg.windowStates[1501]?.model == "opus"
+                  && reg.windowStates[1501]?.isCompleted == false
+                  && reg.sessionAliasWindowID["b149-a"] == nil)
+
+            // 拒绝：非终端 pid 直接 return，摘要文案保持不变（B32 已锁无绑定，此处补文案不被覆盖）
+            let descBeforeReject = reg.lastEventDescription
+            let ownPid = Int32(ProcessInfo.processInfo.processIdentifier)
+            reg.bind(sessionID: "b149-c",
+                     windowIdentity: WindowIdentity(windowID: 1502, pid: ownPid,
+                                                    bundleIdentifier: nil, appName: "Runner",
+                                                    windowNumber: nil, title: "b149-c"))
+            check("bind149: 拒绝——无落位且摘要文案不被覆盖",
+                  reg.windowStates[1502] == nil
+                  && reg.lastEventDescription == descBeforeReject)
+
+            // axWindowNumber 缺席分支：windowNumber nil + 窗不存在（resolveWindow miss）→ nil 直存
+            reg.bind(sessionID: "b149-d",
+                     windowIdentity: WindowIdentity(windowID: 1503, pid: termPid,
+                                                    bundleIdentifier: nil, appName: "iTerm2",
+                                                    windowNumber: nil, title: "b149-d"))
+            check("bind149: windowNumber 缺席——resolveWindow miss 后 nil 直存落位",
+                  reg.windowStates[1503]?.axWindowNumber == nil
+                  && reg.windowStates[1503]?.sessionID == "b149-d")
+        }
+        do {
             // endpointURLString：token 缺省纯端点；配置 token 追加查询串（用后清键）
             check("hookEndpoint: 无 token → 纯端点",
                   ClaudeHookPreferences.endpointURLString(port: 39277) == "http://127.0.0.1:39277/claude/hook")
