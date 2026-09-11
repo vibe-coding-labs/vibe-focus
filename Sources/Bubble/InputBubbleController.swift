@@ -3,12 +3,6 @@ import Carbon
 import CoreGraphics
 import Foundation
 
-// MARK: - 输入气泡面板
-/// 无边框 key 面板：NSPanel borderless 默认不收 key，override canBecomeKey。
-final class InputBubblePanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-}
-
 // MARK: - 输入气泡控制器（B129）
 // 生命周期：⌥⌘B 唤起（仅聚焦终端窗时）→ 本地打字 → Enter/⌘Enter 注入 → 焦点还给终端。
 // 行为约束：
@@ -19,41 +13,43 @@ final class InputBubblePanel: NSPanel {
 // - 注入 = 剪贴板快照 → 写文本 → ⌘V（bracketed paste，多行不误提交）→[可选 Return]
 //   → 按纯决策恢复剪贴板；
 // - 纯决策全部在 InputBubbleLogic（Runner 直测），本文件只做 IO 编排。
+// B151 按域拆分（逐字搬移零行为变更）：面板构建/锚定 → +Panel，提交链机械 → +Submission，
+// 剪贴板快照恢复 → +Clipboard，气泡视图族 → InputBubbleViews；本文件保留状态、生命周期与委托。
 
 @MainActor
 final class InputBubbleController: NSObject {
     static let shared = InputBubbleController()
 
-    private enum Phase { case idle, open, submitting }
-    private var phase: Phase = .idle
+    enum Phase { case idle, open, submitting }
+    var phase: Phase = .idle
 
-    private var panel: InputBubblePanel?
-    private var textView: NSTextView?
+    var panel: InputBubblePanel?
+    var textView: NSTextView?
 
     /// 设置窗可见性暂存（B133：气泡与设置窗都是本 app key 候选，同屏竞争时设置窗
     /// 作为 main window 会抢走 key 使气泡收不到键盘——TitleEditor 同款解法：
     /// 气泡存续期临时 orderOut 设置窗，气泡关闭后恢复可见性）
-    private var settingsWasVisible = false
+    var settingsWasVisible = false
 
     /// B133：尺寸/回车语义从偏好读取（设置页可调）；面板按「构建参数指纹」缓存，
     /// 指纹变化（改尺寸/改回车行为）时下次唤起重建，避免陈旧布局。
-    private var panelBuiltFor: (size: NSSize, submitOnEnter: Bool)?
-    private var bubbleSize: NSSize {
+    var panelBuiltFor: (size: NSSize, submitOnEnter: Bool)?
+    var bubbleSize: NSSize {
         NSSize(width: InputBubblePreferences.bubbleWidth, height: InputBubblePreferences.bubbleHeight)
     }
 
     /// 热键瞬间捕获的注入目标
-    private struct Target {
+    struct Target {
         let pid: pid_t
         let bundleID: String?
         let windowID: UInt32
         let title: String?
     }
-    private var target: Target?
+    var target: Target?
 
     /// 剪贴板快照（注入前保存；恢复决策按 changeCount 走 InputBubbleClipboardPlan）
-    private var clipboardItems: [[NSPasteboard.PasteboardType: Data]] = []
-    private var clipboardPostWriteCount = -1
+    var clipboardItems: [[NSPasteboard.PasteboardType: Data]] = []
+    var clipboardPostWriteCount = -1
 
     private override init() {
         super.init()
@@ -189,280 +185,6 @@ final class InputBubbleController: NSObject {
         _ = NSRunningApplication(processIdentifier: target.pid)?
             .activate(options: .activateIgnoringOtherApps)
         waitFrontmostAndInject(target: target, text: text, mode: mode, elapsedMs: 0)
-    }
-
-    /// 激活后等前台/窗口柄到位再注入（非阻塞轮询；超时宁可不注入）。
-    private func waitFrontmostAndInject(target: Target, text: String, mode: InputBubbleSubmitMode, elapsedMs: Int) {
-        let frontmostMatches = NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid
-        if frontmostMatches {
-            // 前台已到位：再验窗口柄（防激活期间切 tab / 关窗）
-            let handle = WindowManager.shared.focusedWindow(for: target.pid)
-                .flatMap { WindowManager.shared.windowHandle(for: $0) }
-            let gate = InputBubbleSubmitGate.decide(
-                text: text,
-                mode: mode,
-                targetStillValid: handle == target.windowID,
-                frontmostMatchesTarget: true
-            )
-            switch gate {
-            case .proceed(let steps):
-                inject(steps: steps, target: target)
-            case .dismissOnly:
-                finishSubmission()
-            case .abortMissingTarget:
-                abortSubmission(reason: "target window gone", target: target)
-            case .abortFrontmostMismatch:
-                abortSubmission(reason: "frontmost mismatch (unreachable)", target: target)
-            }
-            return
-        }
-        if elapsedMs >= InputBubbleTiming.frontmostPollBudgetMs {
-            abortSubmission(reason: "frontmost activate timeout", target: target)
-            return
-        }
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(InputBubbleTiming.frontmostPollIntervalMs)
-        ) { [weak self] in
-            self?.waitFrontmostAndInject(
-                target: target, text: text, mode: mode,
-                elapsedMs: elapsedMs + InputBubbleTiming.frontmostPollIntervalMs
-            )
-        }
-    }
-
-    private func inject(steps: [InputBubbleKeyPlan.Step], target: Target) {
-        log("[InputBubble] injecting", fields: [
-            "steps": steps.map { $0 == .paste ? "paste" : "return" }.joined(separator: ","),
-            "windowID": String(target.windowID),
-            "pid": String(target.pid)
-        ])
-        CrashContextRecorder.shared.record("input_bubble_inject windowID=\(target.windowID) steps=\(steps.count)")
-
-        for (index, step) in steps.enumerated() {
-            let delayMs = index * InputBubbleTiming.pasteToReturnDelayMs
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
-                switch step {
-                case .paste:
-                    self?.postKeyCombo(keyCode: CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
-                case .returnKey:
-                    self?.postKeyCombo(keyCode: CGKeyCode(kVK_Return), flags: [])
-                }
-            }
-        }
-
-        let totalMs = max(steps.count - 1, 0) * InputBubbleTiming.pasteToReturnDelayMs
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(totalMs + InputBubbleTiming.clipboardRestoreDelayMs)) { [weak self] in
-            self?.restoreClipboardIfSafe()
-            self?.finishSubmission()
-        }
-    }
-
-    private func abortSubmission(reason: String, target: Target) {
-        NSSound.beep()
-        log("[InputBubble] inject aborted", level: .warn, fields: [
-            "reason": reason,
-            "windowID": String(target.windowID)
-        ])
-        CrashContextRecorder.shared.record("input_bubble_abort reason=\(reason) windowID=\(target.windowID)")
-        restoreClipboardIfSafe()
-        finishSubmission()
-    }
-
-    /// 收尾：回归 accessory 政策 + 状态复位（面板已在 submit 时 orderOut）。
-    private func finishSubmission() {
-        phase = .idle
-        panel = nil
-        textView = nil
-        target = nil
-        NSApp.setActivationPolicy(.accessory)
-        restoreSettingsWindowIfNeeded()
-    }
-
-    /// 气泡关闭/提交收尾后，把之前可见的设置窗放回（TitleEditor 同款：恢复可见性不抢焦点）
-    private func restoreSettingsWindowIfNeeded() {
-        guard settingsWasVisible else { return }
-        settingsWasVisible = false
-        SettingsWindowController.shared.window?.orderFront(nil)
-    }
-
-    // MARK: 键击投递（NativeSpaceBridge Escape 同款 .cghidEventTap 语义）
-
-    private func postKeyCombo(keyCode: CGKeyCode, flags: CGEventFlags) {
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true) else { return }
-        down.flags = flags
-        down.post(tap: .cghidEventTap)
-        guard let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else { return }
-        up.flags = flags
-        up.post(tap: .cghidEventTap)
-    }
-
-    // MARK: 剪贴板快照 / 恢复
-
-    private func saveClipboardThenWrite(_ text: String) {
-        let pb = NSPasteboard.general
-        var items: [[NSPasteboard.PasteboardType: Data]] = []
-        if let pbi = pb.pasteboardItems {
-            for item in pbi.prefix(5) {
-                var dict: [NSPasteboard.PasteboardType: Data] = [:]
-                for type in item.types.prefix(10) {
-                    if type.rawValue.hasPrefix("dyn.") { continue }
-                    if let data = item.data(forType: type) { dict[type] = data }
-                }
-                if !dict.isEmpty { items.append(dict) }
-            }
-        }
-        clipboardItems = items
-        pb.clearContents()
-        pb.setString(text, forType: .string)
-        clipboardPostWriteCount = pb.changeCount
-    }
-
-    private func restoreClipboardIfSafe() {
-        guard clipboardPostWriteCount >= 0 else { return }
-        let pb = NSPasteboard.general
-        let shouldRestore = InputBubbleClipboardPlan.shouldRestore(
-            postWriteCount: clipboardPostWriteCount,
-            currentCount: pb.changeCount
-        )
-        clipboardPostWriteCount = -1
-        guard shouldRestore else {
-            log("[InputBubble] clipboard changed during injection, skip restore", level: .debug)
-            clipboardItems = []
-            return
-        }
-        pb.clearContents()
-        for dict in clipboardItems {
-            let item = NSPasteboardItem()
-            for (type, data) in dict {
-                item.setData(data, forType: type)
-            }
-            pb.writeObjects([item])
-        }
-        clipboardItems = []
-        log("[InputBubble] clipboard restored", level: .debug)
-    }
-
-    // MARK: 面板构建（lazy 单建；锚定每次 summon 重算）
-
-    private func builtPanel() -> (InputBubblePanel, NSTextView) {
-        let size = bubbleSize
-        let submitOnEnter = InputBubblePreferences.submitOnEnter
-        if let panel, let textView, let built = panelBuiltFor,
-           built.size == size, built.submitOnEnter == submitOnEnter {
-            return (panel, textView)
-        }
-        if let stale = panel { stale.orderOut(nil) }
-
-        let panel = InputBubblePanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.isMovableByWindowBackground = true
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.delegate = self
-
-        let card = BubbleCardView(frame: NSRect(origin: .zero, size: size))
-
-        let hint = NSTextField(labelWithString: InputBubbleKeyPlan.hintText(submitOnEnter: submitOnEnter))
-        hint.font = NSFont.systemFont(ofSize: 10)
-        hint.textColor = Self.dynamicColor(lightHex: 0x8A7B68, darkHex: 0xA29380)
-        hint.frame = NSRect(x: 14, y: 8, width: size.width - 28, height: 14)
-        hint.lineBreakMode = .byTruncatingTail
-        card.addSubview(hint)
-
-        let scroll = NSScrollView(frame: NSRect(x: 12, y: 26, width: size.width - 24, height: size.height - 40))
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.drawsBackground = false
-
-        let textView = NSTextView(frame: scroll.bounds)
-        textView.font = NSFont.systemFont(ofSize: 13)
-        textView.textColor = Self.dynamicColor(lightHex: 0x40362B, darkHex: 0xF1E9DE)
-        textView.drawsBackground = false
-        textView.isRichText = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.minSize = .zero
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: scroll.contentSize.width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        textView.delegate = self
-        scroll.documentView = textView
-        card.addSubview(scroll)
-
-        panel.contentView = card
-        panel.initialFirstResponder = textView
-
-        self.panel = panel
-        self.textView = textView
-        self.panelBuiltFor = (size, submitOnEnter)
-        return (panel, textView)
-    }
-
-    /// 锚点：目标窗（AppKit 全局坐标）左下内侧，夹进所在屏 visibleFrame。
-    private func anchorOrigin(targetCGFrame: CGRect) -> CGPoint {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let appKitFrame = InputBubbleLayout.appKitFrame(
-            fromCGFrame: targetCGFrame,
-            primaryScreenHeight: primaryHeight
-        )
-        let visibleFrame = containingScreenVisibleFrame(for: appKitFrame)
-        return InputBubbleLayout.anchorOrigin(
-            targetAppKitFrame: appKitFrame,
-            bubbleSize: bubbleSize,
-            visibleFrame: visibleFrame,
-            margin: 16
-        )
-    }
-
-    /// 目标窗中心点所在屏的 visibleFrame（找不到回落主屏）。
-    private func containingScreenVisibleFrame(for appKitFrame: CGRect) -> CGRect {
-        let center = CGPoint(x: appKitFrame.midX, y: appKitFrame.midY)
-        let screen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
-            ?? NSScreen.main
-        return screen?.visibleFrame ?? appKitFrame
-    }
-
-    private static func dynamicColor(lightHex: UInt32, darkHex: UInt32) -> NSColor {
-        NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return NSColor(rgbHex: isDark ? darkHex : lightHex)
-        }
-    }
-}
-
-// MARK: - 气泡卡片视图（VibeFocus 奶油暖底 + 珊瑚描边语系）
-
-final class BubbleCardView: NSView {
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        wantsLayer = true
-        layer?.cornerRadius = 14
-        layer?.masksToBounds = false
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        // 动态色在 draw 里解析（appearance 变化会触发重绘）
-        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let background = (isDark ? NSColor(rgbHex: 0x211C18) : NSColor(rgbHex: 0xF6F1E7)).withAlphaComponent(0.97)
-        let border = isDark ? NSColor.white.withAlphaComponent(0.12) : NSColor(rgbHex: 0xE8DDCB)
-        let path = NSBezierPath(roundedRect: bounds, xRadius: 14, yRadius: 14)
-        background.setFill()
-        path.fill()
-        border.setStroke()
-        path.lineWidth = 1
-        path.stroke()
     }
 }
 
