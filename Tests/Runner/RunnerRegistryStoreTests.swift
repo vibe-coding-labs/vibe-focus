@@ -732,5 +732,78 @@ extension RunnerHarness {
             check("purge: touch 无消息 → 描述不被覆盖",
                   reg.lastEventDescription == "vf-touch-msg")
         }
+
+        // MARK: ToggleRecord 持久层（真实实现——B152：save/load/byPID/clear 此前 8.76% 覆盖；
+        // 文件头「列所有权」约定首次成文锁定：UPDATE 只写 toggle 列不动 session_id，INSERT 才落 session）
+        do {
+            let dir = "/tmp/vibefocus-b152-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let store = WindowStateStore(dbPath: dir + "/swr.db")
+            let t1 = Date(timeIntervalSince1970: 1_800_000_000)
+
+            func mkRec(_ wid: UInt32, pid: Int32 = 700, toggledAt: Date, session: String?) -> ToggleRecord {
+                ToggleRecord(
+                    windowID: wid, pid: pid,
+                    bundleIdentifier: "com.googlecode.iterm2", appName: "iTerm2",
+                    origFrame: CGRect(x: -810, y: -710, width: 1146, height: 707),
+                    sourceSpace: 3, sourceDisplay: 2, sourceYabaiDisp: 2, sourceDispSpace: 1,
+                    targetFrame: CGRect(x: 0, y: 0, width: 3220, height: 1080),
+                    targetDisplay: 1,
+                    toggledAt: toggledAt, sessionID: session, reason: "Stop"
+                )
+            }
+            func mkState(_ wid: UInt32, session: String?) -> WindowState {
+                WindowState(
+                    windowID: wid, pid: 700, tty: nil, axWindowNumber: nil,
+                    appName: "iTerm2", bundleIdentifier: "com.googlecode.iterm2", title: nil,
+                    termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                    envWindowID: nil, sessionID: session, cwd: nil, model: nil,
+                    isCompleted: false, createdAt: Date(), updatedAt: Date()
+                )
+            }
+
+            // INSERT 路径：行不存在 → fallback INSERT，全字段往返（含 session_id 落库）
+            store.saveToggleRecord(mkRec(5001, toggledAt: t1, session: "tr-ins"))
+            let ins = store.loadToggleRecord(windowID: 5001)
+            check("toggleRec: INSERT 全字段往返（frames/space 族/reason/session）",
+                  ins?.origFrame.origin.x == -810 && ins?.origFrame.height == 707
+                  && ins?.targetFrame.width == 3220 && ins?.targetFrame.origin.y == 0
+                  && ins?.sourceSpace == 3 && ins?.sourceDisplay == 2
+                  && ins?.sourceYabaiDisp == 2 && ins?.sourceDispSpace == 1
+                  && ins?.targetDisplay == 1 && ins?.reason == "Stop"
+                  && ins?.sessionID == "tr-ins" && ins?.pid == 700
+                  && ins?.bundleIdentifier == "com.googlecode.iterm2"
+                  && ins?.toggledAt.timeIntervalSince1970 == t1.timeIntervalSince1970)
+
+            // UPDATE 路径：已有绑定行 → toggle 列更新而 session_id 不被抹（列所有权约定）
+            store.saveWindowState(mkState(5002, session: "tr-bind"))
+            store.saveToggleRecord(mkRec(5002, toggledAt: t1.addingTimeInterval(10), session: nil))
+            let upd = store.loadToggleRecord(windowID: 5002)
+            check("toggleRec: UPDATE 落 toggle 列且行上既有绑定 session 保留",
+                  upd?.reason == "Stop" && upd?.sessionID == "tr-bind"
+                  && store.findWindowState(windowID: 5002)?.sessionID == "tr-bind")
+
+            // loadToggleRecord：缺行 nil；纯绑定行（无 toggle 列）nil
+            store.saveWindowState(mkState(5003, session: "tr-plain"))
+            check("toggleRec: 缺行 → nil；纯绑定行（toggle_reason NULL）→ nil",
+                  store.loadToggleRecord(windowID: 5999) == nil
+                  && store.loadToggleRecord(windowID: 5003) == nil)
+
+            // loadToggleRecordByPID：同 pid 双记录取最近 toggled_at；无命中 nil
+            store.saveToggleRecord(mkRec(5004, pid: 701, toggledAt: t1, session: nil))
+            store.saveToggleRecord(mkRec(5005, pid: 701, toggledAt: t1.addingTimeInterval(60), session: nil))
+            check("toggleRec: byPID 同 pid 取最近 toggled_at，无命中 nil",
+                  store.loadToggleRecordByPID(pid: 701)?.windowID == 5005
+                  && store.loadToggleRecordByPID(pid: 9999) == nil)
+
+            // clear：toggle 列清空（load 回 nil）而绑定行与 session 保留
+            store.saveToggleRecord(mkRec(5006, toggledAt: t1, session: nil))
+            store.saveWindowState(mkState(5006, session: "tr-keep"))
+            store.clearToggleRecord(windowID: 5006)
+            check("toggleRec: clear 清 toggle 列、绑定行与 session 保留",
+                  store.loadToggleRecord(windowID: 5006) == nil
+                  && store.findWindowState(windowID: 5006)?.sessionID == "tr-keep")
+        }
     }
 }
