@@ -36,6 +36,18 @@ extension RunnerHarness {
               !OverlayRefreshPolicy.isDuplicateForceTrigger(
                 lastTriggerAt: .distantPast, now: Date(timeIntervalSince1970: 1000), minInterval: 0.3))
 
+        // B2. forceRefreshDecision 四象限（2026-09-11 停格修复的契约锁）：
+        // 挂起闸门只准吞 overlay 重活，不准吞 space-state 广播——设置窗持焦期间
+        // SIGUSR1/toggle 变化必须以 broadcastOnly 形态到达编排页 minimap。
+        check("overlayGate B2: 常态非重复 → broadcastAndRefresh（广播+重刷）",
+              OverlayRefreshPolicy.forceRefreshDecision(suspended: false, duplicate: false) == .broadcastAndRefresh)
+        check("overlayGate B2: 常态连发重复 → skipDuplicate（历史语义不回退）",
+              OverlayRefreshPolicy.forceRefreshDecision(suspended: false, duplicate: true) == .skipDuplicate)
+        check("overlayGate B2: 挂起非重复 → broadcastOnly（广播不吞，重活跳过）",
+              OverlayRefreshPolicy.forceRefreshDecision(suspended: true, duplicate: false) == .broadcastOnly)
+        check("overlayGate B2: 挂起连发重复 → broadcastOnly（挂起时不去重，minimap 不许停格）",
+              OverlayRefreshPolicy.forceRefreshDecision(suspended: true, duplicate: true) == .broadcastOnly)
+
         // C. ScreenHotplugGuard 真身：集合相等语义 + 防御过滤。
         let u1 = UUID(), u2 = UUID(), u3 = UUID()
         check("overlayGate C: 热插拔集合相等（顺序无关）+ 插拔不一致",
