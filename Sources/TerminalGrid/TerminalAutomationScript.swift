@@ -190,4 +190,77 @@ enum TerminalAutomationScript {
         }
         return mapping
     }
+
+    // MARK: - 自动化环境守卫与失败明细（纯函数）
+
+    /// 建窗/恢复前的实例环境判定。真机实证（2026-09-11 用户建 2×3 网格失败复盘）：
+    /// 并行会话的 GRID E2E 会在 /tmp 拉起同 bundle id 的临时 iTerm2 并与真实终端
+    /// 并存/生灭，`tell application id` 按 bundle id 寻址会在实例间随机路由——建窗
+    /// AE 被送进垂死的测试副本时 osascript 秒败且 stderr 为空（用户视角=「第 2 个
+    /// 窗口创建失败」，且已建窗口会随副本退出消失）。因此唯一安全态 = 恰好一个
+    /// 实例、且可执行路径不在临时目录。
+    enum AutomationInstanceVerdict: Equatable {
+        case clean                          // 单实例且路径可信，放行
+        case ephemeralOnly(detail: String)  // 唯一实例是临时副本/路径不可辨
+        case ambiguous(detail: String)      // 多实例并存，寻址会漂移
+        case notRunning                     // 目标终端没有运行实例
+    }
+
+    /// 临时副本路径特征：E2E 脚手架把 iTerm2 拷到 /tmp 直跑；系统临时目录一律不可信
+    static func isEphemeralInstancePath(_ path: String) -> Bool {
+        path.hasPrefix("/tmp/") || path.hasPrefix("/private/tmp/") || path.hasPrefix("/var/folders/")
+    }
+
+    /// instances = 该 bundleID 当前全部运行实例的（pid, 可执行路径）
+    static func automationInstanceVerdict(
+        instances: [(pid: pid_t, executablePath: String?)]
+    ) -> AutomationInstanceVerdict {
+        if instances.isEmpty { return .notRunning }
+        if instances.count == 1, let path = instances[0].executablePath,
+           !isEphemeralInstancePath(path) {
+            return .clean
+        }
+        let listed = instances
+            .map { "pid \($0.pid)：\($0.executablePath ?? "路径未知")" }
+            .joined(separator: "；")
+        return instances.count == 1 ? .ephemeralOnly(detail: listed) : .ambiguous(detail: listed)
+    }
+
+    /// 守卫拒绝的用户文案；clean → nil（放行）
+    static func instanceGuardFailureMessage(
+        for verdict: AutomationInstanceVerdict,
+        appName: String
+    ) -> String? {
+        switch verdict {
+        case .clean:
+            return nil
+        case .notRunning:
+            return "\(appName) 未运行，无法创建终端窗口"
+        case .ephemeralOnly(let detail):
+            return "检测到的唯一 \(appName) 实例不是正式安装版（\(detail)），疑似自动化测试的临时副本——窗口建进去会随副本退出而丢失，已中止创建"
+        case .ambiguous(let detail):
+            return "检测到 \(appName) 有多个实例并存（\(detail)），AppleScript 按 bundle id 寻址会在实例间随机路由，窗口可能建进错误实例——若正在跑自动化测试请等其结束后重试"
+        }
+    }
+
+    /// 建窗脚本的逐格重试上限：瞬时 AE 故障（终端忙、事件超时、实例切换空窗）
+    /// 自愈窗口在亚秒~秒级；两次退避后仍败视为系统性问题，中止并如实上报
+    static let maxCellCreateAttempts = 3
+
+    /// 第 failedAttempts 次失败后的退避（线性，封顶 800ms）
+    static func cellCreateRetryDelayNanos(failedAttempts: Int) -> UInt64 {
+        min(UInt64(failedAttempts) * 400_000_000, 800_000_000)
+    }
+
+    /// osascript 结果 → 失败明细（成功 → nil）。stderr 为空的非零退出是真机
+    /// 实证过的真实形态（AE 被垂死实例吞掉），必须带着退出码现身，不能落进
+    /// 「执行失败或超时」的兜底词里丢失取证线索。
+    static func describeScriptFailure(_ result: YabaiClient.YabaiResult?) -> String? {
+        guard let result else { return "无法启动 osascript（进程未启动或 30s 超时）" }
+        guard result.exitCode != 0 else { return nil }
+        let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        return stderr.isEmpty
+            ? "osascript 异常退出（退出码 \(result.exitCode)，无错误输出）"
+            : stderr
+    }
 }

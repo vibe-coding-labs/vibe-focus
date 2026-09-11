@@ -43,6 +43,17 @@ final class TerminalGridController {
             return OperationResult(ok: false, message: "终端应用不可用（Terminal/iTerm2）")
         }
 
+        // 操作级实例环境守卫：E2E 临时副本与真实终端并存时按 bundle id 寻址会
+        // 随机路由（真机实证 2026-09-11），宁可不建也不能建错地方；网格中途副本
+        // 生灭由逐格守卫（createTerminalCell）兜底。
+        lastScriptError = nil
+        if let refusal = automationInstanceRefusal(appBundleID: appBundleID) {
+            log("[TerminalGrid] createGrid refused by instance guard", level: .warn, fields: [
+                "op": op, "app": appBundleID
+            ])
+            return OperationResult(ok: false, message: refusal)
+        }
+
         // 显式选了非当前工作区 → 先把视角切过去（切换失败不阻断，落在该屏当前工作区）
         let spaceNote = await focusTargetSpaceIfNeeded(screen: screen, op: op)
 

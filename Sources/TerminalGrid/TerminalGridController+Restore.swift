@@ -29,6 +29,15 @@ extension TerminalGridController {
         guard let screen = resolveRestoreScreen(for: snapshot) else {
             return OperationResult(ok: false, message: "目标显示器不可用")
         }
+        // 操作级实例环境守卫 + 陈旧错误复位（同 createGrid， rationale 见
+        // TerminalAutomationScript.automationInstanceVerdict）
+        lastScriptError = nil
+        if let refusal = automationInstanceRefusal(appBundleID: snapshot.appBundleID) {
+            log("[TerminalGrid] restoreLayout refused by instance guard", level: .warn, fields: [
+                "op": op, "app": snapshot.appBundleID
+            ])
+            return OperationResult(ok: false, message: refusal)
+        }
 
         let targetFrames = restoreTargetFrames(for: snapshot, screen: screen)
 
@@ -114,6 +123,15 @@ extension TerminalGridController {
         }
         guard let screen = resolveRestoreScreen(for: snapshot) else {
             return OperationResult(ok: false, message: "自动恢复失败：目标显示器不可用")
+        }
+        lastScriptError = nil
+        // 开机冷启动恢复依赖 AppleEvent 自动拉起未运行的终端（既有行为），
+        // 这里只拦真正危险的形态：临时副本唯一 / 多实例并存
+        if let refusal = automationInstanceRefusal(appBundleID: snapshot.appBundleID, allowNotRunning: true) {
+            log("[TerminalGrid] autoRestore refused by instance guard", level: .warn, fields: [
+                "op": op, "app": snapshot.appBundleID
+            ])
+            return OperationResult(ok: false, message: "自动恢复已跳过：\(refusal)")
         }
         let targetFrames = restoreTargetFrames(for: snapshot, screen: screen)
 

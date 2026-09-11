@@ -416,5 +416,82 @@ extension RunnerHarness {
             check("usageTable: 坏数据解码 → nil 不抛",
                   TerminalUsageTable.decode(Data("not json".utf8)) == nil)
         }
+
+        // ===== 自动化环境守卫：实例判定（真机实证 2026-09-11：并行 E2E 的 /tmp
+        // 临时 iTerm2 与真实终端并存 → bundle id 寻址随机路由 → 建窗 AE 进垂死
+        // 副本秒败无输出。唯一安全态 = 单实例且路径不在临时目录） =====
+        do {
+            func instance(_ pid: pid_t, _ path: String?) -> (pid: pid_t, executablePath: String?) {
+                (pid: pid, executablePath: path)
+            }
+            check("instanceGuard: 单实例正式路径 → clean",
+                  TerminalAutomationScript.automationInstanceVerdict(instances: [
+                      instance(100, "/Applications/iTerm.app/Contents/MacOS/iTerm2")
+                  ]) == .clean)
+            check("instanceGuard: 零实例 → notRunning",
+                  TerminalAutomationScript.automationInstanceVerdict(instances: []) == .notRunning)
+            check("instanceGuard: 唯一实例在 /tmp → 非 clean（真实终端未运行）",
+                  TerminalAutomationScript.automationInstanceVerdict(instances: [
+                      instance(200, "/tmp/vibefocus-b149-UUID/iTerm2")
+                  ]) != .clean)
+            check("instanceGuard: /private/tmp 与 /var/folders 同判临时副本",
+                  TerminalAutomationScript.isEphemeralInstancePath("/private/tmp/x/iTerm2")
+                  && TerminalAutomationScript.isEphemeralInstancePath("/var/folders/zz/T/iTerm2")
+                  && !TerminalAutomationScript.isEphemeralInstancePath("/Applications/iTerm.app/Contents/MacOS/iTerm2"))
+            check("instanceGuard: 唯一实例路径不可辨 → 不放行（诚实拒绝）",
+                  TerminalAutomationScript.automationInstanceVerdict(instances: [
+                      instance(300, nil)
+                  ]) != .clean)
+            check("instanceGuard: 双正式实例并存 → ambiguous（寻址会漂移）",
+                  TerminalAutomationScript.automationInstanceVerdict(instances: [
+                      instance(400, "/Applications/iTerm.app/Contents/MacOS/iTerm2"),
+                      instance(401, "/Applications/iTerm.app/Contents/MacOS/iTerm2")
+                  ]) != .clean)
+            check("instanceGuard: 临时+正式并存 → 非 clean",
+                  TerminalAutomationScript.automationInstanceVerdict(instances: [
+                      instance(500, "/tmp/e2e/iTerm2"),
+                      instance(501, "/Applications/iTerm.app/Contents/MacOS/iTerm2")
+                  ]) != .clean)
+            check("instanceGuard: clean → 放行文案为 nil",
+                  TerminalAutomationScript.instanceGuardFailureMessage(
+                      for: .clean, appName: "iTerm2") == nil)
+            check("instanceGuard: ephemeralOnly 文案交代丢失风险",
+                  TerminalAutomationScript.instanceGuardFailureMessage(
+                      for: .ephemeralOnly(detail: "pid 200：/tmp/e2e/iTerm2"),
+                      appName: "iTerm2")?.contains("丢失") == true)
+            check("instanceGuard: ambiguous 文案交代随机路由",
+                  TerminalAutomationScript.instanceGuardFailureMessage(
+                      for: .ambiguous(detail: "pid 500；pid 501"),
+                      appName: "iTerm2")?.contains("随机路由") == true)
+            check("instanceGuard: notRunning 文案带应用名",
+                  TerminalAutomationScript.instanceGuardFailureMessage(for: .notRunning, appName: "iTerm2")?
+                  .contains("iTerm2") == true)
+        }
+
+        // ===== 建窗重试表与失败明细（瞬时 AE 故障退避重试；挂起类不重试） =====
+        do {
+            check("cellRetry: 第 1 次失败退避 400ms",
+                  TerminalAutomationScript.cellCreateRetryDelayNanos(failedAttempts: 1) == 400_000_000)
+            check("cellRetry: 第 2 次失败退避 800ms",
+                  TerminalAutomationScript.cellCreateRetryDelayNanos(failedAttempts: 2) == 800_000_000)
+            check("cellRetry: 退避封顶 800ms（不随失败次数增长）",
+                  TerminalAutomationScript.cellCreateRetryDelayNanos(failedAttempts: 7) == 800_000_000)
+            check("cellRetry: 上限 3 次尝试（首次 + 2 退避重试）",
+                  TerminalAutomationScript.maxCellCreateAttempts == 3)
+
+            check("scriptFailure: nil 结果（未启动/超时）→ 明确含超时语义",
+                  TerminalAutomationScript.describeScriptFailure(nil)?.contains("30s 超时") == true)
+            check("scriptFailure: 非零退出 + stderr → 原文透传",
+                  TerminalAutomationScript.describeScriptFailure(
+                      .init(exitCode: 1, stdout: "", stderr: "execution error: iTerm2 got an error (-1712)")
+                  ) == "execution error: iTerm2 got an error (-1712)")
+            check("scriptFailure: 非零退出 + 空 stderr → 退出码现身（2026-09-11 实证形态）",
+                  TerminalAutomationScript.describeScriptFailure(
+                      .init(exitCode: 1, stdout: "", stderr: "")
+                  )?.contains("退出码 1") == true)
+            check("scriptFailure: 零退出 → nil（成功不污染）",
+                  TerminalAutomationScript.describeScriptFailure(
+                      .init(exitCode: 0, stdout: "18421", stderr: "")) == nil)
+        }
     }
 }

@@ -12,15 +12,39 @@ extension TerminalGridController {
             // 默认 2s（为 yabai 短命令设计）；超时会掐死半执行脚本泄漏孤儿窗（真机实证）。
             ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script], timeout: 30)
         }.value
-        if let result, result.exitCode != 0, !result.stderr.isEmpty {
-            lastScriptError = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if result == nil {
-            lastScriptError = "无法启动 osascript"
-        }
+        // 每次调用都重写：lastScriptError 恒反映最近一次脚本调用的真实结果，
+        // 不携带历史操作的陈旧错误（跨操作串味会把排查引向假线索）。
+        lastScriptError = TerminalAutomationScript.describeScriptFailure(result)
         return result
     }
 
+    /// 实例环境守卫的运行时采集：NSWorkspace 枚举该 bundleID 的全部运行实例。
+    /// 返回 nil = 放行；非 nil = 用户可读的拒绝原因（同时写入 lastScriptError
+    /// 供失败消息带走）。
+    /// - Parameter allowNotRunning: 开机自动恢复靠 AppleEvent 冷拉起未运行的终端
+    ///   （既有行为），传 true 保留该路径；手动操作传 false，未运行直接诚实拒绝。
+    func automationInstanceRefusal(appBundleID: String, allowNotRunning: Bool = false) -> String? {
+        let instances = NSWorkspace.shared.runningApplications
+            .filter { $0.bundleIdentifier == appBundleID }
+            .map { (pid: pid_t($0.processIdentifier), executablePath: $0.executableURL?.path) }
+        let verdict = TerminalAutomationScript.automationInstanceVerdict(instances: instances)
+        if case .notRunning = verdict, allowNotRunning {
+            return nil
+        }
+        if verdict != .clean {
+            log("[TerminalGrid] automation instance guard", level: .warn, fields: [
+                "bundleID": appBundleID,
+                "instances": String(instances.count),
+                "verdict": String(describing: verdict)
+            ])
+        }
+        let appName = TerminalSelectionResolver.knownNames[appBundleID] ?? appBundleID
+        return TerminalAutomationScript.instanceGuardFailureMessage(for: verdict, appName: appName)
+    }
+
     /// 建一个终端窗口并确保落到目标格子：
+    /// 0) 实例环境守卫（每次尝试前都验：E2E 临时副本可能在网格中途生灭）+ 瞬时
+    ///    故障退避重试（挂起类故障如 TCC 授权框不重试——30s 超时后快速失败）；
     /// 1) AppleScript 建窗 + set bounds（Terminal 的 bounds 是"窗口当前屏局部坐标"
     ///    语义，真机实证跨屏必漂移）；
     /// 2) 读回 bounds 校验，漂移 >10px 走 WindowManager.placeWindow（float 脱管 +
@@ -35,9 +59,37 @@ extension TerminalGridController {
         let script = isIterm
             ? TerminalAutomationScript.itermCreateWindow(command: command, quartzFrame: frame)
             : TerminalAutomationScript.terminalCreateWindow(command: command, quartzFrame: frame)
-        guard let result = await runScript(script), result.exitCode == 0 else {
-            return (nil, false)
+
+        var created: YabaiClient.YabaiResult?
+        var failedAttempts = 0
+        while created == nil {
+            if let refusal = automationInstanceRefusal(appBundleID: appBundleID) {
+                lastScriptError = refusal
+                return (nil, false)
+            }
+            let result = await runScript(script)
+            if let result, result.exitCode == 0 {
+                created = result
+                break
+            }
+            // 挂起类故障（未启动 / 30s 超时）：重试只会翻倍等待，快速失败
+            guard result != nil else {
+                return (nil, false)
+            }
+            failedAttempts += 1
+            guard failedAttempts < TerminalAutomationScript.maxCellCreateAttempts else {
+                return (nil, false)
+            }
+            let delay = TerminalAutomationScript.cellCreateRetryDelayNanos(failedAttempts: failedAttempts)
+            log("[TerminalGrid] cell create failed, retrying", level: .warn, fields: [
+                "op": op,
+                "attempt": String(failedAttempts),
+                "retryInMs": String(delay / 1_000_000),
+                "detail": lastScriptError ?? "-"
+            ])
+            try? await Task.sleep(nanoseconds: delay)
         }
+        guard let result = created else { return (nil, false) }
         let appleScriptID = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         try? await Task.sleep(nanoseconds: Self.interWindowDelayNanos)
 
@@ -60,6 +112,7 @@ extension TerminalGridController {
             return (cgID, false)
         }
         guard let cgID else {
+            lastScriptError = "窗口已创建但无法在 CG 窗口列表定位（bounds 回读失败或就近匹配超差）——窗口可能落在了不可见空间或其它实例"
             return (nil, false)
         }
         log("[TerminalGrid] cell placement drifted, correcting via yabai", fields: [
