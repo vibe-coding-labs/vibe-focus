@@ -136,5 +136,37 @@ extension RunnerHarness {
         // --- B133 提示文案随行为同步 ---
         check("hint: 提交模式文案含「注入终端」", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("注入终端"))
         check("hint: 仅粘贴模式文案含「粘贴到终端」", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("粘贴到终端"))
+
+        // --- B160 聚焦自动弹出决策门（判序：开关→气泡占用→终端→窗口变化→活跃绑定） ---
+        func gate(_ auto: Bool, _ idle: Bool, _ term: Bool, _ changed: Bool, _ live: Bool) -> InputBubbleAutoShowGate.Outcome {
+            InputBubbleAutoShowGate.decide(
+                autoShowEnabled: auto, phaseIdle: idle, frontIsTerminal: term,
+                windowChanged: changed, hasLiveSessionBinding: live)
+        }
+        if case .summon = gate(true, true, true, true, true) {
+            check("autoshow: 全条件满足 → summon", true)
+        } else { check("autoshow: 全条件满足 → summon", false) }
+        if case .skipNotEnabled = gate(false, true, true, true, true) {
+            check("autoshow: 开关关 → skipNotEnabled（⌥⌘B 不受影响）", true)
+        } else { check("autoshow: 开关关 → skipNotEnabled（⌥⌘B 不受影响）", false) }
+        if case .skipBubbleActive = gate(true, false, true, true, true) {
+            check("autoshow: 气泡开着 → skipBubbleActive（lastSeen 冻结防回焦死循环）", true)
+        } else { check("autoshow: 气泡开着 → skipBubbleActive（lastSeen 冻结防回焦死循环）", false) }
+        if case .skipNotTerminal = gate(true, true, false, false, false) {
+            check("autoshow: 前台非终端 → skipNotTerminal（离开域清标记）", true)
+        } else { check("autoshow: 前台非终端 → skipNotTerminal（离开域清标记）", false) }
+        if case .skipSameWindow = gate(true, true, true, false, true) {
+            check("autoshow: 同窗 → skipSameWindow（注入回焦不重弹）", true)
+        } else { check("autoshow: 同窗 → skipSameWindow（注入回焦不重弹）", false) }
+        if case .skipNoLiveSession = gate(true, true, true, true, false) {
+            check("autoshow: 无活跃会话绑定 → skipNoLiveSession（普通终端不弹）", true)
+        } else { check("autoshow: 无活跃会话绑定 → skipNoLiveSession（普通终端不弹）", false) }
+        // 气泡占用优先于「非终端清标记」：气泡开着时 lastSeen 冻结不被清
+        let bubbleActiveOutcome = InputBubbleAutoShowGate.decide(
+            autoShowEnabled: true, phaseIdle: false, frontIsTerminal: false,
+            windowChanged: false, hasLiveSessionBinding: false)
+        if case .skipBubbleActive = bubbleActiveOutcome {
+            check("autoshow: 气泡开着+非终端 → 冻结优先于清标记", true)
+        } else { check("autoshow: 气泡开着+非终端 → 冻结优先于清标记", false) }
     }
 }

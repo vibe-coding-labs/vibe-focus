@@ -20,6 +20,7 @@ private struct InputBubbleSectionView: View {
     @State private var width = InputBubblePreferences.bubbleWidth
     @State private var height = InputBubblePreferences.bubbleHeight
     @State private var submitOnEnter = InputBubblePreferences.submitOnEnter
+    @State private var autoShowOnFocus = InputBubblePreferences.autoShowOnFocus
 
     var body: some View {
         SettingsCard(
@@ -36,6 +37,21 @@ private struct InputBubbleSectionView: View {
                     .toggleStyle(.switch)
                     .onChange(of: enabled) { newValue in
                         InputBubblePreferences.isEnabled = newValue
+                    }
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "聚焦会话自动弹出",
+                detail: "焦点落到正在运行 Claude 的终端窗时，气泡自动出现（无需按快捷键）。"
+            ) {
+                Toggle("", isOn: $autoShowOnFocus)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!enabled)
+                    .onChange(of: autoShowOnFocus) { newValue in
+                        InputBubblePreferences.autoShowOnFocus = newValue
                     }
             }
 

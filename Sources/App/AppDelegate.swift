@@ -178,6 +178,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // 终端使用量追踪（「自动：最近常用」编排目标的数据源）
         TerminalUsageTracker.shared.start()
+        // B160 输入气泡「聚焦会话自动弹出」观察器（激活通知 + 1s 同 app 窗口切换兜底轮询）
+        InputBubbleAutoShow.shared.start()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppBecameActive),

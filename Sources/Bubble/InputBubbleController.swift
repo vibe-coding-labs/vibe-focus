@@ -23,6 +23,9 @@ final class InputBubbleController: NSObject {
     enum Phase { case idle, open, submitting }
     var phase: Phase = .idle
 
+    /// B160：气泡是否空闲（自动弹出观察器的冻结判据；开着/提交中均不算空闲）
+    var isIdle: Bool { phase == .idle }
+
     var panel: InputBubblePanel?
     var textView: NSTextView?
 

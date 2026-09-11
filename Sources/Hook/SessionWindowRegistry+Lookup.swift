@@ -83,6 +83,13 @@ extension SessionWindowRegistry {
 
     // MARK: - UI Support
 
+    /// B160：窗口是否有活跃（未结束）会话绑定——输入气泡聚焦自动弹出的闸门。
+    /// 绑定随 hook（SessionStart/UPS）写入、随会话结束置 completed，天然反映「这窗在跑 Claude」。
+    func hasLiveSessionBinding(windowID: UInt32) -> Bool {
+        guard let state = windowStates[windowID] else { return false }
+        return !state.isCompleted
+    }
+
     var activeBindingsForUI: [WindowState] {
         windowStates.values
             .filter { !$0.isCompleted }

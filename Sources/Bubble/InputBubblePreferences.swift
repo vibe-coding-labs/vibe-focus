@@ -8,6 +8,7 @@ enum InputBubblePreferences {
     private static let widthKey = "inputBubbleWidth"
     private static let heightKey = "inputBubbleHeight"
     private static let submitOnEnterKey = "inputBubbleSubmitOnEnter"
+    private static let autoShowKey = "inputBubbleAutoShowOnFocus"
 
     /// 尺寸合法域与步长（设置页滑杆与 clamp 共用同一事实源）
     static let widthRange: (min: Double, max: Double, step: Double) = (320, 720, 20)
@@ -44,6 +45,17 @@ enum InputBubblePreferences {
                 : true
         }
         set { UserDefaults.standard.set(newValue, forKey: submitOnEnterKey) }
+    }
+
+    /// B160：焦点落到活跃 Claude 会话所在终端窗时自动弹出气泡（默认开；
+    /// ⌥⌘B 手动唤起不受此开关影响）。
+    static var autoShowOnFocus: Bool {
+        get {
+            UserDefaults.standard.object(forKey: autoShowKey) != nil
+                ? UserDefaults.standard.bool(forKey: autoShowKey)
+                : true
+        }
+        set { UserDefaults.standard.set(newValue, forKey: autoShowKey) }
     }
 
     // MARK: - 归一（纯函数，Runner 直测）
