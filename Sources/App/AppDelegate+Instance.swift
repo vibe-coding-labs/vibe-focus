@@ -135,4 +135,85 @@ extension AppDelegate {
             HotKeyManager.shared.openAccessibilitySettings()
         }
     }
+
+    // MARK: - 版本读取与安装位置校验族（B159 自 AppDelegate.swift 拆入）
+
+    func currentAppVersion() -> String {
+        // P-INST-190: 当前应用版本读取耗时（Bundle.main.infoDictionary Info.plist 字典查 CFBundleShortVersionString + fallback AppVersion.current P-INST-105；菜单/诊断显示调用，Bundle 读取）。
+        #if PERF_INSTRUMENT
+        let cavStart = Date()
+        #endif
+        let version: String = {
+            let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+            if let bundleVersion, !bundleVersion.isEmpty {
+                return bundleVersion
+            }
+            return AppVersion.current
+        }()
+        #if PERF_INSTRUMENT
+        let durMs = elapsedMilliseconds(since: cavStart)
+        if durMs >= 5 { log("[AppDelegate] currentAppVersion slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        #endif
+        return version
+    }
+
+    func installedVersion(for app: NSRunningApplication) -> String? {
+        // P-INST-114: 已安装版本读取耗时（app.bundleURL + Bundle(url:) 加载 + infoDictionary 字典查 CFBundleShortVersionString/CFBundleVersion；findExistingInstance 单实例检测调用，启动路径）。
+        #if PERF_INSTRUMENT
+        let ivStart = Date()
+        defer {
+            log("[AppDelegate] installedVersion finished", level: .debug, fields: [
+                "durationMs": String(elapsedMilliseconds(since: ivStart))
+            ])
+        }
+        #endif
+        guard let bundleURL = app.bundleURL,
+              let bundle = Bundle(url: bundleURL) else {
+            return nil
+        }
+        let shortVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String
+        if let shortVersion, !shortVersion.isEmpty {
+            return shortVersion
+        }
+        let buildVersion = bundle.infoDictionary?["CFBundleVersion"] as? String
+        if let buildVersion, !buildVersion.isEmpty {
+            return buildVersion
+        }
+        return nil
+    }
+
+    func expectedAppBundlePaths() -> [String] {
+        let home = NSHomeDirectory()
+        return [
+            (home as NSString).appendingPathComponent("Applications/VibeFocus.app"),
+            "/Applications/VibeFocus.app"
+        ]
+    }
+
+    func isAllowedDevelopmentBundlePath(_ path: String) -> Bool {
+        path.hasSuffix("/dist/VibeFocus.app")
+    }
+
+    func showWrongLocationAlert(actual: String, expectedPaths: [String]) {
+        let alert = NSAlert()
+        alert.messageText = "VibeFocus 安装位置异常"
+        let home = NSHomeDirectory()
+        let displayExpected = expectedPaths
+            .prefix(2)
+            .map { path in
+                if path.hasPrefix(home) {
+                    return path.replacingOccurrences(of: home, with: "~")
+                }
+                return path
+            }
+            .joined(separator: "\n")
+        alert.informativeText = "当前运行位置：\n\(actual)\n\n建议位置：\n\(displayExpected)\n或\n/Applications/VibeFocus.app"
+        alert.addButton(withTitle: "退出")
+
+        NSApp.setActivationPolicy(.regular)
+        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+        alert.runModal()
+        NSApp.setActivationPolicy(.accessory)
+    }
+
 }
