@@ -240,6 +240,10 @@ extension WindowManager {
             "sessionID": sessionID ?? "nil"
         ])
 
+        // B147/B148 离屏救援前置：绑定窗在不可见 space 时（AX 对离屏窗位置读写 -25205，
+        // 真机实测），先聚焦带动把该窗所在 space 切到前台，等上屏后管线才能 resolve/move。
+        rescueOffScreenWindowIfNeeded(windowID: identity.windowID, op: op)
+
         // Batch 7：阶段顺序/失败短路/双路径 float 一次的执行骨架在 MoveToMainPipeline
         // （Support/，Runner 假 IO 序列断言锁定场景 A~J），本壳只做通道接线与汇总日志。
         let result = MoveToMainPipeline.run(
@@ -302,5 +306,49 @@ extension WindowManager {
             ])
             return true
         }
+    }
+}
+
+// MARK: - B147/B148 离屏救援（remote Stop 拉主屏的前置通道）
+
+extension WindowManager {
+
+    /// CG on-screen 判定（离屏窗在 kCGWindowListOptionOnScreenOnly 中缺席）。
+    private func isWindowOnScreenCG(_ windowID: UInt32) -> Bool {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        return list.contains { w in
+            (w["kCGWindowNumber"] as? NSNumber).map { UInt32(truncating: $0) } == windowID
+        }
+    }
+
+    /// 离屏救援：绑定窗在不可见 space 时，先聚焦带动把该窗所在 space 切到前台
+    /// （minimap live 切换同款通道），轮询等上屏后再交还管线正常 resolve/move。
+    /// 全程失败静默——管线按原路径处置并如实汇报，不误伤用户桌面。
+    func rescueOffScreenWindowIfNeeded(windowID: UInt32, op: String) {
+        if isWindowOnScreenCG(windowID) { return }
+        guard let info = spaceController.queryWindow(windowID: windowID, ignoreCache: true),
+              let space = info.space, space > 0 else {
+            log("[WindowManager] off-screen rescue: yabai space unknown", level: .info, fields: [
+                "windowID": String(windowID), "op": op
+            ])
+            return
+        }
+        log("[WindowManager] off-screen rescue: switching display to window's space", level: .info, fields: [
+            "windowID": String(windowID), "space": String(space), "op": op
+        ])
+        _ = spaceController.switchToSpace(space, operationID: op)
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if isWindowOnScreenCG(windowID) {
+                log("[WindowManager] off-screen rescue: window on-screen", level: .info, fields: [
+                    "windowID": String(windowID), "space": String(space), "op": op
+                ])
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        log("[WindowManager] off-screen rescue: window still off-screen after switch", level: .warn, fields: [
+            "windowID": String(windowID), "space": String(space), "op": op
+        ])
     }
 }
