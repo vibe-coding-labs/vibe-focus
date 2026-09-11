@@ -217,6 +217,22 @@ enum TerminalAutomationScript {
         (path as NSString).lastPathComponent == canonicalExecName
     }
 
+    /// 镜像已从磁盘删除的进程不构成可路由实例：拷贝 platform 二进制的测试夹具会被
+    /// 内核卡在 E 态（正在退出）永不消亡，目录被夹具清理后 KERN_PROCARGS2 仍报旧
+    /// 路径——真机 13 个此类僵尸曾把实例守卫永久堵死（创建网格被拒，2026-09-12）。
+    /// 威胁模型区分：在场的真实裸副本（isEphemeralInstancePath 的打击对象）镜像
+    /// 文件在场，AppleScript 仍可能路由到，照常计数；镜像已删除的进程无法完成
+    /// LaunchServices 注册，寻址不可达。nil 路径保守保留（与历史判定一致）。
+    static func filterRoutableInstances(
+        _ entries: [(pid: pid_t, executablePath: String?)],
+        fileExists: (String) -> Bool
+    ) -> [(pid: pid_t, executablePath: String?)] {
+        entries.filter { entry in
+            guard let path = entry.executablePath else { return true }
+            return fileExists(path)
+        }
+    }
+
     /// instances = 该 bundleID 当前全部运行实例的（pid, 可执行路径）
     static func automationInstanceVerdict(
         instances: [(pid: pid_t, executablePath: String?)]
