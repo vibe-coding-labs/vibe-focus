@@ -211,6 +211,12 @@ enum TerminalAutomationScript {
         path.hasPrefix("/tmp/") || path.hasPrefix("/private/tmp/") || path.hasPrefix("/var/folders/")
     }
 
+    /// 进程 exec 路径是否属于目标终端：basename 与正式安装版可执行文件名一致
+    /// （iTerm.app 的可执行名是 iTerm2；副本不论落在哪个目录都会撞上同名 basename）
+    static func processPathMatchesCanonicalExec(_ path: String, canonicalExecName: String) -> Bool {
+        (path as NSString).lastPathComponent == canonicalExecName
+    }
+
     /// instances = 该 bundleID 当前全部运行实例的（pid, 可执行路径）
     static func automationInstanceVerdict(
         instances: [(pid: pid_t, executablePath: String?)]
@@ -220,10 +226,11 @@ enum TerminalAutomationScript {
            !isEphemeralInstancePath(path) {
             return .clean
         }
-        let listed = instances
+        let listed = instances.prefix(3)
             .map { "pid \($0.pid)：\($0.executablePath ?? "路径未知")" }
             .joined(separator: "；")
-        return instances.count == 1 ? .ephemeralOnly(detail: listed) : .ambiguous(detail: listed)
+        let listText = instances.count > 3 ? "\(listed)；等共 \(instances.count) 个" : listed
+        return instances.count == 1 ? .ephemeralOnly(detail: listText) : .ambiguous(detail: listText)
     }
 
     /// 守卫拒绝的用户文案；clean → nil（放行）
