@@ -36,13 +36,21 @@ final class ShortcutRecorderButton: NSButton {
 
     override func mouseDown(with event: NSEvent) {
         isRecording = true
-        ShortcutRecordingState.isRecording = true
         window?.makeFirstResponder(self)
     }
 
     override func keyDown(with event: NSEvent) {
         guard isRecording else {
             super.keyDown(with: event)
+            return
+        }
+
+        // B165：裸 Esc 取消录制（设置页文案「按 Esc 可取消录制」的承诺兑现——
+        // 此前 Esc 落进 NSButton 默认路径，录制态永不退出）。⌘ 等修饰组合的 Esc
+        // 仍是可录制组合键，走下方正常捕获。
+        if event.keyCode == UInt16(kVK_Escape) {
+            isRecording = false
+            window?.makeFirstResponder(nil)
             return
         }
 
@@ -56,13 +64,11 @@ final class ShortcutRecorderButton: NSButton {
             return
         }
         displayedShortcut = config.displayString
-        ShortcutRecordingState.isRecording = false
         onShortcutCaptured?(config)
         isRecording = false
     }
 
     override func resignFirstResponder() -> Bool {
-        ShortcutRecordingState.isRecording = false
         isRecording = false
         return super.resignFirstResponder()
     }

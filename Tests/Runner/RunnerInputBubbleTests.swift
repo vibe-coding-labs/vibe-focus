@@ -273,12 +273,34 @@ extension RunnerHarness {
         check("recorder: 零修饰 keyDown 不捕获（维持录制）", HotKeyConfiguration.from(
             event: keyEvent(keyCode: UInt16(kVK_ANSI_R), modifiers: [])) == nil)
 
-        // --- 录制让位标志（进程级，测后复位防泄漏到其他域） ---
-        check("recordingState: 默认非录制", !ShortcutRecordingState.isRecording)
-        ShortcutRecordingState.isRecording = true
-        check("recordingState: 置位可见", ShortcutRecordingState.isRecording)
-        ShortcutRecordingState.isRecording = false
-        check("recordingState: 复位可见", !ShortcutRecordingState.isRecording)
+        // --- 录制让位判据（B165 活体派生：keyWindow.firstResponder 是否录制钮） ---
+        // Runner 无 key 窗 → 恒 false；此前的布尔标志在设置窗 orderOut 不触发 resign
+        // 时会卡 true，让位变成全部全局热键永久失灵——派生实现无卡死态。
+        check("recordingState: 无 key 窗 → 非录制", !ShortcutRecordingState.isRecording)
+        check("recordingState: nil 响应者 → 不让位", !ShortcutRecordingState.isRecordingResponder(nil))
+        let recordingButton = ShortcutRecorderButton(frame: NSRect(x: 0, y: 0, width: 100, height: 28))
+        check("recordingState: 录制钮 → 让位", ShortcutRecordingState.isRecordingResponder(recordingButton))
+        let plainButton = NSButton(frame: NSRect(x: 0, y: 0, width: 100, height: 28))
+        check("recordingState: 普通按钮 → 不让位", !ShortcutRecordingState.isRecordingResponder(plainButton))
+        let textViewResponder = NSTextView()
+        check("recordingState: 非录制钮响应者 → 不让位", !ShortcutRecordingState.isRecordingResponder(textViewResponder))
+
+        // --- ⌃T 标题编辑键占用（B165）：三处录制校验共用 validationError 单源 ---
+        check("titleEditor: ⌃T 开启时拒绝（含提示语）",
+              HotKeyManager.validationError(for: HotKeyConfiguration.titleEditor)?
+              .contains("标题编辑") == true)
+        check("titleEditor: 唯一事实源常量 = 17 + controlKey",
+              HotKeyConfiguration.titleEditor == HotKeyConfiguration(
+                  keyCode: UInt32(kVK_ANSI_T), modifiers: UInt32(controlKey)))
+        check("titleEditor: ⌃⌥T 不误伤", HotKeyManager.validationError(
+            for: HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_T), modifiers: UInt32(controlKey | optionKey))) == nil)
+        let savedTitleEditorHK = TitleEditorPreferences.isHotKeyEnabled
+        TitleEditorPreferences.isHotKeyEnabled = false
+        check("titleEditor: 热键开关关闭 → ⌃T 释放可绑",
+              HotKeyManager.validationError(for: HotKeyConfiguration.titleEditor) == nil)
+        TitleEditorPreferences.isHotKeyEnabled = savedTitleEditorHK
+        check("titleEditor: 开关恢复 → ⌃T 重新占用",
+              HotKeyManager.validationError(for: HotKeyConfiguration.titleEditor) != nil)
 
         // --- summon 前台处置三态（ownApp 静默 / reject beep / proceed 捕获） ---
         check("summonGate: 自家 app 前台 → ownApp 静默", InputBubbleSummonGate.disposition(

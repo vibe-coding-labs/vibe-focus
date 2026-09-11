@@ -109,6 +109,9 @@ extension HotKeyManager {
         let bubbleHotKey = InputBubblePreferences.hotKey
         let bubbleClaimed = (currentHotKey.keyCode == bubbleHotKey.keyCode
             && currentHotKey.modifiers == bubbleHotKey.modifiers)
+            || (TitleEditorPreferences.isHotKeyEnabled
+                && bubbleHotKey.keyCode == HotKeyConfiguration.titleEditor.keyCode
+                && bubbleHotKey.modifiers == HotKeyConfiguration.titleEditor.modifiers)
             || (LayoutPreferences.isEnabled
                 && LayoutAction.allCases.contains { action in
                     guard let hotKey = layoutTable.hotKey(for: action) else { return false }
@@ -116,7 +119,7 @@ extension HotKeyManager {
                         && hotKey.modifiers == bubbleHotKey.modifiers
                 })
         if bubbleClaimed {
-            log("[HotKey] Input bubble Carbon hotkey skipped: combo claimed by primary/layout binding", level: .debug)
+            log("[HotKey] Input bubble Carbon hotkey skipped: combo claimed by primary/layout/title binding", level: .debug)
         } else {
             let bubbleHotKeyID = EventHotKeyID(signature: hotkeySignature, id: 3)
             let bubbleStatus = RegisterEventHotKey(

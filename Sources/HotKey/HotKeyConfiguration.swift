@@ -15,13 +15,29 @@ struct HotKeyConflict: Equatable {
     let reason: String
 }
 
-/// 快捷键录制器状态（B164，进程级）：录制期间 CGEventTap / NSEvent monitor /
-/// Carbon handler 对本 app 已注册的热键组合全量让位——否则「录制与当前相同的组合键」
-/// （如把气泡唤起键重录成 ⌘B 本身）会在到达录制器前被自家通道消费，永远录不上。
-/// nonisolated(unsafe)：写入只在主线程（录制器 UI），tap/monitor 回调同在 main
-/// runloop 消费，无跨线程竞争；布尔单字读取在此访问模式下足够。
+/// 快捷键录制器状态（B164 引入、B165 改活体派生）：录制期间 CGEventTap / NSEvent
+/// monitor / Carbon handler 对本 app 已注册的热键组合全量让位——否则「录制与当前
+/// 相同的组合键」（如把气泡唤起键重录成 ⌘B 本身）会在到达录制器前被自家通道消费，
+/// 永远录不上。
+/// 判据=key 窗第一响应者是否是录制钮。不能用布尔标志：设置窗被 orderOut/关闭时
+/// resignFirstResponder 未必触发（真实链路：录制中焦点落到 Claude 终端窗→自动弹出
+/// orderOut 设置窗），标志卡 true 会让位变成全部全局热键永久失灵；派生实现没有
+/// 卡死态——窗口失 key 瞬间判据自动归 false。
 enum ShortcutRecordingState {
-    nonisolated(unsafe) static var isRecording = false
+    /// 活体派生：key 窗第一响应者是录制钮 → 让位。tap 回调域由 main runloop 驱动，
+    /// isMainThread 守卫 + assumeIsolated 保证不 trap；非主线程回落 false（fail-closed，
+    /// 录制只能从主线程 UI 发起，回落只会让位失效、不会误吞全局键）。
+    static var isRecording: Bool {
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated {
+            isRecordingResponder(NSApplication.shared.keyWindow?.firstResponder)
+        }
+    }
+
+    /// 纯判定缝（Runner 直测）：录制钮本身 → 让位；其他响应者（含 nil）→ 不让位。
+    static func isRecordingResponder(_ responder: NSResponder?) -> Bool {
+        responder is ShortcutRecorderButton
+    }
 }
 
 /// Global hotkey configuration stored in UserDefaults.
@@ -30,6 +46,13 @@ struct HotKeyConfiguration: Codable, Equatable, Hashable {
     let modifiers: UInt32
 
     static let userDefaultsKey = "hotKeyConfiguration"
+    /// 标题编辑快捷键唯一事实源（⌃T，B165 提取，nonisolated struct 上无隔离问题）：
+    /// 此前 17+controlKey 硬编码散在 tap/fallback/Carbon 三处，冲突校验与让位判定
+    /// 漏了它——用户可把主开关/摆位/气泡键绑成 ⌃T，静默杀死标题编辑热键。
+    static let titleEditor = HotKeyConfiguration(
+        keyCode: UInt32(kVK_ANSI_T),
+        modifiers: UInt32(controlKey)
+    )
     static let legacyDefault = HotKeyConfiguration(
         keyCode: UInt32(kVK_ANSI_M),
         modifiers: UInt32(controlKey | optionKey | cmdKey)
