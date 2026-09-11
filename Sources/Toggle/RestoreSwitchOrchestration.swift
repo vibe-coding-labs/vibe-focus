@@ -145,5 +145,33 @@ enum RestoreSwitchOrchestration {
         }
         return .failed(postSpace: postMoveSpace)
     }
+
+    /// 胶囊 live 切换编排（B164）：先按「目标 space 在其所属屏是否已可见」判成功。
+    ///
+    /// ## 为什么不直接用 refocusPerspective 的全局焦点判漂移
+    /// `currentSpaceIndex()` = 键盘焦点所在屏的 space——键盘焦点在屏 A、屏 B 已显示
+    /// 目标 space 时，点击屏 B 的胶囊会被误判成「需要切换」，进而在空工作区上走双通道
+    /// 全失败给出误导性拒绝（2026-09-12 用户实测：屏2 已显示 2-1，点 2-1 报
+    /// 「该工作区没有可聚焦的窗口」）。目标 space 已在其所属屏可见 = 视角已在位，
+    /// 无需任何切换动作，直接 noDrift 成功。
+    ///
+    /// spaces 查询失败（nil）或目标不在列表 → 退回视角链（与旧行为一致，多一次
+    /// currentSpaceIndex 判漂移，无正确性损失）。
+    static func switchCapsuleToSpace(
+        channels: any RestoreSpaceChanneling,
+        targetSpace: Int,
+        spaces: [YabaiSpaceInfo]?,
+        operationID: String
+    ) -> PerspectiveRefocusOutcome {
+        if let target = spaces?.first(where: { $0.index == targetSpace }), target.isVisible == true {
+            return .noDrift
+        }
+        return refocusPerspective(
+            channels: channels,
+            preMoveSpace: targetSpace,
+            excludingWindowID: 0,
+            operationID: operationID
+        )
+    }
 }
 
