@@ -452,6 +452,16 @@ extension RunnerHarness {
                       instance(500, "/tmp/e2e/iTerm2"),
                       instance(501, "/Applications/iTerm.app/Contents/MacOS/iTerm2")
                   ]) != .clean)
+            check("instanceGuard: 实例列表 >3 截断为 3 并标总数（拒绝文案不随副本数无限变长）",
+                  {
+                      let verdict = TerminalAutomationScript.automationInstanceVerdict(instances: [
+                          instance(1, "/tmp/a/iTerm2"), instance(2, "/tmp/b/iTerm2"),
+                          instance(3, "/tmp/c/iTerm2"), instance(4, "/tmp/d/iTerm2"),
+                          instance(5, "/tmp/e/iTerm2")
+                      ])
+                      guard case .ambiguous(let detail) = verdict else { return false }
+                      return detail.contains("等共 5 个") && !detail.contains("/tmp/d")
+                  }())
             check("instanceGuard: clean → 放行文案为 nil",
                   TerminalAutomationScript.instanceGuardFailureMessage(
                       for: .clean, appName: "iTerm2") == nil)

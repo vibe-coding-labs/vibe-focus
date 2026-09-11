@@ -226,10 +226,11 @@ enum TerminalAutomationScript {
            !isEphemeralInstancePath(path) {
             return .clean
         }
-        let listed = instances
+        let listed = instances.prefix(3)
             .map { "pid \($0.pid)：\($0.executablePath ?? "路径未知")" }
             .joined(separator: "；")
-        return instances.count == 1 ? .ephemeralOnly(detail: listed) : .ambiguous(detail: listed)
+        let listText = instances.count > 3 ? "\(listed)；等共 \(instances.count) 个" : listed
+        return instances.count == 1 ? .ephemeralOnly(detail: listText) : .ambiguous(detail: listText)
     }
 
     /// 守卫拒绝的用户文案；clean → nil（放行）

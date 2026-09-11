@@ -58,12 +58,15 @@ extension TerminalGridController {
         }
     }
 
-    /// 全进程 exec 路径扫描（KERN_PROC_ALL + proc_pidpath；同 uid 进程无需特权）
+    /// 全进程 exec 路径扫描：KERN_PROC_ALL 枚举 pid + 逐 pid KERN_PROCARGS2 读路径。
+    /// 不能用 proc_pidpath——真机实证（2026-09-12，macOS 15.7）：它对 E2E 直接
+    /// exec 的裸 /tmp 副本静默失败（正规 LS 拉起的实例却可见），守卫会被整个绕过；
+    /// KERN_PROCARGS2（/bin/ps 同款通道）七实例全中。
     private static func allProcessExecutablePaths() -> [(pid: pid_t, path: String)] {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
-        // 多留一倍余量：采样与读取之间可能有进程生灭导致二次调用失败
+        // 多留余量：采样与读取之间可能有进程生灭
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 64)
         var actualSize = procs.count * MemoryLayout<kinfo_proc>.stride
         guard sysctl(&mib, 3, &procs, &actualSize, nil, 0) == 0 else { return [] }
@@ -72,11 +75,26 @@ extension TerminalGridController {
         result.reserveCapacity(count)
         for i in 0..<count {
             let pid = procs[i].kp_proc.p_pid
-            var pathbuf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-            guard proc_pidpath(pid, &pathbuf, UInt32(MAXPATHLEN)) > 0 else { continue }
-            result.append((pid: pid, path: String(cString: pathbuf)))
+            if let path = executablePath(pid: pid) {
+                result.append((pid: pid, path: path))
+            }
         }
         return result
+    }
+
+    /// 单进程可执行路径（KERN_PROCARGS2 布局：int32 argc + NUL 填充 + 路径 C 串）
+    private static func executablePath(pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return nil }
+        let argvStart = MemoryLayout<Int32>.size
+        guard size > argvStart else { return nil }
+        var end = argvStart
+        while end < size && buffer[end] != 0 { end += 1 }
+        guard end > argvStart else { return nil }
+        return String(decoding: buffer[argvStart..<end], as: UTF8.self)
     }
 
     /// 建一个终端窗口并确保落到目标格子：
