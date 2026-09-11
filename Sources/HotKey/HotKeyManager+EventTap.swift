@@ -49,6 +49,7 @@ extension HotKeyManager {
 
                     if keyCode == 17 && hasControl && !hasCommand && !hasAlt && !hasShift
                         && event.getIntegerValueField(.keyboardEventAutorepeat) == 0
+                        && !ShortcutRecordingState.isRecording
                     {
                         HotKeyManager.triggerTitleEditor()
                         return nil
@@ -98,6 +99,14 @@ extension HotKeyManager {
             }
         }
         guard type == .keyDown || type == .tapDisabledByTimeout || type == .tapDisabledByUserInput else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // B164 录制让位：录制期间本 app 前台，所有 keyDown 原样放行给录制器——已注册
+        // 组合（气泡键/主开关/摆位键/⌃T）否则会在到达录制器前被自家 tap 消费，「把唤起键
+        // 重录成 ⌘B 本身」这类操作永远录不上（真机实锤：设置页录 ⌘B 四连被吞+beep）。
+        // tapDisabled 自愈路由不受影响（仅 keyDown 让位）。
+        if type == .keyDown, ShortcutRecordingState.isRecording {
             return Unmanaged.passUnretained(event)
         }
 

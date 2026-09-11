@@ -15,6 +15,15 @@ struct HotKeyConflict: Equatable {
     let reason: String
 }
 
+/// 快捷键录制器状态（B164，进程级）：录制期间 CGEventTap / NSEvent monitor /
+/// Carbon handler 对本 app 已注册的热键组合全量让位——否则「录制与当前相同的组合键」
+/// （如把气泡唤起键重录成 ⌘B 本身）会在到达录制器前被自家通道消费，永远录不上。
+/// nonisolated(unsafe)：写入只在主线程（录制器 UI），tap/monitor 回调同在 main
+/// runloop 消费，无跨线程竞争；布尔单字读取在此访问模式下足够。
+enum ShortcutRecordingState {
+    nonisolated(unsafe) static var isRecording = false
+}
+
 /// Global hotkey configuration stored in UserDefaults.
 struct HotKeyConfiguration: Codable, Equatable, Hashable {
     let keyCode: UInt32

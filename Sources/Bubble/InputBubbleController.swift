@@ -96,6 +96,17 @@ final class InputBubbleController: NSObject {
             appName: frontApp.localizedName,
             bundleIdentifier: bundleID
         ) else {
+            // B164：前台是自家 app（设置窗里试键/录制）时静默退场——此刻唤起无从谈
+            // 目标窗，beep 只会让用户误读为热键失灵；非终端他 app 保持 beep 拒绝反馈。
+            if InputBubbleSummonGate.disposition(
+                frontBundleID: bundleID,
+                isTerminalApp: false
+            ) == .ownApp {
+                log("[InputBubble] summon: frontmost is self (settings/UI), silent skip", fields: [
+                    "bundleID": bundleID ?? "nil"
+                ])
+                return
+            }
             log("[InputBubble] summon: frontmost is not a terminal", fields: [
                 "bundleID": bundleID ?? "nil"
             ])

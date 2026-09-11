@@ -36,6 +36,7 @@ final class ShortcutRecorderButton: NSButton {
 
     override func mouseDown(with event: NSEvent) {
         isRecording = true
+        ShortcutRecordingState.isRecording = true
         window?.makeFirstResponder(self)
     }
 
@@ -45,22 +46,23 @@ final class ShortcutRecorderButton: NSButton {
             return
         }
 
-        let keyCode = event.keyCode
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-        // Ignore lone modifier presses
-        if modifiers.isDisjoint(with: [.shift, .control, .option, .command]) {
+        // B164：组合键必须经 from(event:) 做 NSEvent→Carbon 修饰位规范转换。旧实现
+        // 直接塞 NSEvent.ModifierFlags.rawValue（⌘=1<<20），而 HotKeyConfiguration 的
+        // 校验/匹配/展示全是 Carbon 位语义（⌘=1<<8）——校验必败 beep 回退，主开关/
+        // 摆位/气泡三处录制自诞生起就没有生效过。
+        guard let config = HotKeyConfiguration.from(event: event) else {
+            // 纯修饰键到不了 keyDown（走 flagsChanged）；此处兜底未命名键与零修饰 keyDown
             super.keyDown(with: event)
             return
         }
-
-        let config = HotKeyConfiguration(keyCode: UInt32(keyCode), modifiers: UInt32(modifiers.rawValue))
         displayedShortcut = config.displayString
+        ShortcutRecordingState.isRecording = false
         onShortcutCaptured?(config)
         isRecording = false
     }
 
     override func resignFirstResponder() -> Bool {
+        ShortcutRecordingState.isRecording = false
         isRecording = false
         return super.resignFirstResponder()
     }
