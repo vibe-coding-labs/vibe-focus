@@ -742,22 +742,36 @@ extension RunnerHarness {
         }
         do {
             // B149：bind() 编排三通道直测（B32 只锁了拒绝分支；created/alias/merged、
-            // DB 落行与摘要文案此前零覆盖）。终端 PID 用真实短进程：拷贝 /bin/sleep 改名
+            // DB 落行与摘要文案此前零覆盖）。终端 PID 用真实短进程：拷贝二进制改名
             // iTerm2 后运行，ps -o comm= 的 basename 命中 terminalAppNames——与生产
             // getProcessComm 同一判定路径（NSRunningApplication 对非 GUI 进程返回 nil，
             // 落到 comm 兜底，恰好锁住该兜底语义）。
-            let dir = "/tmp/vibefocus-b149-\(UUID().uuidString)"
+            // ⚠️ 夹具源必须是**非 platform 二进制**（homebrew bash；2026-09-12 真机实验）：
+            // 拷贝 /bin/sleep 这类 OS platform 二进制，无论 TERM/KILL/自然退出都会卡死
+            // 内核 E 态（正在退出）永不消亡——每个 Runner 轮次漏一个僵尸，累计 13 个把
+            // 生产实例守卫堵死（创建网格被拒）；ad-hoc 重签/去签名则直接起不来（AMFI 秒杀）。
+            // 命令用 while 复合形态：bash 会把单条 `sleep N` 优化成 exec 替身（comm 变 sleep），
+            // 复合命令保持 bash 镜像在场；TERM 杀 bash 即净，孤儿真 sleep 自然退出不泄漏。
+            // 目录用 NSTemporaryDirectory()（b65 夹具同款家法）：公共 /tmp 有清理竞争
+            // （真机复现 copyItem 后 run() 前 ENOENT），进程私有临时目录无此问题。
+            let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vibefocus-b149-\(UUID().uuidString)")
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(atPath: dir) }
             let exePath = dir + "/iTerm2"
-            try? FileManager.default.copyItem(atPath: "/bin/sleep", toPath: exePath)
+            // 用 /bin/cp 而非 FileManager.copyItem：2026-09-12 真机实验，copyItem 在
+            // 本机返回成功但产物立即不存在（spawn ENOENT），cp 产物正常。
+            let cp = Process()
+            cp.executableURL = URL(fileURLWithPath: "/bin/cp")
+            cp.arguments = ["/opt/homebrew/bin/bash", exePath]
+            try? cp.run()
+            cp.waitUntilExit()
             let fakeTerm = Process()
             fakeTerm.executableURL = URL(fileURLWithPath: exePath)
-            fakeTerm.arguments = ["30"]
+            fakeTerm.arguments = ["-c", "while sleep 30; do :; done"]
             try? fakeTerm.run()
             let termPid = Int32(fakeTerm.processIdentifier)
             defer { if fakeTerm.isRunning { fakeTerm.terminate() } }
-            check("bind149: 前置——改名 sleep 进程经 comm basename 判为终端",
+            check("bind149: 前置——改名 bash 进程经 comm basename 判为终端",
                   fakeTerm.isRunning && TerminalRegistry.isTerminalPID(termPid) == true)
 
             let store = WindowStateStore(dbPath: dir + "/swr.db")
@@ -899,12 +913,18 @@ extension RunnerHarness {
                   && ClaudeHookServer.shared.statusDescription == "未启动")
         }
         do {
-            // endpointURLString：token 缺省纯端点；配置 token 追加查询串（用后清键）
+            // endpointURLString：token 缺省纯端点；配置 token 追加查询串。
+            // B167：先存后清再还原（B84 家法）——本断言此前依赖 Runner 持久域「恰好
+            // 无 token」的环境状态，而安装链路（CodexHookInstaller:111、HookInstaller:135
+            // 等的 ensureTokenGenerated）会在空 token 时生成并持久化，跨轮次泄漏让本块
+            // 交替翻红（实测 pass/fail 抖动）。
+            let savedToken = ClaudeHookPreferences.authToken
+            defer { ClaudeHookPreferences.authToken = savedToken }
+            ClaudeHookPreferences.authToken = nil
             check("hookEndpoint: 无 token → 纯端点",
                   ClaudeHookPreferences.endpointURLString(port: 39277) == "http://127.0.0.1:39277/claude/hook")
             ClaudeHookPreferences.authToken = "tok123"
             let withToken = ClaudeHookPreferences.endpointURLString(port: 39277)
-            ClaudeHookPreferences.authToken = nil
             check("hookEndpoint: 配置 token → ?token= 查询串",
                   withToken == "http://127.0.0.1:39277/claude/hook?token=tok123")
         }

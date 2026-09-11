@@ -134,7 +134,7 @@ enum LANHookPreferences {
         return candidates
     }
 
-    /// 本机对外可达地址候选序（B168）：物理网卡族（en0 → 其余 enX）在前，
+    /// 本机对外可达地址候选序（B170）：物理网卡族（en0 → 其余 enX）在前，
     /// VPN/虚拟口（utun/bridge 等）殿后；排除 loopback/链路本地/198.18 fake-IP
     /// 段/未指定地址，按 IP 去重保序。
     /// 背景：Mac 换网段后 en0 地址对远程机不可达、VPN 隧道地址反而可达——

@@ -9,7 +9,7 @@ import Foundation
 extension ClaudeHookPreferences {
 
     /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点。
-    /// 本机脚本恒直连 127.0.0.1（B168）：服务端 bind 0.0.0.0，loopback 永可达，
+    /// 本机脚本恒直连 127.0.0.1（B170）：服务端 bind 0.0.0.0，loopback 永可达，
     /// 不随 LAN IP 漂移失效；且本机事件经 loopback 进来 source=local，
     /// SessionStart 绑定通道（TTY/PPID）走对分支。
     static func generateHelperScriptContent() -> String {
@@ -74,8 +74,8 @@ extension ClaudeHookPreferences {
     }
 
     /// 生成远程用的 hook-forwarder.sh 内容：按 hook-config.json 的候选主机序
-    /// 逐个试连（B168）。hosts 数组优先，回退单 host 字段，再回退 loopback——
-    /// Mac 换网段后 LAN 地址不可达而 VPN 隧道地址可达的实例（B168 真机复盘）
+    /// 逐个试连（B170）。hosts 数组优先，回退单 host 字段，再回退 loopback——
+    /// Mac 换网段后 LAN 地址不可达而 VPN 隧道地址可达的实例（B170 真机复盘）
     /// 证明单一 host 字段覆盖不了全部拓扑。上次成功地址记入
     /// ~/.vibefocus/.forwarder-host 并在下次提到最前，避免每个事件都先白等
     /// 死地址 connect-timeout。curl 成功（任意 HTTP 应答，含 4xx）即视为可达。

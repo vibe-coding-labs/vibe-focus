@@ -19,7 +19,7 @@ extension ClaudeHookPreferences {
     }
 
     /// 远程 hook-config.json 模板（install 脚本写入远程 ~/.vibefocus/hook-config.json 的唯一形状）。
-    /// extraHosts 非空时附 "hosts" 候选数组（B168）：host 仍是主地址（旧版转发器
+    /// extraHosts 非空时附 "hosts" 候选数组（B170）：host 仍是主地址（旧版转发器
     /// 兼容字段），hosts = 主地址 + 备选（VPN 隧道地址等），转发器按序逐个试连。
     static func hookConfigJSON(host: String, port: Int, token: String, machineLabel: String, extraHosts: [String] = []) -> String {
         var hostSection = "  \"host\": \"\(host)\","

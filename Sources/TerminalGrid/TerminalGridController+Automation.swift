@@ -51,10 +51,14 @@ extension TerminalGridController {
               let execName = bundle.executableURL?.lastPathComponent else {
             return []
         }
-        return allProcessExecutablePaths().compactMap { entry in
+        let matched: [(pid: pid_t, executablePath: String?)] = allProcessExecutablePaths().compactMap { entry in
             TerminalAutomationScript.processPathMatchesCanonicalExec(entry.path, canonicalExecName: execName)
                 ? (pid: entry.pid, executablePath: entry.path)
                 : nil
+        }
+        // 镜像已删除的 E 态僵尸（测试夹具泄漏）不计数——否则守卫被永久堵死（2026-09-12）。
+        return TerminalAutomationScript.filterRoutableInstances(matched) {
+            FileManager.default.fileExists(atPath: $0)
         }
     }
 

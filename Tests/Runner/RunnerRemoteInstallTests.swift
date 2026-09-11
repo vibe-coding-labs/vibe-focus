@@ -61,7 +61,7 @@ extension RunnerHarness {
               && helper.contains("str(d.get('host') or '127.0.0.1')")
               && helper.contains("VF_HOSTS_RAW=\"127.0.0.1\""))
 
-        // ===== 多候选失效切换（沙盒真实执行——B168 死地址→活地址）=====
+        // ===== 多候选失效切换（沙盒真实执行——B170 死地址→活地址）=====
         func runForwarder(home: String, path: String, payload: String) -> (exit: Int32, output: String) {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -183,7 +183,7 @@ extension RunnerHarness {
         let hasJQ = jqAvailable()
 
         func runInstaller(home: String, path: String) -> (exit: Int32, output: String) {
-            // B168: 显式注入受控值——此前经全局 authToken 读回，在本域新增的沙盒子进程
+            // B170: 显式注入受控值——此前经全局 authToken 读回，在本域新增的沙盒子进程
             // 孵化（failover 场景）介入后出现过时序性 nil（cfprefs 读回竞态），注入后
             // 本域确定性；偏好 getter 自身由其它域直测。
             let script = ClaudeHookPreferences.generateRemoteInstallScript(

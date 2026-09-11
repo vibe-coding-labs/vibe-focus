@@ -202,7 +202,8 @@ public final class HotKeyManager: ObservableObject {
         return trusted
     }
 
-    /// 快捷键校验唯一事实源（纯函数，B45 提纯）：修饰键要求 + 系统冲突表。
+    /// 快捷键校验唯一事实源（纯函数，B45 提纯）：修饰键要求 + 系统冲突表 +
+    /// 标题编辑键占用（B165；开关注册表实时读，热键开关关闭时 ⌃T 释放可绑）。
     /// nonisolated static——Runner 直测真身，消除 Runner 内同语义镜像的漂移面。
     nonisolated static func validationError(for hotKey: HotKeyConfiguration) -> String? {
         if hotKey.modifiers & (UInt32(cmdKey) | UInt32(optionKey) | UInt32(controlKey)) == 0 {
@@ -221,6 +222,15 @@ public final class HotKeyManager: ObservableObject {
                 fields: ["conflictReason": conflict.reason]
             )
             return "快捷键冲突：\(conflict.reason)"
+        }
+
+        if TitleEditorPreferences.isHotKeyEnabled, hotKey == HotKeyConfiguration.titleEditor {
+            log(
+                "[HotKey] validate: title editor hotkey collision",
+                level: .debug,
+                fields: ["keyCode": String(hotKey.keyCode), "modifiers": String(hotKey.modifiers)]
+            )
+            return "快捷键冲突：与标题编辑快捷键 ⌃T 冲突"
         }
 
         log(

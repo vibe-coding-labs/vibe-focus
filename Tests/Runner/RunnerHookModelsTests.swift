@@ -106,7 +106,7 @@ extension RunnerHarness {
         let ctxBack = try? JSONDecoder().decode(TerminalContext.self, from: JSONEncoder().encode(ctx))
         check("hookModels: terminalContext Codable 回环保真", ctxBack == ctx)
 
-        // F. 脚本生成族：本机脚本恒直连 127.0.0.1（B168 去 lanMode 缝——不随 LAN IP 漂移）
+        // F. 脚本生成族：本机脚本恒直连 127.0.0.1（B170 去 lanMode 缝——不随 LAN IP 漂移）
         //    + 标签/配置 JSON 命名事实源 + install 脚本集成。
         let helper = ClaudeHookPreferences.generateHelperScriptContent()
         check("hookModels: helper 脚本本机恒直连 127.0.0.1（无 host 采集）",

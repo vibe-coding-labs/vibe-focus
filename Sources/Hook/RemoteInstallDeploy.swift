@@ -26,7 +26,7 @@ public enum RemoteInstallDeploy {
             let i = flagIdx + offset
             return args.count > i && !args[i].hasPrefix("-") ? args[i] : nil
         }
-        // B168: 显式 host 仍是主地址；其余本机可达地址（含 VPN 隧道口）按候选序
+        // B170: 显式 host 仍是主地址；其余本机可达地址（含 VPN 隧道口）按候选序
         // 作为 extraHosts 附入远程配置——Mac 在不同网段间迁移时转发器自动试连。
         let explicitHost = positional(1)
         let candidates = LANHookPreferences.orderedAddressCandidates()

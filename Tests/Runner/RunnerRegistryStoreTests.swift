@@ -300,7 +300,7 @@ extension RunnerHarness {
               LANHookPreferences.selectLANIP(from: [ip("bridge0", "10.0.0.1")]) == nil)
     }
 
-    // MARK: 对外可达地址候选序（B168——远程转发器多候选试连的排序事实源）
+    // MARK: 对外可达地址候选序（B170——远程转发器多候选试连的排序事实源）
 
     do {
         func ip(_ interface: String, _ address: String) -> (interface: String, ip: String) {
