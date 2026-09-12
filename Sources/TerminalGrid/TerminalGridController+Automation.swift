@@ -24,12 +24,18 @@ extension TerminalGridController {
     /// NSWorkspace 只报正式实例，守卫被绕过；进程表才是全量真值。
     /// 返回 nil = 放行；非 nil = 用户可读的拒绝原因（同时写入 lastScriptError
     /// 供失败消息带走）。
-    /// - Parameter allowNotRunning: 开机自动恢复靠 AppleEvent 冷拉起未运行的终端
-    ///   （既有行为），传 true 保留该路径；手动操作传 false，未运行直接诚实拒绝。
+    /// - Parameter allowNotRunning: 未运行但已安装 → 放行（建窗 AppleEvent 冷拉起
+    ///   未运行的终端，与 autoRestore 同一既有通道；2026-09-12 用户反馈「必须先开
+    ///   iTerm2 才能建网格」即此处曾经误拒）；未安装仍拒绝（AE 只会报
+    ///   Can't get application，重试无意义）。
     func automationInstanceRefusal(appBundleID: String, allowNotRunning: Bool = false) -> String? {
         let instances = Self.terminalInstances(bundleID: appBundleID)
         let verdict = TerminalAutomationScript.automationInstanceVerdict(instances: instances)
         if case .notRunning = verdict, allowNotRunning {
+            if NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) == nil {
+                let appName = TerminalSelectionResolver.knownNames[appBundleID] ?? appBundleID
+                return "\(appName)（\(appBundleID)）未安装，无法创建终端窗口"
+            }
             return nil
         }
         if verdict != .clean {
@@ -104,15 +110,20 @@ extension TerminalGridController {
     /// 建一个终端窗口并确保落到目标格子：
     /// 0) 实例环境守卫（每次尝试前都验：E2E 临时副本可能在网格中途生灭）+ 瞬时
     ///    故障退避重试（挂起类故障如 TCC 授权框不重试——30s 超时后快速失败）；
+    ///    未运行但已安装 → 放行冷拉起（建窗 AppleEvent 自会启动 app，与
+    ///    autoRestore 既有通道同款；2026-09-12 用户反馈「必须先开 iTerm2 才能用」
+    ///    即此处误拒）；
     /// 1) AppleScript 建窗 + set bounds（Terminal 的 bounds 是"窗口当前屏局部坐标"
     ///    语义，真机实证跨屏必漂移）；
     /// 2) 读回 bounds 校验，漂移 >10px 走 WindowManager.placeWindow（float 脱管 +
     ///    yabai frame 直写）纠偏——与主流程跨屏写同一引擎。
+    /// - Parameter excluding: 本操作已认领的 CG window id（同钳制位多窗防错认）。
     func createTerminalCell(
         appBundleID: String,
         command: String?,
         frame: CGRect,
-        op: String
+        op: String,
+        excluding: Set<UInt32> = []
     ) async -> (cgWindowID: UInt32?, corrected: Bool) {
         let isIterm = TerminalAutomationScript.usesITermDialect(appBundleID)
         let script = isIterm
@@ -122,7 +133,7 @@ extension TerminalGridController {
         var created: YabaiClient.YabaiResult?
         var failedAttempts = 0
         while created == nil {
-            if let refusal = automationInstanceRefusal(appBundleID: appBundleID) {
+            if let refusal = automationInstanceRefusal(appBundleID: appBundleID, allowNotRunning: true) {
                 lastScriptError = refusal
                 return (nil, false)
             }
@@ -169,7 +180,7 @@ extension TerminalGridController {
             if !isIterm, let id = UInt32(appleScriptID) {
                 cgID = id
             } else {
-                cgID = cgWindowID(forBundleID: appBundleID, nearBounds: readback)
+                cgID = cgWindowID(forBundleID: appBundleID, nearBounds: readback, excluding: excluding)
             }
 
             if TerminalAutomationScript.cellLocateSettled(readback: readback, cgID: cgID) { break }
@@ -185,42 +196,52 @@ extension TerminalGridController {
             try? await Task.sleep(nanoseconds: delay)
         }
 
-        let converged = readback.map { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: 10) } ?? false
+        // 收敛判定用 CG 全局真值而非 AppleScript 回读：Terminal 的 bounds 是
+        // 「当前屏局部坐标」语义（真机实证），冷启动首窗落在主屏时局部数值可能
+        // 恰好撞上跨屏目标的数值 → 假收敛漏纠偏（2026-09-12 真机实锤：冷启动
+        // Terminal 网格 corrections cells=1/6、六窗散落双屏）。CG bounds 对所有
+        // 终端都是全局 quartz，统一以它为准；readback 仅用于定位重试的就近匹配。
+        var actual = readback
+        if let cgID, let global = cgWindowBounds(for: cgID) {
+            actual = global
+        }
+        let converged = actual.map { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: 10) } ?? false
         if converged {
             return (cgID, false)
         }
         guard let cgID else {
             lastScriptError = "窗口已创建但无法在 CG 窗口列表定位（bounds 回读失败或就近匹配超差）——窗口可能落在了不可见空间或其它实例"
+            log("[TerminalGrid] cell CG locate failed", level: .warn, fields: [
+                "op": op,
+                "appleScriptID": appleScriptID,
+                "readback": readback.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil",
+                "excluding": excluding.sorted().map(String.init).joined(separator: ","),
+                "locateAttempts": String(locateAttempt),
+            ])
             return (nil, false)
         }
         log("[TerminalGrid] cell placement drifted, correcting via yabai", fields: [
             "op": op,
             "windowID": String(cgID),
-            "readback": readback.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil"
+            "readback": actual.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil"
         ])
         let corrected = WindowManager.shared.placeWindow(windowID: cgID, frame: frame, operationID: op)
         return (cgID, corrected)
     }
 
-    /// 按 bundleID + 就近 bounds 找 CG window id（iTerm2 的 AppleScript id 不是 CGWindowNumber）
-    private func cgWindowID(forBundleID bundleID: String, nearBounds bounds: CGRect?) -> UInt32? {
-        let entries = cgWindowListAll().filter { entry in
-            entry.layer == 0 && entry.isOnScreen && entry.bounds != nil
-                && bundleIdentifier(ofPID: entry.ownerPID) == bundleID
+    /// 按 bundleID + 回读 bounds 找 CG window id（iTerm2 的 AppleScript id 不是
+    /// CGWindowNumber）。匹配判定在 TerminalAutomationScript.resolveCGWindowID
+    /// （onScreen 优先→全量兜底→claimed 排除→超差拒绝），此处只做候选采集：
+    /// 不再预滤 isOnScreen——新窗可能整窗出屏（set bounds 被钳回出生屏+级联），
+    /// 预滤会让重试永远等不来一个永远不在场的窗（2026-09-12 生产实锤）。
+    private func cgWindowID(forBundleID bundleID: String, nearBounds bounds: CGRect?, excluding: Set<UInt32> = []) -> UInt32? {
+        let candidates = cgWindowListAll().compactMap { entry -> (windowID: UInt32, bounds: CGRect?, isOnScreen: Bool)? in
+            guard entry.layer == 0, entry.bounds != nil,
+                  bundleIdentifier(ofPID: entry.ownerPID) == bundleID else { return nil }
+            return (entry.windowID, entry.bounds, entry.isOnScreen)
         }
-        guard let bounds else {
-            return entries.first?.windowID
-        }
-        var best: (id: UInt32, distance: CGFloat)?
-        for entry in entries {
-            let b = entry.bounds!
-            let d = hypot(b.midX - bounds.midX, b.midY - bounds.midY)
-            if best == nil || d < best!.distance {
-                best = (entry.windowID, d)
-            }
-        }
-        guard let best, best.distance < 40 else { return nil }
-        return best.id
+        return TerminalAutomationScript.resolveCGWindowID(
+            candidates: candidates, nearBounds: bounds, excluding: excluding)
     }
 
     /// Terminal.app 全量 windowID→tty 映射

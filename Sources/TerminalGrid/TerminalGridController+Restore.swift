@@ -30,9 +30,10 @@ extension TerminalGridController {
             return OperationResult(ok: false, message: "目标显示器不可用")
         }
         // 操作级实例环境守卫 + 陈旧错误复位（同 createGrid， rationale 见
-        // TerminalAutomationScript.automationInstanceVerdict）
+        // TerminalAutomationScript.automationInstanceVerdict）；未运行但已安装 →
+        // 放行冷拉起（同 createGrid，2026-09-12 用户反馈误拒链）。
         lastScriptError = nil
-        if let refusal = automationInstanceRefusal(appBundleID: snapshot.appBundleID) {
+        if let refusal = automationInstanceRefusal(appBundleID: snapshot.appBundleID, allowNotRunning: true) {
             log("[TerminalGrid] restoreLayout refused by instance guard", level: .warn, fields: [
                 "op": op, "app": snapshot.appBundleID
             ])
@@ -50,6 +51,7 @@ extension TerminalGridController {
 
         var restored = 0
         var failures: [String] = []
+        var claimedIDs: Set<UInt32> = []
         for (index, cell) in snapshot.cells.enumerated() {
             guard index < targetFrames.count else { break }
             let command = TerminalAutomationScript.cellCommand(
@@ -61,10 +63,12 @@ extension TerminalGridController {
                 appBundleID: snapshot.appBundleID,
                 command: command,
                 frame: targetFrames[index],
-                op: op
+                op: op,
+                excluding: claimedIDs
             )
-            if placement.cgWindowID != nil {
+            if let windowID = placement.cgWindowID {
                 restored += 1
+                claimedIDs.insert(windowID)
             } else {
                 failures.append("#\(index + 1)" + (cell.sessionID != nil ? "（session \(cell.sessionID!)）" : ""))
             }
@@ -156,6 +160,7 @@ extension TerminalGridController {
         var injected = 0
         var skipped = 0
         var failures = 0
+        var autoClaimedIDs: Set<UInt32> = []
         for (index, action) in actions.enumerated() where index < snapshot.cells.count {
             let cell = snapshot.cells[index]
             let command = TerminalAutomationScript.cellCommand(
@@ -183,9 +188,13 @@ extension TerminalGridController {
                     appBundleID: snapshot.appBundleID,
                     command: command,
                     frame: targetFrames[index],
-                    op: op
+                    op: op,
+                    excluding: autoClaimedIDs
                 )
-                if placement.cgWindowID != nil { created += 1 } else { failures += 1 }
+                if let windowID = placement.cgWindowID {
+                    created += 1
+                    autoClaimedIDs.insert(windowID)
+                } else { failures += 1 }
             }
         }
 
