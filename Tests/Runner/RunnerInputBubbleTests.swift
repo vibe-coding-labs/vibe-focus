@@ -302,6 +302,31 @@ extension RunnerHarness {
         check("titleEditor: 开关恢复 → ⌃T 重新占用",
               HotKeyManager.validationError(for: HotKeyConfiguration.titleEditor) != nil)
 
+        // --- B172 IME 组词态避让：marked text 时 Enter 不拦截（交给输入法确认候选） ---
+        do {
+            let tv = InputBubbleTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+            var fired: [Bool] = []
+            tv.onEnterKey = { fired.append($0) }
+            let ret = keyEvent(keyCode: UInt16(kVK_Return), modifiers: [])
+            let cmdRet = keyEvent(keyCode: UInt16(kVK_Return), modifiers: [.command])
+            tv.keyDown(with: ret)
+            check("ime: 无组词 Enter → 拦截回调（无 ⌘）", fired == [false])
+            tv.keyDown(with: cmdRet)
+            check("ime: 无组词 ⌘Enter → 拦截回调（携 ⌘）", fired == [false, true])
+            // 每次探针前重置组词：组词态首个 Enter 经 super 即被输入法语义消费（确认候选），
+            // marked 随之清除——这本身就是要放行达到的行为
+            tv.setMarkedText("nihao", selectedRange: NSRange(location: 5, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            check("ime: marked text 就位", tv.hasMarkedText())
+            tv.keyDown(with: ret)
+            check("ime: 组词态 Enter → 不拦截（放行输入法确认候选）", fired == [false, true])
+            tv.setMarkedText("nihao", selectedRange: NSRange(location: 5, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            tv.keyDown(with: cmdRet)
+            check("ime: 组词态 ⌘Enter → 不拦截（同样让位输入法）", fired == [false, true])
+            tv.unmarkText()
+            tv.keyDown(with: ret)
+            check("ime: 组词清除后恢复拦截", fired == [false, true, false])
+        }
+
         // --- summon 前台处置三态（ownApp 静默 / reject beep / proceed 捕获） ---
         check("summonGate: 自家 app 前台 → ownApp 静默", InputBubbleSummonGate.disposition(
             frontBundleID: AppIdentity.bundleID, isTerminalApp: false) == .ownApp)
