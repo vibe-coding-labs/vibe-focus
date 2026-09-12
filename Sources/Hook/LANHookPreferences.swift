@@ -102,7 +102,7 @@ enum LANHookPreferences {
     /// 旧行为硬编码只认 en0——Wi-Fi 不在 en0 的机器会拿到 127.0.0.1，
     /// 设置页显示与远程安装脚本随之失效。
     static func currentLANIP() -> String {
-        // P-INST-146: 本机 en0 IPv4 地址查询耗时（getifaddrs 链表遍历 + getnameinfo 反向解析 syscall + freeifaddrs；HookInstaller:33 写 config host + LANSettingsView 显示调用）。
+        // P-INST-146: 本机 en0 IPv4 地址查询耗时（getifaddrs 链表遍历 + getnameinfo 反向解析 syscall + freeifaddrs；LANSettingsView 显示调用）。
         #if PERF_INSTRUMENT
         let clipStart = Date()
         defer {
@@ -111,9 +111,15 @@ enum LANHookPreferences {
             ])
         }
         #endif
+        return selectLANIP(from: collectIPv4Candidates()) ?? "127.0.0.1"
+    }
+
+    /// 本机全部 IPv4 候选（interface, ip）——getifaddrs 遍历的 IO 薄壳，
+    /// currentLANIP 与 orderedAddressCandidates 共用。
+    static func collectIPv4Candidates() -> [(interface: String, ip: String)] {
         var candidates: [(interface: String, ip: String)] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return "127.0.0.1" }
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return [] }
         defer { freeifaddrs(ifaddr) }
         for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
             let interface = ptr.pointee
@@ -125,7 +131,34 @@ enum LANHookPreferences {
                               &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
             candidates.append((name, String(cString: hostname)))
         }
-        return selectLANIP(from: candidates) ?? "127.0.0.1"
+        return candidates
+    }
+
+    /// 本机对外可达地址候选序（B170）：物理网卡族（en0 → 其余 enX）在前，
+    /// VPN/虚拟口（utun/bridge 等）殿后；排除 loopback/链路本地/198.18 fake-IP
+    /// 段/未指定地址，按 IP 去重保序。
+    /// 背景：Mac 换网段后 en0 地址对远程机不可达、VPN 隧道地址反而可达——
+    /// 单一 host 字段无法同时覆盖两种拓扑，远程转发器按候选序逐个试连。
+    static func orderedAddressCandidates(from candidates: [(interface: String, ip: String)]) -> [String] {
+        let physical = candidates.filter { $0.interface.hasPrefix("en") }
+        let orderedCandidates = physical.filter { $0.interface == "en0" }
+            + physical.filter { $0.interface != "en0" }
+            + candidates.filter { !$0.interface.hasPrefix("en") }
+        var seen = Set<String>()
+        var result: [String] = []
+        for candidate in orderedCandidates {
+            let ip = candidate.ip
+            let excluded = ip.hasPrefix("127.") || ip.hasPrefix("169.254.")
+                || ip.hasPrefix("198.18.") || ip.hasPrefix("0.")
+            if excluded { continue }
+            if seen.insert(ip).inserted { result.append(ip) }
+        }
+        return result
+    }
+
+    /// 生产入口：实时枚举本机地址并给出候选序。
+    static func orderedAddressCandidates() -> [String] {
+        orderedAddressCandidates(from: collectIPv4Candidates())
     }
 
     /// 从 IPv4 候选（interface, ip）中选出对外 LAN IP 的纯判定：

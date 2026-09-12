@@ -100,3 +100,18 @@ VIBEFOCUS_SIZE_E2E=1 VIBEFOCUS_DB_PATH=/tmp/vibefocus-size-e2e.db \
   注记同因：Terminal.app frame 按字符行高量化，≤4px 收敛不保证；放宽容差属网格域决策。
 - **基建发现**：debug runner ad-hoc 签名导致 TCC 身份随构建哈希漂移——已改证书签名
   （见「标准跑法」TCC 身份稳定节），授权一次长期有效。
+
+## 诊断注记：ps 里的 `/tmp/*/iTerm2`「实例」（B169，2026-09-12）
+
+Runner 门禁会 spawn 改名夹具进程（comm basename=iTerm2，锁定终端 PID 判定路径），
+在 ps/pgrep/KERN_PROCARGS2 里形如 `/tmp/vibefocus-b149-<UUID>/iTerm2`：
+
+- **不是真实 iTerm2 实例**：不注册 LaunchServices、收不到 AppleEvent——
+  `tell application id "com.googlecode.iterm2"` 永远只落到 /Applications 真身
+  （实测 22 个僵尸在场时 LS 仍只注册 1 个 iterm2）。「AppleScript 按实例随机路由」
+  属误报；真实风险=污染进程表诊断与生产终端实例枚举（B166 filterRoutableInstances 已滤）。
+- **历史 /bin/sleep 夹具的僵尸不可杀**：platform 二进制拷贝卡死内核 E 态永不消亡
+  （B166 真机三连实锤），只能重启清空。夹具演进：B166 改 homebrew bash + while 复合
+  命令（不再 kernel 卡死）；B169 夹具 defer 补 waitUntilExit 收尸（Runner 轮次零泄漏）。
+- 判别口诀：单参数 `30` + STAT 含 E = 老 sleep 夹具遗留僵尸（重启前一直在）；
+  `-c while sleep 30` = 现行 bash 夹具（仅测试运行中可见，测完即收尸，不可见=收尸健康）。

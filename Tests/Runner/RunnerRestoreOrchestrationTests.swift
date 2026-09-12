@@ -164,6 +164,24 @@ extension RunnerHarness {
     check("候选: 目标 space 无窗口 → nil",
           SpaceController.selectRefocusCandidate(windows: [window(id: 1, space: 2)], spaceIndex: 3, excludingWindowID: nil) == nil)
 
+    // MARK: selectRefocusCandidates（B167 有序全量候选：聚焦落位验证的换下一个依据）
+
+    check("候选B167: 非最小化在前、最小化殿后（保序）",
+          SpaceController.selectRefocusCandidates(
+              windows: [window(id: 1, space: 3, minimized: true), window(id: 2, space: 3), window(id: 3, space: 3, minimized: true)],
+              spaceIndex: 3, excludingWindowID: nil).map { $0.id } == [2, 1, 3])
+    check("候选B167: space 过滤+排除 id+无 AX 过滤（与单数版同口径）",
+          SpaceController.selectRefocusCandidates(
+              windows: [window(id: 1, space: 3, hasAX: false), window(id: 7, space: 3), window(id: 4, space: 2)],
+              spaceIndex: 3, excludingWindowID: 7).map { $0.id } == [])
+    check("候选B167: 全最小化 → 仍返回全量（最小化殿后语义）",
+          SpaceController.selectRefocusCandidates(
+              windows: [window(id: 1, space: 3, minimized: true), window(id: 2, space: 3, minimized: true)],
+              spaceIndex: 3, excludingWindowID: nil).map { $0.id } == [1, 2])
+    check("候选B167: 空候选 = 单数版 nil（接口一致）",
+          SpaceController.selectRefocusCandidates(
+              windows: [window(id: 1, space: 2)], spaceIndex: 3, excludingWindowID: nil).isEmpty)
+
     // MARK: FloatToggleOutcome（float 脱管结局，真实实现）
 
     check("float 结局: toggled → didToggle=true",

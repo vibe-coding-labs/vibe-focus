@@ -248,6 +248,7 @@ final class FakeAuditor: RestoreAuditing {
         runAXSelfHealTests()
         runRemoteInstallTests()
         runForwarderBehaviorTests()
+        runSpoolDrainTests()
         runInputBubbleTests()
         runBubbleHotkeyRecorderTests()
     // MARK: 汇总

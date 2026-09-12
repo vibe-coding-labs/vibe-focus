@@ -40,6 +40,9 @@ final class ClaudeHookServer: ObservableObject {
         } else {
             stop()
         }
+        // B171: 远程 spool 拉取器随 hook 开关同启停（VPN/单向网络下远程事件
+        // 的唯一通道；无注册主机时内部自判定不轮询）。
+        RemoteSpoolDrainer.shared.applyPreferences()
         logOperationDuration("[ClaudeHookServer] applyPreferences finished", startedAt: startedAt, warnThresholdMs: 200)
     }
 

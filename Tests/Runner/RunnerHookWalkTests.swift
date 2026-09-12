@@ -770,7 +770,13 @@ extension RunnerHarness {
             fakeTerm.arguments = ["-c", "while sleep 30; do :; done"]
             try? fakeTerm.run()
             let termPid = Int32(fakeTerm.processIdentifier)
-            defer { if fakeTerm.isRunning { fakeTerm.terminate() } }
+            // 收尸契约：terminate 后必须 waitUntilExit（termPid>0 守卫 run 失败路径），
+            // 否则夹具进程要等 Runner 退出被孤儿收养才消失——门禁运行中途 ps 里仍会
+            // 出现 /tmp/*/iTerm2 条目，正是实例枚举误报检测器的触发源（B169）。
+            defer {
+                if fakeTerm.isRunning { fakeTerm.terminate() }
+                if termPid > 0 { fakeTerm.waitUntilExit() }
+            }
             check("bind149: 前置——改名 bash 进程经 comm basename 判为终端",
                   fakeTerm.isRunning && TerminalRegistry.isTerminalPID(termPid) == true)
 
@@ -913,12 +919,18 @@ extension RunnerHarness {
                   && ClaudeHookServer.shared.statusDescription == "未启动")
         }
         do {
-            // endpointURLString：token 缺省纯端点；配置 token 追加查询串（用后清键）
+            // endpointURLString：token 缺省纯端点；配置 token 追加查询串。
+            // B167：先存后清再还原（B84 家法）——本断言此前依赖 Runner 持久域「恰好
+            // 无 token」的环境状态，而安装链路（CodexHookInstaller:111、HookInstaller:135
+            // 等的 ensureTokenGenerated）会在空 token 时生成并持久化，跨轮次泄漏让本块
+            // 交替翻红（实测 pass/fail 抖动）。
+            let savedToken = ClaudeHookPreferences.authToken
+            defer { ClaudeHookPreferences.authToken = savedToken }
+            ClaudeHookPreferences.authToken = nil
             check("hookEndpoint: 无 token → 纯端点",
                   ClaudeHookPreferences.endpointURLString(port: 39277) == "http://127.0.0.1:39277/claude/hook")
             ClaudeHookPreferences.authToken = "tok123"
             let withToken = ClaudeHookPreferences.endpointURLString(port: 39277)
-            ClaudeHookPreferences.authToken = nil
             check("hookEndpoint: 配置 token → ?token= 查询串",
                   withToken == "http://127.0.0.1:39277/claude/hook?token=tok123")
         }

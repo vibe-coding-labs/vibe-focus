@@ -8,14 +8,12 @@ import Foundation
 
 extension ClaudeHookPreferences {
 
-    /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点
-    /// （默认入口读 LANHookPreferences.lanMode；lanMode 参数版是 P-INST-144 的测试缝，直测免 UserDefaults）
+    /// 生成辅助脚本内容：读取 stdin JSON，捕获终端环境变量，转发到 VibeFocus HTTP 端点。
+    /// 本机脚本恒直连 127.0.0.1（B170）：服务端 bind 0.0.0.0，loopback 永可达，
+    /// 不随 LAN IP 漂移失效；且本机事件经 loopback 进来 source=local，
+    /// SessionStart 绑定通道（TTY/PPID）走对分支。
     static func generateHelperScriptContent() -> String {
-        generateHelperScriptContent(lanMode: LANHookPreferences.lanMode)
-    }
-
-    static func generateHelperScriptContent(lanMode: Bool) -> String {
-        // P-INST-198: hook 辅助脚本内容生成耗时（读 LANHookPreferences.lanMode P-INST-144 + hostBlock/hostDefault 三元 + 多行 bash 字符串插值；installHelperScript P-INST-88 调用，写 hook-forwarder.sh）。
+        // P-INST-198: hook 辅助脚本内容生成耗时（多行 bash 字符串插值；installHelperScript P-INST-88 调用，写 hook-forwarder.sh）。
         #if PERF_INSTRUMENT
         let ghscStart = Date()
         defer {
@@ -23,11 +21,6 @@ extension ClaudeHookPreferences {
             if durMs >= 5 { log("[HookScriptGenerator] generateHelperScriptContent slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
         #endif
-        let hostBlock = lanMode ? """
-        VF_HOST=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('host','127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
-
-""" : ""
-        let hostDefault = lanMode ? "$VF_HOST" : "127.0.0.1"
         return """
         #!/bin/bash
         set -euo pipefail
@@ -38,7 +31,6 @@ extension ClaudeHookPreferences {
         VF_CONFIG="$HOME/.vibefocus/hook-config.json"
         VF_PORT=39277
         VF_TOKEN=""
-        \(hostBlock)
         if [ -f "$VF_CONFIG" ]; then
             VF_PORT=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('port',39277))" 2>/dev/null || echo "39277")
             VF_TOKEN=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('token',''))" 2>/dev/null || echo "")
@@ -71,8 +63,8 @@ extension ClaudeHookPreferences {
         print(json.dumps(d))
         " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
-        VF_URL="http://\(hostDefault):$VF_PORT/claude/hook"
-        VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
+        VF_URL="http://127.0.0.1:$VF_PORT/claude/hook"
+        VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json" --connect-timeout 1 -m 4)
         if [ -n "$VF_TOKEN" ]; then
             VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
         fi
@@ -81,7 +73,16 @@ extension ClaudeHookPreferences {
         """
     }
 
-    /// 生成远程用的 hook-forwarder.sh 内容（始终从 config 读取 host，指向 VibeFocus 机器）
+    /// 生成远程用的 hook-forwarder.sh 内容：三层投递级联（B170+B171 合流）。
+    /// ① 候选主机序逐个试连（B170）：hosts 数组优先，回退单 host 字段，再回退
+    /// loopback——Mac 换网段后 LAN 地址不可达而 VPN 隧道地址可达的实例证明单一
+    /// host 字段覆盖不了全部拓扑；上次成功地址记入 ~/.vibefocus/.forwarder-host
+    /// 并在下次提到最前。② channel-hint（B171）：全部候选失败的瞬间记时，
+    /// 10 分钟内后续事件跳过直投（VPN 单向网络免每次白等 connect-timeout），
+    /// 过期自愈重试。③ spool 落盘（B171）：候选全灭时事件原子落盘
+    /// ~/.vibefocus/spool/，Mac 侧 RemoteSpoolDrainer 定时 ssh 拉取回灌——
+    /// 服务端→Mac 完全无回程路由（单向 VPN）时的唯一通道。ssh 用户与服务器
+    /// IP 随 terminal_ctx 上报，直投可达时 Mac 顺路自注册 drain 主机。
     static func generateRemoteHelperScriptContent() -> String {
         return """
     #!/bin/bash
@@ -91,16 +92,26 @@ extension ClaudeHookPreferences {
     # Captures terminal context and forwards Claude Code hook events to remote VibeFocus
 
     VF_CONFIG="$HOME/.vibefocus/hook-config.json"
-    VF_HOST="127.0.0.1"
     VF_PORT=39277
     VF_TOKEN=""
     VF_LABEL=""
+    VF_LASTHOST_FILE="$HOME/.vibefocus/.forwarder-host"
 
     if [ -f "$VF_CONFIG" ]; then
-        VF_HOST=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('host','127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
+        VF_HOSTS_RAW=$(python3 -c "
+    import json
+    d = json.load(open('$VF_CONFIG'))
+    hs = d.get('hosts')
+    out = [str(x) for x in hs if isinstance(x, str) and x] if isinstance(hs, list) else []
+    if not out:
+        out = [str(d.get('host') or '127.0.0.1')]
+    print(chr(10).join(out))
+    " 2>/dev/null || echo "127.0.0.1")
         VF_PORT=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('port',39277))" 2>/dev/null || echo "39277")
         VF_TOKEN=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('token',''))" 2>/dev/null || echo "")
         VF_LABEL=$(python3 -c "import json;d=json.load(open('$VF_CONFIG'));print(d.get('machine_label',''))" 2>/dev/null || echo "")
+    else
+        VF_HOSTS_RAW="127.0.0.1"
     fi
 
     VF_PAYLOAD=$(cat)
@@ -114,6 +125,7 @@ extension ClaudeHookPreferences {
     VF_CPD="${CLAUDE_PROJECT_DIR:-}"
     VF_WID="${WINDOWID:-}"
     VF_SSHC="${SSH_CLIENT:-}"
+    VF_USER=$(whoami 2>/dev/null || echo "")
 
     VF_ENRICHED=$(printf '%s' "$VF_PAYLOAD" | python3 -c "
     import sys, json
@@ -131,7 +143,8 @@ extension ClaudeHookPreferences {
     }
     # SSH_CLIENT = client_ip client_port server_ip server_port
     # client_port 是 Mac 侧 ssh 进程的本地 TCP 端口，服务端据此反查本机窗口
-    # （B125 动态绑定）。注意本段 -c 脚本被 bash 双引号包裹：python 代码与注释
+    # （B125 动态绑定）。server_ip + whoami 供 Mac 自注册 spool 拉取主机
+    # （B171）。注意本段 -c 脚本被 bash 双引号包裹：python 代码与注释
     # 内不得出现双引号/$/反引号。
     conn = sys.argv[10].split() if len(sys.argv) > 10 else []
     if len(conn) >= 2:
@@ -139,17 +152,94 @@ extension ClaudeHookPreferences {
         ctx['ssh_client_port'] = conn[1]
     if len(conn) >= 3:
         ctx['ssh_server_ip'] = conn[2]
+    if len(sys.argv) > 11 and sys.argv[11]:
+        ctx['ssh_user'] = sys.argv[11]
     d['terminal_ctx'] = ctx
     print(json.dumps(d))
-    " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" "$VF_SSHC" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
+    " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" "$VF_SSHC" "$VF_USER" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
-    VF_URL="http://$VF_HOST:$VF_PORT/claude/hook"
-    VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json")
-    if [ -n "$VF_TOKEN" ]; then
-        VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
+    # ---- B171：spool 兜底状态（hint 门 + 落盘目录），投递级联见下 ----
+    VF_SPOOL_DIR="$HOME/.vibefocus/spool"
+    VF_HINT_FILE="$HOME/.vibefocus/direct-hint"
+    VF_HINT_TTL=600
+
+    VF_TRY_DIRECT=1
+    if [ -f "$VF_HINT_FILE" ]; then
+        VF_HINT_AT=$(cat "$VF_HINT_FILE" 2>/dev/null || echo 0)
+        case "$VF_HINT_AT" in ''|*[!0-9]*) VF_HINT_AT=0 ;; esac
+        VF_NOW=$(date +%s)
+        if [ "$VF_NOW" -lt $((VF_HINT_AT + VF_HINT_TTL)) ]; then
+            VF_TRY_DIRECT=0
+        fi
     fi
-    VF_CURL_ARGS+=(--data "$VF_ENRICHED")
-    curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1 || true
+
+    # ---- 投递层 ①②：候选主机序直投（hint 新鲜时整层跳过）----
+    VF_SENT=0
+    VF_TRY_DIRECT=1
+    if [ -f "$VF_HINT_FILE" ]; then
+        VF_HINT_AT=$(cat "$VF_HINT_FILE" 2>/dev/null || echo 0)
+        case "$VF_HINT_AT" in ''|*[!0-9]*) VF_HINT_AT=0 ;; esac
+        VF_NOW=$(date +%s)
+        if [ "$VF_NOW" -lt $((VF_HINT_AT + VF_HINT_TTL)) ]; then
+            VF_TRY_DIRECT=0
+        fi
+    fi
+
+    # 候选主机序：上次成功地址优先（快路径），其余按配置序。
+    VF_HOSTS=()
+    while IFS= read -r VF_LINE; do
+        if [ -n "$VF_LINE" ]; then
+            VF_HOSTS+=("$VF_LINE")
+        fi
+    done <<< "$VF_HOSTS_RAW"
+    if [ ${#VF_HOSTS[@]} -eq 0 ]; then
+        VF_HOSTS=("127.0.0.1")
+    fi
+    VF_LAST=""
+    if [ -f "$VF_LASTHOST_FILE" ]; then
+        VF_LAST=$(head -n 1 "$VF_LASTHOST_FILE" 2>/dev/null || true)
+    fi
+    VF_ORDERED=()
+    if [ -n "$VF_LAST" ]; then
+        VF_ORDERED+=("$VF_LAST")
+    fi
+    for VF_H in "${VF_HOSTS[@]}"; do
+        if [ "$VF_H" != "$VF_LAST" ]; then
+            VF_ORDERED+=("$VF_H")
+        fi
+    done
+
+    if [ "$VF_TRY_DIRECT" = "1" ]; then
+        for VF_HOST in "${VF_ORDERED[@]}"; do
+            VF_URL="http://$VF_HOST:$VF_PORT/claude/hook"
+            VF_CURL_ARGS=(-sS -X POST "$VF_URL" -H "Content-Type: application/json" --connect-timeout 1 -m 4)
+            if [ -n "$VF_TOKEN" ]; then
+                VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
+            fi
+            VF_CURL_ARGS+=(--data "$VF_ENRICHED")
+            if curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1; then
+                printf '%s\n' "$VF_HOST" > "$VF_LASTHOST_FILE" 2>/dev/null || true
+                VF_SENT=1
+                rm -f "$VF_HINT_FILE" 2>/dev/null || true
+                break
+            fi
+        done
+        if [ "$VF_SENT" = "0" ]; then
+            date +%s > "$VF_HINT_FILE" 2>/dev/null || true
+        fi
+    fi
+
+    # ---- 投递层 ③：候选全灭 → spool 落盘（Mac 侧定时 ssh 拉取，B171）----
+    if [ "$VF_SENT" = "0" ]; then
+        mkdir -p "$VF_SPOOL_DIR" 2>/dev/null || true
+        VF_STAMP="$(date +%s)-$$-${RANDOM:-0}"
+        printf '%s\n' "$VF_ENRICHED" > "$VF_SPOOL_DIR/.tmp-$VF_STAMP" 2>/dev/null || true
+        mv "$VF_SPOOL_DIR/.tmp-$VF_STAMP" "$VF_SPOOL_DIR/$VF_STAMP.json" 2>/dev/null || true
+        # 挤压积压上限：只留最新 200 个（Mac 长期失联时防无限膨胀）
+        ls -t "$VF_SPOOL_DIR" 2>/dev/null | tail -n +201 | while IFS= read -r f; do
+            rm -f "$VF_SPOOL_DIR/$f" 2>/dev/null || true
+        done
+    fi
     """
     }
 

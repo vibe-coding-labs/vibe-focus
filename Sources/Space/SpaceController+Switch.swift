@@ -45,17 +45,34 @@ extension SpaceController {
     /// 场景（2026-09-04 守卫轻查询计划）：全量 `query --windows` 在 50+ 窗口下
     /// JSON 枚举 ~100-250ms 且波动大，是守卫降级链最大单项；按目标 space 过滤后
     /// 列表只剩个位数窗口（实测 31ms vs 98ms），信息对候选选择完全等价。
+    /// B167：负载下 yabai fork 偶发 1-2s 边缘超时（2026-09-12 胶囊切换实测
+    /// durationMs=1020 贴线）——失败/超时重试一次再放弃，削掉偶发误失败。
     func queryWindowsOnSpace(_ spaceIndex: Int, operationID: String?) -> [YabaiWindowInfo]? {
-        guard let result = runYabai(arguments: ["-m", "query", "--windows", "--space", "\(spaceIndex)"], operation: "queryWindowsOnSpace(\(spaceIndex))", operationID: operationID ?? "none"),
-              result.exitCode == 0 else {
-            return nil
+        func queryOnce() -> [YabaiWindowInfo]? {
+            guard let result = runYabai(arguments: ["-m", "query", "--windows", "--space", "\(spaceIndex)"], operation: "queryWindowsOnSpace(\(spaceIndex))", operationID: operationID ?? "none"),
+                  result.exitCode == 0 else {
+                return nil
+            }
+            return decodeArray(YabaiWindowInfo.self, from: result.stdout)
         }
-        return decodeArray(YabaiWindowInfo.self, from: result.stdout)
+        if let first = queryOnce() {
+            return first
+        }
+        log("[SpaceController] queryWindowsOnSpace: first query failed/timeout, retrying once", level: .debug, fields: [
+            "op": operationID ?? "none", "spaceIndex": String(spaceIndex)
+        ])
+        return queryOnce()
     }
 
     /// - Parameter prefetchedWindows: 调用方提前查好的目标 space 窗口列表（守卫候选
     ///   预取：restore 在 move 前发起查询，move 完成时候选已就绪，省一次串行 fork）；
     ///   nil 时现查（其他调用路径）。
+    ///
+    /// B167 落位验证：`window --focus` 对不可聚焦窗口（死壳 Terminal 残窗等）会
+    /// **exit 0 但焦点/视角纹丝不动**（2026-09-12 实测：exit 0、全局焦点与可见
+    /// space 均无变化）——旧实现只看 exitCode，把 no-op 当成功上报「已切换」，
+    /// 用户视角里就是「切换失效」。现按偏好序逐候选聚焦，每个候选以「全局焦点
+    /// 窗口 id == 候选」轮询验证真落位；全候选落位失败如实返回 false。
     func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID excluded: UInt32? = nil, operationID: String? = nil, prefetchedWindows: [YabaiWindowInfo]? = nil) -> Bool {
         let op = operationID ?? "none"
         guard let windows = prefetchedWindows ?? queryWindowsOnSpace(spaceIndex, operationID: op) else {
@@ -65,46 +82,107 @@ extension SpaceController {
             return false
         }
 
-        guard let candidate = Self.selectRefocusCandidate(windows: windows, spaceIndex: spaceIndex, excludingWindowID: excluded),
-              let candidateID = candidate.id.map({ UInt32($0) }) else {
+        let candidates = Self.selectRefocusCandidates(windows: windows, spaceIndex: spaceIndex, excludingWindowID: excluded)
+        guard !candidates.isEmpty else {
             log("[SpaceController] refocusWindowOnSpace: no focusable window on target space", level: .debug, fields: [
                 "op": op, "spaceIndex": String(spaceIndex)
             ])
             return false
         }
 
-        let focusResult = runYabai(
-            arguments: ["-m", "window", "\(candidateID)", "--focus"],
-            operation: "refocusWindowOnSpace.focus(windowID=\(candidateID))",
-            operationID: op
-        )
-        let ok = focusResult?.exitCode == 0
-        log("[SpaceController] refocusWindowOnSpace result", level: ok ? .debug : .warn, fields: [
-            "op": op, "spaceIndex": String(spaceIndex),
-            "focusedWindowID": String(candidateID),
-            "candidateMinimized": String(candidate.isMinimized),
-            "success": String(ok)
+        for candidate in candidates {
+            guard let candidateID = candidate.id.map({ UInt32($0) }) else { continue }
+            let focusResult = runYabai(
+                arguments: ["-m", "window", "\(candidateID)", "--focus"],
+                operation: "refocusWindowOnSpace.focus(windowID=\(candidateID))",
+                operationID: op
+            )
+            guard focusResult?.exitCode == 0 else {
+                log("[SpaceController] refocusWindowOnSpace: focus command failed, trying next candidate", level: .debug, fields: [
+                    "op": op, "spaceIndex": String(spaceIndex), "windowID": String(candidateID)
+                ])
+                continue
+            }
+            // B167：exit 0 ≠ 切换成功，必须轮询验证视角真落到目标 space。
+            // 判据 = 目标屏可见 space（切换的真正目标）；候选 display 缺失时退回
+            // 焦点窗口 id 比对。不用「焦点 id == 候选」做主判据：同 app 多窗时
+            // app 会把焦点收敛到自己的活跃窗（≠聚焦候选），视角已切也误判失败。
+            if switchDidLand(targetSpace: spaceIndex, displayIndex: candidate.display, expectedWindow: candidateID, operationID: op) {
+                log("[SpaceController] refocusWindowOnSpace result", level: .debug, fields: [
+                    "op": op, "spaceIndex": String(spaceIndex),
+                    "focusedWindowID": String(candidateID),
+                    "candidateMinimized": String(candidate.isMinimized),
+                    "success": "true"
+                ])
+                return true
+            }
+            log("[SpaceController] refocusWindowOnSpace: focus did not land (unfocusable window no-op), trying next candidate", level: .debug, fields: [
+                "op": op, "spaceIndex": String(spaceIndex), "windowID": String(candidateID)
+            ])
+        }
+        log("[SpaceController] refocusWindowOnSpace: all candidates exhausted without focus landing", level: .warn, fields: [
+            "op": op, "spaceIndex": String(spaceIndex), "candidates": String(candidates.count)
         ])
-        return ok
+        return false
     }
+
+    /// 切换落位轮询（B167）：等聚焦/切视角动画落定后读目标屏可见 space，
+    /// == 目标 space 才算成功。displayIndex 未知时退回焦点窗口 id 比对。
+    private func switchDidLand(targetSpace: Int, displayIndex: Int?, expectedWindow: UInt32, operationID: String) -> Bool {
+        let deadline = Date().addingTimeInterval(Double(Self.refocusVerifyBudgetMs) / 1000.0)
+        while true {
+            if let displayIndex {
+                if visibleSpaceIndex(forDisplayIndex: displayIndex, ignoreCache: true)?.yabaiIndex == targetSpace {
+                    return true
+                }
+            } else if focusedWindowID(operationID: operationID) == expectedWindow {
+                return true
+            }
+            if Date() >= deadline { return false }
+            usleep(Self.refocusVerifyPollIntervalMs * 1000)
+        }
+    }
+
+    /// 全局焦点窗口 id（`query --windows --window`；失败 nil）。
+    func focusedWindowID(operationID: String) -> UInt32? {
+        guard let result = runYabai(arguments: ["-m", "query", "--windows", "--window"], operation: "focusedWindowID", operationID: operationID),
+              result.exitCode == 0,
+              let focused = decodeArray(YabaiWindowInfo.self, from: result.stdout)?.first,
+              let id = focused.id else { return nil }
+        return UInt32(id)
+    }
+
+    /// 聚焦落位验证时序（B167）。
+    static let refocusVerifyPollIntervalMs: useconds_t = 120
+    static let refocusVerifyBudgetMs: Int = 700
 
     /// refocus 候选选择（纯函数，SpaceControllerRefocusTests 锁定）。
     ///
     /// 在目标 space 的可管理窗口中偏好**非最小化**窗口：聚焦最小化窗口会把它从 Dock
     /// 拉出（凭空扰动用户布局）或在部分 app 上直接失败；仅当目标 space 全部最小化时
-    /// 才退回最小化候选（视角切换仍优先于布局扰动）。
-    static func selectRefocusCandidate(
+    /// 才退回最小化候选（视角切换仍优先于布局扰动）。B167：返回**有序全量候选**——
+    /// 调用方逐个聚焦并验证落位，头一个 no-op（死窗）自动换下一个。
+    static func selectRefocusCandidates(
         windows: [YabaiWindowInfo],
         spaceIndex: Int,
         excludingWindowID excluded: UInt32?
-    ) -> YabaiWindowInfo? {
+    ) -> [YabaiWindowInfo] {
         let onSpace = windows.filter { w in
             guard w.space == spaceIndex,
                   w.isManageableByYabai,
                   w.id.map({ UInt32($0) }) != excluded else { return false }
             return true
         }
-        return onSpace.first { !$0.isMinimized } ?? onSpace.first
+        return onSpace.filter { !$0.isMinimized } + onSpace.filter { $0.isMinimized }
+    }
+
+    /// 单数版兼容入口（= 有序候选首个；既有调用方/测试语义不变）。
+    static func selectRefocusCandidate(
+        windows: [YabaiWindowInfo],
+        spaceIndex: Int,
+        excludingWindowID excluded: UInt32?
+    ) -> YabaiWindowInfo? {
+        selectRefocusCandidates(windows: windows, spaceIndex: spaceIndex, excludingWindowID: excluded).first
     }
 
     /// Minimap 胶囊点击 live 切换（2026-09-07，用户报告「点胶囊切不过去」）：
