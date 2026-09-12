@@ -232,13 +232,23 @@ extension RunnerHarness {
         check("draft: 按窗读取各自独立", store.draft(for: 1111) == "窗口 A 的半截话" && store.draft(for: 2222) == "窗口 B 的内容")
         store.save("窗口 A 更新", for: 1111)
         check("draft: 同窗覆盖更新", store.draft(for: 1111) == "窗口 A 更新")
-        // 跨实例（重启语义）：同 suite 重建 store 仍可读
+        // B178 防抖语义：save 只进 pending，未 flush 不落盘——同 suite 新实例读不到。
+        let storeUnflushed = InputBubbleDraftStore(defaults: draftDefaults)
+        check("draft: 防抖 pending 未落盘（跨实例不可见）", storeUnflushed.draft(for: 1111) == nil)
+        store.flushPending()
+        // 跨实例（重启语义）：同 suite 重建 store 仍可读（flush 后）
         let store2 = InputBubbleDraftStore(defaults: draftDefaults)
         check("draft: 持久化跨实例可读", store2.draft(for: 2222) == "窗口 B 的内容")
         store2.clear(for: 1111)
         check("draft: clear 后读 nil", store2.draft(for: 1111) == nil && store2.draft(for: 2222) == "窗口 B 的内容")
         store2.save("   ", for: 2222)
-        check("draft: 空白保存等价清除", store2.draft(for: 2222) == nil)
+        check("draft: 空白保存等价清除（pending 路径）", store2.draft(for: 2222) == nil)
+        // B178：clear 必须丢弃 pending——提交清稿后延后 flush 不得复活草稿。
+        store2.save("复活嫌疑文本", for: 3333)
+        store2.clear(for: 3333)
+        store2.flushPending()
+        check("draft: clear 丢弃 pending 不复活", store2.draft(for: 3333) == nil)
+        store2.flushPending()
         check("draft: 全清后存储键移除", draftDefaults.data(forKey: "inputBubbleDrafts") == nil)
         draftDefaults.removePersistentDomain(forName: suiteName)
 

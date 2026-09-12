@@ -66,7 +66,11 @@ extension ToggleEngine {
 
     @discardableResult
     func restore(windowID: UInt32, triggerSource: String, traceID: String? = nil) -> RestoreOutcome {
-        Self.performRestore(
+        // B178 常开埋点：UPS 自动归位走这里，实测 34/35 次 >200ms（最高 2.3s）——
+        // 用户每次提交提示词都触发一次主线程阻塞，与打字节奏重合。
+        PerfMonitor.shared.beginSection("restore", fields: ["trigger": triggerSource])
+        defer { PerfMonitor.shared.endSection() }
+        return Self.performRestore(
             windowID: windowID,
             triggerSource: triggerSource,
             traceID: traceID,

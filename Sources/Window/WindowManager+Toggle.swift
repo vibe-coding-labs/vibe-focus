@@ -39,6 +39,9 @@ extension WindowManager {
     func toggle(operationID: String? = nil, triggerSource: String = "unknown") {
         let op = operationID ?? makeOperationID(prefix: "toggle")
         let startedAt = Date()
+        // B178 常开埋点：⌃Q toggle 热路径（抓窗/移动/收敛同步占主线程，实测 0.2~1.2s）。
+        PerfMonitor.shared.beginSection("toggle", fields: ["op": op])
+        defer { PerfMonitor.shared.endSection() }
         ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "toggle_in_progress op=\(op)")
         defer {
             // P-INST-9: defer 开销（resume + schedulePostToggleRefresh）。不计入 durationMs（在 defer 前计算），

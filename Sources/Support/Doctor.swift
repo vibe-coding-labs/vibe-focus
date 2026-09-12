@@ -248,7 +248,8 @@ enum Doctor {
         // 应用日志错误
         out.append("")
         out.append("[应用日志] \(fileState(paths.appLogPath))")
-        let errors = tailLines(paths.appLogPath, maxBytes: 262_144, count: 200).filter { $0.contains("[ERROR]") }.suffix(5)
+        let logTail = tailLines(paths.appLogPath, maxBytes: 262_144, count: 200)
+        let errors = logTail.filter { $0.contains("[ERROR]") }.suffix(5)
         if errors.isEmpty {
             out.append("  尾部无 [ERROR]")
         } else {
@@ -257,6 +258,15 @@ enum Doctor {
                 out.append("    \(line.prefix(300))")
             }
         }
+
+        // B178 性能监控：主线程停顿（卡顿取证入口）——看门狗停顿行 + 计数器快照文件。
+        let snapshotData = try? Data(contentsOf: URL(fileURLWithPath: PerfMonitor.snapshotPath))
+        out.append("")
+        out.append(contentsOf: perfReportLines(
+            snapshotData: snapshotData,
+            stallLogLines: logTail.filter { $0.contains("[PERF][STALL]") },
+            now: now
+        ))
 
         out.append("")
         if deadUnmatched.isEmpty {
@@ -274,6 +284,50 @@ enum Doctor {
         df.formatOptions = [.withInternetDateTime]
         guard let date = df.date(from: fromISO) else { return nil }
         return max(0, now.timeIntervalSince(date))
+    }
+
+    // MARK: - 性能监控报告（B178，纯逻辑 Runner 直测）
+
+    /// 停顿日志行 + 快照 JSON → 报告行。无任何记录时给「监控未产生事件」的明确交代。
+    static func perfReportLines(
+        snapshotData: Data?,
+        stallLogLines: [String],
+        now: Date
+    ) -> [String] {
+        var out: [String] = ["[性能监控] 主线程停顿（≥250ms WARN / ≥1s ERROR）与窗口作业计数"]
+        var parsed: [(at: String, deltaMs: Int, level: String)] = []
+        for line in stallLogLines {
+            if let p = PerfMonitor.parseStallLogLine(line) { parsed.append(p) }
+        }
+        var snapshot: PerfMonitorLogic.SnapshotFile?
+        if let snapshotData,
+           let decoded = try? JSONDecoder().decode(PerfMonitorLogic.SnapshotFile.self, from: snapshotData) {
+            snapshot = decoded
+        }
+        if parsed.isEmpty, snapshot == nil {
+            out.append("  无停顿记录、无快照文件（PerfMonitor 未运行或刚装机）")
+            return out
+        }
+        if parsed.isEmpty {
+            out.append("  日志尾部无停顿行（好迹象：主线程近期无 ≥250ms 阻塞）")
+        } else {
+            out.append("  日志尾部停顿 \(parsed.count) 次（最近 ≤5）:")
+            for p in parsed.suffix(5) {
+                let age = ageSeconds(fromISO: p.at, now: now)
+                    .map { String(format: "（%.0f 分钟前）", $0 / 60) } ?? ""
+                out.append("    \(p.level) 阻塞 \(p.deltaMs)ms at=\(p.at)\(age)")
+            }
+        }
+        if let snapshot {
+            out.append("  快照（自启动累计）：stallCount=\(snapshot.stallCount) generatedAt=\(snapshot.generatedAt)")
+            for c in snapshot.counters.prefix(8) {
+                let avg = c.count > 0 ? c.totalMs / Double(c.count) : 0
+                out.append(String(format: "    %@ ×%d max=%.0fms avg=%.0fms", c.name, c.count, c.maxMs, avg))
+            }
+        } else {
+            out.append("  快照文件不存在（app 运行满 5 分钟或首次停顿后生成）")
+        }
+        return out
     }
 
     // MARK: - IO 辅助
