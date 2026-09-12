@@ -5,6 +5,11 @@ import Foundation
 extension ScreenOverlayManager {
 
     func showOverlays() {
+        // B180：输入气泡存续期抑制（防第三方工具按最顶层窗口误判活跃显示器），直接 no-op。
+        guard !overlaysSuppressedForInputBubble else {
+            log("[Overlay] showOverlays skipped (input bubble suppression)", level: .debug)
+            return
+        }
         // P-INST-74: overlay 显示总耗时（N 屏 getPerScreenSpaceIndex fork 累积 P-INST-73 + OverlayWindow 创建/show；@MainActor 主线程，fork 阻塞 UI）。
         // 崩溃循环熔断：见 crashLoopSuppressed 场景注释（ScreenOverlayManager.swift）。
         guard !crashLoopSuppressed else {

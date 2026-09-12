@@ -199,6 +199,8 @@ final class InputBubbleController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKey()
         textView.window?.makeFirstResponder(textView)
+        // B180：气泡存续期隐藏自家浮层（幂等）——见 ScreenOverlayManager.setOverlaysSuppressedForInputBubble
+        ScreenOverlayManager.shared.setOverlaysSuppressedForInputBubble(true)
 
         log("[InputBubble] bubble opened", fields: [
             "windowID": String(target.windowID),
@@ -221,6 +223,8 @@ final class InputBubbleController: NSObject {
         target = nil
         phase = .idle
         NSApp.setActivationPolicy(.accessory)
+        // B180：气泡关闭即还原自家浮层（幂等；提交路径的 finishSubmission 同款）
+        ScreenOverlayManager.shared.setOverlaysSuppressedForInputBubble(false)
         restoreSettingsWindowIfNeeded()
         if reactivateTarget, let t = captured {
             _ = NSRunningApplication(processIdentifier: t.pid)?.activate(options: .activateIgnoringOtherApps)

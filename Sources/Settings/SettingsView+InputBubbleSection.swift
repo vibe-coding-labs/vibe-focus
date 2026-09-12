@@ -107,7 +107,7 @@ private struct InputBubbleSectionView: View {
 
             SettingsRow(
                 title: "移回主屏自动弹出",
-                detail: "窗口被拉回主屏（如会话结束 Stop）时气泡自动出现，方便接着输入下一条。"
+                detail: "窗口从其它屏幕移动到主屏时（摆位热键、鼠标拖动、会话结束自动拉回）气泡自动出现，省一次快捷键。"
             ) {
                 Toggle("", isOn: $autoShowOnMoveToMain)
                     .labelsHidden()
