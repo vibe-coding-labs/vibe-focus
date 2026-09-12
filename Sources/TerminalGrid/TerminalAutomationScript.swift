@@ -275,6 +275,24 @@ enum TerminalAutomationScript {
         min(UInt64(failedAttempts) * 400_000_000, 800_000_000)
     }
 
+    /// 建窗后回读+CG 定位的重试退避表（递增，累计 ~5.3s）：
+    /// iTerm2 新窗的 CG/AX 注册是懒建立（真机实测 1~3s，冷启动刚拉起的实例更久），
+    /// 单发定位会误杀刚建好的窗口（2026-09-12 用户实测第 2 格创建失败——iTerm2
+    /// 启动 3s 后即建网格，新窗未及登记）。nil = 重试预算耗尽。
+    static let cellLocateRetryDelaysNanos: [UInt64] = [
+        400_000_000, 600_000_000, 900_000_000, 1_400_000_000, 2_000_000_000,
+    ]
+
+    static func cellLocateRetryDelayNanos(attempt: Int) -> UInt64? {
+        guard attempt >= 0, attempt < cellLocateRetryDelaysNanos.count else { return nil }
+        return cellLocateRetryDelaysNanos[attempt]
+    }
+
+    /// 回读+定位是否已齐（齐了就停止重试）
+    static func cellLocateSettled(readback: CGRect?, cgID: UInt32?) -> Bool {
+        readback != nil && cgID != nil
+    }
+
     /// osascript 结果 → 失败明细（成功 → nil）。stderr 为空的非零退出是真机
     /// 实证过的真实形态（AE 被垂死实例吞掉），必须带着退出码现身，不能落进
     /// 「执行失败或超时」的兜底词里丢失取证线索。

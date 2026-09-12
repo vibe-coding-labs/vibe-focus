@@ -152,18 +152,37 @@ extension TerminalGridController {
         let appleScriptID = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         try? await Task.sleep(nanoseconds: Self.interWindowDelayNanos)
 
-        let boundsScript = isIterm
-            ? TerminalAutomationScript.itermGetBounds(windowID: appleScriptID)
-            : TerminalAutomationScript.terminalGetBounds(windowID: UInt32(appleScriptID) ?? 0)
-        let readback = (await runScript(boundsScript))
-            .flatMap { TerminalAutomationScript.parseBounds($0.stdout) }
-
-        // CG window id：Terminal 的 AppleScript id == CGWindowNumber；iTerm2 按落点 bounds 就近匹配
+        // 回读+CG 定位带退避重试：iTerm2 新窗注册懒建立（1~3s，冷启动更久），
+        // 单发判定会误杀刚建好的窗口（2026-09-12 用户实测冷启动 3s 后建网格第 2 格失败）。
+        var readback: CGRect?
         var cgID: UInt32?
-        if !isIterm, let id = UInt32(appleScriptID) {
-            cgID = id
-        } else {
-            cgID = cgWindowID(forBundleID: appBundleID, nearBounds: readback)
+        var locateAttempt = 0
+        while true {
+            let boundsScript = isIterm
+                ? TerminalAutomationScript.itermGetBounds(windowID: appleScriptID)
+                : TerminalAutomationScript.terminalGetBounds(windowID: UInt32(appleScriptID) ?? 0)
+            readback = (await runScript(boundsScript))
+                .flatMap { TerminalAutomationScript.parseBounds($0.stdout) }
+
+            // CG window id：Terminal 的 AppleScript id == CGWindowNumber；iTerm2 按落点 bounds 就近匹配
+            cgID = nil
+            if !isIterm, let id = UInt32(appleScriptID) {
+                cgID = id
+            } else {
+                cgID = cgWindowID(forBundleID: appBundleID, nearBounds: readback)
+            }
+
+            if TerminalAutomationScript.cellLocateSettled(readback: readback, cgID: cgID) { break }
+            guard let delay = TerminalAutomationScript.cellLocateRetryDelayNanos(attempt: locateAttempt) else { break }
+            locateAttempt += 1
+            log("[TerminalGrid] cell locate pending, retrying", level: .warn, fields: [
+                "op": op,
+                "attempt": String(locateAttempt),
+                "retryInMs": String(delay / 1_000_000),
+                "readback": readback.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil",
+                "cgID": cgID.map { String($0) } ?? "nil",
+            ])
+            try? await Task.sleep(nanoseconds: delay)
         }
 
         let converged = readback.map { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: 10) } ?? false

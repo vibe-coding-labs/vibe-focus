@@ -522,6 +522,20 @@ extension RunnerHarness {
             check("cellRetry: 上限 3 次尝试（首次 + 2 退避重试）",
                   TerminalAutomationScript.maxCellCreateAttempts == 3)
 
+            // ===== 回读+定位退避表（冷启动 iTerm2 新窗 CG 注册懒建立 1~3s 的对症锁，2026-09-12） =====
+            check("cellLocate: 退避表递增且累计 ~5.3s",
+                  TerminalAutomationScript.cellLocateRetryDelaysNanos == [400_000_000, 600_000_000, 900_000_000, 1_400_000_000, 2_000_000_000]
+                  && TerminalAutomationScript.cellLocateRetryDelaysNanos.reduce(0, +) == 5_300_000_000)
+            check("cellLocate: 预算耗尽返回 nil（停止重试）",
+                  TerminalAutomationScript.cellLocateRetryDelayNanos(attempt: 4) != nil
+                  && TerminalAutomationScript.cellLocateRetryDelayNanos(attempt: 5) == nil
+                  && TerminalAutomationScript.cellLocateRetryDelayNanos(attempt: -1) == nil)
+            check("cellLocate: 回读+CG 双齐才算 settled",
+                  TerminalAutomationScript.cellLocateSettled(readback: CGRect(x: 0, y: 0, width: 10, height: 10), cgID: 7)
+                  && !TerminalAutomationScript.cellLocateSettled(readback: nil, cgID: 7)
+                  && !TerminalAutomationScript.cellLocateSettled(readback: CGRect(x: 0, y: 0, width: 10, height: 10), cgID: nil)
+                  && !TerminalAutomationScript.cellLocateSettled(readback: nil, cgID: nil))
+
             check("scriptFailure: nil 结果（未启动/超时）→ 明确含超时语义",
                   TerminalAutomationScript.describeScriptFailure(nil)?.contains("30s 超时") == true)
             check("scriptFailure: 非零退出 + stderr → 原文透传",
