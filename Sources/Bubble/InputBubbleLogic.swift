@@ -233,9 +233,12 @@ enum InputBubbleLayout {
 
 /// 注入时序常量唯一事实源（执行器消费）。
 enum InputBubbleTiming {
-    /// 激活终端后等前台到位的轮询间隔 / 总预算
+    /// 激活终端后等前台到位的轮询间隔 / 总预算。
+    /// B176：预算 800→2000ms——本机切窗延迟实测可超 800ms（iTerm2 多窗 +
+    /// 高负载，见 P-INST 卡顿台账），且协作激活可能被推迟逐拍兑现；
+    /// 成功路径首个轮询即返回，预算只影响「真失败时的放弃延迟」。
     static let frontmostPollIntervalMs: Int = 50
-    static let frontmostPollBudgetMs: Int = 800
+    static let frontmostPollBudgetMs: Int = 2000
     /// ⌘V 与 Return 之间的间隔（留终端读 pasteboard 并渲染粘贴）
     static let pasteToReturnDelayMs: Int = 80
     /// 注入完成到恢复剪贴板的延迟

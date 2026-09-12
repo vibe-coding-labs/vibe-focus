@@ -35,6 +35,11 @@ extension InputBubbleController {
             abortSubmission(reason: "frontmost activate timeout", target: target)
             return
         }
+        // B176：激活逐拍重试——activate 只调一次时，被系统协作激活推迟/拒绝
+        // （典型：鼠标点击事件处理期间发起）就只能干等到假超时；每拍重发让
+        // 推迟的激活在事件落定后仍能兑现。
+        _ = NSRunningApplication(processIdentifier: target.pid)?
+            .activate(options: .activateIgnoringOtherApps)
         DispatchQueue.main.asyncAfter(
             deadline: .now() + .milliseconds(InputBubbleTiming.frontmostPollIntervalMs)
         ) { [weak self] in
