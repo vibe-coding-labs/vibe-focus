@@ -251,6 +251,7 @@ final class FakeAuditor: RestoreAuditing {
         runSpoolDrainTests()
         runInputBubbleTests()
         runBubbleHotkeyRecorderTests()
+        runBubbleResizeTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

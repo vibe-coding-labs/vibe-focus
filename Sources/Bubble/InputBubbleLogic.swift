@@ -222,6 +222,43 @@ enum InputBubbleLayout {
         return CGPoint(x: min(max(position.x, visibleFrame.minX), xUpper),
                        y: min(max(position.y, visibleFrame.minY), yUpper))
     }
+
+    // MARK: 右下角拖拽调尺寸（B175）
+
+    /// 拖拽中的实时尺寸：连续 clamp 到合法域（不按步进量化——拖拽要顺滑，
+    /// 松手时才经 clampedWidth/clampedHeight 量化并持久化）。
+    static func resizedSize(startSize: CGSize, widthDelta: CGFloat, heightDelta: CGFloat) -> CGSize {
+        let widthRange = InputBubblePreferences.widthRange
+        let heightRange = InputBubblePreferences.heightRange
+        return CGSize(
+            width: min(max(startSize.width + widthDelta, widthRange.min), widthRange.max),
+            height: min(max(startSize.height + heightDelta, heightRange.min), heightRange.max)
+        )
+    }
+
+    /// 右下角拖拽 = 左上角固定（AppKit y 向上）：origin 随高度变化反向平移。
+    static func resizedOrigin(startOrigin: CGPoint, startSize: CGSize, newSize: CGSize) -> CGPoint {
+        CGPoint(x: startOrigin.x, y: startOrigin.y + (startSize.height - newSize.height))
+    }
+
+    // MARK: 气泡内容布局（B175：提示文案 + 滚动输入区 + 提交钮 + 缩放把手）
+
+    /// 按面板尺寸摆内容（唯一事实源：builtPanel 初建 / 拖拽 relayout / 设置页联动
+    /// relayout 三方共用）。底栏右端依次提交钮、缩放把手；提示文案让位左对齐。
+    static func contentFrames(for size: CGSize) -> (hint: CGRect, scroll: CGRect, button: CGRect, grip: CGRect) {
+        let gripSide: CGFloat = 14
+        let buttonSize = CGSize(width: 58, height: 18)
+        let grip = CGRect(x: size.width - gripSide - 6, y: 7, width: gripSide, height: gripSide)
+        let button = CGRect(
+            x: grip.minX - 6 - buttonSize.width,
+            y: 5,
+            width: buttonSize.width,
+            height: buttonSize.height
+        )
+        let hint = CGRect(x: 14, y: 8, width: max(button.minX - 14 - 6, 0), height: 14)
+        let scroll = CGRect(x: 12, y: 26, width: size.width - 24, height: size.height - 40)
+        return (hint, scroll, button, grip)
+    }
 }
 
 /// 注入时序常量唯一事实源（执行器消费）。

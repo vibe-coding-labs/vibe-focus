@@ -17,6 +17,8 @@ import Foundation
 // 剪贴板快照恢复 → +Clipboard，气泡视图族 → InputBubbleViews；本文件保留状态、生命周期与委托。
 // B162：Enter/⌘Enter 改 keyDown 层拦截（doCommandBy 收不到 ⌘Enter，noop: 实锤）+
 // 草稿按窗保留（InputBubbleDraftStore）+ 用户拖动位置记忆 + Stop 拉回主屏定向弹出。
+// B175：气泡内提交钮（鼠标路径）+ 右下角拖拽调尺寸（量化落账广播）+
+// 与设置页尺寸滑杆双向实时联动（sizeDidChangeNotification）。
 
 @MainActor
 final class InputBubbleController: NSObject {
@@ -47,6 +49,9 @@ final class InputBubbleController: NSObject {
         NSSize(width: InputBubblePreferences.bubbleWidth, height: InputBubblePreferences.bubbleHeight)
     }
 
+    /// B175：右下角拖拽调尺寸的起点快照（beginResizeDrag 置位，finish 后清空）
+    var resizeDragStart: (origin: NSPoint, size: NSSize)?
+
     /// 热键瞬间捕获的注入目标
     struct Target {
         let pid: pid_t
@@ -62,6 +67,13 @@ final class InputBubbleController: NSObject {
 
     private override init() {
         super.init()
+        // B175：设置页滑杆改尺寸 → 打开中的气泡面板实时联动
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(bubbleSizeDidChange(_:)),
+            name: InputBubblePreferences.sizeDidChangeNotification,
+            object: nil
+        )
     }
 
     // MARK: 热键入口（CGEventTap / Carbon / fallback 三通道汇合点；TitleEditor 同款非隔离静态）
@@ -216,7 +228,12 @@ final class InputBubbleController: NSObject {
         log("[InputBubble] bubble dismissed", level: .debug)
     }
 
-    // MARK: 提交（Enter / ⌘Enter）
+    // MARK: 提交（Enter / ⌘Enter / 提交钮）
+
+    /// B175：气泡内提交钮（鼠标路径）——语义恒为「注入并提交」，与回车键位无关。
+    @objc func submitButtonClicked() {
+        submit(mode: .submit)
+    }
 
     fileprivate func submit(mode: InputBubbleSubmitMode) {
         guard phase == .open, let target = target, let textView = textView else { return }
@@ -295,5 +312,22 @@ extension InputBubbleController: NSWindowDelegate {
         guard phase == .open, !suppressMoveTracking else { return }
         guard let moved = notification.object as? NSWindow, moved === panel else { return }
         InputBubblePreferences.userPlacedOrigin = moved.frame.origin
+    }
+
+    // MARK: B175 尺寸联动（设置页滑杆 ↔ 打开中的气泡面板）
+
+    /// 偏好尺寸变化（拖拽落账 / 设置页写穿广播）→ 打开中的面板实时 relayout。
+    /// 面板已等于目标尺寸时跳过（拖拽落账路径先 applyPanelSize 再写偏好，
+    /// 广播到达时幂等收敛，不二次 setFrame）。
+    @objc func bubbleSizeDidChange(_ notification: Notification) {
+        guard phase == .open, panel != nil else { return }
+        let newSize = NSSize(
+            width: InputBubblePreferences.bubbleWidth,
+            height: InputBubblePreferences.bubbleHeight
+        )
+        guard let current = panel?.frame,
+              abs(current.width - newSize.width) > 0.5 || abs(current.height - newSize.height) > 0.5
+        else { return }
+        applyPanelSize(newSize)
     }
 }

@@ -36,11 +36,33 @@ extension InputBubbleController {
         let hint = NSTextField(labelWithString: InputBubbleKeyPlan.hintText(submitOnEnter: submitOnEnter))
         hint.font = NSFont.systemFont(ofSize: 10)
         hint.textColor = Self.dynamicColor(lightHex: 0x8A7B68, darkHex: 0xA29380)
-        hint.frame = NSRect(x: 14, y: 8, width: size.width - 28, height: 14)
         hint.lineBreakMode = .byTruncatingTail
+        card.hintLabel = hint
         card.addSubview(hint)
 
-        let scroll = NSScrollView(frame: NSRect(x: 12, y: 26, width: size.width - 24, height: size.height - 40))
+        let submitButton = BubbleSubmitButton(frame: .zero)
+        submitButton.isBordered = false
+        submitButton.target = self
+        submitButton.action = #selector(submitButtonClicked)
+        submitButton.toolTip = "注入并提交（同 ⌘Enter）"
+        card.submitButton = submitButton
+        card.addSubview(submitButton)
+
+        let resizeHandle = BubbleResizeHandleView(frame: .zero)
+        resizeHandle.toolTip = "拖拽调整气泡大小（与设置页尺寸实时同步）"
+        resizeHandle.onBegin = { [weak self] in
+            self?.beginResizeDrag()
+        }
+        resizeHandle.onDrag = { [weak self] dx, dy in
+            self?.applyResizeDrag(dx: dx, dy: dy)
+        }
+        resizeHandle.onEnd = { [weak self] in
+            self?.finishResizeDrag()
+        }
+        card.resizeHandle = resizeHandle
+        card.addSubview(resizeHandle)
+
+        let scroll = NSScrollView(frame: .zero)
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
@@ -66,15 +88,67 @@ extension InputBubbleController {
         )
         textView.delegate = self
         scroll.documentView = textView
+        card.scrollView = scroll
         card.addSubview(scroll)
 
         panel.contentView = card
         panel.initialFirstResponder = textView
+        card.applyLayout(size: size)
 
         self.panel = panel
         self.textView = textView
         self.panelBuiltFor = (size, submitOnEnter)
         return (panel, textView)
+    }
+
+    // MARK: 拖拽调尺寸（B175，右下角把手；几何派生在 InputBubbleLayout，Runner 直测）
+
+    /// 拖拽起点快照（把手 mouseDown 时置位；finish/取消后清空）
+    func beginResizeDrag() {
+        guard let panel else { return }
+        resizeDragStart = (origin: panel.frame.origin, size: panel.frame.size)
+    }
+
+    /// 拖拽中：左上角固定实时改尺寸（连续值不量化；didMove 期间照发——
+    /// 拖拽同时也在搬窗，位置记忆按用户语义更新）
+    func applyResizeDrag(dx: CGFloat, dy: CGFloat) {
+        guard phase == .open, let panel, let start = resizeDragStart else { return }
+        // dy 为屏幕 y 位移（向上为正）；把手在右下角，向下拖 = 增高 = 取负
+        let newSize = InputBubbleLayout.resizedSize(startSize: start.size, widthDelta: dx, heightDelta: -dy)
+        let newOrigin = InputBubbleLayout.resizedOrigin(
+            startOrigin: start.origin, startSize: start.size, newSize: newSize
+        )
+        panel.setFrame(NSRect(origin: newOrigin, size: newSize), display: true)
+    }
+
+    /// 松手：量化到步进合法域并持久化（setter 变化时广播 → 设置页滑杆同步；
+    /// 广播先于落账前面板已就位 → 联动观察者幂等跳过，回路收敛）。
+    func finishResizeDrag() {
+        defer { resizeDragStart = nil }
+        guard phase == .open, let panel else { return }
+        let width = InputBubblePreferences.clampedWidth(Double(panel.frame.width))
+        let height = InputBubblePreferences.clampedHeight(Double(panel.frame.height))
+        applyPanelSize(NSSize(width: width, height: height))
+        InputBubblePreferences.bubbleWidth = width
+        InputBubblePreferences.bubbleHeight = height
+        log("[InputBubble] bubble resized by drag", fields: [
+            "width": String(Int(width)), "height": String(Int(height))
+        ])
+    }
+
+    /// 面板按新尺寸 relayout（左上角固定；程序化定位抑制位置记忆写入，
+    /// 面板指纹同步更新防下次唤起误重建）。设置页滑杆联动与拖拽量化落账共用。
+    func applyPanelSize(_ newSize: NSSize) {
+        guard let panel else { return }
+        let current = panel.frame
+        let origin = InputBubbleLayout.resizedOrigin(
+            startOrigin: current.origin, startSize: current.size, newSize: newSize
+        )
+        suppressMoveTracking = true
+        panel.setFrame(NSRect(origin: origin, size: newSize), display: true)
+        suppressMoveTracking = false
+        (panel.contentView as? BubbleCardView)?.applyLayout(size: newSize)
+        panelBuiltFor = (newSize, InputBubblePreferences.submitOnEnter)
     }
 
     /// 锚点：目标窗（AppKit 全局坐标）左下内侧，夹进所在屏 visibleFrame。

@@ -22,6 +22,11 @@ enum InputBubblePreferences {
     static let defaultWidth: Double = 480
     static let defaultHeight: Double = 150
 
+    /// B175：尺寸变化广播——气泡拖拽落账与设置页滑杆写穿都会触发；
+    /// 打开中的气泡面板实时 relayout 与设置页 @State 回写都消费此通知。
+    /// 只在值真正变化时发（同值写不广播，联动回路自然收敛）。
+    static let sizeDidChangeNotification = Notification.Name("InputBubbleSizeDidChange")
+
     static var isEnabled: Bool {
         get {
             UserDefaults.standard.object(forKey: enabledKey) != nil
@@ -31,16 +36,30 @@ enum InputBubblePreferences {
         set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
     }
 
-    /// 气泡宽度（pt）。越界/未设置经 clampedWidth 归一。
+    /// 气泡宽度（pt）。越界/未设置经 clampedWidth 归一；变化时广播 sizeDidChangeNotification。
     static var bubbleWidth: Double {
         get { clampedWidth(UserDefaults.standard.double(forKey: widthKey)) }
-        set { UserDefaults.standard.set(clampedWidth(newValue), forKey: widthKey) }
+        set {
+            let normalized = clampedWidth(newValue)
+            let changed = normalized != bubbleWidth
+            UserDefaults.standard.set(normalized, forKey: widthKey)
+            if changed { postSizeDidChange() }
+        }
     }
 
-    /// 气泡高度（pt）。越界/未设置经 clampedHeight 归一。
+    /// 气泡高度（pt）。越界/未设置经 clampedHeight 归一；变化时广播 sizeDidChangeNotification。
     static var bubbleHeight: Double {
         get { clampedHeight(UserDefaults.standard.double(forKey: heightKey)) }
-        set { UserDefaults.standard.set(clampedHeight(newValue), forKey: heightKey) }
+        set {
+            let normalized = clampedHeight(newValue)
+            let changed = normalized != bubbleHeight
+            UserDefaults.standard.set(normalized, forKey: heightKey)
+            if changed { postSizeDidChange() }
+        }
+    }
+
+    private static func postSizeDidChange() {
+        NotificationCenter.default.post(name: sizeDidChangeNotification, object: nil)
     }
 
     /// Enter 默认行为：false（默认，B161）=Enter 换行、⌘Enter 注入并提交；
