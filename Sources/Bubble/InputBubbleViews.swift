@@ -24,7 +24,12 @@ final class InputBubbleTextView: NSTextView {
     private static let enterKeyCodes: Set<UInt16> = [UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter)]
 
     override func keyDown(with event: NSEvent) {
-        if Self.enterKeyCodes.contains(event.keyCode), !event.modifierFlags.contains(.shift) {
+        // B172：IME 组词态放行——中文/日文等输入法组词时按 Enter 是「确认候选词」，
+        // 必须交给输入法（super → inputContext），拦截会把确认组词误当提交注入，
+        // 把带标记文本的半截拼音直接射进终端（CJK 用户主路径）。
+        if Self.enterKeyCodes.contains(event.keyCode),
+           !event.modifierFlags.contains(.shift),
+           !hasMarkedText() {
             onEnterKey?(event.modifierFlags.contains(.command))
             return
         }
