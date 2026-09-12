@@ -27,7 +27,7 @@ enum WindowWorkExecutor {
     /// 把同步窗口作业调度到串行后台队列执行；调用方（MainActor async 上下文）
     /// 在 await 期间完全挂起——主线程零占用。返回后调用方经 actor 隔离自动
     /// 跳回主线程，后续 UI 副作用安全。
-    static func run<T>(_ work: @escaping () -> T) async -> T {
+    static func run<T: Sendable>(_ work: @Sendable @escaping () -> T) async -> T {
         await withCheckedContinuation { continuation in
             queue.async {
                 continuation.resume(returning: work())

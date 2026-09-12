@@ -18,13 +18,11 @@ import Foundation
 // MARK: - 假通道（记录调用序列，RestoreSwitchOrchestration 分支穷尽锁定用）
 
 /// restore 阶段序列日志：跨四类假依赖统一记录调用顺序（Batch 8 序列锁）。
-@MainActor
 final class RestoreSeqLog {
     var events: [String] = []
     func add(_ e: String) { events.append(e) }
 }
 
-@MainActor
 final class FakeRestoreChannels: RestoreSpaceChanneling {
     var seq: RestoreSeqLog?
     var canControlSpaces: Bool
@@ -114,7 +112,6 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
 
 // MARK: - restore 主体假依赖（record 存取 / 窗口操作 / 审计收集）
 
-@MainActor
 final class FakeRecords: RestoreRecordStoring {
     let record: ToggleRecord?
     private(set) var clearCalls = 0
@@ -134,7 +131,6 @@ final class FakeRecords: RestoreRecordStoring {
     }
 }
 
-@MainActor
 final class FakeWindows: RestoreWindowOperating {
     var findResult: AXUIElement?
     var moveResult = true
@@ -165,7 +161,6 @@ final class FakeWindows: RestoreWindowOperating {
     }
 }
 
-@MainActor
 final class FakeAuditor: RestoreAuditing {
     struct Event {
         let eventType: String

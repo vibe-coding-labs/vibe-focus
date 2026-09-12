@@ -5,7 +5,7 @@ import Foundation
 // 类型定义已移至 SpaceController+Types.swift
 // Yabai 执行逻辑已移至 SpaceController+Yabai.swift
 
-final class SpaceController: ObservableObject {
+final class SpaceController: ObservableObject, @unchecked Sendable {
     static let shared = SpaceController()
 
     @Published var availability: SpaceAvailability = .unknown
@@ -143,36 +143,39 @@ final class SpaceController: ObservableObject {
         raResult = "dispatched"
 
         Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
             PerfMonitor.shared.beginSection("availability.refresh", fields: ["force": String(force)])
             let spacesResult = YabaiClient.run(arguments: ["-m", "query", "--spaces"])
-            var saLoaded = false
-            if let result = spacesResult, result.exitCode == 0 {
-                saLoaded = self?.checkScriptingAdditionLoaded(yabaiPath: yabaiPath) ?? false
-            }
+            let saLoaded: Bool = (spacesResult?.exitCode == 0)
+                ? self.checkScriptingAdditionLoaded(yabaiPath: yabaiPath)
+                : false
+            let probe = AvailabilityProbe(spacesResult: spacesResult, saLoaded: saLoaded, yabaiPath: yabaiPath)
             PerfMonitor.shared.endSection()
 
-            await MainActor.run { [weak self] in
-                self?.applyAvailability(
-                    spacesResult: spacesResult,
-                    saLoaded: saLoaded,
-                    yabaiPath: yabaiPath,
-                    raResultOut: { raResult = $0 }
-                )
+            await MainActor.run {
+                self.applyAvailability(probe: probe)
             }
         }
     }
 
+    /// B180：后台探测结果载体（跨隔离域传递，全值类型）。
+    struct AvailabilityProbe {
+        let spacesResult: ShellResult?
+        let saLoaded: Bool
+        let yabaiPath: String
+    }
+
     /// 后台探测结果 → 主线程状态应用（原 refreshAvailability 的状态变更段原样搬移）。
     @MainActor
-    private func applyAvailability(
-        spacesResult: ShellResult?,
-        saLoaded: Bool,
-        yabaiPath: String,
-        raResultOut: @escaping (String) -> Void
-    ) {
+    private func applyAvailability(probe: AvailabilityProbe) {
+        let yabaiPath = probe.yabaiPath
         var raResult = "applied"
-        defer { raResultOut(raResult) }
-        guard let result = spacesResult else {
+        defer {
+            log("[SpaceController] applyAvailability finished", level: .debug, fields: [
+                "result": raResult
+            ])
+        }
+        guard let result = probe.spacesResult else {
             availability = .unavailable
             canControlSpaces = false
             lastErrorMessage = "Unable to launch yabai"
@@ -184,7 +187,7 @@ final class SpaceController: ObservableObject {
         if result.exitCode == 0 {
             availability = .available
             WindowManager.shared.focusSpaceKnownBroken = false
-            if saLoaded {
+            if probe.saLoaded {
                 canControlSpaces = true
                 lastErrorMessage = nil
                 raResult = "available_sa_loaded"

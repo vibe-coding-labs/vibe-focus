@@ -4,8 +4,9 @@ import SQLite3
 /// 窗口变更审计日志服务
 /// 记录所有窗口状态变更（toggle、restore、session bind、space move、UserPromptSubmit）
 /// 自动清理超过 maxRecords 条的旧记录
-@MainActor
-final class AuditLogger {
+final class AuditLogger: @unchecked Sendable {
+    /// B180：record 从窗口作业线程触发，缓冲区/防抖标志锁串行化（flush 仍走主线程防抖）。
+    private let stateLock = NSLock()
     static let shared = AuditLogger()
 
     private let maxRecords: Int = 10_000
@@ -58,15 +59,20 @@ final class AuditLogger {
 
     // MARK: - Record
 
-    func record(
+    nonisolated func record(
         eventType: String,
         windowID: UInt32,
         pid: Int32? = nil,
         sessionID: String? = nil,
         details: [String: String] = [:]
     ) {
-        // 追加到内存缓冲区 — 不阻塞调用者
+        // 追加到内存缓冲区 — 不阻塞调用者（B180 锁保护，跨线程追加安全）
+        stateLock.lock()
         pendingEvents.append((eventType, windowID, pid, sessionID, details))
+        let shouldSchedule = !flushScheduled
+        flushScheduled = shouldSchedule
+        stateLock.unlock()
+        guard shouldSchedule else { return }
         scheduleFlush()
     }
 
@@ -79,22 +85,28 @@ final class AuditLogger {
             log("[AuditLogger] scheduleFlush finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: sfStart))])
         }
         #endif
-        guard !flushScheduled else { return }
+        stateLock.lock()
+        let alreadyScheduled = flushScheduled
         flushScheduled = true
+        stateLock.unlock()
+        guard !alreadyScheduled else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + flushDebounceInterval) { [weak self] in
-            self?.flushScheduled = false
-            self?.flushPendingEvents()
+            guard let self else { return }
+            self.stateLock.lock()
+            self.flushScheduled = false
+            self.stateLock.unlock()
+            self.flushPendingEvents()
         }
     }
 
     /// 批量写入待处理事件到 SQLite
     /// internal 以便测试直接调用（@testable import 可见）
     func flushPendingEvents() {
-        guard !pendingEvents.isEmpty else { return }
+        let events = stateLock.withLock { pendingEvents }
+        pendingEvents = []
+        guard !events.isEmpty else { return }
         // P-INST-66: AuditLogger 批量 SQLite 写耗时（异步防抖后执行，N 条 insertEventSync；record() 本身只内存 append 不阻塞，此埋点归因批量写对主线程的占用）。
         let flushStart = Date()
-        let events = pendingEvents
-        pendingEvents = []
         let flushed = events.count
         defer {
             log("[AuditLogger] flushPendingEvents finished", level: .debug, fields: [

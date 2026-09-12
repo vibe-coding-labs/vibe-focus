@@ -17,7 +17,7 @@ enum YabaiClient {
         }
     }
 
-    static let commandTimeout: TimeInterval = 2.0
+    nonisolated static let commandTimeout: TimeInterval = 2.0
 
     /// 后台串行队列 — yabai 只读查询专用，避免阻塞主线程。
     /// 串行保证 query 顺序一致；仅用于只读（query --spaces/--displays/--space）。

@@ -6,7 +6,7 @@ import CoreFoundation
 import Foundation
 
 /// Core window management engine — finding, moving, toggling, and restoring windows.
-final class WindowManager {
+final class WindowManager: @unchecked Sendable {
     static let shared = WindowManager()
 
     let spaceController = SpaceController.shared
@@ -58,10 +58,26 @@ final class WindowManager {
     /// 运行期 AX 授权翻转监控（2026-09-06：并行会话安装实验毒化 TCC 行，move_to_main
     /// 静默失效数小时才被用户感知）。AXIsProcessTrusted 结果与上次不同 → WARN 日志 +
     /// UserDefaults 落账供 --diagnose 报告；首次调用仅记基线不告警。
-    private static var lastKnownAXTrusted: Bool?
+    /// B180：AX 授权标记被后台权限检查线程读写，锁盒保护。
+    private nonisolated static let axHealBox = AXHealStateBox()
+
+    /// 运行期自愈标记锁盒（跨线程：主线程 + 窗口作业线程都会触发权限检查）。
+    final class AXHealStateBox: @unchecked Sendable {
+        private let lock = NSLock()
+        var lastKnownAXTrusted: Bool?
+        var runtimeHealAttempted = false
+    }
+
+    private static var lastKnownAXTrusted: Bool? {
+        get { axHealBox.lastKnownAXTrusted }
+        set { axHealBox.lastKnownAXTrusted = newValue }
+    }
 
     /// 运行期自愈「每进程一次」标记（见 AXSelfHeal.decideRuntimeFlip）。
-    private static var runtimeHealAttempted = false
+    private static var runtimeHealAttempted: Bool {
+        get { axHealBox.runtimeHealAttempted }
+        set { axHealBox.runtimeHealAttempted = newValue }
+    }
 
     /// 运行期自愈执行体：5s 复核仍假 → detached 看护自拉起；无法可靠自拉起
     /// （非 bundle / 看护派生失败）则保持运行走人工提示，绝不无人拉起。

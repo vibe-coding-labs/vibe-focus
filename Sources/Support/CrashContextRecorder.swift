@@ -2,7 +2,7 @@ import Foundation
 
 // IPS 解析与文件 I/O 已移至 CrashContextRecorder+IO.swift
 
-final class CrashContextRecorder {
+final class CrashContextRecorder: @unchecked Sendable {
     /// B180：record 从窗口作业线程（后台串行队列）触发，state/persistScheduled
     /// 由 stateLock 串行化；persistState 读取走锁内快照。
     let stateLock = NSLock()

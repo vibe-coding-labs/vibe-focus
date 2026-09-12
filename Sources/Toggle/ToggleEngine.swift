@@ -9,7 +9,7 @@ import ApplicationServices
 /// 1. 单一事实来源：所有 toggle state 只存 SQLite `windows` 表，不缓存到内存
 /// 2. 确定性查找：用 windowID 直接查 SQLite，不走 PID/TTY/PPID 猜测链
 /// 3. 原子操作：save 是一次 SQLite UPDATE，read 是一次 SELECT
-final class ToggleEngine: ToggleRecordStore {
+final class ToggleEngine: ToggleRecordStore, @unchecked Sendable {
 
     static let shared = ToggleEngine()
     private init() {}
