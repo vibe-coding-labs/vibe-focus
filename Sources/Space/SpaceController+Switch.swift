@@ -191,8 +191,9 @@ extension SpaceController {
     /// 目标屏已显示目标 space、只要键盘焦点在另一块屏就被误判成需要切换，空工作区上
     /// 给出误导性失败）；真需切换时 SA 直切 → 聚焦带动降级。
     /// .failed 时调用方必须给用户明确反馈（空工作区切不动是平台事实，不许静默）。
+    /// B173：随返回目标状态（visible/hidden/missing/unknown），反馈文案按状态分流。
     @discardableResult
-    func switchToSpace(_ yabaiIndex: Int, operationID: String) -> RestoreSwitchOrchestration.PerspectiveRefocusOutcome {
+    func switchToSpace(_ yabaiIndex: Int, operationID: String) -> (outcome: RestoreSwitchOrchestration.PerspectiveRefocusOutcome, state: RestoreSwitchOrchestration.CapsuleTargetState) {
         let spaces = querySpaces(ignoreCache: true)
         return RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: self,

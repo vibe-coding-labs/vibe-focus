@@ -1039,10 +1039,10 @@ extension RunnerHarness {
             YabaiSpaceInfo(id: 5, index: 2, display: 2, isVisible: true),
             YabaiSpaceInfo(id: 6, index: 3, display: 2, isVisible: false),
         ]
-        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+        let result = RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: ch, targetSpace: 2, spaces: spaces, operationID: "t")
         check("capsule: 目标 space 已在其所属屏可见 → noDrift，零切换动作（不受全局焦点影响）",
-              outcome == .noDrift && ch.calls == [])
+              result == (outcome: .noDrift, state: .visible) && ch.calls == [])
     }
     do {
         // 目标 space 不可见 → 委托 restore 视角链（SA 直切优先）。
@@ -1052,10 +1052,11 @@ extension RunnerHarness {
             YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true),
             YabaiSpaceInfo(id: 5, index: 2, display: 2, isVisible: false),
         ]
-        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+        let result = RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: ch, targetSpace: 2, spaces: spaces, operationID: "t")
         check("capsule: 目标不可见 → 委托视角链，SA 直切成功 refocused(5)",
-              outcome == .refocused(postSpace: 5) && ch.calls == ["current", "focus", "clearCache"]
+              result == (outcome: .refocused(postSpace: 5), state: .hidden)
+              && ch.calls == ["current", "focus", "clearCache"]
               && ch.focusReceived == .yabaiIndex(2))
     }
     do {
@@ -1067,28 +1068,48 @@ extension RunnerHarness {
             YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true),
             YabaiSpaceInfo(id: 5, index: 2, display: 2, isVisible: false),
         ]
-        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+        let result = RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: ch, targetSpace: 2, spaces: spaces, operationID: "t")
         check("capsule: 不可见+SA 不可用+空工作区 → failed（如实拒绝）",
-              outcome == .failed(postSpace: 1) && ch.calls == ["current", "refocus"])
+              result == (outcome: .failed(postSpace: 1), state: .hidden)
+              && ch.calls == ["current", "refocus"])
     }
     do {
         // spaces 查询失败（nil）→ 退回旧判定（currentSpace==target 即 noDrift），不崩。
         let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 2)
-        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+        let result = RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: ch, targetSpace: 2, spaces: nil, operationID: "t")
-        check("capsule: spaces 查询失败 → 退回视角链判定，查询即真（noDrift）",
-              outcome == .noDrift && ch.calls == ["current"])
+        check("capsule: spaces 查询失败 → unknown 状态+视角链判定（currentSpace 也失败=查不到即 noDrift）",
+              result == (outcome: .noDrift, state: .unknown) && ch.calls == ["current"])
     }
     do {
         // spaces 有列表但不含目标 index（快照过期）→ 委托视角链兜底。
         let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 3)
         ch.refocusResult = true
         let spaces = [YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true)]
-        let outcome = RestoreSwitchOrchestration.switchCapsuleToSpace(
+        let result = RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: ch, targetSpace: 4, spaces: spaces, operationID: "t")
-        check("capsule: 目标不在快照列表 → 委托视角链，聚焦带动成功",
-              outcome == .refocused(postSpace: 3) && ch.calls == ["current", "refocus", "clearCache"])
+        check("capsuleB173: 目标索引不在列表（布局漂移）→ failed+missing，不盲试（零通道调用）",
+              result == (outcome: .failed(postSpace: 0), state: .missing) && ch.calls == [])
+    do {
+        // spaces 查询失败但视角链能切（currentSpace≠target，聚焦带动成功）→ refocused+unknown。
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: 1)
+        ch.refocusResult = true
+        let result = RestoreSwitchOrchestration.switchCapsuleToSpace(
+            channels: ch, targetSpace: 4, spaces: nil, operationID: "t")
+        check("capsuleB173: 查询失败+视角链切换成功 → refocused+unknown（如实上报状态）",
+              result == (outcome: .refocused(postSpace: 1), state: .unknown)
+              && ch.calls == ["current", "refocus", "clearCache"])
+    }
+    do {
+        // spaces 查询失败且视角链也失败 → failed+unknown（反馈层给「无法确认状态」而非编造）。
+        let ch = FakeRestoreChannels(canControlSpaces: false, currentSpace: nil)
+        ch.refocusResult = false
+        let result = RestoreSwitchOrchestration.switchCapsuleToSpace(
+            channels: ch, targetSpace: 4, spaces: nil, operationID: "t")
+        check("capsuleB173: 查询失败+视角链失败 → failed+unknown（currentSpace nil 走 noDrift 短路）",
+              result == (outcome: .noDrift, state: .unknown) && ch.calls == ["current"])
+    }
     }
     }
 }

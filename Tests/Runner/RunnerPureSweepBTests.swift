@@ -352,6 +352,23 @@ extension RunnerHarness {
         check("switchFB: failed 失败说明含原因（不许静默）",
               GridSpaceSwitchFeedback.message(for: .failed(postSpace: 9), label: "2-1")
               == "无法切换到 2-1：该工作区没有可聚焦的窗口，且 SA 直切通道不可用（SIP 拦截）——空工作区只能通过 SA 切换")
+        // B173 状态分流：missing=布局漂移、unknown=查询失败，各自如实文案（不与空工作区共用）。
+        check("switchFB: missing 布局漂移文案（引导刷新屏幕布局）",
+              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 0), label: "2-1",
+                                             state: .missing).contains("已不存在")
+              && GridSpaceSwitchFeedback.message(for: .failed(postSpace: 0), label: "2-1",
+                                                 state: .missing).contains("刷新"))
+        check("switchFB: unknown+noDrift 不再编造「已是当前工作区」",
+              GridSpaceSwitchFeedback.message(for: .noDrift, label: "2-1",
+                                              state: .unknown).contains("无法确认")
+              && !GridSpaceSwitchFeedback.message(for: .noDrift, label: "2-1",
+                                                  state: .unknown).contains("已是当前工作区"))
+        check("switchFB: unknown+failed 查询失败文案",
+              GridSpaceSwitchFeedback.message(for: .failed(postSpace: 9), label: "2-1",
+                                              state: .unknown).contains("yabai 查询失败"))
+        check("switchFB: unknown+refocused 照常报成功（切换真实发生）",
+              GridSpaceSwitchFeedback.message(for: .refocused(postSpace: 9), label: "2-1",
+                                              state: .unknown) == "已切换到 2-1")
 
         // TitleEditor 脚本决策层：转义/模板契约/verdict 哨兵/诊断回读。
         check("titleEsc: 反斜杠与双引号转义 + 原文透传",

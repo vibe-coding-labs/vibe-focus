@@ -146,7 +146,20 @@ enum RestoreSwitchOrchestration {
         return .failed(postSpace: postMoveSpace)
     }
 
-    /// 胶囊 live 切换编排（B164）：先按「目标 space 在其所属屏是否已可见」判成功。
+    /// 胶囊目标状态（B173）：反馈文案按真实状态分流，杜绝查询失败时的编造。
+    enum CapsuleTargetState: Equatable {
+        /// 目标 space 在其所属屏可见（无需切换）
+        case visible
+        /// 目标 space 存在但不可见（需切换）
+        case hidden
+        /// 目标索引已不存在——工作区布局漂移（增删 space 后序号重排），快照过期
+        case missing
+        /// spaces 查询失败——无法确认目标状态（yabai 不可用/超时）
+        case unknown
+    }
+
+    /// 胶囊 live 切换编排（B164 编排 / B173 状态分流）：先按「目标 space 在其所属屏
+    /// 是否已可见」判成功；缺失/未知状态如实上报，不盲试不编造。
     ///
     /// ## 为什么不直接用 refocusPerspective 的全局焦点判漂移
     /// `currentSpaceIndex()` = 键盘焦点所在屏的 space——键盘焦点在屏 A、屏 B 已显示
@@ -155,23 +168,40 @@ enum RestoreSwitchOrchestration {
     /// 「该工作区没有可聚焦的窗口」）。目标 space 已在其所属屏可见 = 视角已在位，
     /// 无需任何切换动作，直接 noDrift 成功。
     ///
-    /// spaces 查询失败（nil）或目标不在列表 → 退回视角链（与旧行为一致，多一次
-    /// currentSpaceIndex 判漂移，无正确性损失）。
+    /// ## B173 状态分流
+    /// - `missing`（目标索引不在 spaces 列表）：工作区序号会随增删 space 重排
+    ///   （2026-09-12 实测 [2..6]→[2..7]→[2..6]），过期快照的胶囊点了也不能盲试——
+    ///   如实 .failed + missing，反馈引导刷新屏幕布局；
+    /// - `unknown`（spaces 查询失败）：仍尝试视角链（查询失败≠切换必失败），但
+    ///   状态上报 unknown——视角链自身的 currentSpaceIndex 查询同样失败时返回
+    ///   .noDrift（旧语义=查询失败按无需切换），反馈层据此给「无法确认状态」而非
+    ///   「已是当前工作区」（查询失败时「已是」是编造）。
     static func switchCapsuleToSpace(
         channels: any RestoreSpaceChanneling,
         targetSpace: Int,
         spaces: [YabaiSpaceInfo]?,
         operationID: String
-    ) -> PerspectiveRefocusOutcome {
-        if let target = spaces?.first(where: { $0.index == targetSpace }), target.isVisible == true {
-            return .noDrift
+    ) -> (outcome: PerspectiveRefocusOutcome, state: CapsuleTargetState) {
+        guard let spaces else {
+            return (refocusPerspective(
+                channels: channels,
+                preMoveSpace: targetSpace,
+                excludingWindowID: 0,
+                operationID: operationID
+            ), .unknown)
         }
-        return refocusPerspective(
+        guard let target = spaces.first(where: { $0.index == targetSpace }) else {
+            return (.failed(postSpace: 0), .missing)
+        }
+        if target.isVisible == true {
+            return (.noDrift, .visible)
+        }
+        return (refocusPerspective(
             channels: channels,
             preMoveSpace: targetSpace,
             excludingWindowID: 0,
             operationID: operationID
-        )
+        ), .hidden)
     }
 }
 
