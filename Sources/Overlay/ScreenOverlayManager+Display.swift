@@ -87,6 +87,13 @@ extension ScreenOverlayManager {
     }
 
     func updateOverlaysInPlace() {
+        // B177：输入气泡存续期抑制——本函数会为缺失 UUID 的屏幕「新建」overlay（绕过
+        // showOverlays 的守卫），hideOverlays 清空字典后任何一次屏幕参数通知都会让浮层
+        // 复活，必须同样 no-op。
+        guard !overlaysSuppressedForInputBubble else {
+            log("[Overlay] updateOverlaysInPlace skipped (input bubble suppression)", level: .debug)
+            return
+        }
         // P-INST-74: overlay 就地更新总耗时（N 屏循环 + cache miss getPerScreenSpaceIndex fork P-INST-73 + OverlayWindow show + stale cleanup）。
         // 崩溃循环熔断：见 crashLoopSuppressed 场景注释（ScreenOverlayManager.swift）。
         guard !crashLoopSuppressed else {
