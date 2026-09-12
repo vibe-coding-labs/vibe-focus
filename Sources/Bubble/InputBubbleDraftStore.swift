@@ -20,33 +20,74 @@ final class InputBubbleDraftStore {
     private let capacity: Int
     /// 过期时长（CGWindowID 复用周期无 API 可查，7 天经验值兜底）
     private let maxAge: TimeInterval
+    /// B178 打字防抖：每个按键都走「JSON decode + prune + encode + defaults 写」
+    /// 在主线程排队（长草稿时毫秒级×每键），打字期间与 hook 窗口作业叠加放大卡顿。
+    /// 改为未落盘编辑先进 pendingEdits（读取方优先看 pending，语义不变），
+    /// 静默 300ms 后一次落盘。
+    private let saveDebounceInterval: TimeInterval
+    private var pendingEdits: [UInt32: String] = [:]
+    private var flushWorkItem: DispatchWorkItem?
 
-    init(defaults: UserDefaults = .standard, capacity: Int = 32, maxAge: TimeInterval = 7 * 24 * 3600) {
+    init(
+        defaults: UserDefaults = .standard,
+        capacity: Int = 32,
+        maxAge: TimeInterval = 7 * 24 * 3600,
+        saveDebounceInterval: TimeInterval = 0.3
+    ) {
         self.defaults = defaults
         self.capacity = capacity
         self.maxAge = maxAge
+        self.saveDebounceInterval = saveDebounceInterval
     }
 
     func draft(for windowID: UInt32) -> String? {
-        entries()[key(windowID)]?.text
+        // 未落盘的编辑优先（save 已进 pending 但尚未 flush 的窗口）。
+        if let pending = pendingEdits[windowID] {
+            return pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : pending
+        }
+        return entries()[key(windowID)]?.text
     }
 
     /// 保存/更新草稿；空白文本等价于清除（不留空串条目）。
+    /// 防抖语义：文本先进 pendingEdits 立即可读，落盘延后 300ms 静默批处理。
     func save(_ text: String, for windowID: UInt32, now: Date = Date()) {
-        var all = entries()
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            all.removeValue(forKey: key(windowID))
-        } else {
-            all[key(windowID)] = InputBubbleDraftEntry(text: text, at: now)
-        }
-        let pruned = Self.prune(all, now: now, maxAge: maxAge, capacity: capacity)
-        persist(pruned)
+        pendingEdits[windowID] = text
+        scheduleFlush(now: now)
     }
 
     func clear(for windowID: UInt32) {
+        // 提交成功清草稿：必须同时丢弃未落盘编辑，否则延后 flush 会复活已清草稿。
+        pendingEdits.removeValue(forKey: windowID)
         var all = entries()
         guard all.removeValue(forKey: key(windowID)) != nil else { return }
         persist(all)
+    }
+
+    /// 防抖落盘调度（单飞行 workitem，新保存重置计时）。
+    private func scheduleFlush(now: Date) {
+        flushWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.flushPending()
+        }
+        flushWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + saveDebounceInterval, execute: item)
+    }
+
+    /// 把 pendingEdits 批量落盘（flush 时窗口可能已提交清稿——pending 已被
+    /// clear 移除，天然不会复活）。
+    func flushPending(now: Date = Date()) {
+        guard !pendingEdits.isEmpty else { return }
+        var all = entries()
+        for (windowID, text) in pendingEdits {
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                all.removeValue(forKey: key(windowID))
+            } else {
+                all[key(windowID)] = InputBubbleDraftEntry(text: text, at: now)
+            }
+        }
+        pendingEdits.removeAll()
+        let pruned = Self.prune(all, now: now, maxAge: maxAge, capacity: capacity)
+        persist(pruned)
     }
 
     // MARK: 存取

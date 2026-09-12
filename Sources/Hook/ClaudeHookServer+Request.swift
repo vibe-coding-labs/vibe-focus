@@ -17,6 +17,11 @@ extension ClaudeHookServer {
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-71: hook 请求端到端总耗时（token 验证 + JSON decode + eventHandler 处理 + 响应构造；hook 路径顶层归因，配合子阶段 P-INST-38/47/54/55/56）。
         let hhrStart = Date()
+        // B178 常开埋点：hook 处理全程占主线程（窗口作业同步执行），停顿看门狗
+        // 依赖区间栈归因「卡在哪个事件」。外层 hook.request 记全程，事件级
+        // hook.<event> 在分发处再套一层（嵌套区间，看门狗日志父子链可见）。
+        PerfMonitor.shared.beginSection("hook.request")
+        defer { PerfMonitor.shared.endSection() }
         let bodyString = String(data: body, encoding: .utf8) ?? "non-utf8"
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "hook_request")
@@ -107,6 +112,14 @@ extension ClaudeHookServer {
 
         let eventHandler = HookEventHandler.shared
         var result: (statusCode: Int, response: ClaudeHookResponse)
+
+        // B178 事件级区间：UPS 归位/Stop 移动都在此段同步占主线程（实测归位
+        // 34/35 次 >200ms、Stop 移动 16/16 次 >200ms），看门狗停顿日志靠它归因。
+        PerfMonitor.shared.beginSection("hook.\(payload.event.rawValue)", fields: [
+            "session": String(payload.sessionID.prefix(8)),
+            "src": isRemote ? "remote" : "local"
+        ])
+        defer { PerfMonitor.shared.endSection() }
 
         switch payload.event {
         case .sessionStart:

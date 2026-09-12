@@ -50,6 +50,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         logDiagnostics("launch")
         CrashContextRecorder.shared.bootstrap()
         NativeSpaceBridge.logAvailability()
+        // B178 常开性能监控：主线程停顿看门狗 + 区间埋点 + 计数器快照。任何卡顿
+        // 发生瞬间即落 [PERF][STALL] 归因日志（含活跃区间栈），不再事后人肉对线。
+        PerfMonitor.shared.startHeartbeatOnMain()
 
         // 单实例处理：同版本复用现有进程，不强制重启。
         if let existing = findExistingInstance() {

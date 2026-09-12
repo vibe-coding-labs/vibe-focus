@@ -118,6 +118,11 @@ final class SpaceController: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: raStart))
             ])
         }
+        // B178 常开埋点：本函数在主线程同步跑两次 yabai fork（query --spaces + SA
+        // 探针），yabai 忙时实测 1~3s/次、每 20s 节流窗口可达一次——真机看门狗
+        // 首个战果（2026-09-12 [PERF][STALL] 1.39s/2.44s 归因到此）。后台化为 B179。
+        PerfMonitor.shared.beginSection("availability.refresh", fields: ["force": String(force)])
+        defer { PerfMonitor.shared.endSection() }
         if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < checkInterval {
             return
         }

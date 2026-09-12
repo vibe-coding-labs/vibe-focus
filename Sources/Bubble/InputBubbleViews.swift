@@ -76,10 +76,37 @@ final class BubbleCardView: NSView {
         submitButton?.frame = frames.button
         resizeHandle?.frame = frames.grip
         if let scrollView, let textView = scrollView.documentView as? NSTextView {
+            // B178：显式 tile 同步 clip/滚动条与 documentView 宽度（不依赖活窗口布局时机，
+            // legacy 滚动条槽出现/消失的可视宽变化也在这一步收敛）
+            scrollView.tile()
+            // B178：钉死「文档宽 = 可视宽」不变量——isHorizontallyResizable=false 是
+            // 产品语义（放不下就换行），宽度同步不delegate给 autoresizing 的隐式时机
+            //（跨滚动条风格/暂态窗口下 AppKit 可能残留 ±滚动条槽宽的错位）
+            let visibleWidth = scrollView.contentView.bounds.width
+            if abs(textView.frame.width - visibleWidth) > 0.5 {
+                textView.setFrameSize(NSSize(width: visibleWidth, height: textView.frame.height))
+            }
             textView.textContainer?.containerSize = NSSize(
                 width: scrollView.contentSize.width,
                 height: CGFloat.greatestFiniteMagnitude
             )
+        }
+        normalizeHorizontalOrigin()
+    }
+
+    /// B178：横向漂移归零——宽度暂态期间（建框/联动 relayout/竖向滚动条出现改变可视宽），
+    /// 光标跳尾的 scrollRangeToVisible 会把 clip/textView 的 origin.x 带偏且无人复位，
+    /// 表现为文本左缘被裁（用户截图实锤「/goal」只剩「oal」，体感即「水平滚动条」）。
+    /// 每次布局与选区落定后强制回零；横向滚动已被策略禁用，这里只清残局。
+    func normalizeHorizontalOrigin() {
+        guard let scrollView, let textView = scrollView.documentView as? NSTextView else { return }
+        let clip = scrollView.contentView
+        if clip.bounds.origin.x != 0 {
+            clip.scroll(to: NSPoint(x: 0, y: clip.bounds.origin.y))
+            scrollView.reflectScrolledClipView(clip)
+        }
+        if textView.bounds.origin.x != 0 {
+            textView.setBoundsOrigin(NSPoint(x: 0, y: textView.bounds.origin.y))
         }
     }
 }

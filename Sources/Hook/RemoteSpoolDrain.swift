@@ -170,9 +170,16 @@ final class RemoteSpoolDrainer: ObservableObject {
     /// 语义；再老（>1h）恢复目标大概率已失效，删。
     static let stalenessMinutes = 60
     static let batchLimit = 20
+    /// B178：单 tick 回灌预算。回灌的每个事件都在主线程同步执行（UPS 归位实测
+    /// 0.2~2.3s/个），一次回灌 20 个曾把主线程连占 31~66s（打字卡死实锤）——
+    /// 分批回灌，剩余顺延到下个 tick（事件缓冲在内存 pendingReplay，不丢）。
+    static let maxReplaysPerTick = 4
 
     private var timer: Timer?
     private var inFlight: Set<String> = []
+    /// 已从远程 spool 取走、但超出本 tick 预算待回灌的事件（内存缓冲；app 退出即失，
+    /// 与回灌中途崩溃的既有风险同级）。
+    private var pendingReplay: [String] = []
 
     /// 与 hook 服务同生命周期：启用且有注册主机才轮询；主机清单变化无需重启
     /// （tick 每轮现读注册表），仅启停边界需重调用。
@@ -203,8 +210,45 @@ final class RemoteSpoolDrainer: ObservableObject {
     }
 
     func tick() {
+        // B178：上一批取回的事件还有积压时，本 tick 优先消化积压、不再发起新的
+        // ssh 拉取——主线程每 tick 只背一份窗口作业，事件不丢（顺延处理）。
+        if !pendingReplay.isEmpty {
+            let budget = Array(pendingReplay.prefix(Self.maxReplaysPerTick))
+            pendingReplay.removeFirst(min(Self.maxReplaysPerTick, pendingReplay.count))
+            log("[RemoteSpoolDrainer] replaying deferred events", fields: [
+                "count": String(budget.count),
+                "stillPending": String(pendingReplay.count)
+            ])
+            replayDeferred(budget)
+            return
+        }
         for host in RemoteSpoolHosts.loadHosts() where !inFlight.contains(host) {
             startDrain(host: host)
+        }
+    }
+
+    /// 积压回灌（与 finishDrain 同管线同 token 门；事件已离开远程 spool，只能
+    /// 内存顺延不能丢弃）。
+    private func replayDeferred(_ lines: [String]) {
+        guard ClaudeHookPreferences.isEnabled else {
+            log("[RemoteSpoolDrainer] deferred events dropped (hook disabled)", level: .warn, fields: [
+                "count": String(lines.count)
+            ])
+            return
+        }
+        var headers: [String: String] = [:]
+        if let token = ClaudeHookPreferences.authToken, !token.isEmpty {
+            headers["X-VibeFocus-Token"] = token
+        }
+        PerfMonitor.shared.beginSection("spool.replay.deferred", fields: ["count": String(lines.count)])
+        defer { PerfMonitor.shared.endSection() }
+        for line in lines {
+            _ = ClaudeHookServer.shared.handleHookRequest(
+                body: Data(line.utf8),
+                query: [:],
+                headers: headers,
+                peerAddress: nil
+            )
         }
     }
 
@@ -229,12 +273,12 @@ final class RemoteSpoolDrainer: ObservableObject {
                 )
             }
             Task { @MainActor [weak self] in
-                self?.finishDrain(host: host, result: result)
+                await self?.finishDrain(host: host, result: result)
             }
         }
     }
 
-    private func finishDrain(host: String, result: (exitCode: Int32, stdout: String, stderr: String)?) {
+    private func finishDrain(host: String, result: (exitCode: Int32, stdout: String, stderr: String)?) async {
         inFlight.remove(host)
         var status = statuses[host] ?? HostStatus()
         defer { statuses[host] = status }
@@ -276,20 +320,38 @@ final class RemoteSpoolDrainer: ObservableObject {
             return
         }
 
+        // B178：分批回灌——超预算部分顺延到 pendingReplay（下个 tick 优先消化）。
+        // 单次回灌曾把主线程连占 31~66s（打字卡死实锤），预算制让主线程每 tick
+        // 只背最多 maxReplaysPerTick 个事件的窗口作业。
+        let budget = Array(events.prefix(Self.maxReplaysPerTick))
+        let deferred = Array(events.dropFirst(Self.maxReplaysPerTick))
+        if !deferred.isEmpty {
+            pendingReplay.append(contentsOf: deferred)
+            log("[RemoteSpoolDrainer] deferred events to next tick", level: .warn, fields: [
+                "host": host,
+                "deferred": String(deferred.count),
+                "budget": String(budget.count)
+            ])
+        }
+
         var headers: [String: String] = [:]
         if let token = ClaudeHookPreferences.authToken, !token.isEmpty {
             headers["X-VibeFocus-Token"] = token
         }
-        for line in events {
-            // 与 HTTP 事件同一管线（token 门/解码/分发/计数全同）；spool 通道
-            // 已经过注册表信任边界（本机 ssh 凭据拉取），对端传 nil 走 local 分类，
-            // 远程语义由 payload 自带 machine_label 驱动，与来源分类解耦。
+        // 与 HTTP 事件同一管线（token 门/解码/分发/计数全同）；spool 通道
+        // 已经过注册表信任边界（本机 ssh 凭据拉取），对端传 nil 走 local 分类，
+        // 远程语义由 payload 自带 machine_label 驱动，与来源分类解耦。
+        PerfMonitor.shared.beginSection("spool.replay", fields: ["host": host, "count": String(budget.count)])
+        defer { PerfMonitor.shared.endSection() }
+        for line in budget {
             _ = ClaudeHookServer.shared.handleHookRequest(
                 body: Data(line.utf8),
                 query: [:],
                 headers: headers,
                 peerAddress: nil
             )
+            // 让主队列插钥/UI 呼吸一拍——连续窗口作业之间主线程不再连续占用。
+            await Task.yield()
         }
     }
 

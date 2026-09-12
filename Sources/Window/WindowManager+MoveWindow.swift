@@ -232,6 +232,10 @@ extension WindowManager {
     ) -> Bool {
         let op = operationID ?? makeOperationID(prefix: "move")
         let startedAt = Date()
+        // B178 常开埋点：移窗管线（yabai fork 等待+float settle+收敛循环）同步占
+        // 主线程 250ms~数秒，是打字卡顿/页面卡顿的主嫌疑——停顿看门狗归因靠它。
+        PerfMonitor.shared.beginSection("move.toMain", fields: ["op": op])
+        defer { PerfMonitor.shared.endSection() }
         log("[WindowManager] moveWindowToMainScreen started", fields: [
             "op": op,
             "windowID": String(identity.windowID),
