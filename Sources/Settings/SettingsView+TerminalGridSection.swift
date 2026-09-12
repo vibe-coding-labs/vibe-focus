@@ -101,11 +101,14 @@ extension SettingsView {
                         } else {
                             label = "Space \(spaceIndex)"
                         }
-                        let outcome = SpaceController.shared.switchToSpace(
+                        let result = SpaceController.shared.switchToSpace(
                             spaceIndex,
                             operationID: "minimap-space-\(spaceIndex)-\(Int(Date().timeIntervalSince1970 * 1000))"
                         )
-                        gridSpaceSwitchMessage = GridSpaceSwitchFeedback.message(for: outcome, label: label)
+                        let outcome = result.outcome
+                        // B173：文案按目标状态分流（missing=布局漂移、unknown=查询失败），
+                        // 不再与「空工作区无窗口」共用一句误导文案。
+                        gridSpaceSwitchMessage = GridSpaceSwitchFeedback.message(for: outcome, label: label, state: result.state)
                         // live 切换成功后必须重建 minimap 快照：isVisible 高亮与 S 标注
                         // 都来自快照，不刷新的话旧工作区仍亮「当前」、新目标只有描边——
                         // 两处同时高亮（2026-09-10 用户报告）。refocused 路径 yabai 状态

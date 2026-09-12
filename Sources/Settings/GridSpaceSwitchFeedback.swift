@@ -13,8 +13,21 @@ enum GridSpaceSwitchFeedback {
 
     static func message(
         for outcome: RestoreSwitchOrchestration.PerspectiveRefocusOutcome,
-        label: String
+        label: String,
+        state: RestoreSwitchOrchestration.CapsuleTargetState = .hidden
     ) -> String {
+        // B173：状态优先分流——missing/unknown 的失败语义与 hidden 不同，
+        // 不能共用「没有可聚焦的窗口」文案（一个是布局漂移、一个是查询失败）。
+        switch (state, outcome) {
+        case (.missing, _):
+            return "无法切换到 \(label)：该工作区已不存在（工作区布局变化后序号会重排，请刷新屏幕布局后重试）"
+        case (.unknown, .noDrift):
+            return "无法确认 \(label) 的当前状态（yabai 查询失败）——未执行任何切换"
+        case (.unknown, .failed):
+            return "无法切换到 \(label)：yabai 查询失败，暂时无法操作工作区，稍后重试"
+        default:
+            break
+        }
         switch outcome {
         case .noDrift:
             return "\(label) 已是当前工作区"
