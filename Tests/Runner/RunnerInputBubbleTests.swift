@@ -205,6 +205,49 @@ extension RunnerHarness {
             check("moveToMain: 气泡占用 → skipBubbleActive", true)
         } else { check("moveToMain: 气泡占用 → skipBubbleActive", false) }
 
+        // --- B180 同窗跨到主屏自动弹出决策门（摆位热键/鼠标拖动等一切移动方式） ---
+        // 判序：开关 → 气泡占用 → 同窗 → 有基线 → 前值非主屏 → 现值主屏
+        if case .skipNotEnabled = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: false, phaseIdle: true, sameWindowAsLastTick: true,
+            lastSeenOnMain: false, nowOnMain: true) {
+            check("arrival: 开关关 → skipNotEnabled", true)
+        } else { check("arrival: 开关关 → skipNotEnabled", false) }
+        if case .skipBubbleActive = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, phaseIdle: false, sameWindowAsLastTick: true,
+            lastSeenOnMain: false, nowOnMain: true) {
+            check("arrival: 气泡占用 → skipBubbleActive", true)
+        } else { check("arrival: 气泡占用 → skipBubbleActive", false) }
+        if case .skipSameWindow = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: false,
+            lastSeenOnMain: false, nowOnMain: true) {
+            check("arrival: 换了窗（首观测）→ skipSameWindow", true)
+        } else { check("arrival: 换了窗（首观测）→ skipSameWindow", false) }
+        if case .skipNoBaseline = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
+            lastSeenOnMain: nil, nowOnMain: true) {
+            check("arrival: 同窗但无基线 → skipNoBaseline", true)
+        } else { check("arrival: 同窗但无基线 → skipNoBaseline", false) }
+        if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
+            lastSeenOnMain: true, nowOnMain: true) {
+            check("arrival: 已在主屏（防 Esc 重弹循环）→ skipAlreadyOnMain", true)
+        } else { check("arrival: 已在主屏（防 Esc 重弹循环）→ skipAlreadyOnMain", false) }
+        if case .skipStillOffMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
+            lastSeenOnMain: false, nowOnMain: false) {
+            check("arrival: 同窗仍在非主屏 → skipStillOffMain", true)
+        } else { check("arrival: 同窗仍在非主屏 → skipStillOffMain", false) }
+        if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
+            lastSeenOnMain: true, nowOnMain: false) {
+            check("arrival: 主屏移去别屏（反向）→ skipAlreadyOnMain（基线已在主屏先短路）", true)
+        } else { check("arrival: 主屏移去别屏（反向）→ skipAlreadyOnMain（基线已在主屏先短路）", false) }
+        if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
+            lastSeenOnMain: false, nowOnMain: true) {
+            check("arrival: 同窗非主屏→主屏 → summon", true)
+        } else { check("arrival: 同窗非主屏→主屏 → summon", false) }
+
         // --- B162 草稿预填解析（草稿优先，空白草稿回落前缀） ---
         check("prefill: 无草稿 → 前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "/goal ") == "/goal ")
         check("prefill: 草稿优先于前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: "打到一半", prefix: "/goal ") == "打到一半")

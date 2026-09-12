@@ -22,7 +22,12 @@ extension InputBubbleController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        // B180：level 取 statusBar+1——高于本 app 菜单栏级浮件（25），低于 IME 候选条
+        // （~popup 101；候选条必须浮在气泡文字上方，抬到 1001+ 会盖住候选=中文输入回归）。
+        // 配合气泡存续期隐藏自家 screenSaver+1 浮层（ScreenOverlayManager 抑制），
+        // 保证「气泡打开时 VibeFocus 最顶层 onscreen 窗=气泡」——LazyTyper 等按前台 app
+        // 最顶层窗口推断活跃显示器落语音气泡的第三方工具，才不会把语音气泡甩到副屏。
+        panel.level = .statusBar + 1
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true

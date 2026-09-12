@@ -84,6 +84,25 @@ final class ScreenOverlayManager: ObservableObject {
     /// - 只挡窗口创建：菜单栏/热键/hook 等功能不受影响；下次启动无新崩溃即自动恢复。
     var crashLoopSuppressed = false
 
+    /// B180：输入气泡存续期浮层抑制。LazyTyper 等第三方语音工具按「前台 app 最顶层窗口」
+    /// 推断活跃显示器落语音气泡；VibeFocus 的浮层（level=screenSaver+1，双屏各一块）会让
+    /// 它把语音气泡落到副屏。气泡打开期间隐藏自家浮层、关闭即还原（幂等，可重复调用）。
+    private(set) var overlaysSuppressedForInputBubble = false
+
+    /// B180：设置/解除浮层抑制（幂等）。抑制期间 showOverlays 直接 no-op，
+    /// 刷新周期/屏幕变化路径不会把浮层拉回来；解除时按开关与熔断状态还原。
+    func setOverlaysSuppressedForInputBubble(_ suppressed: Bool) {
+        guard overlaysSuppressedForInputBubble != suppressed else { return }
+        overlaysSuppressedForInputBubble = suppressed
+        if suppressed {
+            hideOverlays()
+            log("[ScreenOverlayManager] overlays suppressed for input bubble session")
+        } else if preferences.isEnabled, !crashLoopSuppressed {
+            showOverlays()
+            log("[ScreenOverlayManager] overlays restored after input bubble session")
+        }
+    }
+
     private init() {
         self.preferences = ScreenIndexPreferences.load()
         // init() 只读不写：持久化完全由 didSet → save() 在用户实际修改时驱动。
