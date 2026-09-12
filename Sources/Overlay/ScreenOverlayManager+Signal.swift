@@ -77,19 +77,20 @@ extension ScreenOverlayManager {
         let now = Date()
         // Batch 12：去重判定提纯为 OverlayRefreshPolicy.isDuplicateForceTrigger（语义不变）。
         let duplicate = OverlayRefreshPolicy.isDuplicateForceTrigger(lastTriggerAt: lastForceRefreshTriggerAt, now: now, minInterval: minForceRefreshTriggerInterval)
-        // 2026-09-11 停格修复：挂起闸门只准吞 overlay 重活，不准吞 space-state 广播。
-        // 设置窗持焦期间 overlay 本就隐藏，而编排页 minimap 恰在此时依赖广播自愈
-        // （旧代码在广播之前 return，SIGUSR1/toggle 的变化永远到不了设置页）。
+        // 2026-09-11 停格修复：space-state 广播任何分支都不吞。
+        // 2026-09-12 索引停格根治（B175）：挂起不再把事件刷新降级为 broadcastOnly。
+        // 挂起只治理兜底 Timer 的周期 fork；事件刷新（SIGUSR1/插拔/toggle 后）是
+        // 「真相展示」——refreshSpaceIndices(force:) 本就穿透 suspend，B162 的
+        // 「overlay 本就隐藏」前提不成立（overlay 不随设置窗持焦隐藏，多屏独立
+        // Spaces 下另一屏角标全程可见，实测角标停格 7.2s）。去重重复 → 只免重活、
+        // 广播照发（minimap 不许因去重停格）。
         switch OverlayRefreshPolicy.forceRefreshDecision(suspended: automaticRefreshSuspended, duplicate: duplicate) {
-        case .skipDuplicate:
-            log("[FORCE_REFRESH] Skip duplicated trigger reason=\(reason)")
-            return
         case .broadcastOnly:
-            log("[FORCE_REFRESH] Suspended: delivering space-state broadcast only, reason=\(reason)")
+            log("[FORCE_REFRESH] Duplicate trigger: broadcasting only (heavy refresh skipped), reason=\(reason), suspended=\(automaticRefreshSuspended)")
             NotificationCenter.default.post(name: .vibefocusSpaceStateMayHaveChanged, object: nil)
-        case .broadcastAndRefresh:
+        case .refreshAndBroadcast:
             lastForceRefreshTriggerAt = now
-            log("[FORCE_REFRESH] Triggered by reason=\(reason), clearing caches and refreshing")
+            log("[FORCE_REFRESH] Triggered by reason=\(reason), suspended=\(automaticRefreshSuspended), clearing caches and refreshing")
             // 广播给非 overlay 消费方（设置页 minimap 等）：去重闸之后发出，
             // 频率已与本函数的真实刷新率一致，不会放大 yabai fork。
             NotificationCenter.default.post(name: .vibefocusSpaceStateMayHaveChanged, object: nil)

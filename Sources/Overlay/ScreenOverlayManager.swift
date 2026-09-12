@@ -212,7 +212,7 @@ final class ScreenOverlayManager: ObservableObject {
         log("Suspended automatic overlay refreshes: \(reason)")
     }
 
-    func resumeAutomaticRefreshes(reason: String) {
+    func resumeAutomaticRefreshes(reason: String, catchUpRefresh: Bool = false) {
         // P-INST-260: overlay 自动刷新恢复（startRefreshTimer P-INST-217 Timer 重建 + 状态置位；设置窗口失焦/toggle 结束后调用）。
         #if PERF_INSTRUMENT
         let rarStart = Date()
@@ -226,6 +226,14 @@ final class ScreenOverlayManager: ObservableObject {
         automaticRefreshSuspended = false
         startRefreshTimer()
         log("Resumed automatic overlay refreshes: \(reason)")
+        if catchUpRefresh {
+            // B175：恢复即补刷，不等新 Timer 首跳（多屏 2s 相位——实测停格 7.2s 里的
+            // 2.0s 就是这段相位等待）。挂起期间事件刷新已即时（B175 语义），这里兜底
+            // 去重重复（broadcastOnly 分支）留下的残余漂移；triggerForceRefresh 的
+            // 去重闸自动挡掉恢复瞬间的连发。toggle 路径传 false——它有自己的 0.3s
+            // post-toggle 防抖刷新（P3.6），再补刷会把 toggle 风暴的 yabai fork 翻倍。
+            triggerForceRefresh(reason: "resume_catchup(\(reason))")
+        }
     }
 
     func flushPendingPreferenceSave(reason: String = "manual_flush") {

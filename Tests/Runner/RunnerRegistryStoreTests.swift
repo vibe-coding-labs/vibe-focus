@@ -36,16 +36,17 @@ extension RunnerHarness {
               !OverlayRefreshPolicy.isDuplicateForceTrigger(
                 lastTriggerAt: .distantPast, now: Date(timeIntervalSince1970: 1000), minInterval: 0.3))
 
-        // B2. forceRefreshDecision 四象限（2026-09-11 停格修复的契约锁）：
-        // 挂起闸门只准吞 overlay 重活，不准吞 space-state 广播——设置窗持焦期间
-        // SIGUSR1/toggle 变化必须以 broadcastOnly 形态到达编排页 minimap。
-        check("overlayGate B2: 常态非重复 → broadcastAndRefresh（广播+重刷）",
-              OverlayRefreshPolicy.forceRefreshDecision(suspended: false, duplicate: false) == .broadcastAndRefresh)
-        check("overlayGate B2: 常态连发重复 → skipDuplicate（历史语义不回退）",
-              OverlayRefreshPolicy.forceRefreshDecision(suspended: false, duplicate: true) == .skipDuplicate)
-        check("overlayGate B2: 挂起非重复 → broadcastOnly（广播不吞，重活跳过）",
-              OverlayRefreshPolicy.forceRefreshDecision(suspended: true, duplicate: false) == .broadcastOnly)
-        check("overlayGate B2: 挂起连发重复 → broadcastOnly（挂起时不去重，minimap 不许停格）",
+        // B2. forceRefreshDecision 四象限（契约演进：B162 停格修复 → B175 索引停格根治）：
+        // 挂起不降级事件刷新（挂起只治理兜底 Timer 的周期 fork），去重只免重活不吞
+        // 广播——设置窗持焦期间切工作区，角标必须随 SIGUSR1 即时重刷（实测旧语义
+        // 角标停格 7.2s：挂起 5.2s + 恢复后 Timer 相位 2s，2026-09-12 用户报告）。
+        check("overlayGate B2: 常态非重复 → refreshAndBroadcast（广播+重刷）",
+              OverlayRefreshPolicy.forceRefreshDecision(suspended: false, duplicate: false) == .refreshAndBroadcast)
+        check("overlayGate B2: 挂起非重复 → refreshAndBroadcast（挂起不降级事件刷新，B175 本 bug 契约锁）",
+              OverlayRefreshPolicy.forceRefreshDecision(suspended: true, duplicate: false) == .refreshAndBroadcast)
+        check("overlayGate B2: 常态连发重复 → broadcastOnly（去重只免重活，广播照发）",
+              OverlayRefreshPolicy.forceRefreshDecision(suspended: false, duplicate: true) == .broadcastOnly)
+        check("overlayGate B2: 挂起连发重复 → broadcastOnly（同上，挂起不参与裁决）",
               OverlayRefreshPolicy.forceRefreshDecision(suspended: true, duplicate: true) == .broadcastOnly)
 
         // C. ScreenHotplugGuard 真身：集合相等语义 + 防御过滤。

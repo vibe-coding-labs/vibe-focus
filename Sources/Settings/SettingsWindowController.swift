@@ -180,13 +180,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 "frontmost": frontmostAppDescriptor()
             ]
         )
-        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_resign_key")
+        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_resign_key", catchUpRefresh: true)
     }
 
     func windowWillClose(_ notification: Notification) {
         log("[SettingsWindow] will close")
         window?.orderOut(nil)
-        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_closed")
+        ScreenOverlayManager.shared.resumeAutomaticRefreshes(reason: "settings_window_closed", catchUpRefresh: true)
         NSApp.setActivationPolicy(.accessory)
     }
 }

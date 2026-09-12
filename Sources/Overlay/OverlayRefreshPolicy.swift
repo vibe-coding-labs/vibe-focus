@@ -15,10 +15,12 @@ import Foundation
 ///    disabled（用户关掉 overlay 后任何刷新都不该发生）。
 /// 2. `isDuplicateForceTrigger`：距上次触发不足 minInterval 视为重复触发丢弃
 ///    （SIGUSR1 连发的第二道闸）。
-/// 3. `forceRefreshDecision`：重复去重只保护 overlay 重活，不吞 space-state 广播——
-///    挂起期间（设置窗持焦）广播必须照发：编排页 minimap 恰在此时依赖它自愈
-///    （2026-09-11 用户报告「已切工作区、minimap 高亮停格」根因 = 挂起 return
-///    在广播之前，SIGUSR1/toggle 变化永远到不了设置页）。
+/// 3. `forceRefreshDecision`：去重与挂起都只免 overlay 重活，不吞 space-state 广播——
+///    B162（2026-09-11）：挂起 return 在广播之前，minimap 停格 → 广播任何分支照发；
+///    B175（2026-09-12）：挂起不再把事件刷新降级为 broadcastOnly——「设置窗持焦
+///    期间 overlay 本就隐藏」前提不成立（overlay 从不因设置窗持焦隐藏，多屏独立
+///    Spaces 下另一屏角标全程可见），实测挂起期间切工作区角标停格 7.2s
+///    （挂起 5.2s + 恢复后 Timer 相位 2s）。挂起只治理兜底 Timer 的周期 fork。
 enum OverlayRefreshPolicy {
 
     /// refreshSpaceIndices 入口门判定结果。
@@ -31,16 +33,16 @@ enum OverlayRefreshPolicy {
         case proceed
     }
 
-    /// triggerForceRefresh 三分支判定结果。
+    /// triggerForceRefresh 两分支判定结果（B175 起；旧 skipDuplicate/broadcastAndRefresh
+    /// 三分支退役——skipDuplicate 整单丢弃会让 minimap 错过最后一次切换且无 yabai 收益）。
     enum ForceRefreshDecision: Equatable {
-        /// 连发重复且未挂起：整单丢弃（不广播、不刷新——与历史语义一致）。
-        case skipDuplicate
-        /// 挂起中（设置窗持焦等）：只发 vibefocusSpaceStateMayHaveChanged 广播，
-        /// overlay 重活（清缓存+重刷+follow-up）跳过——overlay 此时本就隐藏，
-        /// 广播接收方自带 400ms 防抖与轻量重建。
+        /// 连发重复（距上次真实刷新 < minInterval）：免 overlay 重活（清缓存+重刷），
+        /// 广播照发（零 yabai fork，接收方 400ms 防抖 + 单次 querySpaces 自愈）——
+        /// minimap 不许因去重停格。
         case broadcastOnly
-        /// 常态：广播 + overlay 缓存清理与重刷。
-        case broadcastAndRefresh
+        /// 非重复：广播 + overlay 缓存清理与重刷。挂起（设置窗持焦/toggle）不降级：
+        /// 事件驱动的索引刷新是「真相展示」，可见的角标不许为旧值停留（B175 契约）。
+        case refreshAndBroadcast
     }
 
     /// - Parameters:
@@ -61,11 +63,14 @@ enum OverlayRefreshPolicy {
 
     /// - Parameters:
     ///   - suspended: 自动刷新抑制中（设置窗持焦/toggle 等编排入口 suspend 期间）。
+    ///     只治理兜底 Timer 的周期 fork（见 refreshGate），不参与本判定——SIGUSR1
+    ///     到达时 yabai 状态已稳态，fast path 单次 query 即真相，挂起期间照常全量
+    ///     刷新。此参数保留是为让四象限契约锁死「挂起不降级事件刷新」（B175），
+    ///     防止降级语义回归。
     ///   - duplicate: 距上次真实 overlay 刷新不足 minInterval（连发第二道闸）。
-    /// 挂起时不去重、也不推进去重时钟：广播本身零 yabai fork（接收方 400ms 防抖 +
-    /// 重建仅单次 querySpaces），且恢复后首个信号应尽快触发真实 overlay 刷新。
+    ///     去重只免重活不吞广播（B175 起）。
     static func forceRefreshDecision(suspended: Bool, duplicate: Bool) -> ForceRefreshDecision {
-        if duplicate && !suspended { return .skipDuplicate }
-        return suspended ? .broadcastOnly : .broadcastAndRefresh
+        if duplicate { return .broadcastOnly }
+        return .refreshAndBroadcast
     }
 }
