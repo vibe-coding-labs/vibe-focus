@@ -98,5 +98,46 @@ extension RunnerHarness {
         check("perf H3: 停顿+快照全量态", full.contains("日志尾部停顿 1 次") && full.contains("阻塞 2310ms"))
         let badJSON = Doctor.perfReportLines(snapshotData: Data("not-json".utf8), stallLogLines: [stallLine], now: base).joined(separator: "\n")
         check("perf H4: 快照损坏降级不崩", badJSON.contains("快照文件不存在") && badJSON.contains("日志尾部停顿 1 次"))
+
+        // I. B182 直方图桶（恰等边界进高桶）。
+        check("perf I1: 9.9ms → <10 桶", PerfMonitorLogic.bucketIndex(durationMs: 9.9) == 0)
+        check("perf I2: 10ms → 10-50 桶", PerfMonitorLogic.bucketIndex(durationMs: 10) == 1)
+        check("perf I3: 200ms → 200-1k 桶", PerfMonitorLogic.bucketIndex(durationMs: 200) == 3)
+        check("perf I4: 1000ms → >=1k 桶", PerfMonitorLogic.bucketIndex(durationMs: 1000) == 4)
+        var bucketed: PerfMonitorLogic.CounterSnapshot?
+        PerfMonitorLogic.record(counter: &bucketed, name: "restore", durationMs: 7)
+        PerfMonitorLogic.record(counter: &bucketed, name: "restore", durationMs: 2253)
+        check("perf I5: 直方图分桶累计", bucketed?.buckets == [1, 0, 0, 0, 1])
+        check("perf I6: 桶摘要格式", PerfMonitorLogic.bucketSummary([1, 0, 0, 0, 1]) == "<10:1/10-50:0/50-200:0/200-1k:0/>=1k:1")
+
+        // J. B182 journal 环形缓冲（容量裁剪 + dropped 计数）。
+        var ring = PerfMonitorLogic.JournalRing(capacity: 3)
+        ring.append("a"); ring.append("b"); ring.append("c")
+        check("perf J1: 未满全保留", ring.entries == ["a", "b", "c"] && ring.dropped == 0)
+        ring.append("d")
+        check("perf J2: 满后淘汰最旧", ring.entries == ["b", "c", "d"] && ring.dropped == 1)
+
+        // K. B182 stallReport 带 journal 段（空 journal 不出段——旧格式兼容）。
+        let reportNoJournal = PerfMonitorLogic.stallReport(deltaS: 1.0, sections: [], counters: [], now: base)
+        check("perf K1: 空 journal 不出段", !reportNoJournal.contains("journal=["))
+        let reportWithJournal = PerfMonitorLogic.stallReport(
+            deltaS: 1.0, sections: [], counters: [], now: base,
+            journal: ["[+100ms M] ▶hook.Stop", "[+200ms M] ▶move.toMain"])
+        check("perf K2: journal 段含主线程轨迹", reportWithJournal.contains("journal=[") && reportWithJournal.contains("▶hook.Stop"))
+
+        // L. B182 Doctor 快照渲染：直方图 + 停顿历史 + journal 尾。
+        let richSnapshot = try? JSONEncoder().encode(PerfMonitorLogic.SnapshotFile(
+            generatedAt: base,
+            stallCount: 1,
+            lastStallDeltaS: 1.5,
+            lastStallAt: base,
+            counters: [bucketed].compactMap { $0 },
+            journal: ["[+1ms M] ▶bubble.summon"],
+            stalls: [PerfMonitorLogic.StallRecord(at: base, deltaMs: 1500, level: "ERROR", sectionsSummary: "hook.Stop>move.toMain", stackSummary: "sampled(12 frames)")]
+        ))
+        let rich = Doctor.perfReportLines(snapshotData: richSnapshot, stallLogLines: [], now: base).joined(separator: "\n")
+        check("perf L1: 直方图渲染", rich.contains(">=1k:1"))
+        check("perf L2: 停顿历史渲染", rich.contains("停顿历史") && rich.contains("hook.Stop>move.toMain") && rich.contains("sampled(12 frames)"))
+        check("perf L3: journal 尾渲染", rich.contains("▶bubble.summon"))
     }
 }

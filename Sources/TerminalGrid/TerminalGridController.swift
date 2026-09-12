@@ -32,6 +32,8 @@ final class TerminalGridController {
     // MARK: 创建网格
 
     func createGrid() async -> OperationResult {
+        PerfMonitor.shared.beginSection("grid.create")
+        defer { PerfMonitor.shared.endSection() }
         let op = makeOperationID(prefix: "grid-create")
         let rows = TerminalGridPreferences.rows
         let cols = TerminalGridPreferences.cols

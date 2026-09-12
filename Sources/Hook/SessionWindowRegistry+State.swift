@@ -87,6 +87,8 @@ extension SessionWindowRegistry {
     }
 
     func purgeClosedWindows() {
+        PerfMonitor.shared.beginSection("registry.purge")
+        defer { PerfMonitor.shared.endSection() }
         // P-INST-75: 周期性清理耗时（@MainActor 每 60s Timer 触发 AppDelegate:74；cgWindowListAll + N 次 deleteWindowState SQLite 写；主线程周期性 I/O 可造成微卡顿）。
         let startedAt = Date()
         let windows = windowsProvider()

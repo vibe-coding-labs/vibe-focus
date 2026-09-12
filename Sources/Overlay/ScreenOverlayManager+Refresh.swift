@@ -31,6 +31,8 @@ extension ScreenOverlayManager {
     ///
     /// - Parameter force: If true, bypass suspension and clear cache before refresh.
     func refreshSpaceIndices(force: Bool = false) {
+        PerfMonitor.shared.beginSection("overlay.refreshIndices", fields: ["force": String(force)])
+        defer { PerfMonitor.shared.endSection() }
         // Batch 12：门判定提纯为 OverlayRefreshPolicy.refreshGate（suspend 先于 enabled，
         // force 穿透 suspend 不穿透 disabled——语义与拆分前内联守卫逐分支一致）。
         switch OverlayRefreshPolicy.refreshGate(suspended: automaticRefreshSuspended, enabled: preferences.isEnabled, force: force) {

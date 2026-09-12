@@ -322,7 +322,21 @@ enum Doctor {
             out.append("  快照（自启动累计）：stallCount=\(snapshot.stallCount) generatedAt=\(snapshot.generatedAt)")
             for c in snapshot.counters.prefix(8) {
                 let avg = c.count > 0 ? c.totalMs / Double(c.count) : 0
-                out.append(String(format: "    %@ ×%d max=%.0fms avg=%.0fms", c.name, c.count, c.maxMs, avg))
+                out.append(String(format: "    %@ ×%d max=%.0fms avg=%.0fms [%@]",
+                                  c.name, c.count, c.maxMs, avg,
+                                  PerfMonitorLogic.bucketSummary(c.buckets)))
+            }
+            if let stalls = snapshot.stalls, !stalls.isEmpty {
+                out.append("  停顿历史（≤8，新在前）:")
+                for s in stalls.reversed() {
+                    out.append("    \(s.level) \(s.deltaMs)ms sections=[\(s.sectionsSummary)]\(s.stackSummary.map { " stack=\($0)" } ?? "")")
+                }
+            }
+            if let journal = snapshot.journal, !journal.isEmpty {
+                out.append("  主线程轨迹尾部（≤5）:")
+                for entry in journal.suffix(5) {
+                    out.append("    \(entry)")
+                }
             }
         } else {
             out.append("  快照文件不存在（app 运行满 5 分钟或首次停顿后生成）")

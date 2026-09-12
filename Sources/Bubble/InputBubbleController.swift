@@ -89,6 +89,8 @@ final class InputBubbleController: NSObject {
     /// 快捷键唤起（默认 ⌘B）：开着则关（toggle）；没开则捕获聚焦终端窗并弹气泡。
     /// 前台不是可识别终端时 beep 拒绝（静默吞键会让用户以为失灵，与摆位热键同款反馈）。
     func summon() {
+        PerfMonitor.shared.beginSection("bubble.summon")
+        defer { PerfMonitor.shared.endSection() }
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"
         log("[InputBubble] summon called", fields: ["phase": String(describing: phase), "frontBundle": frontBundle])
         if phase == .open {
@@ -218,6 +220,8 @@ final class InputBubbleController: NSObject {
     /// Esc / 点外部 / toggle 关闭。reactivateTarget：Esc 关闭时把焦点还给终端
     /// （submit 路径自己已激活终端，传 false 防重复抢）。
     func dismiss(reactivateTarget: Bool) {
+        PerfMonitor.shared.beginSection("bubble.hide")
+        defer { PerfMonitor.shared.endSection() }
         guard phase == .open else { return }
         let captured = target
         panel?.orderOut(nil)
@@ -243,6 +247,8 @@ final class InputBubbleController: NSObject {
     }
 
     fileprivate func submit(mode: InputBubbleSubmitMode) {
+        PerfMonitor.shared.beginSection("bubble.submit", fields: ["mode": String(describing: mode)])
+        defer { PerfMonitor.shared.endSection() }
         guard phase == .open, let target = target, let textView = textView else { return }
         let text = textView.string
         // 第一拍纯决策：空文本/cancel 只关（此时校验事实未知，传 true 只走文本/模式分支）

@@ -3,7 +3,7 @@ import Csqlite3
 
 let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-final class WindowStateStore {
+final class WindowStateStore: @unchecked Sendable {
     static let shared = WindowStateStore()
 
     var db: OpaquePointer?

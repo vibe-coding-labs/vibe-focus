@@ -193,6 +193,8 @@ extension SpaceController {
     /// B173：随返回目标状态（visible/hidden/missing/unknown），反馈文案按状态分流。
     @discardableResult
     func switchToSpace(_ yabaiIndex: Int, operationID: String) -> (outcome: RestoreSwitchOrchestration.PerspectiveRefocusOutcome, state: RestoreSwitchOrchestration.CapsuleTargetState) {
+        PerfMonitor.shared.beginSection("space.switch", fields: ["space": String(yabaiIndex)])
+        defer { PerfMonitor.shared.endSection() }
         let spaces = querySpaces(ignoreCache: true)
         return RestoreSwitchOrchestration.switchCapsuleToSpace(
             channels: self,

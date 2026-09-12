@@ -195,6 +195,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             name: openSettingsDistributedNotification,
             object: nil
         )
+        // B182 性能证据链自测通道：post 此通知 → 主线程人为阻塞 1.5s → 看门狗
+        // 全链路出证（STALL 行 + journal 轨迹 + ≥1s 调用栈采样）。触发：
+        // DistributedNotificationCenter post "com.vibefocus.app.perf-stall-test"。
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handlePerfStallTestRequest(_:)),
+            name: Notification.Name("com.vibefocus.app.perf-stall-test"),
+            object: nil
+        )
         showSettingsWindowOnLaunch()
     }
 
@@ -207,6 +216,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationWillTerminate(_ notification: Notification) {
         ScreenOverlayManager.shared.flushPendingPreferenceSave(reason: "application_will_terminate")
         CrashContextRecorder.shared.markCleanExit()
+    }
+
+    /// B182 性能证据链自测：人为阻塞主线程 1.5s，验证看门狗全链路出证
+    /// （STALL 归因行 + journal 轨迹 + ≥1s 停顿调用栈采样）。仅诊断用途。
+    @objc func handlePerfStallTestRequest(_ notification: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            log("[PerfMonitor] stall-test: blocking main thread 1.5s")
+            Thread.sleep(forTimeInterval: 1.5)
+            log("[PerfMonitor] stall-test: main thread unblocked")
+        }
     }
 
     @objc func handleOpenSettingsRequest(_ notification: Notification) {

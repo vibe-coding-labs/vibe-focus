@@ -93,6 +93,8 @@ extension HookEventHandler {
         payload: ClaudeHookPayload,
         label: String?
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        PerfMonitor.shared.beginSection("hook.bind")
+        defer { PerfMonitor.shared.endSection() }
         // 双通道解析结果由 decideSessionBind 纯判定裁决
         //（Batch 19，决策与响应映射 Runner 直测穷尽锁定）。
         if let label {

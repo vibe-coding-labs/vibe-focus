@@ -1,20 +1,20 @@
 import Foundation
 
-// MARK: - 常开性能监控（B178，2026-09-12）
-// 背景：2026-09-12 用户报「气泡打字中途卡死几秒 + 整个设置页卡顿」，日志回溯实锤
-// 主线程被 hook 窗口作业同步占用：577 个 hook 请求中 89 次 >200ms（UPS 归位 34/35、
-// Stop 移动 16/16，最坏单次 66s）——但这类证据此前只能事后翻 INFO 日志粗估，
-// 且 PERF_INSTRUMENT 埋点生产构建不编入。本模块提供**零编译开关、常开、低开销**的
-// 三件套，让以后任何卡顿在发生瞬间就带上归因：
-//   1. 主线程停顿看门狗：主线程 50ms 心跳 + 看门狗线程 100ms 巡检；主线程被任何
-//      工作阻塞 ≥250ms 即落 WARN/ERROR 日志（含停顿时长 + 当时活跃区间栈 +
-//      计数器 Top）——不再依赖「事后人肉对时间线」。
-//   2. 区间埋点（beginSection/endSection）：已知重路径（hook 处理/移窗/恢复/
-//      回灌/minimap/建格）打标，看门狗日志直接给出「卡在谁身上」。
-//   3. 计数器：每区间 count/totalMs/maxMs 自启动累计，快照定期落盘
-//      perf-snapshot.json，--diagnose 与 Doctor 直接可见。
+// MARK: - 常开性能监控（B178 建，B182 证据链升级）
+// 方法论：任何性能问题的证据链 = [PERF][STALL] 归因行（停顿时长 + 活跃区间栈 +
+// 计数器 Top + 主线程活动轨迹 + ≥1s 停顿的调用栈）→ perf-snapshot.json 直方图
+// （典型 vs 最差分布）→ --diagnose 汇总。排查手册：docs/performance-triage-runbook.md。
+//
+// B182 升级（用户要求「完整证据链、不靠撞大运」）：
+//   1. 区间耗时直方图桶（<10/10-50/50-200/200-1k/≥1k ms）——「max 是不是孤例」
+//      一眼可判，典型/最差分布不靠猜；
+//   2. 主线程活动轨迹环形缓冲（journal，64 条）——停顿发生时即使无活跃区间
+//      （sections=0 之谜），主线程刚做过什么也有据可查；
+//   3. ≥1s 停顿的主线程调用栈采样（arm64 FP 走链，suspend→取址→resume→符号化）
+//      ——直接给出「主线程卡在哪个函数」，根因级证据；
+//   4. 停顿历史环（快照文件持久化最近 8 次停顿）——复盘不再依赖翻全量日志。
 // 开销预算：心跳 20 次/s（锁+Date，µs 级）；巡检线程 10 次/s（读锁+比较）；
-// 埋点每区间两次锁 + 一次 Date()。对毫秒级路径无感，对秒级路径可忽略。
+// 埋点每区间两次锁 + 一次 Date()；journal 仅主线程区间追加（容量裁剪 O(1)）。
 
 // MARK: - 纯判定层（Runner 直测，无 IO 无锁）
 
@@ -36,23 +36,40 @@ enum PerfMonitorLogic {
         return currentDeltaS - last >= escalationS
     }
 
-    /// 单计数器条目：name → 调用次数 / 累计耗时 / 最差耗时。
+    /// 直方图桶边界（ms）：<10 / 10-50 / 50-200 / 200-1000 / >=1000。
+    static let bucketBounds: [Double] = [10, 50, 200, 1000]
+
+    /// 耗时 → 桶下标（0..4；恰等边界进高桶）。
+    static func bucketIndex(durationMs: Double) -> Int {
+        for (index, bound) in bucketBounds.enumerated() where durationMs < bound {
+            return index
+        }
+        return bucketBounds.count
+    }
+
+    /// 单计数器条目：name → 调用次数 / 累计耗时 / 最差耗时 / 直方图桶。
     struct CounterSnapshot: Equatable, Codable {
         var name: String
         var count: Int
         var totalMs: Double
         var maxMs: Double
+        /// 直方图桶计数（bucketBounds.count + 1 = 5 桶）。
+        var buckets: [Int] = [0, 0, 0, 0, 0]
     }
 
     /// 累加一次区间耗时（负值/NaN 防御：丢弃不计数）。
     static func record(counter: inout CounterSnapshot?, name: String, durationMs: Double) {
         guard durationMs.isFinite, durationMs >= 0 else { return }
+        let bucket = bucketIndex(durationMs: durationMs)
         if counter == nil {
-            counter = CounterSnapshot(name: name, count: 1, totalMs: durationMs, maxMs: durationMs)
+            var buckets = [0, 0, 0, 0, 0]
+            buckets[bucket] += 1
+            counter = CounterSnapshot(name: name, count: 1, totalMs: durationMs, maxMs: durationMs, buckets: buckets)
         } else {
             counter!.count += 1
             counter!.totalMs += durationMs
             counter!.maxMs = max(counter!.maxMs, durationMs)
+            counter!.buckets[bucket] += 1
         }
     }
 
@@ -84,9 +101,41 @@ enum PerfMonitorLogic {
         return (last, Array(stack.dropLast()))
     }
 
-    /// 停顿日志单行正文（看门狗与快照共用，保证日志/报告同语言）：
-    /// `2.31s sections=[hook.Stop(1.9s) > move.toMain(1.9s)] top=[move.toMain×12 max=1.9s avg=0.8s]`
-    static func stallReport(deltaS: Double, sections: [Section], counters: [CounterSnapshot], now: Date) -> String {
+    /// 主线程活动轨迹环形缓冲（B182）：固定容量、满则淘汰最旧并计数。
+    struct JournalRing: Equatable {
+        var entries: [String] = []
+        var capacity: Int
+        var dropped: Int = 0
+
+        init(capacity: Int) { self.capacity = max(1, capacity) }
+
+        mutating func append(_ entry: String) {
+            entries.append(entry)
+            if entries.count > capacity {
+                entries.removeFirst(entries.count - capacity)
+                dropped += 1
+            }
+        }
+    }
+
+    /// 单次停顿的持久化记录（快照文件内）。
+    struct StallRecord: Codable, Equatable {
+        var at: Date
+        var deltaMs: Int
+        var level: String
+        var sectionsSummary: String
+        var stackSummary: String?
+    }
+
+    /// 停顿报告单行正文（看门狗与快照共用，保证日志/报告同语言）：
+    /// `2.31s sections=[hook.Stop(1.9s) > move.toMain(1.9s)] top=[...] journal=[...]`
+    static func stallReport(
+        deltaS: Double,
+        sections: [Section],
+        counters: [CounterSnapshot],
+        now: Date,
+        journal: [String] = []
+    ) -> String {
         let sectionDesc = sections.map { section -> String in
             let fieldsPart = section.fields.isEmpty ? "" : " " + section.fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
             return "\(section.name)\(fieldsPart)(\(String(format: "%.1f", section.elapsedMs(now: now) / 1000))s)"
@@ -95,9 +144,19 @@ enum PerfMonitorLogic {
             let avg = counter.count > 0 ? counter.totalMs / Double(counter.count) : 0
             return "\(counter.name)×\(counter.count) max=\(String(format: "%.1f", counter.maxMs))ms avg=\(String(format: "%.1f", avg))ms"
         }.joined(separator: ", ")
+        let journalDesc = journal.suffix(4).joined(separator: " | ")
         return String(format: "%.2fs", deltaS)
             + (sectionDesc.isEmpty ? "" : " sections=[\(sectionDesc)]")
             + (topDesc.isEmpty ? "" : " top=[\(topDesc)]")
+            + (journalDesc.isEmpty ? "" : " journal=[\(journalDesc)]")
+    }
+
+    /// 直方图格式化（报告行）。
+    static func bucketSummary(_ buckets: [Int]) -> String {
+        let labels = ["<10", "10-50", "50-200", "200-1k", ">=1k"]
+        return (0..<(bucketBounds.count + 1)).map { i in
+            "\(labels[i]):\(i < buckets.count ? buckets[i] : 0)"
+        }.joined(separator: "/")
     }
 
     /// 快照文件 JSON 形状（perf-snapshot.json，--diagnose/Doctor 消费）。
@@ -107,6 +166,9 @@ enum PerfMonitorLogic {
         var lastStallDeltaS: Double?
         var lastStallAt: Date?
         var counters: [CounterSnapshot]
+        /// B182：主线程活动轨迹尾部 + 停顿历史环。
+        var journal: [String]?
+        var stalls: [StallRecord]?
     }
 }
 
@@ -120,6 +182,8 @@ final class PerfMonitor: @unchecked Sendable {
     private let lock = NSLock()
     private var counters: [String: PerfMonitorLogic.CounterSnapshot] = [:]
     private var activeSections: [ObjectIdentifier: [PerfMonitorLogic.Section]] = [:]
+    private var journal = PerfMonitorLogic.JournalRing(capacity: 64)
+    private var stallHistory: [PerfMonitorLogic.StallRecord] = []
     private var lastHeartbeatAt: Date = Date()
     private var lastStallReportedS: Double?
     private var lastStallAt: Date?
@@ -138,6 +202,8 @@ final class PerfMonitor: @unchecked Sendable {
     /// 快照落盘周期（常驻证据，--diagnose 读文件不依赖 app 进程内状态）。
     static let snapshotInterval: TimeInterval = 300
     static let snapshotPath: String = NSHomeDirectory() + "/Library/Logs/VibeFocus/perf-snapshot.json"
+    /// 调用栈采样只对 ≥1s（ERROR 级）停顿触发，且每次停顿只采一次。
+    static let stackSampleMinSeconds: Double = 1.0
 
     private init() {}
 
@@ -145,6 +211,7 @@ final class PerfMonitor: @unchecked Sendable {
 
     func startHeartbeatOnMain() {
         guard mainTimer == nil else { return }
+        BacktraceSampler.captureMainThreadPortOnLaunch()
         lock.lock()
         lastHeartbeatAt = Date()
         lock.unlock()
@@ -164,7 +231,8 @@ final class PerfMonitor: @unchecked Sendable {
         thread.start()
         watchdogThread = thread
         scheduleSnapshot()
-        log("[PerfMonitor] started (heartbeat 50ms, stall warn ≥250ms error ≥1s, snapshot every 300s)")
+        journal("perf-monitor started")
+        log("[PerfMonitor] started (heartbeat 50ms, stall warn ≥250ms error ≥1s + stack sample, journal ring 64, snapshot every 300s)")
     }
 
     /// 主线程心跳：主 runloop 每跳更新时间戳。主线程被阻塞时心跳停跳，
@@ -172,6 +240,18 @@ final class PerfMonitor: @unchecked Sendable {
     private func heartbeat() {
         lock.lock()
         lastHeartbeatAt = Date()
+        lock.unlock()
+    }
+
+    // MARK: 主线程活动轨迹（journal）
+
+    /// 记录一条活动轨迹（任意线程可调；主线程条目带 M 标）。停顿报告与快照
+    /// 都会带上尾部若干条——「sections=0 之谜」的主线程行为证据。
+    func journal(_ event: String) {
+        let tag = Thread.isMainThread ? "M" : "B"
+        let t = Int(ProcessInfo.processInfo.systemUptime * 1000)
+        lock.lock()
+        journal.append("[+\(t)ms \(tag)] \(event)")
         lock.unlock()
     }
 
@@ -183,6 +263,9 @@ final class PerfMonitor: @unchecked Sendable {
         lock.lock()
         activeSections[key, default: []] = PerfMonitorLogic.push(stack: activeSections[key] ?? [], section: section)
         lock.unlock()
+        if Thread.isMainThread {
+            journal("▶\(name)")
+        }
     }
 
     func endSection() {
@@ -199,7 +282,11 @@ final class PerfMonitor: @unchecked Sendable {
             log("[PerfMonitor] endSection underflow on \(Thread.current)", level: .debug)
             return
         }
-        record(section.name, durationMs: section.elapsedMs(now: Date()))
+        let durationMs = section.elapsedMs(now: Date())
+        record(section.name, durationMs: durationMs)
+        if Thread.isMainThread, durationMs >= 100 {
+            journal("✓\(section.name) \(Int(durationMs))ms")
+        }
     }
 
     /// 显式计数（不经区间栈，如外部已有耗时的补记）。
@@ -222,6 +309,7 @@ final class PerfMonitor: @unchecked Sendable {
         let sections = (activeSections[mainKey] ?? [])
             + activeSections.filter { $0.key != mainKey }.sorted { $0.key.hashValue < $1.key.hashValue }.flatMap { $0.value }
         let countersCopy = counters
+        let journalCopy = journal.entries
         let reportedS = lastStallReportedS
         lock.unlock()
 
@@ -249,13 +337,53 @@ final class PerfMonitor: @unchecked Sendable {
         lock.unlock()
 
         let top = PerfMonitorLogic.topCounters(countersCopy, limit: 3)
-        let report = PerfMonitorLogic.stallReport(deltaS: deltaS, sections: sections, counters: top, now: now)
+        let report = PerfMonitorLogic.stallReport(
+            deltaS: deltaS,
+            sections: sections,
+            counters: top,
+            now: now,
+            journal: journalCopy
+        )
         log("[PERF][STALL] main thread blocked \(report)", level: level, fields: [
             "deltaMs": String(Int(deltaS * 1000)),
             "sections": String(sections.count),
             "stallCount": String(stallCountNow)
         ])
+
+        // B182：≥1s 停顿采样主线程调用栈（根因级证据）。采样自身 suspend/resume
+        // 主线程——此处不持任何锁 ✓；符号化在 resume 后异步执行。
+        if deltaS >= Self.stackSampleMinSeconds {
+            let addresses = BacktraceSampler.sampleMainThread()
+            let stackSummary: String?
+            if addresses.isEmpty {
+                stackSummary = nil
+            } else {
+                stackSummary = "sampled(\(addresses.count) frames)"
+                DispatchQueue.global(qos: .utility).async {
+                    let symbols = BacktraceSampler.symbolize(addresses)
+                    log("[PERF][STALL] main stack (\(symbols.count) frames): "
+                        + symbols.prefix(16).joined(separator: " ← "))
+                }
+            }
+            lock.lock()
+            appendStallHistory(PerfMonitorLogic.StallRecord(
+                at: now,
+                deltaMs: Int(deltaS * 1000),
+                level: level == .error ? "ERROR" : "WARN",
+                sectionsSummary: sections.map(\.name).joined(separator: ">"),
+                stackSummary: stackSummary
+            ))
+            lock.unlock()
+        }
         writeSnapshot(reason: "stall")
+    }
+
+    /// 停顿历史环（调用方持锁；容量 8）。
+    private func appendStallHistory(_ record: PerfMonitorLogic.StallRecord) {
+        stallHistory.append(record)
+        if stallHistory.count > 8 {
+            stallHistory.removeFirst(stallHistory.count - 8)
+        }
     }
 
     // MARK: 快照（常驻证据文件；--diagnose 读文件不依赖 app 存活）
@@ -276,7 +404,9 @@ final class PerfMonitor: @unchecked Sendable {
             stallCount: stallCount,
             lastStallDeltaS: lastStallReportedS,
             lastStallAt: lastStallAt,
-            counters: PerfMonitorLogic.topCounters(counters, limit: 64)
+            counters: PerfMonitorLogic.topCounters(counters, limit: 64),
+            journal: Array(journal.entries.suffix(32)),
+            stalls: stallHistory
         )
         lock.unlock()
         DispatchQueue.global(qos: .utility).async {
