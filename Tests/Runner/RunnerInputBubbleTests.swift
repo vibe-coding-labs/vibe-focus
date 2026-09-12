@@ -444,3 +444,53 @@ extension RunnerHarness {
             frontBundleID: nil, isTerminalApp: false) == .reject)
     }
 }
+
+// MARK: - B178：横向滚动策略契约（放不下就换行，永不横向滚动/漂移）
+
+extension RunnerHarness {
+    func runBubbleScrollPolicyTests() {
+        print("\n=== BubbleScrollPolicy (B178) ===")
+
+        // 真身 builtPanel 构建（含滚动视图策略与布局链）
+        let controller = InputBubbleController.shared
+        let (panel, textView) = controller.builtPanel()
+        guard let scroll = textView.enclosingScrollView else {
+            check("scroll: documentView 已挂 scroll", false)
+            return
+        }
+        check("scroll: 显式禁用横向滚动条部件", !scroll.hasHorizontalScroller)
+        check("scroll: 横向弹性 none（无横向手势滚动）", scroll.horizontalScrollElasticity == .none)
+        check("scroll: 建成即非退化可视宽（无宽 0 窗口）", scroll.contentSize.width > 100)
+        check("scroll: 容器宽跟踪文本视图", textView.textContainer?.widthTracksTextView == true)
+        // Runner 无活窗口时 scroller 风格回落 legacy（给 documentView 多算 15px 槽），
+        // 与生产（系统 overlay）不符；显式对齐后再锁宽度契约
+        scroll.scrollerStyle = .overlay
+        controller.applyPanelSize(NSSize(width: InputBubblePreferences.bubbleWidth, height: InputBubblePreferences.bubbleHeight))
+
+        // 长不可断 token + 跳尾选区（用户场景）：横向零漂移、文档不宽于可视区
+        let longToken = String(repeating: "a", count: 208)
+        textView.string = longToken
+        textView.setSelectedRange(NSRange(location: longToken.count, length: 0))
+        (panel.contentView as? BubbleCardView)?.normalizeHorizontalOrigin()
+        check("scroll: 长文+跳尾选区后 clip x 归零", scroll.contentView.bounds.origin.x == 0)
+        check("scroll: 长文+跳尾选区后 textView x 归零", textView.bounds.origin.x == 0)
+        check("scroll: 文档不宽于可视区（横向放不下=换行/裁剪）",
+              textView.frame.width <= scroll.contentView.bounds.width + 0.5)
+
+        // 联动 relayout（拖拽落账/设置滑杆同路径）后依旧零漂移且宽度同步
+        controller.applyPanelSize(NSSize(width: 640, height: 240))
+        check("scroll: relayout 后横向仍归零", scroll.contentView.bounds.origin.x == 0 && textView.bounds.origin.x == 0)
+        check("scroll: relayout 后宽度同步", abs(textView.frame.width - scroll.contentView.bounds.width) < 0.5)
+
+        // 漂移注入→归零收殓能力（模拟暂态偏移残留）
+        textView.setBoundsOrigin(NSPoint(x: 33, y: 0))
+        (panel.contentView as? BubbleCardView)?.normalizeHorizontalOrigin()
+        check("scroll: 人为漂移可被归零收殓", textView.bounds.origin.x == 0)
+
+        // 释放共享控制器状态，不污染其他域
+        panel.orderOut(nil)
+        controller.panel = nil
+        controller.textView = nil
+        controller.panelBuiltFor = nil
+    }
+}

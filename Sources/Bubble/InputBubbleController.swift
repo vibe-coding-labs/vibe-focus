@@ -192,6 +192,9 @@ final class InputBubbleController: NSObject {
         let initial = InputBubbleKeyPlan.resolveInitialText(savedDraft: savedDraft, prefix: InputBubblePreferences.defaultPrefix)
         textView.string = initial
         textView.setSelectedRange(NSRange(location: (initial as NSString).length, length: 0))
+        // B178：光标跳尾的 scrollRangeToVisible 可能带偏横向 origin（宽度暂态/滚动条
+        // 出现改变可视宽），选区落定立即归零，长草稿不再左缘裁字。
+        (panel.contentView as? BubbleCardView)?.normalizeHorizontalOrigin()
         panel.makeKeyAndOrderFront(nil)
 
         // 收键盘三件套：切 regular（accessory 不收 key）→ 激活自己 → textView 成第一响应者
