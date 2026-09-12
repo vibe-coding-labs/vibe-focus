@@ -1,7 +1,7 @@
 // SettingsView+InputBubbleSection.swift
 // VibeFocus — 设置页「输入气泡」区块（B133/B162）
-// 配置项：功能开关 / 唤起快捷键 / 聚焦自动弹出 / 移到主屏自动弹出 / 气泡宽度 / 高度 /
-// 回车默认行为 / 默认前缀。
+// 配置项：功能开关 / 唤起快捷键 / 聚焦自动弹出 / 移到主屏自动弹出 / 提交后自动归位（B176）/
+// 气泡宽度 / 高度 / 回车默认行为 / 默认前缀。
 // 偏好存取唯一事实源在 InputBubblePreferences（clamp 归一），本视图只做镜像与写穿；
 // @State 镜像驱动行内数值即时刷新（UserDefaults 非 SwiftUI 可观察，不能直绑）。
 
@@ -25,6 +25,7 @@ private struct InputBubbleSectionView: View {
     @State private var submitOnEnter = InputBubblePreferences.submitOnEnter
     @State private var autoShowOnFocus = InputBubblePreferences.autoShowOnFocus
     @State private var autoShowOnMoveToMain = InputBubblePreferences.autoShowOnMoveToMain
+    @State private var autoRestoreOnSubmit = InputBubblePreferences.autoRestoreOnSubmit
     @State private var defaultPrefix = InputBubblePreferences.defaultPrefix
     @State private var bubbleHotKeyDisplay = InputBubblePreferences.hotKey.displayString
     /// 录制失败时强制 ShortcutRecorderButton 重建回显当前生效组合键（NSViewRepresentable
@@ -114,6 +115,21 @@ private struct InputBubbleSectionView: View {
                     .disabled(!enabled)
                     .onChange(of: autoShowOnMoveToMain) { newValue in
                         InputBubblePreferences.autoShowOnMoveToMain = newValue
+                    }
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "提交后自动归位",
+                detail: "气泡提交（回车发送）后，把窗还原到移动前的原位（如副屏）；仅当窗有移动记录且在主屏时生效。"
+            ) {
+                Toggle("", isOn: $autoRestoreOnSubmit)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!enabled)
+                    .onChange(of: autoRestoreOnSubmit) { newValue in
+                        InputBubblePreferences.autoRestoreOnSubmit = newValue
                     }
             }
 

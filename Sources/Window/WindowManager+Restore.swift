@@ -75,7 +75,13 @@ extension WindowManager {
 
         // P1-1 结局可感知：四类结局播报（语音走队列/音效区分成败；aborted 内部静默；
         // 两通道分别由语音模式与音效类型开关控制，关闭即静默）。
-        VoiceAnnouncementManager.shared.announceRestoreOutcome(outcome, windowID: currentWindowID)
+        // B176：本路径唯一调用者是 toggle（用户手动热键），成功不再播完成音——
+        // ding 收口为「agent 完成」语义（Stop 拉主屏自播），失败 Basso 恒播。
+        VoiceAnnouncementManager.shared.announceRestoreOutcome(
+            outcome,
+            windowID: currentWindowID,
+            playsSuccessSound: false
+        )
 
         guard case .restored(let spaceExact) = outcome else {
             // 2026-09-02 诚实化：失败/放弃不再伪装成功。aborted = 移动前放弃；

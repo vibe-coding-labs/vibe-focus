@@ -60,6 +60,16 @@ extension InputBubbleController {
         // B162：注入放行即消费草稿（abort 不清——文本保留在草稿里，重开气泡可续）
         InputBubbleDraftStore.shared.clear(for: target.windowID)
 
+        // B176 提交后自动归位：决策在注入起点采集（窗态 580ms 注入窗口内不变），
+        // 执行在收尾块（Return 已落地）。仅气泡提交路径；abort 不归位（用户还需要这扇窗）。
+        let autoRestoreDecision = InputBubbleAutoRestoreGate.decide(
+            preferenceEnabled: InputBubblePreferences.autoRestoreOnSubmit,
+            submits: steps.contains(.returnKey),
+            hasToggleRecord: ToggleEngine.shared.load(windowID: target.windowID) != nil,
+            isOnMainScreen: WindowManager.shared.isWindowOnMainScreen(windowID: target.windowID)
+        )
+        let restoreWindowID = target.windowID
+
         for (index, step) in steps.enumerated() {
             let delayMs = index * InputBubbleTiming.pasteToReturnDelayMs
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
@@ -75,7 +85,38 @@ extension InputBubbleController {
         let totalMs = max(steps.count - 1, 0) * InputBubbleTiming.pasteToReturnDelayMs
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(totalMs + InputBubbleTiming.clipboardRestoreDelayMs)) { [weak self] in
             self?.restoreClipboardIfSafe()
+            self?.autoRestoreIfDecided(decision: autoRestoreDecision, windowID: restoreWindowID)
             self?.finishSubmission()
+        }
+    }
+
+    /// B176：提交注入落地后按门决议归位（经 ToggleEngine 直调，与 UPS restoreToOriginal
+    /// 同一执行入口；成功清 toggle 记录，~2s 后到达的 UPS 见无记录 → stay，无冲突）。
+    private func autoRestoreIfDecided(decision: InputBubbleAutoRestoreGate.Outcome, windowID: UInt32) {
+        guard decision == .restore else {
+            log("[InputBubble] auto-restore skip", level: .debug, fields: [
+                "outcome": String(describing: decision),
+                "windowID": String(windowID)
+            ])
+            return
+        }
+        let traceID = "bubble-\(Int(Date().timeIntervalSince1970 * 1000))"
+        let outcome = ToggleEngine.shared.restore(
+            windowID: windowID,
+            triggerSource: "input_bubble_submit",
+            traceID: traceID
+        )
+        if case .restored = outcome {
+            log("[InputBubble] submit auto-restore completed", fields: [
+                "windowID": String(windowID),
+                "traceID": traceID
+            ])
+        } else {
+            log("[InputBubble] submit auto-restore failed", level: .warn, fields: [
+                "windowID": String(windowID),
+                "outcome": outcome.outcomeLabel,
+                "traceID": traceID
+            ])
         }
     }
 

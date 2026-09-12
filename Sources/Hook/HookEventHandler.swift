@@ -253,7 +253,8 @@ final class HookEventHandler {
         payload: ClaudeHookPayload
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // triggerOnStop=true: 处理所有 session（本地+远程）
-        // triggerOnStop=false: 仅处理远程 session（跳过本地绑定）
+        // triggerOnStop=false: 跳过全部 session（304373e 定案语义——remoteOnly 在一切
+        // 绑定 IO 前拒绝，含远程；旧注释「仅处理远程」系漂移已修正，B176）
         let remoteOnly = !ClaudeHookPreferences.triggerOnStop
         return handleWindowMoveTrigger(payload: payload, triggerName: "Stop", remoteOnly: remoteOnly)
     }
