@@ -1,5 +1,5 @@
 // RemoteSpoolDrain.swift
-// VibeFocus — 远程事件兜底通道（B171）：spool 落盘 + Mac 主动 SSH 拉取
+// VibeFocus — 远程事件兜底通道（B171 建通道，B172 VPN 健壮性加固）：spool 落盘 + Mac 主动 SSH 拉取
 //
 // 背景：VPN/单向 NAT 场景下远程机器回程不可达——hook-config.json 里的 Mac 地址
 // 从服务端路由不通（2026-09-12 真机实锤：001 的 config 指向 10.9.0.2，curl 三路
@@ -100,6 +100,14 @@ enum RemoteSpoolDrainLogic {
             "--", target, command,
         ]
     }
+
+    /// drain 超时后强制重置可疑 ControlMaster 的 argv（B172）。
+    /// VPN 半开连接下死掉的 mux master 会让后续 exec 挂到 TCP keepalive
+    ///（用户配置 15s×3≈45s）才自愈；`ssh -O exit` 立即清掉，下一 tick 走全新
+    /// 连接。fire-and-forget：master 不存在/已死时该命令失败，无害。
+    static func muxResetArguments(target: String) -> [String] {
+        ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-O", "exit", "--", target]
+    }
 }
 
 // MARK: - drain 主机注册表（UserDefaults 持久化）
@@ -158,7 +166,9 @@ final class RemoteSpoolDrainer: ObservableObject {
 
     static let pollInterval: TimeInterval = 2.0
     static let drainTimeout: TimeInterval = 10.0
-    static let stalenessMinutes = 10
+    /// spool 陈旧阈值：容忍服务器时钟偏差与 Mac 离线数十分钚——事件仍有恢复
+    /// 语义；再老（>1h）恢复目标大概率已失效，删。
+    static let stalenessMinutes = 60
     static let batchLimit = 20
 
     private var timer: Timer?
@@ -209,6 +219,15 @@ final class RemoteSpoolDrainer: ObservableObject {
         log("[RemoteSpoolDrainer] drain start", level: .debug, fields: ["host": host])
         DispatchQueue.global(qos: .utility).async {
             let result = Self.runProcess(executable: "/usr/bin/ssh", arguments: arguments, timeout: timeout)
+            if result == nil {
+                // B172: 超时=连接疑似半开（VPN 撤销/切换常见）。强制重置共享
+                // ControlMaster，防后续 exec 挂死等 TCP keepalive（~45s）。
+                _ = Self.runProcess(
+                    executable: "/usr/bin/ssh",
+                    arguments: RemoteSpoolDrainLogic.muxResetArguments(target: host),
+                    timeout: 8.0
+                )
+            }
             Task { @MainActor [weak self] in
                 self?.finishDrain(host: host, result: result)
             }
@@ -246,6 +265,16 @@ final class RemoteSpoolDrainer: ObservableObject {
             "host": host,
             "count": String(events.count)
         ])
+
+        // B172: 回灌前复核 hook 开关——关开关瞬间在途拉取的事件不再驱动
+        // 窗口动作（事件已从 spool 取走，无法回滚；丢弃并在日志交代）。
+        guard ClaudeHookPreferences.isEnabled else {
+            log("[RemoteSpoolDrainer] drained events dropped (hook disabled mid-flight)", level: .warn, fields: [
+                "host": host,
+                "count": String(events.count)
+            ])
+            return
+        }
 
         var headers: [String: String] = [:]
         if let token = ClaudeHookPreferences.authToken, !token.isEmpty {
