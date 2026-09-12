@@ -14,6 +14,7 @@ enum InputBubblePreferences {
     private static let hotKeyKey = "inputBubbleHotKeyConfiguration"
     private static let autoShowOnMoveToMainKey = "inputBubbleAutoShowOnMoveToMain"
     private static let autoRestoreOnSubmitKey = "inputBubbleAutoRestoreOnSubmit"
+    private static let autoHideKey = "inputBubbleAutoHide"
     private static let userPlacedFrameKey = "inputBubbleUserFrame"
 
     /// 尺寸合法域与步长（设置页滑杆与 clamp 共用同一事实源）
@@ -126,6 +127,19 @@ enum InputBubblePreferences {
                 : true
         }
         set { UserDefaults.standard.set(newValue, forKey: autoRestoreOnSubmitKey) }
+    }
+
+    /// B183：气泡自动隐藏（默认关=false=绑定跟随模式）。
+    /// false（默认）：气泡绑定目标终端窗，失焦不消失，跟随目标窗移动（跨屏/拖动均跟随），
+    ///                仅 ✕ / Esc / 快捷键 / 提交 关闭。
+    /// true：旧行为——失焦（点击其它位置）即隐藏。
+    static var autoHide: Bool {
+        get {
+            UserDefaults.standard.object(forKey: autoHideKey) != nil
+                ? UserDefaults.standard.bool(forKey: autoHideKey)
+                : false
+        }
+        set { UserDefaults.standard.set(newValue, forKey: autoHideKey) }
     }
 
     /// B162：用户拖动气泡后的记忆位置（AppKit 全局坐标 origin；nil = 从未拖过，

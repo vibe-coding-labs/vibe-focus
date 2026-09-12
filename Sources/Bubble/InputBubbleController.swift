@@ -52,6 +52,15 @@ final class InputBubbleController: NSObject {
     /// B175：右下角拖拽调尺寸的起点快照（beginResizeDrag 置位，finish 后清空）
     var resizeDragStart: (origin: NSPoint, size: NSSize)?
 
+    /// B183 绑定跟随模式（autoHide=false 默认）：跟随基线与轮询定时器。
+    /// baseline = 上次同步点的目标窗 origin 与气泡 origin（均 AppKit 全局坐标）。
+    var followWindowOrigin: NSPoint?
+    var followBubbleOrigin: NSPoint?
+    var followTimer: Timer?
+    /// B183：本 app 内点击监视器——失焦后点气泡重新激活+收键
+    /// （nonactivatingPanel 点击不激活 app，子视图会吃掉 mouseDown，必须监视器层拦）。
+    var clickMonitor: Any?
+
     /// 热键瞬间捕获的注入目标
     struct Target {
         let pid: pid_t
@@ -204,6 +213,13 @@ final class InputBubbleController: NSObject {
         textView.window?.makeFirstResponder(textView)
         // B180：气泡存续期隐藏自家浮层（幂等）——见 ScreenOverlayManager.setOverlaysSuppressedForInputBubble
         ScreenOverlayManager.shared.setOverlaysSuppressedForInputBubble(true)
+        // B183：绑定跟随模式（自动隐藏=关，默认）启动跟随引擎；自动隐藏=开则不跟随（旧行为）
+        if InputBubblePreferences.autoHide {
+            stopFollowing()
+        } else {
+            startFollowing(targetCGFrame: cgFrame, bubbleOrigin: origin)
+        }
+        installClickMonitor()
 
         log("[InputBubble] bubble opened", fields: [
             "windowID": String(target.windowID),
@@ -226,6 +242,8 @@ final class InputBubbleController: NSObject {
         target = nil
         phase = .idle
         NSApp.setActivationPolicy(.accessory)
+        // B183：跟随引擎与点击监视器随气泡生命周期终止
+        stopFollowing()
         // B180：气泡关闭即还原自家浮层（幂等；提交路径的 finishSubmission 同款）
         ScreenOverlayManager.shared.setOverlaysSuppressedForInputBubble(false)
         restoreSettingsWindowIfNeeded()
@@ -233,6 +251,96 @@ final class InputBubbleController: NSObject {
             _ = NSRunningApplication(processIdentifier: t.pid)?.activate(options: .activateIgnoringOtherApps)
         }
         log("[InputBubble] bubble dismissed", level: .debug)
+    }
+
+    // MARK: 绑定跟随（B183：autoHide=false 默认模式——气泡跟目标窗走）
+
+    /// 启动跟随：基线 = 唤起时目标窗位置与气泡位置；0.2s 轮询目标窗位移。
+    func startFollowing(targetCGFrame: CGRect, bubbleOrigin: NSPoint) {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        followWindowOrigin = InputBubbleLayout.appKitFrame(
+            fromCGFrame: targetCGFrame, primaryScreenHeight: primaryHeight
+        ).origin
+        followBubbleOrigin = bubbleOrigin
+        followTimer?.invalidate()
+        let controller = InputBubbleController.shared
+        followTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { controller.followTick() }
+            }
+        }
+    }
+
+    /// 终止跟随（dismiss / 提交收尾 / 自动隐藏模式唤起时幂等清场）。
+    func stopFollowing() {
+        followTimer?.invalidate()
+        followTimer = nil
+        followWindowOrigin = nil
+        followBubbleOrigin = nil
+        removeClickMonitor()
+    }
+
+    /// 跟随拍：目标窗位移 → 气泡保偏移平移（夹进所在屏可视区）。
+    /// bounds 读不到（最小化/目标窗关闭中）= 原地停驻不跳；目标进程消失 = 随之关闭。
+    func followTick() {
+        guard phase == .open, let target, let panel,
+              let windowBefore = followWindowOrigin, let bubbleBefore = followBubbleOrigin else { return }
+        if NSRunningApplication(processIdentifier: target.pid) == nil {
+            log("[InputBubble] follow: target app gone, dismissing", level: .debug)
+            dismiss(reactivateTarget: false)
+            return
+        }
+        guard let cgFrame = cgWindowBounds(for: target.windowID) else { return }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let windowNow = InputBubbleLayout.appKitFrame(
+            fromCGFrame: cgFrame, primaryScreenHeight: primaryHeight
+        ).origin
+        let moved = InputBubbleLayout.followOrigin(
+            bubbleOrigin: bubbleBefore,
+            windowOriginBefore: windowBefore,
+            windowOriginNow: windowNow
+        )
+        let appKitFrame = InputBubbleLayout.appKitFrame(fromCGFrame: cgFrame, primaryScreenHeight: primaryHeight)
+        let clamped = InputBubbleLayout.clampedOrigin(
+            position: moved,
+            bubbleSize: panel.frame.size,
+            visibleFrame: containingScreenVisibleFrame(for: appKitFrame)
+        )
+        if clamped != panel.frame.origin {
+            suppressMoveTracking = true
+            panel.setFrameOrigin(clamped)
+            suppressMoveTracking = false
+        }
+        // 基线每拍推进（含未位移拍：窗口尺寸变化等场景不累积漂移）
+        followWindowOrigin = windowNow
+        followBubbleOrigin = clamped
+    }
+
+    /// B183：失焦后点击气泡 → 重新激活本 app 并恢复 textView 第一响应者（幂等）。
+    func refocusPanel() {
+        guard phase == .open, panel != nil else { return }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        panel?.makeKey()
+        textView?.window?.makeFirstResponder(textView)
+    }
+
+    /// B183：气泡内任意点击 → 回焦。本地监视器覆盖 textView 等子视图吃掉的 mouseDown
+    /// （nonactivatingPanel 点击不激活 app，绑定跟随模式失焦后必须能点回来打字）。
+    func installClickMonitor() {
+        removeClickMonitor()
+        let controller = InputBubbleController.shared
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .otherMouseDown]) { event in
+            if event.window === controller.panel {
+                controller.refocusPanel()
+            }
+            return event
+        }
+    }
+
+    func removeClickMonitor() {
+        if let monitor = clickMonitor { NSEvent.removeMonitor(monitor) }
+        clickMonitor = nil
     }
 
     // MARK: 提交（Enter / ⌘Enter / 提交钮）
@@ -305,20 +413,29 @@ extension InputBubbleController: NSTextViewDelegate {
     }
 }
 
-// MARK: - 面板失焦即关（用户点了终端 = 放弃气泡，不注入）；拖动位置记忆
+// MARK: - 面板失焦处置（B183 前提：autoHide=true 才失焦即关；默认绑定跟随不消失）；
+//         拖动位置记忆 + 跟随基线同步
 
 extension InputBubbleController: NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         guard phase == .open else { return }  // submitting 路径自己管理面板，不在此关
-        dismiss(reactivateTarget: false)
+        // B183：「自动隐藏」开=旧行为失焦即关；关（默认）=绑定跟随，失焦不消失，
+        // 气泡跟随目标窗（含跨屏与拖动），用 ✕ / Esc / 快捷键 / 提交 关闭。
+        if case .dismiss = InputBubbleResignPlan.decide(autoHide: InputBubblePreferences.autoHide) {
+            dismiss(reactivateTarget: false)
+        }
     }
 
     /// B162：用户拖动气泡 → 记忆位置（下次唤起优先用）。程序化定位被
     /// suppressMoveTracking 抑制；非当前面板的 didMove 忽略。
+    /// B183：拖动同时同步跟随基线——保住用户新偏移，不被下一拍拉回旧位。
     func windowDidMove(_ notification: Notification) {
         guard phase == .open, !suppressMoveTracking else { return }
         guard let moved = notification.object as? NSWindow, moved === panel else { return }
         InputBubblePreferences.userPlacedOrigin = moved.frame.origin
+        if followBubbleOrigin != nil {
+            followBubbleOrigin = moved.frame.origin
+        }
     }
 
     // MARK: B175 尺寸联动（设置页滑杆 ↔ 打开中的气泡面板）

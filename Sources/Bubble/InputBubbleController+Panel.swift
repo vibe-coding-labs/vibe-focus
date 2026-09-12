@@ -67,6 +67,16 @@ extension InputBubbleController {
         card.resizeHandle = resizeHandle
         card.addSubview(resizeHandle)
 
+        // B183：右上角关闭钮（✕）——绑定跟随模式下失焦不再自动关，这是鼠标关闭入口。
+        let closeButton = BubbleCloseButton(frame: .zero)
+        closeButton.toolTip = "关闭气泡（Esc / 快捷键 同效）"
+        closeButton.onClose = { [weak self] in
+            self?.dismiss(reactivateTarget: false)
+        }
+        card.closeButton = closeButton
+        // 子视图序在 scroll 之后 = z 序更高，压在滚动区上沿可点
+        card.addSubview(closeButton)
+
         // B178：滚动视图带真实初始帧创建（零帧起步会产生「容器宽 0」退化窗口：
         // 此间灌入长文本+光标跳尾 → scrollRangeToVisible 横向偏移且无人复位 →
         // 文本左缘被裁，用户截图实锤）；横向滚动条部件与横向弹性一并显式禁用——
@@ -198,7 +208,7 @@ extension InputBubbleController {
     }
 
     /// 目标窗中心点所在屏的 visibleFrame（找不到回落主屏）。
-    private func containingScreenVisibleFrame(for appKitFrame: CGRect) -> CGRect {
+    func containingScreenVisibleFrame(for appKitFrame: CGRect) -> CGRect {
         let center = CGPoint(x: appKitFrame.midX, y: appKitFrame.midY)
         let screen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
             ?? NSScreen.main

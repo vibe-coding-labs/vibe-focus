@@ -138,6 +138,8 @@ extension InputBubbleController {
         textView = nil
         target = nil
         NSApp.setActivationPolicy(.accessory)
+        // B183：提交收尾终止跟随引擎与点击监视器（dismiss 路径同款）
+        stopFollowing()
         // B180：气泡会话结束，还原自家浮层（幂等；dismiss 路径同款）
         ScreenOverlayManager.shared.setOverlaysSuppressedForInputBubble(false)
         restoreSettingsWindowIfNeeded()
