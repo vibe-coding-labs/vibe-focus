@@ -293,6 +293,25 @@ enum TerminalAutomationScript {
         readback != nil && cgID != nil
     }
 
+    /// 目标终端未运行时的自动拉起等待表（递增，累计 ~10.5s）：
+    /// 创建网格不该要求终端先在跑（2026-09-12 用户裁定）——工具的职责是把环境
+    /// 备好。冷启动 + 首窗就绪通常 1~3s，预算放宽到 10s 级兜住高负载。
+    static let terminalLaunchRetryDelaysNanos: [UInt64] = [
+        500_000_000, 800_000_000, 1_200_000_000, 1_800_000_000, 2_600_000_000, 3_600_000_000,
+    ]
+
+    static func terminalLaunchRetryDelayNanos(attempt: Int) -> UInt64? {
+        guard attempt >= 0, attempt < terminalLaunchRetryDelaysNanos.count else { return nil }
+        return terminalLaunchRetryDelaysNanos[attempt]
+    }
+
+    /// 仅「确认未运行」才自动拉起：多实例/临时副本是 AppleScript 寻址安全问题，
+    /// 拉起只会雪上加霜，必须走既有诚实拒绝链。
+    static func needsTerminalLaunch(_ verdict: AutomationInstanceVerdict) -> Bool {
+        if case .notRunning = verdict { return true }
+        return false
+    }
+
     /// osascript 结果 → 失败明细（成功 → nil）。stderr 为空的非零退出是真机
     /// 实证过的真实形态（AE 被垂死实例吞掉），必须带着退出码现身，不能落进
     /// 「执行失败或超时」的兜底词里丢失取证线索。

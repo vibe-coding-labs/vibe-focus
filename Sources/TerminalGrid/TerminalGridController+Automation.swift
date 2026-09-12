@@ -101,6 +101,39 @@ extension TerminalGridController {
         return String(decoding: buffer[argvStart..<end], as: UTF8.self)
     }
 
+    /// 目标终端未运行时自动拉起并等实例就绪（2026-09-12 用户裁定：创建网格
+    /// 不该要求终端先在跑——工具的职责就是把环境备好）。仅 notRunning 拉起；
+    /// 多实例/临时副本交给后续守卫的诚实拒绝链（寻址安全问题不碰）。
+    private func ensureTerminalRunning(appBundleID: String, op: String) async -> Bool {
+        let verdict = TerminalAutomationScript.automationInstanceVerdict(
+            instances: Self.terminalInstances(bundleID: appBundleID))
+        guard TerminalAutomationScript.needsTerminalLaunch(verdict) else { return true }
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) else {
+            return true  // LS 解析不到应用：维持原 notRunning 拒绝链，此处不误报
+        }
+        log("[TerminalGrid] terminal not running, auto-launching", fields: [
+            "op": op, "bundleID": appBundleID,
+        ])
+        _ = try? await NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+        var attempt = 0
+        while let delay = TerminalAutomationScript.terminalLaunchRetryDelayNanos(attempt: attempt) {
+            try? await Task.sleep(nanoseconds: delay)
+            let now = TerminalAutomationScript.automationInstanceVerdict(
+                instances: Self.terminalInstances(bundleID: appBundleID))
+            if !TerminalAutomationScript.needsTerminalLaunch(now) {
+                log("[TerminalGrid] terminal launched and instance ready", fields: [
+                    "op": op, "bundleID": appBundleID, "waitedAttempts": String(attempt + 1),
+                ])
+                return true
+            }
+            attempt += 1
+        }
+        log("[TerminalGrid] terminal auto-launch wait exhausted", level: .warn, fields: [
+            "op": op, "bundleID": appBundleID,
+        ])
+        return false
+    }
+
     /// 建一个终端窗口并确保落到目标格子：
     /// 0) 实例环境守卫（每次尝试前都验：E2E 临时副本可能在网格中途生灭）+ 瞬时
     ///    故障退避重试（挂起类故障如 TCC 授权框不重试——30s 超时后快速失败）；
@@ -119,6 +152,12 @@ extension TerminalGridController {
             ? TerminalAutomationScript.itermCreateWindow(command: command, quartzFrame: frame)
             : TerminalAutomationScript.terminalCreateWindow(command: command, quartzFrame: frame)
 
+        // 终端未运行 → 自动拉起再建窗（失败才走 notRunning 拒绝链，如实告知）
+        guard await ensureTerminalRunning(appBundleID: appBundleID, op: op) else {
+            let appName = TerminalSelectionResolver.knownNames[appBundleID] ?? appBundleID
+            lastScriptError = "已尝试自动启动 \(appName) 但等待超时仍未检测到实例——请手动启动后重试"
+            return (nil, false)
+        }
         var created: YabaiClient.YabaiResult?
         var failedAttempts = 0
         while created == nil {
