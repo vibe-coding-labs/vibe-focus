@@ -13,6 +13,7 @@ enum InputBubblePreferences {
     private static let defaultPrefixKey = "inputBubbleDefaultPrefix"
     private static let hotKeyKey = "inputBubbleHotKeyConfiguration"
     private static let autoShowOnMoveToMainKey = "inputBubbleAutoShowOnMoveToMain"
+    private static let autoRestoreOnSubmitKey = "inputBubbleAutoRestoreOnSubmit"
     private static let userPlacedFrameKey = "inputBubbleUserFrame"
 
     /// 尺寸合法域与步长（设置页滑杆与 clamp 共用同一事实源）
@@ -95,6 +96,17 @@ enum InputBubblePreferences {
                 : true
         }
         set { UserDefaults.standard.set(newValue, forKey: autoShowOnMoveToMainKey) }
+    }
+
+    /// B176：气泡提交（注入含 Return）落地后把窗还原到 toggle 记录原位（默认开）。
+    /// 仅影响气泡提交路径；UPS hook 的 userPlacedSkip 语义（B126）不变。
+    static var autoRestoreOnSubmit: Bool {
+        get {
+            UserDefaults.standard.object(forKey: autoRestoreOnSubmitKey) != nil
+                ? UserDefaults.standard.bool(forKey: autoRestoreOnSubmitKey)
+                : true
+        }
+        set { UserDefaults.standard.set(newValue, forKey: autoRestoreOnSubmitKey) }
     }
 
     /// B162：用户拖动气泡后的记忆位置（AppKit 全局坐标 origin；nil = 从未拖过，

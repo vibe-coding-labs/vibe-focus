@@ -135,6 +135,33 @@ extension RunnerHarness {
         check("hint: 提交模式文案含「注入并提交」", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("注入并提交"))
         check("hint: 默认模式文案含「Enter 换行」与「⌘Enter 注入并提交」", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("Enter 换行") && InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("⌘Enter 注入并提交"))
 
+        // --- B176 提交后自动归位门（判序：偏好→提交语义→有记录→在主屏） ---
+        func arGate(_ pref: Bool, _ submits: Bool, _ record: Bool, _ onMain: Bool) -> InputBubbleAutoRestoreGate.Outcome {
+            InputBubbleAutoRestoreGate.decide(
+                preferenceEnabled: pref, submits: submits,
+                hasToggleRecord: record, isOnMainScreen: onMain)
+        }
+        check("autoRestore: 偏好关 → skipDisabled（哪怕其余全满足）",
+              arGate(false, true, true, true) == .skipDisabled)
+        check("autoRestore: 非提交（⌘Enter 仅粘贴）→ skipNotSubmitted",
+              arGate(true, false, true, true) == .skipNotSubmitted)
+        check("autoRestore: 无 toggle 记录（无从知原位）→ skipNoRecord",
+              arGate(true, true, false, true) == .skipNoRecord)
+        check("autoRestore: 窗不在主屏（本就在家）→ skipNotOnMain",
+              arGate(true, true, true, false) == .skipNotOnMain)
+        check("autoRestore: 全满足 → restore",
+              arGate(true, true, true, true) == .restore)
+        check("autoRestore: 判序优先级 偏好 > 提交（关+非提交）",
+              arGate(false, false, false, false) == .skipDisabled)
+        check("autoRestore: 判序优先级 提交 > 记录",
+              arGate(true, false, false, false) == .skipNotSubmitted)
+        check("autoRestore: 判序优先级 记录 > 主屏",
+              arGate(true, true, false, false) == .skipNoRecord)
+        check("keyPlan: submit 键序含 returnKey（归位触发语义）",
+              InputBubbleKeyPlan.steps(for: .submit).contains(.returnKey))
+        check("keyPlan: pasteOnly 键序不含 returnKey（不触发归位）",
+              !InputBubbleKeyPlan.steps(for: .pasteOnly).contains(.returnKey))
+
         // --- B160 聚焦自动弹出决策门（判序：开关→气泡占用→终端→窗口变化→活跃绑定） ---
         func gate(_ auto: Bool, _ idle: Bool, _ term: Bool, _ changed: Bool, _ live: Bool) -> InputBubbleAutoShowGate.Outcome {
             InputBubbleAutoShowGate.decide(

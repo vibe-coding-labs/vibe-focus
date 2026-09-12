@@ -698,6 +698,18 @@ extension RunnerHarness {
     check("播报文案: silent → 无文案（成败通道无消费方，恒 true）",
           RestoreAnnouncementPlan.silent.text == nil && RestoreAnnouncementPlan.silent.isSuccessful)
 
+    // MARK: B176 成功音分流（ding 收口为「agent 完成」语义，手动恢复成功静默）
+
+    check("成功音分流: 允许 + 成功结局 → 播",
+          RestoreAnnouncementPlan.shouldPlaySuccessSound(plan: .restoredExact, allowed: true))
+    check("成功音分流: 不允许（手动恢复路径）+ 成功结局 → 不播",
+          !RestoreAnnouncementPlan.shouldPlaySuccessSound(plan: .restoredExact, allowed: false))
+    check("成功音分流: 降级结局同样受允许位约束",
+          !RestoreAnnouncementPlan.shouldPlaySuccessSound(plan: .restoredDegraded, allowed: false))
+    check("成功音分流: 失败结局与允许位无关恒不播成功音",
+          !RestoreAnnouncementPlan.shouldPlaySuccessSound(plan: .failedRetryable, allowed: true)
+          && !RestoreAnnouncementPlan.shouldPlaySuccessSound(plan: .failedPermanent, allowed: true))
+
     // MARK: YabaiWindowInfo 双键最小化解码（真实实现——P0-2 事实源）
 
     do {

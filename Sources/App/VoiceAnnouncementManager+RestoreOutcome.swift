@@ -54,6 +54,14 @@ enum RestoreAnnouncementPlan: Equatable {
             return false
         }
     }
+
+    /// B176 成功音分流：ding 语义收口为「agent 完成」专属（Stop 拉主屏路径自播），
+    /// 用户手动热键恢复不再响完成音——窗口飞回本身就是反馈，此前每次 ⌃Q 恢复都 ding
+    /// 被用户报为「完成音与实际完成对不上」。失败 Basso 不受此分流影响（可感知价值保留）。
+    /// 纯函数供 Runner 直测。
+    static func shouldPlaySuccessSound(plan: RestoreAnnouncementPlan, allowed: Bool) -> Bool {
+        plan.isSuccessful && allowed
+    }
 }
 
 @MainActor
@@ -87,7 +95,16 @@ extension VoiceAnnouncementManager {
     /// - 语音：mode != .none 时经有界队列播报（不抢占会话完成播报，第二十二刀语义）；
     /// - 音效：soundType != .none 时 NSSound 区分成败——成功=用户配置完成音效，
     ///   失败=系统 Basso（SoundManager.playFailureSound）。
-    func announceRestoreOutcome(_ outcome: ToggleEngine.RestoreOutcome, windowID: UInt32) {
+    /// - Parameters:
+    ///   - outcome: 引擎结局
+    ///   - windowID: 目标窗
+    ///   - playsSuccessSound: 成功是否播完成音（B176：手动热键恢复路径传 false——
+    ///     ding 收口为「agent 完成」语义；失败 Basso 恒播）。
+    func announceRestoreOutcome(
+        _ outcome: ToggleEngine.RestoreOutcome,
+        windowID: UInt32,
+        playsSuccessSound: Bool = true
+    ) {
         let plan = outcome.restoreAnnouncementPlan
         guard plan != .silent else {
             log("[VoiceAnnouncementManager] restore outcome aborted, staying silent", fields: [
@@ -104,8 +121,12 @@ extension VoiceAnnouncementManager {
             ])
         }
 
-        if plan.isSuccessful {
+        if RestoreAnnouncementPlan.shouldPlaySuccessSound(plan: plan, allowed: playsSuccessSound) {
             SoundManager.shared.playCompletionSound()
+        } else if plan.isSuccessful {
+            log("[VoiceAnnouncementManager] restore success sound withheld (user-initiated restore)", fields: [
+                "windowID": String(windowID)
+            ])
         } else {
             SoundManager.shared.playFailureSound()
         }

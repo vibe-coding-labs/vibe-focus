@@ -132,6 +132,36 @@ enum InputBubbleClipboardPlan {
     }
 }
 
+/// 提交后自动归位决策门（B176）。
+/// 气泡提交（注入含 Return）= 用户显式「用完此窗」信号，注入落地后把窗还原到
+/// toggle 记录的原位——与 UPS 的 userPlacedSkip 不冲突：B126 保护的是 ambient
+/// hook 事件（语音流/后台提交）不得 Undo 用户放置，气泡提交是用户当下的动作
+/// （2026-09-12 用户实测：SSH 窗手动移主屏 → 气泡提交 → 期望自动回副屏）。
+/// 判序：偏好关 → 非提交（⌘Enter 仅粘贴/Esc）→ 无 toggle 记录（无从知原位，
+/// 诚实不动作）→ 窗不在主屏（本就在家/别处）→ 归位。
+enum InputBubbleAutoRestoreGate {
+    enum Outcome: Equatable {
+        case restore
+        case skipDisabled
+        case skipNotSubmitted
+        case skipNoRecord
+        case skipNotOnMain
+    }
+
+    static func decide(
+        preferenceEnabled: Bool,
+        submits: Bool,
+        hasToggleRecord: Bool,
+        isOnMainScreen: Bool
+    ) -> Outcome {
+        guard preferenceEnabled else { return .skipDisabled }
+        guard submits else { return .skipNotSubmitted }
+        guard hasToggleRecord else { return .skipNoRecord }
+        guard isOnMainScreen else { return .skipNotOnMain }
+        return .restore
+    }
+}
+
 /// 气泡锚点布局（AppKit 全局坐标，bottom-left 原点）：贴目标窗左下角内侧，
 /// 水平/垂直双轴夹进屏幕 visibleFrame；退化（气泡比屏宽/高）时贴 visible 左/下缘。
 enum InputBubbleLayout {
