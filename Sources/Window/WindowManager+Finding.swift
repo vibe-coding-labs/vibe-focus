@@ -5,7 +5,6 @@ import Foundation
 
 // MARK: - Window Finding
 // 窗口查找：捕获聚焦窗口、查找 Claude Code 窗口
-@MainActor
 extension WindowManager {
 
     struct WindowCandidate {

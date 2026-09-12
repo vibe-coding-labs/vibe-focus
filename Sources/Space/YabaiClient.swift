@@ -4,7 +4,18 @@ import Foundation
 @MainActor
 enum YabaiClient {
 
-    private static var cachedPath: String?
+    /// B180：yabai 路径缓存可能被主线程与窗口作业线程并发读写，锁盒保护。
+    private nonisolated static let cachedPathBox = PathCacheBox()
+
+    /// 非隔离路径缓存盒（yabaiPath 解析在主线程与窗口作业线程都会触发）。
+    private final class PathCacheBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var path: String?
+        var value: String? {
+            get { lock.lock(); defer { lock.unlock() }; return path }
+            set { lock.lock(); defer { lock.unlock() }; path = newValue }
+        }
+    }
 
     static let commandTimeout: TimeInterval = 2.0
 
@@ -18,7 +29,7 @@ enum YabaiClient {
     )
 
     /// 获取 yabai 可执行文件路径（带缓存 + shell fallback）
-    static func yabaiPath() -> String? {
+    nonisolated static func yabaiPath() -> String? {
         // P-INST-178: yabai 可执行路径解析耗时（缓存命中 fileExists 检查 / 未命中时 7 个候选路径 FileManager.fileExists stat 扫描 + findViaUserShell + findViaBashWhich fork 兜底；首次查询后缓存，所有 yabai fork 前调用）。
         #if PERF_INSTRUMENT
         let ypStart = Date()
@@ -29,7 +40,7 @@ enum YabaiClient {
             }
         }
         #endif
-        if let cached = cachedPath, FileManager.default.fileExists(atPath: cached) {
+        if let cached = cachedPathBox.value, FileManager.default.fileExists(atPath: cached) {
             return cached
         }
 
@@ -45,27 +56,27 @@ enum YabaiClient {
         ]
         for path in candidates {
             if FileManager.default.fileExists(atPath: path) {
-                cachedPath = path
+                cachedPathBox.value = path
                 return path
             }
         }
 
         // 2. Fallback: 通过用户 shell 环境查找
         if let shellPath = findViaUserShell() {
-            cachedPath = shellPath
+            cachedPathBox.value = shellPath
             return shellPath
         }
 
         // 3. Fallback: 通过 bash -l which 查找
         if let whichPath = findViaBashWhich() {
-            cachedPath = whichPath
+            cachedPathBox.value = whichPath
             return whichPath
         }
 
         return nil
     }
 
-    private static func findViaUserShell() -> String? {
+    private nonisolated static func findViaUserShell() -> String? {
         // P-INST-183: 用户 shell 查找 yabai 路径耗时（2x 裸 Process fork：env bash -l -c 'echo $SHELL' + $SHELL -l -c 'which yabai' + FileManager.fileExists 校验；yabaiPath P-INST-178 缓存未命中 fallback，登录 shell 加载可阻塞）。
         #if PERF_INSTRUMENT
         let fusStart = Date()
@@ -105,7 +116,7 @@ enum YabaiClient {
         }
     }
 
-    private static func findViaBashWhich() -> String? {
+    private nonisolated static func findViaBashWhich() -> String? {
         // P-INST-184: bash which 查找 yabai 路径耗时（裸 Process fork /bin/bash -l -c 'which yabai' + FileManager.fileExists 校验；yabaiPath P-INST-178 末级 fallback，登录 shell 加载可阻塞）。
         #if PERF_INSTRUMENT
         let fbwStart = Date()
@@ -184,7 +195,7 @@ enum YabaiClient {
 
     /// 执行 yabai 命令（带超时）— 主线程同步，用于写操作
     /// （window --move/--focus/--space 等有时序依赖，[[space_switch_regression]]）。
-    static func run(arguments: [String]) -> YabaiResult? {
+    nonisolated static func run(arguments: [String]) -> YabaiResult? {
         guard let path = yabaiPath() else { return nil }
         // P-INST-37: YabaiClient.run fork 耗时（主线程同步 yabai fork；overlay/查询路径底层，归因 yabai 占用）。
         let runStart = Date()

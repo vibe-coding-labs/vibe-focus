@@ -7,7 +7,6 @@ import Foundation
 // 1. verifyAndCorrectPostMoveSize — 移动后 size 漂移校验与重写（对抗 yabai 异步 re-tile）
 // 2. saveToggleRecordForMainMove  — 保存 toggle record 供 restore 回原位
 
-@MainActor
 extension WindowManager {
 
     /// 移动后一致性校验：读最终 frame，size 漂移超阈值则重写（最多 2 次 + 回读验证）。

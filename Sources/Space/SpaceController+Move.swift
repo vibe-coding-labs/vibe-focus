@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 
-@MainActor
 extension SpaceController {
 
     // MARK: 历史注（2026-09-01 清理）

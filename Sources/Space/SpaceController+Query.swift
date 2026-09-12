@@ -1,10 +1,9 @@
 import AppKit
 import Foundation
 
-@MainActor
 extension SpaceController {
 
-    func queryFocusedSpace() -> YabaiSpaceInfo? {
+    nonisolated func queryFocusedSpace() -> YabaiSpaceInfo? {
         // P-INST-57: queryFocusedSpace 耗时（runYabai query --spaces --space fork + decode；overlay refreshSpaceIndices P-INST-42 的 focused space 查询，底层 runYabai P-INST-27 已覆盖 fork，此埋点补顶层归因）。
         #if PERF_INSTRUMENT
         let qfsStart = Date()
@@ -123,7 +122,7 @@ extension SpaceController {
 
     /// - Parameter ignoreCache: true 时跳过缓存读（仍回写缓存）——等到位轮询场景消费：
     ///   float 脱管后缓存里是脱管前的旧 is-floating，读缓存恒假会让轮询白转到超时。
-    func queryWindow(windowID: UInt32, ignoreCache: Bool = false) -> YabaiWindowInfo? {
+    nonisolated func queryWindow(windowID: UInt32, ignoreCache: Bool = false) -> YabaiWindowInfo? {
         // P-INST-6: queryWindow fork 耗时 + cacheHit（toggle 入口 queryFocusedWindow 预填缓存，命中应 ~0ms）。
         let qwStart = Date()
         // 1. 检查缓存
@@ -196,7 +195,7 @@ extension SpaceController {
         return spaces?.first(where: { $0.display == displayIndex && $0.isVisible == true })?.index.map { .yabai($0) }
     }
 
-    func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil, ignoreCache: Bool = false) -> SpaceIdentifier? {
+    nonisolated func visibleSpaceIndex(forDisplayIndex displayIndex: Int?, spaces: [YabaiSpaceInfo]? = nil, ignoreCache: Bool = false) -> SpaceIdentifier? {
         let resolvedSpaces = spaces ?? querySpaces(ignoreCache: ignoreCache)
         return Self.resolveVisibleSpaceIndex(displayIndex: displayIndex, spaces: resolvedSpaces)
     }
@@ -262,7 +261,7 @@ extension SpaceController {
     }
 
     /// yabai display index → NSScreen（几何精确，1s 缓存；yabai 不可用回退猜序版）。
-    func exactNSScreen(forYabaiDisplayIndex index: Int) -> NSScreen? {
+    nonisolated func exactNSScreen(forYabaiDisplayIndex index: Int) -> NSScreen? {
         if displayMatchTable == nil || Date().timeIntervalSince(displayMatchTable!.mappedAt) > 1.0 {
             displayMatchTable = rebuildDisplayMatchTable()
         }

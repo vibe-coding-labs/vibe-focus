@@ -11,7 +11,6 @@ import Foundation
 // 读 frame/windowID 必须用 CGWindowList（cgWindowBounds/cgWindowListAll，非阻塞快照），
 // 本层仅用于非热路径诊断与已确认不阻塞的场景（如窗口已被 yabai space move 到主屏后）。
 
-@MainActor
 extension WindowManager {
 
     /// Extract the CGWindowID from an AXUIElement window reference.

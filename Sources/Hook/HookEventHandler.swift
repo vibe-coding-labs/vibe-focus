@@ -39,7 +39,7 @@ final class HookEventHandler {
     /// 创建、成功即清除，每次回跳需一次新的 Stop 移动作凭证）+ UPS 限流闸前置。
     func handleUserPromptSubmit(
         payload: ClaudeHookPayload
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+    ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         let traceID = makeOperationID(prefix: "ups")
         // P-INST-29: handleUserPromptSubmit 总耗时（hook 同步响应延迟；defer 统一记，outcome 见各路径 code 字段，用 traceID 关联）。
         #if PERF_INSTRUMENT
@@ -152,11 +152,16 @@ final class HookEventHandler {
                     "sessionID": payload.sessionID
                 ]
             )
-            let outcome = ToggleEngine.shared.restore(
-                windowID: identity.windowID,
-                triggerSource: "hook_user_prompt_submit",
-                traceID: traceID
-            )
+            // B180：归位移动下放窗口作业串行队列——主线程解放（实测此路径
+            // 34/35 次 >200ms、max 2.3s，与用户打字节奏重合=卡死主诉）。
+            // 响应仍在移动完成后返回，hook 语义不变。
+            let outcome = await WindowWorkExecutor.run {
+                ToggleEngine.shared.restore(
+                    windowID: identity.windowID,
+                    triggerSource: "hook_user_prompt_submit",
+                    traceID: traceID
+                )
+            }
             var restored = false
             if case .restored = outcome { restored = true }
             if restored {
@@ -251,12 +256,12 @@ final class HookEventHandler {
 
     func handleStop(
         payload: ClaudeHookPayload
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+    ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         // triggerOnStop=true: 处理所有 session（本地+远程）
         // triggerOnStop=false: 跳过全部 session（304373e 定案语义——remoteOnly 在一切
         // 绑定 IO 前拒绝，含远程；旧注释「仅处理远程」系漂移已修正，B176）
         let remoteOnly = !ClaudeHookPreferences.triggerOnStop
-        return handleWindowMoveTrigger(payload: payload, triggerName: "Stop", remoteOnly: remoteOnly)
+        return await handleWindowMoveTrigger(payload: payload, triggerName: "Stop", remoteOnly: remoteOnly)
     }
 
 }

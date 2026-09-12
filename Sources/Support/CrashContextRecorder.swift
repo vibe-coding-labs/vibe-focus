@@ -2,8 +2,10 @@ import Foundation
 
 // IPS 解析与文件 I/O 已移至 CrashContextRecorder+IO.swift
 
-@MainActor
 final class CrashContextRecorder {
+    /// B180：record 从窗口作业线程（后台串行队列）触发，state/persistScheduled
+    /// 由 stateLock 串行化；persistState 读取走锁内快照。
+    let stateLock = NSLock()
     static let shared = CrashContextRecorder()
 
     struct SessionState: Codable {
@@ -138,8 +140,10 @@ final class CrashContextRecorder {
                         events: prev.events,
                         lastIngestedCrashReport: reportName
                     )
-                    appendEvent("crash_report file=\(reportName) (parse_failed)")
+                    stateLock.lock()
+                    appendEventLocked("crash_report file=\(reportName) (parse_failed)")
                     state = newState
+                    stateLock.unlock()
                     persistState()
                     return
                 }
@@ -187,7 +191,9 @@ final class CrashContextRecorder {
                     events: prev.events,
                     lastIngestedCrashReport: reportName
                 )
-                appendEvent("crash_report file=\(reportName) exception=\(exceptionType) signal=\(exceptionSignal) frame0=\(topFrameSymbol)")
+                stateLock.lock()
+                appendEventLocked("crash_report file=\(reportName) exception=\(exceptionType) signal=\(exceptionSignal) frame0=\(topFrameSymbol)")
+                stateLock.unlock()
                 // 2026-08-31 修复：此前构造的 newState 从未赋给 state（state 尚为 nil，
                 // `state?.lastIngestedCrashReport` 是 no-op），reportName 不会持久化，
                 // 同一崩溃报告会被重复 ingest。改为有效赋值。
@@ -208,26 +214,34 @@ final class CrashContextRecorder {
         if let lastEvent = previous?.events.last {
             newState.events.append(lastEvent)
         }
+        stateLock.lock()
         state = newState
+        stateLock.unlock()
         persistState()
         log("CrashContextRecorder.bootstrap exit", level: .debug)
     }
 
-    func record(_ event: String) {
-        appendEvent(event)
-        // Debounced persist: 不每次都立即写磁盘
-        guard !persistScheduled else { return }
+    nonisolated func record(_ event: String) {
+        stateLock.lock()
+        appendEventLocked(event)
+        let shouldSchedule = !persistScheduled
         persistScheduled = true
+        stateLock.unlock()
+        // Debounced persist: 不每次都立即写磁盘
+        guard shouldSchedule else { return }
         persistQueue.asyncAfter(deadline: .now() + persistDebounceInterval) { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.persistScheduled = false
-                self?.persistState()
-            }
+            guard let self else { return }
+            self.stateLock.lock()
+            self.persistScheduled = false
+            self.stateLock.unlock()
+            self.persistState()
         }
     }
 
     func markCleanExit() {
+        stateLock.lock()
         state?.cleanExit = true
+        stateLock.unlock()
         captureRecentLogTail(context: "clean_exit")
         persistState()
         log("CrashContextRecorder.markCleanExit", level: .debug)

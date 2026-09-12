@@ -14,7 +14,7 @@ extension ClaudeHookServer {
         query: [String: String],
         headers: [String: String],
         peerAddress: String? = nil
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+    ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-71: hook 请求端到端总耗时（token 验证 + JSON decode + eventHandler 处理 + 响应构造；hook 路径顶层归因，配合子阶段 P-INST-38/47/54/55/56）。
         let hhrStart = Date()
         // B178 常开埋点：hook 处理全程占主线程（窗口作业同步执行），停顿看门狗
@@ -125,16 +125,16 @@ extension ClaudeHookServer {
         case .sessionStart:
             result = eventHandler.handleSessionStart(payload: payload)
         case .stop:
-            result = eventHandler.handleStop(payload: payload)
+            result = await eventHandler.handleStop(payload: payload)
             // 语音播报：与移窗逻辑解耦，无条件异步触发（不阻塞 hook 响应）。
             // 窗口已在主屏（handleStop 早返回）时语音仍触发，避免依赖 moved 标志。
             Task { @MainActor in
                 VoiceAnnouncementManager.shared.announceCompletion(payload: payload)
             }
         case .sessionEnd:
-            result = eventHandler.handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
+            result = await eventHandler.handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
         case .userPromptSubmit:
-            result = eventHandler.handleUserPromptSubmit(payload: payload)
+            result = await eventHandler.handleUserPromptSubmit(payload: payload)
         }
 
         // Track handled requests based on the response

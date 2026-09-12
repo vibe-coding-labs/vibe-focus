@@ -187,7 +187,7 @@ extension WindowManager {
     /// 全仓 float 脱管一律经此出口，禁止再手抄 float→settle 序列（Batch 6 收敛，
     /// 序列契约见 FloatSettle）。
     @discardableResult
-    func floatAndSettle(windowID: UInt32, operationID: String, knownWindowInfo: YabaiWindowInfo?) -> FloatSettle.Outcome {
+    nonisolated func floatAndSettle(windowID: UInt32, operationID: String, knownWindowInfo: YabaiWindowInfo?) -> FloatSettle.Outcome {
         FloatSettle.floatAndSettle(
             windowID: windowID,
             operationID: operationID,

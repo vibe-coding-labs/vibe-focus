@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 
-@MainActor
 extension WindowManager {
 
     /// 通过 CGWindowID focus 窗口 — yabai focus 失败时的 fallback。

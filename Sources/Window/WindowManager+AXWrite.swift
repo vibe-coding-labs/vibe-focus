@@ -5,7 +5,6 @@ import Foundation
 // MARK: - AX 写入编排层（2026-08-31 从 +AXHelpers.swift 拆分，行为不变）
 // apply 两阶段（Phase 1 size + Phase 2 position）frame 写入及其子步骤。读取原语见 +AXRead.swift。
 
-@MainActor
 extension WindowManager {
 
     /// 写入目标 frame。两阶段固定顺序：Phase 1 size write + readback retry，Phase 2 position write。

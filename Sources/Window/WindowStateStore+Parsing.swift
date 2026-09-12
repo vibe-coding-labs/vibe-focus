@@ -5,7 +5,6 @@
 import Foundation
 import SQLite3
 
-@MainActor
 extension WindowStateStore {
 
     // MARK: - Row Parser

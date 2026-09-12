@@ -7,7 +7,6 @@ import Foundation
 // AXUIElement。唯一调用方是 moveWindowToMainScreen 的 P2 yabai 路径（窗口被 yabai
 // space move 到主屏后，AX 不再被副屏阻塞，此时解析安全）。
 
-@MainActor
 extension WindowManager {
 
     /// 按身份解析 AXUIElement，四级匹配路径按代价递增。

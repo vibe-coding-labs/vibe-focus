@@ -110,7 +110,7 @@ final class ClaudeHookServer: ObservableObject {
                         return
                     }
 
-                    let result = self.handleHookRequest(
+                    let result = await self.handleHookRequest(
                         body: dataRequest.data,
                         query: request.query ?? [:],
                         headers: request.headers,

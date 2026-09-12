@@ -5,7 +5,6 @@
 import AppKit
 import Foundation
 
-@MainActor
 extension WindowManager {
 
     // MARK: - TTY Normalization (唯一事实源，2.16a 第十八刀)

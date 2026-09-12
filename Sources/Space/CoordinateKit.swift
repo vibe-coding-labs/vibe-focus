@@ -100,7 +100,6 @@ struct QuartzRect: Equatable, CustomStringConvertible {
 // MARK: - 坐标转换
 
 /// Utility for converting between CG, yabai, and NSScreen coordinate systems.
-@MainActor
 enum CoordinateKit {
 
     /// AppKit 全局 y → Quartz 全局 y（纯函数，RunnerRegistryStoreTests coord 块锁定）。

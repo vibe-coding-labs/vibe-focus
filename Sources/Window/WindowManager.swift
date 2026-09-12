@@ -5,7 +5,6 @@ import ApplicationServices.HIServices
 import CoreFoundation
 import Foundation
 
-@MainActor
 /// Core window management engine — finding, moving, toggling, and restoring windows.
 final class WindowManager {
     static let shared = WindowManager()

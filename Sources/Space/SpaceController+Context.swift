@@ -1,10 +1,9 @@
 import AppKit
 import Foundation
 
-@MainActor
 extension SpaceController {
 
-    func captureSpaceContext(windowID: UInt32, operationID: String? = nil) -> SpaceContext {
+    nonisolated func captureSpaceContext(windowID: UInt32, operationID: String? = nil) -> SpaceContext {
         let op = operationID ?? "none"
         // P-INST-5: captureSpaceContext 总耗时 + 内部 queryWindow/querySpaces 子查询耗时（移动前 space 上下文捕获）。
         let captureStart = Date()

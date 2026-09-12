@@ -22,7 +22,6 @@ import Cocoa
 // Tests/Runner 无需真实 yabai/AX/SQLite 即穷尽结局裁决全部分支；生产入口
 // restore(windowID:triggerSource:traceID:) 委托并传入四个 .shared 单例。
 
-@MainActor
 extension ToggleEngine {
 
     /// 视角守卫（成功与失败路径共用）：frame 直写/源屏预切回会把 macOS 键盘焦点/视角

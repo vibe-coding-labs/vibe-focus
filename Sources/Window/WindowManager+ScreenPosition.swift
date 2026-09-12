@@ -5,7 +5,6 @@ import Foundation
 
 // MARK: - Screen Position
 // 屏幕检测、frame 计算、窗口位置判断
-@MainActor
 extension WindowManager {
 
     /// Check whether a window (by CGWindowID) is currently on the main screen.

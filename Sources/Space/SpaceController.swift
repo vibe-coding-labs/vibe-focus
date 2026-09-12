@@ -5,7 +5,6 @@ import Foundation
 // 类型定义已移至 SpaceController+Types.swift
 // Yabai 执行逻辑已移至 SpaceController+Yabai.swift
 
-@MainActor
 final class SpaceController: ObservableObject {
     static let shared = SpaceController()
 
@@ -107,8 +106,15 @@ final class SpaceController: ObservableObject {
         refreshAvailability(force: false)
     }
 
+    /// B180：availability 刷新完全后台化。原实现在调用线程（主线程）同步跑两次
+    /// yabai fork（query --spaces + SA 探针），yabai 忙时实测 1~3s/次、每 20s 节流窗
+    /// 口一次——真机看门狗首个战果（[PERF][STALL] 1.39s/2.44s 归因）。现结构：
+    /// 节流判定与路径解析即时返回；两个 fork 在后台 utility 线程执行（区间
+    /// availability.refresh 落在后台线程，主线程停顿日志不再出现它）；结果经
+    /// MainActor.run 应用（@Published 状态保持在主线程变更，SwiftUI 语义不变）。
+    /// 探测期间 availability 保持旧值——调用方（设置页/编排热路径）拿到的仍是
+    /// 最近一次探测结果，与原节流语义一致。
     func refreshAvailability(force: Bool) {
-        // P-INST-41: refreshAvailability 总耗时（availability 刷新；fork query --spaces + SA check + 可能 recovery；force vs 节流缓存路径，归因 availability 路径阻塞）。
         let raStart = Date()
         var raResult = "throttled"
         defer {
@@ -118,11 +124,6 @@ final class SpaceController: ObservableObject {
                 "durationMs": String(elapsedMilliseconds(since: raStart))
             ])
         }
-        // B178 常开埋点：本函数在主线程同步跑两次 yabai fork（query --spaces + SA
-        // 探针），yabai 忙时实测 1~3s/次、每 20s 节流窗口可达一次——真机看门狗
-        // 首个战果（2026-09-12 [PERF][STALL] 1.39s/2.44s 归因到此）。后台化为 B179。
-        PerfMonitor.shared.beginSection("availability.refresh", fields: ["force": String(force)])
-        defer { PerfMonitor.shared.endSection() }
         if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < checkInterval {
             return
         }
@@ -139,8 +140,39 @@ final class SpaceController: ObservableObject {
         }
 
         cachedYabaiPath = yabaiPath
+        raResult = "dispatched"
 
-        guard let result = runYabai(arguments: ["-m", "query", "--spaces"]) else {
+        Task.detached(priority: .utility) { [weak self] in
+            PerfMonitor.shared.beginSection("availability.refresh", fields: ["force": String(force)])
+            let spacesResult = YabaiClient.run(arguments: ["-m", "query", "--spaces"])
+            var saLoaded = false
+            if let result = spacesResult, result.exitCode == 0 {
+                saLoaded = self?.checkScriptingAdditionLoaded(yabaiPath: yabaiPath) ?? false
+            }
+            PerfMonitor.shared.endSection()
+
+            await MainActor.run { [weak self] in
+                self?.applyAvailability(
+                    spacesResult: spacesResult,
+                    saLoaded: saLoaded,
+                    yabaiPath: yabaiPath,
+                    raResultOut: { raResult = $0 }
+                )
+            }
+        }
+    }
+
+    /// 后台探测结果 → 主线程状态应用（原 refreshAvailability 的状态变更段原样搬移）。
+    @MainActor
+    private func applyAvailability(
+        spacesResult: ShellResult?,
+        saLoaded: Bool,
+        yabaiPath: String,
+        raResultOut: @escaping (String) -> Void
+    ) {
+        var raResult = "applied"
+        defer { raResultOut(raResult) }
+        guard let result = spacesResult else {
             availability = .unavailable
             canControlSpaces = false
             lastErrorMessage = "Unable to launch yabai"
@@ -152,7 +184,6 @@ final class SpaceController: ObservableObject {
         if result.exitCode == 0 {
             availability = .available
             WindowManager.shared.focusSpaceKnownBroken = false
-            let saLoaded = checkScriptingAdditionLoaded(yabaiPath: yabaiPath)
             if saLoaded {
                 canControlSpaces = true
                 lastErrorMessage = nil

@@ -5,7 +5,6 @@
 import AppKit
 import Foundation
 
-@MainActor
 extension WindowManager {
 
     /// 通过 ITERM_SESSION_ID 用 iTerm2 AppleScript API 查找窗口

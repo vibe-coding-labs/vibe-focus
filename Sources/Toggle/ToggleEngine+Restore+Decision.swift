@@ -7,7 +7,6 @@ import Foundation
 // 全部声明为纯函数/纯类型（无 IO、无实例状态），分支穷尽锁定于
 // Tests/Runner performRestore 分支穷举双通道锁定；本拆分为纯代码搬移，锁不失效。
 
-@MainActor
 extension ToggleEngine {
 
     /// restore 的真实结局（record 处置与审计事件的唯一依据）。

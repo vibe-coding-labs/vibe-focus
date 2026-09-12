@@ -4,7 +4,6 @@
 
 import Foundation
 
-@MainActor
 extension SpaceController {
 
     // MARK: - Scripting Addition Detection
@@ -16,7 +15,7 @@ extension SpaceController {
 
     // MARK: - Yabai Command Execution
 
-    func runYabai(
+    nonisolated func runYabai(
         arguments: [String],
         operation: String? = nil,
         operationID: String? = nil,
@@ -134,7 +133,16 @@ extension SpaceController {
                     ]
                 )
 
-                if !recoveredOnce, isScriptingAdditionError(result), attemptScriptingAdditionRecovery(trigger: operation, operationID: op) {
+                if !recoveredOnce, isScriptingAdditionError(result) {
+                    // B180：SA 恢复状态机保持主线程；后台调用方 fire-and-forget 触发、
+                    // 不阻塞重试（本机 SA 被 SIP 永久静默，重试恒败，语义无损）。
+                    let trigger = operation
+                    let opID = op
+                    Task { @MainActor in
+                        _ = self.attemptScriptingAdditionRecovery(trigger: trigger, operationID: opID)
+                    }
+                    recoveredOnce = true
+                    log("[SpaceController] SA recovery dispatched async (off-main caller)")
                     recoveredOnce = true
                     log(
                         "[SpaceController] retrying after scripting-addition recovery",
@@ -193,7 +201,7 @@ extension SpaceController {
 
     // MARK: - Process & Decoding Utilities
 
-    func runProcess(executable: String, arguments: [String]) -> ShellResult? {
+    nonisolated func runProcess(executable: String, arguments: [String]) -> ShellResult? {
         // P-INST-194: SpaceController 进程执行入口耗时（委托 ShellRunner.run fork P-INST-49；yabai 查询/SA 探测等 SpaceController 路径调用，≥50ms warn 归因调用点）。
         let rpStart = Date()
         let result = ShellRunner.run(executable: executable, arguments: arguments)

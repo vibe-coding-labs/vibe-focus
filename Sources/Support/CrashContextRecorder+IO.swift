@@ -98,7 +98,8 @@ extension CrashContextRecorder {
     }
 
     func persistState() {
-        guard let state else {
+        let snapshot: SessionState? = stateLock.withLock { state }
+        guard let state = snapshot else {
             log("CrashContextRecorder.persistState no state to persist", level: .debug)
             return
         }
@@ -129,7 +130,7 @@ extension CrashContextRecorder {
         }
     }
 
-    func appendEvent(_ event: String) {
+    func appendEventLocked(_ event: String) {
         guard state != nil else {
             log("CrashContextRecorder.appendEvent no state, skipping", level: .debug)
             return

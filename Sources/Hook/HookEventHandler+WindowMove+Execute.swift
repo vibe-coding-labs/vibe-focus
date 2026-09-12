@@ -24,7 +24,7 @@ extension HookEventHandler {
         source: String,
         bindingAge: TimeInterval? = nil,
         onComplete: (() -> Void)? = nil
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+    ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-47: moveWindowToMainScreenAndRespond 总耗时 + outcome（hook 移动核心执行；
         // 区分 moved 含 moveWindowToMainScreen P-INST-3 vs move_failed skip；
         // P-INST-31 handleWindowMoveTrigger 已覆盖调用方总耗时，此埋点补本函数归因）。
@@ -47,11 +47,15 @@ extension HookEventHandler {
             ]
         )
 
-        let moved = WindowManager.shared.moveWindowToMainScreen(
-            identity: identity,
-            reason: .claudeSessionEnd,
-            sessionID: payload.sessionID
-        )
+        // B180：移动下放窗口作业串行队列（实测 16/16 次 >200ms、max 8.7s 主线程
+        // 占用）；await 期间主线程解放，响应仍在移动完成后返回——hook 契约不变。
+        let moved = await WindowWorkExecutor.run {
+            WindowManager.shared.moveWindowToMainScreen(
+                identity: identity,
+                reason: .claudeSessionEnd,
+                sessionID: payload.sessionID
+            )
+        }
         if moved {
             outcome = "moved"
             onComplete?()

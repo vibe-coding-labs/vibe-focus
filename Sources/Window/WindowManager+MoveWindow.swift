@@ -12,7 +12,6 @@ import Foundation
 // 保留在 WindowManager 命名空间原位（搬动需同步评估全部调用方，本轮不做）。
 
 // MARK: - Window Move Operations
-@MainActor
 extension WindowManager {
 
     func runShellCommand(_ executable: String, args: [String]) -> String? {

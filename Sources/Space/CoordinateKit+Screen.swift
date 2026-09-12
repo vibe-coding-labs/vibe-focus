@@ -7,7 +7,6 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-@MainActor
 extension CoordinateKit {
 
     // MARK: 显示器相关

@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 
-@MainActor
 extension SpaceController {
 
     func focusSpace(_ space: SpaceIdentifier, operationID: String? = nil) -> Bool {

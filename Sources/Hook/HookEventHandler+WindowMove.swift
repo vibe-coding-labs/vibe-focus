@@ -31,7 +31,7 @@ extension HookEventHandler {
         payload: ClaudeHookPayload,
         triggerName: String,
         remoteOnly: Bool = false
-    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+    ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-31: handleWindowMoveTrigger 总耗时（Stop/SessionEnd hook 同步响应延迟；defer 统一记，
         // 含决策输入收集与 moveWindowToMainScreenAndRespond）。
         let wmtStart = Date()
@@ -158,7 +158,7 @@ extension HookEventHandler {
                     "bindingAge": String(Int(bindingAge)) + "s"
                 ]
             )
-            return moveWindowToMainScreenAndRespond(
+            return await moveWindowToMainScreenAndRespond(
                 identity: identity,
                 payload: payload,
                 triggerName: triggerName,

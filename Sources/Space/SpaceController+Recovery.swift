@@ -48,7 +48,7 @@ extension SpaceController {
     /// （"cannot focus an already focused space"，无状态变化），未加载时 stderr 报
     /// scripting-addition，Mission Control 活跃时报 mission-control（此时 space 切换
     /// 本就不可用，按不可用如实上报）。裁决纯函数 saProbeVerdict 分支穷尽锁定。
-    func checkScriptingAdditionLoaded(yabaiPath: String) -> Bool {
+    nonisolated func checkScriptingAdditionLoaded(yabaiPath: String) -> Bool {
         // P-INST-35: SA 检查耗时（两次 fork：query --spaces --space + 探针；availability 路径，启动 + 节流刷新时调用）。
         let csaStart = Date()
         var csaResult = "failed_to_run"
@@ -80,7 +80,7 @@ extension SpaceController {
     /// - stderr 分类为 scriptingAdditionMissing：SA 未加载（探针的本职信号）；
     /// - stderr 分类为 missionControlBlocking：MC 期间 space 切换本就不可用，按不可用如实上报；
     /// - 其余（"cannot focus an already focused space" 等逻辑错误/空输出）：SA 可用。
-    static func saProbeVerdict(exitCode: Int32, stderr: String) -> Bool {
+    nonisolated static func saProbeVerdict(exitCode: Int32, stderr: String) -> Bool {
         if exitCode == 0 { return true }
         let kind = YabaiErrorClassifier.classify(stderr: stderr)
         return kind != .scriptingAdditionMissing && kind != .missionControlBlocking
@@ -210,7 +210,7 @@ extension SpaceController {
         return false
     }
 
-    func locateYabai() -> String? {
+    nonisolated func locateYabai() -> String? {
         return YabaiClient.yabaiPath()
     }
 }

@@ -5,7 +5,6 @@ import Cocoa
 //（逐字搬移零行为变更）：restore 四阶段机械。B97 分阶段提取的产物，调用序列由
 // RunnerRestoreOrchestrationTests 序列锁穷尽锁定；private→internal 仅为跨文件调用。
 
-@MainActor
 extension ToggleEngine {
 
     /// 6+7 成功尾段阶段：视角守卫 → 清 record → completed 汇总日志 → 审计。行为与内联版逐行等价。

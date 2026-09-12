@@ -14,7 +14,6 @@ import Foundation
 
 /// restore 双层切回编排的 space 通道抽象。
 /// 生产实现 = SpaceController；测试注入假通道记录调用序列。
-@MainActor
 protocol RestoreSpaceChanneling: AnyObject {
     /// SA 直切通道可用性（运行时判据，SA 状态随环境/重启漂移，禁止硬编码假设）
     var canControlSpaces: Bool { get }
@@ -40,7 +39,6 @@ extension SpaceController: RestoreSpaceChanneling {}
 
 /// restore 主体的 toggle record 存取抽象（load/clear）。
 /// 生产实现 = ToggleEngine（自身即 ToggleRecordStore）；测试注入内存假存储。
-@MainActor
 protocol RestoreRecordStoring: AnyObject {
     func load(windowID: UInt32) -> ToggleRecord?
     func clear(windowID: UInt32)
@@ -50,7 +48,6 @@ extension ToggleEngine: RestoreRecordStoring {}
 
 /// restore 主体的窗口操作抽象（AX 存在性探测、frame 直写、屏归属判定）。
 /// 生产实现 = WindowManager；测试注入假实现分支穷尽结局裁决。
-@MainActor
 protocol RestoreWindowOperating: AnyObject {
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement?
     func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleFrame: CGRect?) -> Bool
@@ -63,7 +60,6 @@ extension WindowManager: RestoreWindowOperating {}
 
 /// restore 主体的审计事件抽象（结局事件的唯一出口）。
 /// 生产实现 = AuditLogger；测试注入收集器断言结局字段与 record 处置一一对应。
-@MainActor
 protocol RestoreAuditing: AnyObject {
     func record(eventType: String, windowID: UInt32, pid: Int32?, sessionID: String?, details: [String: String])
 }
@@ -71,7 +67,6 @@ protocol RestoreAuditing: AnyObject {
 extension AuditLogger: RestoreAuditing {}
 
 /// restore 双层切回编排（纯决策，通道可注入；Tests/Runner 分支穷尽锁定）。
-@MainActor
 enum RestoreSwitchOrchestration {
 
     /// 源屏预切回（4-pre 核心）双层通道，按可靠性排序：

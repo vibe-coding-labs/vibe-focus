@@ -219,7 +219,9 @@ final class RemoteSpoolDrainer: ObservableObject {
                 "count": String(budget.count),
                 "stillPending": String(pendingReplay.count)
             ])
-            replayDeferred(budget)
+            Task { @MainActor [weak self] in
+                await self?.replayDeferred(budget)
+            }
             return
         }
         for host in RemoteSpoolHosts.loadHosts() where !inFlight.contains(host) {
@@ -229,7 +231,7 @@ final class RemoteSpoolDrainer: ObservableObject {
 
     /// 积压回灌（与 finishDrain 同管线同 token 门；事件已离开远程 spool，只能
     /// 内存顺延不能丢弃）。
-    private func replayDeferred(_ lines: [String]) {
+    private func replayDeferred(_ lines: [String]) async {
         guard ClaudeHookPreferences.isEnabled else {
             log("[RemoteSpoolDrainer] deferred events dropped (hook disabled)", level: .warn, fields: [
                 "count": String(lines.count)
@@ -243,7 +245,7 @@ final class RemoteSpoolDrainer: ObservableObject {
         PerfMonitor.shared.beginSection("spool.replay.deferred", fields: ["count": String(lines.count)])
         defer { PerfMonitor.shared.endSection() }
         for line in lines {
-            _ = ClaudeHookServer.shared.handleHookRequest(
+            _ = await ClaudeHookServer.shared.handleHookRequest(
                 body: Data(line.utf8),
                 query: [:],
                 headers: headers,
@@ -344,7 +346,7 @@ final class RemoteSpoolDrainer: ObservableObject {
         PerfMonitor.shared.beginSection("spool.replay", fields: ["host": host, "count": String(budget.count)])
         defer { PerfMonitor.shared.endSection() }
         for line in budget {
-            _ = ClaudeHookServer.shared.handleHookRequest(
+            _ = await ClaudeHookServer.shared.handleHookRequest(
                 body: Data(line.utf8),
                 query: [:],
                 headers: headers,
