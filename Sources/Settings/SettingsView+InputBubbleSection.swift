@@ -26,6 +26,7 @@ private struct InputBubbleSectionView: View {
     @State private var autoShowOnFocus = InputBubblePreferences.autoShowOnFocus
     @State private var autoShowOnMoveToMain = InputBubblePreferences.autoShowOnMoveToMain
     @State private var autoRestoreOnSubmit = InputBubblePreferences.autoRestoreOnSubmit
+    @State private var autoHide = InputBubblePreferences.autoHide
     @State private var defaultPrefix = InputBubblePreferences.defaultPrefix
     @State private var bubbleHotKeyDisplay = InputBubblePreferences.hotKey.displayString
     /// 录制失败时强制 ShortcutRecorderButton 重建回显当前生效组合键（NSViewRepresentable
@@ -115,6 +116,21 @@ private struct InputBubbleSectionView: View {
                     .disabled(!enabled)
                     .onChange(of: autoShowOnMoveToMain) { newValue in
                         InputBubblePreferences.autoShowOnMoveToMain = newValue
+                    }
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "气泡自动隐藏",
+                detail: "开启后点击其它位置气泡即隐藏（旧行为）。默认关闭=气泡绑定终端窗：失焦不消失，跟随窗口移动（主副屏切换、拖动都跟随），点气泡可继续输入，用右上角 ✕ / Esc / 快捷键关闭。"
+            ) {
+                Toggle("", isOn: $autoHide)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!enabled)
+                    .onChange(of: autoHide) { newValue in
+                        InputBubblePreferences.autoHide = newValue
                     }
             }
 

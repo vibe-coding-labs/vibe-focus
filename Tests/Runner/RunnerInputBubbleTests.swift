@@ -248,6 +248,39 @@ extension RunnerHarness {
             check("arrival: 同窗非主屏→主屏 → summon", true)
         } else { check("arrival: 同窗非主屏→主屏 → summon", false) }
 
+        // --- B183 失焦处置门（自动隐藏开关语义：默认关=绑定跟随不消失） ---
+        if case .dismiss = InputBubbleResignPlan.decide(autoHide: true) {
+            check("resign: 自动隐藏开 → dismiss（旧行为）", true)
+        } else { check("resign: 自动隐藏开 → dismiss（旧行为）", false) }
+        if case .stay = InputBubbleResignPlan.decide(autoHide: false) {
+            check("resign: 自动隐藏关（默认）→ stay（绑定跟随）", true)
+        } else { check("resign: 自动隐藏关（默认）→ stay（绑定跟随）", false) }
+
+        // --- B183 跟随定位（保偏移平移） ---
+        let followA = InputBubbleLayout.followOrigin(
+            bubbleOrigin: CGPoint(x: 100, y: 200),
+            windowOriginBefore: CGPoint(x: 50, y: 60),
+            windowOriginNow: CGPoint(x: 80, y: 40))
+        check("follow: 正向位移保偏移", followA == CGPoint(x: 130, y: 180))
+        let followB = InputBubbleLayout.followOrigin(
+            bubbleOrigin: CGPoint(x: 100, y: 200),
+            windowOriginBefore: CGPoint(x: 50, y: 60),
+            windowOriginNow: CGPoint(x: 20, y: 90))
+        check("follow: 负向位移保偏移", followB == CGPoint(x: 70, y: 230))
+        let followC = InputBubbleLayout.followOrigin(
+            bubbleOrigin: CGPoint(x: 100, y: 200),
+            windowOriginBefore: CGPoint(x: 50, y: 60),
+            windowOriginNow: CGPoint(x: 50, y: 60))
+        check("follow: 零位移原位", followC == CGPoint(x: 100, y: 200))
+
+        // --- B183 contentFrames 关闭钮契约（右上角、界内、不与底栏三件冲突） ---
+        for (label, size) in [("min", NSSize(width: 320, height: 100)), ("def", NSSize(width: 480, height: 150)), ("max", NSSize(width: 720, height: 300))] {
+            let f = InputBubbleLayout.contentFrames(for: size)
+            check("close[\(label)]: 贴右上角在界内", f.close.maxX <= size.width && f.close.minX >= size.width - 24 && f.close.maxY <= size.height && f.close.minY >= size.height - 24)
+            check("close[\(label)]: 与底栏三件无纵向重叠", f.close.minY >= 26 && f.close.minY > f.button.maxY && f.close.minY > f.grip.maxY)
+            check("close[\(label)]: 尺寸合理 12–20pt", f.close.width >= 12 && f.close.width <= 20 && f.close.height == f.close.width)
+        }
+
         // --- B162 草稿预填解析（草稿优先，空白草稿回落前缀） ---
         check("prefill: 无草稿 → 前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "/goal ") == "/goal ")
         check("prefill: 草稿优先于前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: "打到一半", prefix: "/goal ") == "打到一半")

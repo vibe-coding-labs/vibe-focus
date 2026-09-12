@@ -6,6 +6,8 @@ import Carbon
 
 // MARK: - 输入气泡面板
 /// 无边框 key 面板：NSPanel borderless 默认不收 key，override canBecomeKey。
+/// B183 绑定跟随模式的「点气泡重新收键」走控制器本地事件监视器（面板 mouseDown
+/// 对内容区点击不触发——事件派发给最深子视图），不在面板层挂钩。
 final class InputBubblePanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
@@ -45,6 +47,7 @@ final class BubbleCardView: NSView {
     var scrollView: NSScrollView?
     var submitButton: BubbleSubmitButton?
     var resizeHandle: BubbleResizeHandleView?
+    var closeButton: BubbleCloseButton?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -75,6 +78,7 @@ final class BubbleCardView: NSView {
         scrollView?.frame = frames.scroll
         submitButton?.frame = frames.button
         resizeHandle?.frame = frames.grip
+        closeButton?.frame = frames.close
         if let scrollView, let textView = scrollView.documentView as? NSTextView {
             // B178：显式 tile 同步 clip/滚动条与 documentView 宽度（不依赖活窗口布局时机，
             // legacy 滚动条槽出现/消失的可视宽变化也在这一步收敛）
@@ -136,6 +140,35 @@ final class BubbleSubmitButton: NSButton {
             at: NSPoint(x: (bounds.width - labelSize.width) / 2, y: (bounds.height - labelSize.height) / 2),
             withAttributes: attributes
         )
+    }
+}
+
+// MARK: - 关闭钮（B183：绑定跟随模式的手动关闭入口）
+
+/// 右上角 ✕：细线叉，悬停感用描边色；点击只发回调（控制器 dismiss），不抢键。
+final class BubbleCloseButton: NSView {
+    var onClose: (() -> Void)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        onClose?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let color = (isDark ? NSColor.white.withAlphaComponent(0.45) : NSColor(rgbHex: 0xA08D6E)).withAlphaComponent(0.9)
+        color.setStroke()
+        let b = bounds
+        let inset: CGFloat = 4.5
+        let path = NSBezierPath()
+        path.lineWidth = 1.4
+        path.lineCapStyle = .round
+        path.move(to: NSPoint(x: b.minX + inset, y: b.minY + inset))
+        path.line(to: NSPoint(x: b.maxX - inset, y: b.maxY - inset))
+        path.move(to: NSPoint(x: b.maxX - inset, y: b.minY + inset))
+        path.line(to: NSPoint(x: b.minX + inset, y: b.maxY - inset))
+        path.stroke()
     }
 }
 

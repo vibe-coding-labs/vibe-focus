@@ -241,11 +241,12 @@ enum InputBubbleLayout {
         CGPoint(x: startOrigin.x, y: startOrigin.y + (startSize.height - newSize.height))
     }
 
-    // MARK: 气泡内容布局（B175：提示文案 + 滚动输入区 + 提交钮 + 缩放把手）
+    // MARK: 气泡内容布局（B175：提示文案 + 滚动输入区 + 提交钮 + 缩放把手；B183：+关闭钮）
 
     /// 按面板尺寸摆内容（唯一事实源：builtPanel 初建 / 拖拽 relayout / 设置页联动
-    /// relayout 三方共用）。底栏右端依次提交钮、缩放把手；提示文案让位左对齐。
-    static func contentFrames(for size: CGSize) -> (hint: CGRect, scroll: CGRect, button: CGRect, grip: CGRect) {
+    /// relayout 三方共用）。底栏右端依次提交钮、缩放把手；提示文案让位左对齐；
+    /// B183 关闭钮（✕）贴右上角，压在滚动区上沿（子视图序在 scroll 之后=可点）。
+    static func contentFrames(for size: CGSize) -> (hint: CGRect, scroll: CGRect, button: CGRect, grip: CGRect, close: CGRect) {
         let gripSide: CGFloat = 14
         let buttonSize = CGSize(width: 58, height: 18)
         let grip = CGRect(x: size.width - gripSide - 6, y: 7, width: gripSide, height: gripSide)
@@ -257,7 +258,38 @@ enum InputBubbleLayout {
         )
         let hint = CGRect(x: 14, y: 8, width: max(button.minX - 14 - 6, 0), height: 14)
         let scroll = CGRect(x: 12, y: 26, width: size.width - 24, height: size.height - 40)
-        return (hint, scroll, button, grip)
+        let closeSide: CGFloat = 16
+        let close = CGRect(x: size.width - closeSide - 5, y: size.height - closeSide - 5, width: closeSide, height: closeSide)
+        return (hint, scroll, button, grip, close)
+    }
+
+    // MARK: 跟随定位（B183：绑定跟随模式）
+
+    /// 目标窗位移 → 气泡新 origin（保持用户看到的相对偏移，拖动过也保拖动偏移）。
+    /// AppKit 全局坐标；越界夹取由调用方走 clampedOrigin + 所在屏可视区。
+    static func followOrigin(
+        bubbleOrigin: CGPoint,
+        windowOriginBefore: CGPoint,
+        windowOriginNow: CGPoint
+    ) -> CGPoint {
+        CGPoint(
+            x: bubbleOrigin.x + (windowOriginNow.x - windowOriginBefore.x),
+            y: bubbleOrigin.y + (windowOriginNow.y - windowOriginBefore.y)
+        )
+    }
+}
+
+// MARK: - 失焦处置决策（B183：绑定跟随模式开关）
+
+/// 气泡失焦（windowDidResignKey）处置唯一事实源。
+/// - autoHide=false（默认）：绑定跟随模式——失焦不消失，气泡跟随目标窗，
+///   仅 ✕ / Esc / 快捷键 / 提交 关闭；
+/// - autoHide=true：旧行为——失焦即隐藏。
+enum InputBubbleResignPlan {
+    enum Action: Equatable { case dismiss, stay }
+
+    static func decide(autoHide: Bool) -> Action {
+        autoHide ? .dismiss : .stay
     }
 }
 
