@@ -564,5 +564,39 @@ extension RunnerHarness {
                   TerminalAutomationScript.describeScriptFailure(
                       .init(exitCode: 0, stdout: "18421", stderr: "")) == nil)
         }
+
+        // ===== CG 窗口定位判定（2026-09-12 用户建网格第 2 格失败复盘对症锁） =====
+        // 生产形态：iTerm2 set bounds 被钳回出生屏底缘（~28px 露头），级联/坞状态
+        // 差一点就整窗出屏——OnScreenOnly 预滤会让重试永远等不来不在场的窗；
+        // nearBounds nil 旧实现回退「列表第一个窗」= 可能抓用户真窗去摆位。
+        func entry(_ id: UInt32, _ x: CGFloat, _ y: CGFloat, onScreen: Bool = true) -> (windowID: UInt32, bounds: CGRect?, isOnScreen: Bool) {
+            (id, CGRect(x: x, y: y, width: 100, height: 100), onScreen)
+        }
+        let target = CGRect(x: 0, y: 0, width: 100, height: 100)
+        do {
+            check("cgResolve: 在场候选零距命中",
+                  TerminalAutomationScript.resolveCGWindowID(
+                      candidates: [entry(1, 0, 0)], nearBounds: target, excluding: []) == 1)
+            check("cgResolve: 唯一候选整窗出屏 → 全量兜底命中（OnScreenOnly 误杀回归锁）",
+                  TerminalAutomationScript.resolveCGWindowID(
+                      candidates: [entry(2, 0, 0, onScreen: false)], nearBounds: target, excluding: []) == 2)
+            check("cgResolve: 在场优先——离屏更近也让位于在场候选",
+                  TerminalAutomationScript.resolveCGWindowID(
+                      candidates: [entry(3, 0, 0, onScreen: false), entry(4, 30, 0)],
+                      nearBounds: target, excluding: []) == 4)
+            check("cgResolve: claimed 排除——已认领窗不参与，次近补位",
+                  TerminalAutomationScript.resolveCGWindowID(
+                      candidates: [entry(5, 0, 0), entry(6, 0, 0)],
+                      nearBounds: target, excluding: [5]) == 6)
+            check("cgResolve: 全员超差（≥40px）→ nil 宁失败不乱抓",
+                  TerminalAutomationScript.resolveCGWindowID(
+                      candidates: [entry(7, 500, 500)], nearBounds: target, excluding: []) == nil)
+            check("cgResolve: nearBounds nil → nil（不回退第一个窗——旧实现破坏性行为回归锁）",
+                  TerminalAutomationScript.resolveCGWindowID(
+                      candidates: [entry(8, 0, 0)], nearBounds: nil, excluding: []) == nil)
+            check("cgResolve: bounds 缺失候选跳过 + 全空 → nil",
+                  TerminalAutomationScript.resolveCGWindowID(
+                      candidates: [(9, nil as CGRect?, true)], nearBounds: target, excluding: []) == nil)
+        }
     }
 }

@@ -44,10 +44,11 @@ final class TerminalGridController {
         }
 
         // 操作级实例环境守卫：E2E 临时副本与真实终端并存时按 bundle id 寻址会
-        // 随机路由（真机实证 2026-09-11），宁可不建也不能建错地方；网格中途副本
-        // 生灭由逐格守卫（createTerminalCell）兜底。
+        // 随机路由（真机实证 2026-09-11），宁可不建也不能建错地方；未运行但已安装
+        // → 放行冷拉起（建窗 AE 自会启动 app，2026-09-12 用户反馈「必须先开
+        // iTerm2 才能用」即此处误拒）；网格中途副本生灭由逐格守卫兜底。
         lastScriptError = nil
-        if let refusal = automationInstanceRefusal(appBundleID: appBundleID) {
+        if let refusal = automationInstanceRefusal(appBundleID: appBundleID, allowNotRunning: true) {
             log("[TerminalGrid] createGrid refused by instance guard", level: .warn, fields: [
                 "op": op, "app": appBundleID
             ])
@@ -87,7 +88,8 @@ final class TerminalGridController {
                 appBundleID: appBundleID,
                 command: launchCommand.isEmpty ? nil : launchCommand,
                 frame: frame,
-                op: op
+                op: op,
+                excluding: Set(createdWindowIDs)
             )
             guard let windowID = placement.cgWindowID else {
                 let detail = lastScriptError ?? "osascript 执行失败或超时"
@@ -173,24 +175,44 @@ final class TerminalGridController {
             }
         }
 
-        // 收敛复核：逐格摆放各允许 ≤10px 残余漂移，相邻格累积成肉眼可见的缝
-        // （用户反馈"格子间空隙很大"）。单次 CGWindowList 快照全量回读，
-        // 偏离 >4px 的格子再用 placeWindow 直写纠一次。
-        let recheckEntries = cgWindowListAll()
-        var reCorrected = 0
-        for (frame, windowID) in zip(frames, createdWindowIDs) {
-            guard let actual = recheckEntries.first(where: { $0.windowID == windowID })?.bounds,
-                  !CoordinateKit.isFrameConverged(actual: actual, target: frame, tolerance: 4) else {
-                continue
+        // 收敛复核（多轮有界 settle）：逐格摆放各允许 ≤10px 残余漂移，相邻格累积成
+        // 肉眼可见的缝（用户反馈"格子间空隙很大"）。单次 CGWindowList 快照全量回读，
+        // 偏离 >4px 的格子用 placeWindow 直写纠偏。Terminal 新建窗的 AX 引用懒注册
+        // （yabai could not locate，2026-09-12 冷启动真机实测六窗纠偏整批空转）——
+        // 多轮重纠直到全部收敛，20s 时间预算封顶（placeWindow 内部自带重试，轮数
+        // 不封时间会拖到分钟级）；iTerm2 等已注册终端一轮即齐（多花一次快照）。
+        var totalReCorrected = 0
+        var lastUnconverged = 0
+        var settleRounds = 0
+        let settleDeadline = Date().addingTimeInterval(20)
+        while true {
+            settleRounds += 1
+            let recheckEntries = cgWindowListAll()
+            var roundCorrected = 0
+            lastUnconverged = 0
+            for (frame, windowID) in zip(frames, createdWindowIDs) {
+                guard let actual = recheckEntries.first(where: { $0.windowID == windowID })?.bounds,
+                      !CoordinateKit.isFrameConverged(actual: actual, target: frame, tolerance: 4) else {
+                    continue
+                }
+                lastUnconverged += 1
+                if WindowManager.shared.placeWindow(windowID: windowID, frame: frame, operationID: op) {
+                    roundCorrected += 1
+                }
             }
-            if WindowManager.shared.placeWindow(windowID: windowID, frame: frame, operationID: op) {
-                reCorrected += 1
+            totalReCorrected += roundCorrected
+            if lastUnconverged == 0 || Date() >= settleDeadline {
+                if totalReCorrected > 0 || lastUnconverged > 0 {
+                    log("[TerminalGrid] createGrid convergence recheck", fields: [
+                        "op": op,
+                        "reCorrected": String(totalReCorrected),
+                        "rounds": String(settleRounds),
+                        "unconverged": String(lastUnconverged)
+                    ])
+                }
+                break
             }
-        }
-        if reCorrected > 0 {
-            log("[TerminalGrid] createGrid convergence recheck", fields: [
-                "op": op, "reCorrected": String(reCorrected)
-            ])
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
         }
 
         // Space 投递：AppleScript 建窗可能落进终端 app 自己的活跃 space 而非当前

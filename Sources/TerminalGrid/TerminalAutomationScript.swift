@@ -293,6 +293,40 @@ enum TerminalAutomationScript {
         readback != nil && cgID != nil
     }
 
+    /// CG 窗口定位判定（iTerm2 的 AppleScript id ≠ CGWindowNumber，按回读 bounds
+    /// 就近匹配）。四条语义各有真机出处（2026-09-12 用户建网格第 2 格失败复盘）：
+    /// 1. onScreen 池优先，落空退全量候选——iTerm2 的 `set bounds` 会被钳回出生屏
+    ///    底缘（实测 quartz y = 屏高−dock 高，仅 ~28px 露头），级联/坞状态差一点
+    ///    就整窗出屏，OnScreenOnly 过滤会让重试多少轮都找不到（B172 重试解决的是
+    ///    注册懒建立，救不了永久缺席）；
+    /// 2. claimed 排除——本网格已认领的窗不参与匹配，同钳制位多窗相邻时防错认；
+    /// 3. nearBounds 为 nil → 直接 nil——旧实现此时回退「列表第一个窗」，会把任意
+    ///    iTerm2 窗（可能是用户真窗）交给 yabai 摆位，属破坏性行为，根除；
+    /// 4. 距离 ≥ maxDistance 拒配（回读与窗不符，宁失败不乱抓）。
+    static func resolveCGWindowID(
+        candidates: [(windowID: UInt32, bounds: CGRect?, isOnScreen: Bool)],
+        nearBounds: CGRect?,
+        excluding: Set<UInt32>,
+        maxDistance: CGFloat = 40
+    ) -> UInt32? {
+        guard let nearBounds else { return nil }
+        let usable = candidates.filter { $0.bounds != nil && !excluding.contains($0.windowID) }
+        for pool in [usable.filter(\.isOnScreen), usable] {
+            var best: (windowID: UInt32, distance: CGFloat)?
+            for entry in pool {
+                let b = entry.bounds!
+                let d = hypot(b.midX - nearBounds.midX, b.midY - nearBounds.midY)
+                if best == nil || d < best!.distance {
+                    best = (entry.windowID, d)
+                }
+            }
+            if let best, best.distance < maxDistance {
+                return best.windowID
+            }
+        }
+        return nil
+    }
+
     /// 目标终端未运行时的自动拉起等待表（递增，累计 ~10.5s）：
     /// 创建网格不该要求终端先在跑（2026-09-12 用户裁定）——工具的职责是把环境
     /// 备好。冷启动 + 首窗就绪通常 1~3s，预算放宽到 10s 级兜住高负载。
