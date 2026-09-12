@@ -536,6 +536,20 @@ extension RunnerHarness {
                   && !TerminalAutomationScript.cellLocateSettled(readback: CGRect(x: 0, y: 0, width: 10, height: 10), cgID: nil)
                   && !TerminalAutomationScript.cellLocateSettled(readback: nil, cgID: nil))
 
+            // ===== 终端自动拉起等待表（2026-09-12 用户裁定：建网格不要求终端先在跑） =====
+            check("terminalLaunch: 等待表递增且累计 ~10.5s",
+                  TerminalAutomationScript.terminalLaunchRetryDelaysNanos == [500_000_000, 800_000_000, 1_200_000_000, 1_800_000_000, 2_600_000_000, 3_600_000_000]
+                  && TerminalAutomationScript.terminalLaunchRetryDelaysNanos.reduce(0, +) == 10_500_000_000)
+            check("terminalLaunch: 预算耗尽返回 nil",
+                  TerminalAutomationScript.terminalLaunchRetryDelayNanos(attempt: 5) != nil
+                  && TerminalAutomationScript.terminalLaunchRetryDelayNanos(attempt: 6) == nil
+                  && TerminalAutomationScript.terminalLaunchRetryDelayNanos(attempt: -1) == nil)
+            check("terminalLaunch: 仅 notRunning 才拉起（多实例/临时副本走诚实拒绝链）",
+                  TerminalAutomationScript.needsTerminalLaunch(.notRunning)
+                  && !TerminalAutomationScript.needsTerminalLaunch(.clean)
+                  && !TerminalAutomationScript.needsTerminalLaunch(.ephemeralOnly(detail: "x"))
+                  && !TerminalAutomationScript.needsTerminalLaunch(.ambiguous(detail: "x")))
+
             check("scriptFailure: nil 结果（未启动/超时）→ 明确含超时语义",
                   TerminalAutomationScript.describeScriptFailure(nil)?.contains("30s 超时") == true)
             check("scriptFailure: 非零退出 + stderr → 原文透传",
