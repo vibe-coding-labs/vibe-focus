@@ -130,25 +130,40 @@ extension RunnerHarness {
               forwarder.contains("VF_HINT_FILE") && forwarder.contains("VF_HINT_TTL=600"))
         check("spoolDrain: forwarder 上报 ssh_user 供自注册",
               forwarder.contains("whoami") && forwarder.contains("ssh_user"))
+        check("spoolDrain[B172]: forwarder 只认 2xx 为已投递（401/404 不再吞事件）",
+              forwarder.contains("-w '%{http_code}'")
+              && forwarder.contains("case \"$VF_CODE\" in")
+              && forwarder.contains("2*)"))
+        check("spoolDrain[B172]: forwarder 追加 SSH_CLIENT 自学习候选",
+              forwarder.contains("VF_LEARNED=\"${VF_SSHC%% *}\"")
+              && forwarder.contains("VF_ORDERED+=(\"$VF_LEARNED\")"))
+        check("spoolDrain[B172]: spool 落盘前压平换行（JSONL 契约）",
+              forwarder.contains("tr -d '\\r\\n'"))
+        check("spoolDrain[B172]: drain 超时后 mux 重置 argv 合法（-- 后置目标）",
+              RemoteSpoolDrainLogic.muxResetArguments(target: "cc@1.2.3.4").last == "cc@1.2.3.4"
+              && RemoteSpoolDrainLogic.muxResetArguments(target: "cc@1.2.3.4").contains("-O")
+              && RemoteSpoolDrainLogic.muxResetArguments(target: "cc@1.2.3.4").contains("exit")
+              && RemoteSpoolDrainLogic.muxResetArguments(target: "cc@1.2.3.4").contains("--"))
 
-        // ===== 4. forwarder 沙盒行为测试（假 curl 可控退出）=====
+        // ===== 4. forwarder 沙盒行为测试（假 curl 可控退出/可控状态码）=====
         func makeSandbox() -> (home: String, bin: String, log: String, configPath: String, fwdPath: String, spoolDir: String, hintPath: String) {
             let home = "/tmp/vibefocus-b169-spool-\(UUID().uuidString)"
             let bin = home + "/bin"
             let cfgDir = home + "/.vibefocus"
             try? FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
             try? FileManager.default.createDirectory(atPath: cfgDir, withIntermediateDirectories: true)
-            // forwarder 全部外部命令：python3/cat 真身 + date/mkdir/mv/ls/tail/rm/whoami/curl
+            // forwarder 全部外部命令：python3/cat 真身 + date/mkdir/mv/ls/tail/rm/whoami/tr/curl
             for (name, target) in [("python3", "/usr/bin/python3"), ("cat", "/bin/cat"),
                                    ("date", "/bin/date"), ("mkdir", "/bin/mkdir"),
                                    ("mv", "/bin/mv"), ("ls", "/bin/ls"),
                                    ("tail", "/usr/bin/tail"), ("rm", "/bin/rm"),
-                                   ("whoami", "/usr/bin/whoami")] {
+                                   ("whoami", "/usr/bin/whoami"), ("tr", "/usr/bin/tr")] {
                 try? FileManager.default.createSymbolicLink(atPath: bin + "/" + name, withDestinationPath: target)
             }
             let log = home + "/fake-curl.log"
-            // 假 curl：参数逐行记日志，退出码由 FAKE_CURL_EXIT 控制（模拟直投成败）
-            let fake = "#!/bin/bash\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${FAKE_CURL_LOG}\"; done; printf '%s\\n' '---' >> \"${FAKE_CURL_LOG}\"\nexit ${FAKE_CURL_EXIT:-0}\n"
+            // 假 curl：参数逐行记日志；stdout 吐 FAKE_CURL_STATUS（模拟 HTTP 状态码，
+            // 缺省 200=投递成功）；退出码 FAKE_CURL_EXIT（缺省 0，非 0=连接层失败）
+            let fake = "#!/bin/bash\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${FAKE_CURL_LOG}\"; done; printf '%s\\n' '---' >> \"${FAKE_CURL_LOG}\"\nprintf '%s' \"${FAKE_CURL_STATUS:-200}\"\nexit ${FAKE_CURL_EXIT:-0}\n"
             FileManager.default.createFile(atPath: bin + "/curl", contents: Data(fake.utf8))
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/curl")
             return (home, bin, log, cfgDir + "/hook-config.json", cfgDir + "/hook-forwarder.sh",
@@ -289,5 +304,54 @@ extension RunnerHarness {
             check("spoolDrain[D]: 最新事件幸存（陈旧文件先被挤掉）",
                   files.contains { !$0.hasPrefix("1000000000-") })
         }
+
+        // 场景 E（B172）：Mac 应答 401（token 轮换未重部署）→ 不算已投递，
+        // 事件落 spool（拉取通道带 Mac 当前 token，自愈）
+        do {
+            let (home, bin, log, configPath, fwdPath, spoolDir, hintPath) = makeSandbox()
+            defer { try? FileManager.default.removeItem(atPath: home) }
+            FileManager.default.createFile(atPath: configPath,
+                contents: Data(#"{"host":"127.0.0.1","port":1,"token":"old-token","machine_label":"m1"}"#.utf8))
+            FileManager.default.createFile(atPath: fwdPath, contents: Data(forwarder.utf8))
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fwdPath)
+
+            let exit = runForwarder(fwdPath, payload: payloadA,
+                                    env: ["HOME": home, "FAKE_CURL_LOG": log,
+                                          "FAKE_CURL_EXIT": "0", "FAKE_CURL_STATUS": "401"],
+                                    bin: bin)
+            check("spoolDrain[E]: 401 应答零错误退出", exit == 0)
+            check("spoolDrain[E]: 401 不算投递成功 → 事件落盘", spoolFiles(spoolDir).count == 1)
+            check("spoolDrain[E]: 401 → hint 记失败时刻（下次免试）",
+                  FileManager.default.fileExists(atPath: hintPath))
+        }
+
+        // 场景 F（B172）：非 JSON 多行载荷（enrich 回退原样）→ 落盘压平为单行
+        do {
+            let (home, bin, log, configPath, fwdPath, spoolDir, _) = makeSandbox()
+            defer { try? FileManager.default.removeItem(atPath: home) }
+            FileManager.default.createFile(atPath: configPath,
+                contents: Data(#"{"host":"127.0.0.1","port":1,"token":"t","machine_label":"m1"}"#.utf8))
+            FileManager.default.createFile(atPath: fwdPath, contents: Data(forwarder.utf8))
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fwdPath)
+
+            let multiline = "{ \"broken\": \n \"payload with\nnewline\" }"
+            var env = ["HOME": home, "FAKE_CURL_LOG": log, "FAKE_CURL_EXIT": "7"]
+            env.merge(ctxEnvA) { _, new in new }
+            _ = runForwarder(fwdPath, payload: multiline, env: env, bin: bin)
+            let files = spoolFiles(spoolDir)
+            check("spoolDrain[F]: 多行载荷落盘恰一个文件", files.count == 1)
+            if let first = files.first,
+               let raw = try? String(contentsOfFile: spoolDir + "/" + first, encoding: .utf8) {
+                let lines = raw.components(separatedBy: "\n").filter { !$0.isEmpty }
+                check("spoolDrain[F]: spool 内容压平为单行（JSONL 拉取契约）", lines.count == 1)
+            } else {
+                check("spoolDrain[F]: spool 内容压平为单行（JSONL 拉取契约）", false)
+            }
+        }
+
+        // 场景 G（B172）：SSH_CLIENT 自学习候选追加在配置候选之后
+        check("spoolDrain[G]: 自学习候选源码序在配置候选循环之后（末位兜底）",
+              forwarder.range(of: "VF_LEARNED=\"${VF_SSHC%% *}\"")?.lowerBound ?? forwarder.startIndex
+              > forwarder.range(of: "for VF_H in \"${VF_HOSTS[@]}\"; do")?.lowerBound ?? forwarder.endIndex)
     }
 }

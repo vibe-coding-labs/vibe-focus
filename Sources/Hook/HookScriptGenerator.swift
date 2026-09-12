@@ -73,16 +73,21 @@ extension ClaudeHookPreferences {
         """
     }
 
-    /// 生成远程用的 hook-forwarder.sh 内容：三层投递级联（B170+B171 合流）。
+    /// 生成远程用的 hook-forwarder.sh 内容：三层投递级联（B170+B171+B172）。
     /// ① 候选主机序逐个试连（B170）：hosts 数组优先，回退单 host 字段，再回退
     /// loopback——Mac 换网段后 LAN 地址不可达而 VPN 隧道地址可达的实例证明单一
     /// host 字段覆盖不了全部拓扑；上次成功地址记入 ~/.vibefocus/.forwarder-host
-    /// 并在下次提到最前。② channel-hint（B171）：全部候选失败的瞬间记时，
-    /// 10 分钟内后续事件跳过直投（VPN 单向网络免每次白等 connect-timeout），
-    /// 过期自愈重试。③ spool 落盘（B171）：候选全灭时事件原子落盘
-    /// ~/.vibefocus/spool/，Mac 侧 RemoteSpoolDrainer 定时 ssh 拉取回灌——
-    /// 服务端→Mac 完全无回程路由（单向 VPN）时的唯一通道。ssh 用户与服务器
-    /// IP 随 terminal_ctx 上报，直投可达时 Mac 顺路自注册 drain 主机。
+    /// 并在下次提到最前；末位追加运行时自学习候选（B172：SSH_CLIENT 首字段=
+    /// Mac 在本机眼中的当前地址，Mac 换网段未重部署时自愈直投）。
+    /// ② channel-hint（B171）：全部候选失败的瞬间记时，10 分钟内后续事件跳过
+    /// 直投（VPN 单向网络免每次白等 connect-timeout），过期自愈重试。
+    /// ③ spool 落盘（B171）：候选全灭时事件原子落盘 ~/.vibefocus/spool/，
+    /// Mac 侧 RemoteSpoolDrainer 定时 ssh 拉取回灌——服务端→Mac 完全无回程
+    /// 路由（单向 VPN）时的唯一通道。投递成功判据=HTTP 2xx（B172：401/403
+    /// token 轮换、404 等不再被「任意应答即成功」吞掉，转 spool 自愈——拉取
+    /// 通道带 Mac 当前 token，天然免疫轮换）。spool 落盘前压平换行（JSONL
+    /// 契约）。ssh 用户与服务器 IP 随 terminal_ctx 上报，直投可达时 Mac 顺路
+    /// 自注册 drain 主机。
     static func generateRemoteHelperScriptContent() -> String {
         return """
     #!/bin/bash
@@ -158,20 +163,10 @@ extension ClaudeHookPreferences {
     print(json.dumps(d))
     " "$VF_TSID" "$VF_ISID" "$VF_KWID" "$VF_WP" "$VF_TTY" "$VF_PPID" "$VF_CPD" "$VF_WID" "$VF_LABEL" "$VF_SSHC" "$VF_USER" 2>/dev/null || printf '%s' "$VF_PAYLOAD")
 
-    # ---- B171：spool 兜底状态（hint 门 + 落盘目录），投递级联见下 ----
+    # ---- spool 兜底状态（hint 门 + 落盘目录），投递级联见下 ----
     VF_SPOOL_DIR="$HOME/.vibefocus/spool"
     VF_HINT_FILE="$HOME/.vibefocus/direct-hint"
     VF_HINT_TTL=600
-
-    VF_TRY_DIRECT=1
-    if [ -f "$VF_HINT_FILE" ]; then
-        VF_HINT_AT=$(cat "$VF_HINT_FILE" 2>/dev/null || echo 0)
-        case "$VF_HINT_AT" in ''|*[!0-9]*) VF_HINT_AT=0 ;; esac
-        VF_NOW=$(date +%s)
-        if [ "$VF_NOW" -lt $((VF_HINT_AT + VF_HINT_TTL)) ]; then
-            VF_TRY_DIRECT=0
-        fi
-    fi
 
     # ---- 投递层 ①②：候选主机序直投（hint 新鲜时整层跳过）----
     VF_SENT=0
@@ -185,7 +180,9 @@ extension ClaudeHookPreferences {
         fi
     fi
 
-    # 候选主机序：上次成功地址优先（快路径），其余按配置序。
+    # 候选主机序：上次成功地址优先（快路径），其余按配置序；
+    # 末位追加运行时自学习候选（B172）——SSH_CLIENT 首字段=Mac 在本机眼中的
+    # 当前地址，Mac 换网段/换 VPN 出口未重部署时由它自愈直投。
     VF_HOSTS=()
     while IFS= read -r VF_LINE; do
         if [ -n "$VF_LINE" ]; then
@@ -208,6 +205,18 @@ extension ClaudeHookPreferences {
             VF_ORDERED+=("$VF_H")
         fi
     done
+    VF_LEARNED="${VF_SSHC%% *}"
+    if [ -n "$VF_LEARNED" ]; then
+        VF_KNOWN_LEARNED=0
+        for VF_H in "${VF_ORDERED[@]}"; do
+            if [ "$VF_H" = "$VF_LEARNED" ]; then
+                VF_KNOWN_LEARNED=1
+            fi
+        done
+        if [ "$VF_KNOWN_LEARNED" = "0" ]; then
+            VF_ORDERED+=("$VF_LEARNED")
+        fi
+    fi
 
     if [ "$VF_TRY_DIRECT" = "1" ]; then
         for VF_HOST in "${VF_ORDERED[@]}"; do
@@ -217,12 +226,18 @@ extension ClaudeHookPreferences {
                 VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
             fi
             VF_CURL_ARGS+=(--data "$VF_ENRICHED")
-            if curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1; then
-                printf '%s\n' "$VF_HOST" > "$VF_LASTHOST_FILE" 2>/dev/null || true
-                VF_SENT=1
-                rm -f "$VF_HINT_FILE" 2>/dev/null || true
-                break
-            fi
+            # B172: 只认 2xx=已投递。401/403（token 轮换未重部署）/404 等此前被
+            # 「任意应答即成功」吞掉——落下一候选/进 spool（拉取通道带 Mac 当前
+            # token，天然免疫轮换，事件不丢）。
+            VF_CODE=$(curl "${VF_CURL_ARGS[@]}" -o /dev/null -w '%{http_code}' 2>/dev/null) || VF_CODE=000
+            case "$VF_CODE" in
+                2*)
+                    printf '%s\n' "$VF_HOST" > "$VF_LASTHOST_FILE" 2>/dev/null || true
+                    VF_SENT=1
+                    rm -f "$VF_HINT_FILE" 2>/dev/null || true
+                    break
+                    ;;
+            esac
         done
         if [ "$VF_SENT" = "0" ]; then
             date +%s > "$VF_HINT_FILE" 2>/dev/null || true
@@ -233,7 +248,10 @@ extension ClaudeHookPreferences {
     if [ "$VF_SENT" = "0" ]; then
         mkdir -p "$VF_SPOOL_DIR" 2>/dev/null || true
         VF_STAMP="$(date +%s)-$$-${RANDOM:-0}"
-        printf '%s\n' "$VF_ENRICHED" > "$VF_SPOOL_DIR/.tmp-$VF_STAMP" 2>/dev/null || true
+        # 压平换行（B172）：spool 是 JSONL 拉取契约，enrich 失败回退的原始
+        # payload 可能是多行——落盘前压成单行，防拉取端按行拆碎。
+        VF_SPOOL_LINE=$(printf '%s' "$VF_ENRICHED" | tr -d '\\r\\n')
+        printf '%s\n' "$VF_SPOOL_LINE" > "$VF_SPOOL_DIR/.tmp-$VF_STAMP" 2>/dev/null || true
         mv "$VF_SPOOL_DIR/.tmp-$VF_STAMP" "$VF_SPOOL_DIR/$VF_STAMP.json" 2>/dev/null || true
         # 挤压积压上限：只留最新 200 个（Mac 长期失联时防无限膨胀）
         ls -t "$VF_SPOOL_DIR" 2>/dev/null | tail -n +201 | while IFS= read -r f; do
