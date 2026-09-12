@@ -5,6 +5,7 @@
 // 偏好存取唯一事实源在 InputBubblePreferences（clamp 归一），本视图只做镜像与写穿；
 // @State 镜像驱动行内数值即时刷新（UserDefaults 非 SwiftUI 可观察，不能直绑）。
 
+import Combine
 import SwiftUI
 
 // MARK: - 输入气泡
@@ -37,7 +38,7 @@ private struct InputBubbleSectionView: View {
     var body: some View {
         SettingsCard(
             title: "输入气泡",
-            subtitle: "SSH 远程会话逐键回显卡顿的对症通道：快捷键（默认 ⌘B）唤起本地气泡打字，一次性注入终端；输入按目标窗保留，拖动位置也会记住。",
+            subtitle: "SSH 远程会话逐键回显卡顿的对症通道：快捷键（默认 ⌘B）唤起本地气泡打字，一次性注入终端；输入按目标窗保留，拖动位置也会记住。气泡右下角可直接拖拽调大小，与下方尺寸设置实时联动。",
             icon: "text.bubble"
         ) {
             SettingsRow(
@@ -195,7 +196,16 @@ private struct InputBubbleSectionView: View {
                     .onChange(of: defaultPrefix) { newValue in
                         InputBubblePreferences.defaultPrefix = newValue
                     }
-            }
+                }
+        }
+        // B175：气泡拖拽落账（或他处写偏好）→ 镜像 @State 回写，滑杆实时跟随。
+        // 同值回写不触发 onChange，联动回路自然收敛。
+        .onReceive(
+            NotificationCenter.default.publisher(for: InputBubblePreferences.sizeDidChangeNotification)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            width = InputBubblePreferences.bubbleWidth
+            height = InputBubblePreferences.bubbleHeight
         }
     }
 }

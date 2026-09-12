@@ -234,6 +234,73 @@ extension RunnerHarness {
     }
 }
 
+// MARK: - B175：鼠标提交钮 + 右下角拖拽调尺寸（纯几何 / 布局契约 / 通知联动契约）
+
+extension RunnerHarness {
+    func runBubbleResizeTests() {
+        print("\n=== BubbleResize (B175) ===")
+
+        // --- 拖拽实时尺寸：连续 clamp（拖拽中不步进量化，顺滑优先；松手才量化） ---
+        let startSize = CGSize(width: 480, height: 150)
+        check("resize: 零位移原样保留", InputBubbleLayout.resizedSize(startSize: startSize, widthDelta: 0, heightDelta: 0) == startSize)
+        check("resize: 位移直接应用（正 heightDelta = 增高）", InputBubbleLayout.resizedSize(startSize: startSize, widthDelta: 40, heightDelta: 30) == CGSize(width: 520, height: 180))
+        check("resize: 连续值不步进量化", InputBubbleLayout.resizedSize(startSize: startSize, widthDelta: 7, heightDelta: 0).width == 487)
+        check("resize: 越上界钳制 720×300", InputBubbleLayout.resizedSize(startSize: startSize, widthDelta: 9999, heightDelta: 9999) == CGSize(width: 720, height: 300))
+        check("resize: 越下界钳制 320×100", InputBubbleLayout.resizedSize(startSize: startSize, widthDelta: -9999, heightDelta: -9999) == CGSize(width: 320, height: 100))
+        check("resize: 尺寸域取自 Preferences 单源", InputBubblePreferences.widthRange.min == 320 && InputBubblePreferences.heightRange.max == 300)
+
+        // --- 左上角固定 origin 派生（AppKit y 向上） ---
+        let startOrigin = CGPoint(x: 100, y: 200)
+        check("origin: 等高 origin 不动", InputBubbleLayout.resizedOrigin(startOrigin: startOrigin, startSize: startSize, newSize: startSize) == startOrigin)
+        check("origin: 增高 30 → origin 下移 30（左上固定）", InputBubbleLayout.resizedOrigin(startOrigin: startOrigin, startSize: startSize, newSize: CGSize(width: 480, height: 180)) == CGPoint(x: 100, y: 170))
+        check("origin: 缩高 20 → origin 上移 20", InputBubbleLayout.resizedOrigin(startOrigin: startOrigin, startSize: startSize, newSize: CGSize(width: 480, height: 130)) == CGPoint(x: 100, y: 220))
+        check("origin: 宽度变化不影响 origin", InputBubbleLayout.resizedOrigin(startOrigin: startOrigin, startSize: startSize, newSize: CGSize(width: 600, height: 150)) == startOrigin)
+
+        // --- contentFrames 布局契约（最小/默认/最大三档扫描） ---
+        for size in [CGSize(width: 320, height: 100), CGSize(width: 480, height: 150), CGSize(width: 720, height: 300)] {
+            let frames = InputBubbleLayout.contentFrames(for: size)
+            let label = "\(Int(size.width))x\(Int(size.height))"
+            check("frames[\(label)]: 提示-提交钮-把手从左到右不重叠",
+                  frames.hint.maxX <= frames.button.minX && frames.button.maxX <= frames.grip.minX)
+            check("frames[\(label)]: 把手贴右缘在界内", frames.grip.maxX <= size.width && frames.grip.minX >= frames.button.maxX)
+            check("frames[\(label)]: 底栏三件都落在底栏区(y≤26)", frames.button.maxY <= 26 && frames.grip.maxY <= 26 && frames.hint.maxY <= 26)
+            check("frames[\(label)]: 滚动区在底栏上方且有正高度", frames.scroll.minY == 26 && frames.scroll.height > 0 && frames.scroll.maxY <= size.height)
+            check("frames[\(label)]: 提示宽度为正", frames.hint.width > 0)
+        }
+
+        // --- 视图契约：把手不搬窗（与背景拖动移窗解耦） ---
+        let handle = BubbleResizeHandleView(frame: NSRect(x: 0, y: 0, width: 14, height: 14))
+        check("handle: mouseDownCanMoveWindow=false", !handle.mouseDownCanMoveWindow)
+
+        // --- 尺寸通知契约（设置页滑杆与打开面板联动的依赖） ---
+        // 先存后清再还原（B84 家法）：不依赖 Runner 持久域的先行状态
+        let savedWidth = InputBubblePreferences.bubbleWidth
+        let savedHeight = InputBubblePreferences.bubbleHeight
+        final class NoteProbe: NSObject {
+            var count = 0
+            @objc func hit(_ note: Notification) { count += 1 }
+        }
+        let probe = NoteProbe()
+        NotificationCenter.default.addObserver(
+            probe, selector: #selector(NoteProbe.hit(_:)),
+            name: InputBubblePreferences.sizeDidChangeNotification, object: nil
+        )
+        defer { NotificationCenter.default.removeObserver(probe) }
+        let probeWidth: Double = savedWidth == 520 ? 540 : 520
+        let probeHeight: Double = savedHeight == 160 ? 170 : 160
+        InputBubblePreferences.bubbleWidth = probeWidth
+        InputBubblePreferences.bubbleHeight = probeHeight
+        check("prefs: 改值各广播一次", probe.count == 2)
+        InputBubblePreferences.bubbleWidth = probeWidth
+        check("prefs: 同值写不广播", probe.count == 2)
+        InputBubblePreferences.bubbleWidth = savedWidth
+        InputBubblePreferences.bubbleHeight = savedHeight
+        check("prefs: 还原广播且值复原", probe.count == 4
+              && InputBubblePreferences.bubbleWidth == savedWidth
+              && InputBubblePreferences.bubbleHeight == savedHeight)
+    }
+}
+
 // MARK: - B164：唤起快捷键录制修复（录制器契约 / 录制让位标志 / summon 前台处置）
 
 extension RunnerHarness {
