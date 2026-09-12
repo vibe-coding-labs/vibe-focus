@@ -182,6 +182,17 @@ final class InputBubbleController: NSObject {
         CrashContextRecorder.shared.record("input_bubble_summon_moved windowID=\(windowID) pid=\(pid)")
     }
 
+    /// B184：绑定跟随模式下，另一窗跨到主屏而气泡开着 → 气泡改绑到到达窗。
+    /// 旧窗草稿按窗落盘不丢（InputBubbleDraftStore），dismiss+定向重弹即完成换绑。
+    func retargetForMovedWindow(windowID: UInt32, pid: pid_t, appName: String?) {
+        guard phase == .open, let current = target, current.windowID != windowID else { return }
+        log("[InputBubble] follow retarget \(current.windowID) -> \(windowID)", fields: [
+            "appName": appName ?? "nil"
+        ])
+        dismiss(reactivateTarget: false)
+        summonForMovedWindow(windowID: windowID, pid: pid, appName: appName)
+    }
+
     private func showPanel(target: Target, cgFrame: CGRect) {
         self.target = target
         phase = .open

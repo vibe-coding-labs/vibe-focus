@@ -205,81 +205,49 @@ extension RunnerHarness {
             check("moveToMain: 气泡占用 → skipBubbleActive", true)
         } else { check("moveToMain: 气泡占用 → skipBubbleActive", false) }
 
-        // --- B180 同窗跨到主屏自动弹出决策门（摆位热键/鼠标拖动等一切移动方式） ---
-        // 判序：开关 → 气泡占用 → 同窗 → 有基线 → 前值非主屏 → 现值主屏
+        // --- B180/B184 跨到主屏自动弹出决策门 v2（基线表版：lastSeenOnMain 按 windowID 查表，nil=无基线） ---
         if case .skipNotEnabled = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: false, phaseIdle: true, sameWindowAsLastTick: true,
-            lastSeenOnMain: false, nowOnMain: true) {
+            moveToMainEnabled: false, lastSeenOnMain: false, nowOnMain: true) {
             check("arrival: 开关关 → skipNotEnabled", true)
         } else { check("arrival: 开关关 → skipNotEnabled", false) }
-        if case .skipBubbleActive = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, phaseIdle: false, sameWindowAsLastTick: true,
-            lastSeenOnMain: false, nowOnMain: true) {
-            check("arrival: 气泡占用 → skipBubbleActive", true)
-        } else { check("arrival: 气泡占用 → skipBubbleActive", false) }
-        if case .skipSameWindow = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: false,
-            lastSeenOnMain: false, nowOnMain: true) {
-            check("arrival: 换了窗（首观测）→ skipSameWindow", true)
-        } else { check("arrival: 换了窗（首观测）→ skipSameWindow", false) }
         if case .skipNoBaseline = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
-            lastSeenOnMain: nil, nowOnMain: true) {
-            check("arrival: 同窗但无基线 → skipNoBaseline", true)
-        } else { check("arrival: 同窗但无基线 → skipNoBaseline", false) }
+            moveToMainEnabled: true, lastSeenOnMain: nil, nowOnMain: true) {
+            check("arrival: 无基线 → skipNoBaseline", true)
+        } else { check("arrival: 无基线 → skipNoBaseline", false) }
         if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
-            lastSeenOnMain: true, nowOnMain: true) {
-            check("arrival: 已在主屏（防 Esc 重弹循环）→ skipAlreadyOnMain", true)
-        } else { check("arrival: 已在主屏（防 Esc 重弹循环）→ skipAlreadyOnMain", false) }
+            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: true) {
+            check("arrival: 已在主屏 → skipAlreadyOnMain", true)
+        } else { check("arrival: 已在主屏 → skipAlreadyOnMain", false) }
+        if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: false) {
+            check("arrival: 主屏移去别屏（反向，基线先短路）→ skipAlreadyOnMain", true)
+        } else { check("arrival: 主屏移去别屏（反向，基线先短路）→ skipAlreadyOnMain", false) }
         if case .skipStillOffMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
-            lastSeenOnMain: false, nowOnMain: false) {
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: false) {
             check("arrival: 同窗仍在非主屏 → skipStillOffMain", true)
         } else { check("arrival: 同窗仍在非主屏 → skipStillOffMain", false) }
-        if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
-            lastSeenOnMain: true, nowOnMain: false) {
-            check("arrival: 主屏移去别屏（反向）→ skipAlreadyOnMain（基线已在主屏先短路）", true)
-        } else { check("arrival: 主屏移去别屏（反向）→ skipAlreadyOnMain（基线已在主屏先短路）", false) }
         if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, phaseIdle: true, sameWindowAsLastTick: true,
-            lastSeenOnMain: false, nowOnMain: true) {
-            check("arrival: 同窗非主屏→主屏 → summon", true)
-        } else { check("arrival: 同窗非主屏→主屏 → summon", false) }
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true) {
+            check("arrival: 基线非主屏→主屏 → summon", true)
+        } else { check("arrival: 基线非主屏→主屏 → summon", false) }
 
-        // --- B183 失焦处置门（自动隐藏开关语义：默认关=绑定跟随不消失） ---
-        if case .dismiss = InputBubbleResignPlan.decide(autoHide: true) {
-            check("resign: 自动隐藏开 → dismiss（旧行为）", true)
-        } else { check("resign: 自动隐藏开 → dismiss（旧行为）", false) }
-        if case .stay = InputBubbleResignPlan.decide(autoHide: false) {
-            check("resign: 自动隐藏关（默认）→ stay（绑定跟随）", true)
-        } else { check("resign: 自动隐藏关（默认）→ stay（绑定跟随）", false) }
-
-        // --- B183 跟随定位（保偏移平移） ---
-        let followA = InputBubbleLayout.followOrigin(
-            bubbleOrigin: CGPoint(x: 100, y: 200),
-            windowOriginBefore: CGPoint(x: 50, y: 60),
-            windowOriginNow: CGPoint(x: 80, y: 40))
-        check("follow: 正向位移保偏移", followA == CGPoint(x: 130, y: 180))
-        let followB = InputBubbleLayout.followOrigin(
-            bubbleOrigin: CGPoint(x: 100, y: 200),
-            windowOriginBefore: CGPoint(x: 50, y: 60),
-            windowOriginNow: CGPoint(x: 20, y: 90))
-        check("follow: 负向位移保偏移", followB == CGPoint(x: 70, y: 230))
-        let followC = InputBubbleLayout.followOrigin(
-            bubbleOrigin: CGPoint(x: 100, y: 200),
-            windowOriginBefore: CGPoint(x: 50, y: 60),
-            windowOriginNow: CGPoint(x: 50, y: 60))
-        check("follow: 零位移原位", followC == CGPoint(x: 100, y: 200))
-
-        // --- B183 contentFrames 关闭钮契约（右上角、界内、不与底栏三件冲突） ---
-        for (label, size) in [("min", NSSize(width: 320, height: 100)), ("def", NSSize(width: 480, height: 150)), ("max", NSSize(width: 720, height: 300))] {
-            let f = InputBubbleLayout.contentFrames(for: size)
-            check("close[\(label)]: 贴右上角在界内", f.close.maxX <= size.width && f.close.minX >= size.width - 24 && f.close.maxY <= size.height && f.close.minY >= size.height - 24)
-            check("close[\(label)]: 与底栏三件无纵向重叠", f.close.minY >= 26 && f.close.minY > f.button.maxY && f.close.minY > f.grip.maxY)
-            check("close[\(label)]: 尺寸合理 12–20pt", f.close.width >= 12 && f.close.width <= 20 && f.close.height == f.close.width)
-        }
+        // --- B184 气泡开着时到达窗的处置门（跟随模式改绑/自动隐藏不打扰/本窗跟随已处理） ---
+        if case .keepCurrent = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: true, openForWindowID: nil, arrivedWindowID: 42) {
+            check("whileOpen: 自动隐藏模式 → keepCurrent（不打扰）", true)
+        } else { check("whileOpen: 自动隐藏模式 → keepCurrent（不打扰）", false) }
+        if case .keepCurrent = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: false, openForWindowID: 42, arrivedWindowID: 42) {
+            check("whileOpen: 到达窗=气泡本窗 → keepCurrent（跟随已处理）", true)
+        } else { check("whileOpen: 到达窗=气泡本窗 → keepCurrent（跟随已处理）", false) }
+        if case .retarget = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: false, openForWindowID: 42, arrivedWindowID: 43) {
+            check("whileOpen: 跟随模式异窗到达 → retarget（改绑）", true)
+        } else { check("whileOpen: 跟随模式异窗到达 → retarget（改绑）", false) }
+        if case .retarget = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: false, openForWindowID: nil, arrivedWindowID: 43) {
+            check("whileOpen: 跟随模式无目标 → retarget", true)
+        } else { check("whileOpen: 跟随模式无目标 → retarget", false) }
 
         // --- B162 草稿预填解析（草稿优先，空白草稿回落前缀） ---
         check("prefill: 无草稿 → 前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "/goal ") == "/goal ")

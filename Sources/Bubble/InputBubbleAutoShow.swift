@@ -42,24 +42,37 @@ enum InputBubbleAutoShowGate {
         return .summon
     }
 
-    /// B180：「同一终端窗从非主屏跨越到主屏 → 气泡自动出现」决策门（摆位热键/鼠标拖动/
+    /// B184：「同一终端窗从非主屏跨越到主屏 → 气泡自动出现」决策门 v2（摆位热键/鼠标拖动/
     /// 会话结束拉回等一切移动方式统一覆盖；Stop hook 快路径另有 decideMoveToMainAutoShow）。
-    /// 纯函数直测；AutoShow tick 负责「同一 CGWindowID 前后两次观测的主屏归属」事实采集。
-    /// - lastSeenOnMain == nil：本窗首次观测，无前值，无从谈跨越。
+    /// 纯函数直测；基线=全窗口基线表按 windowID 查找（B184 升级：窗在非前台时被移动、
+    /// 之后才聚焦的流程，首观测即有历史基线，照样触发——旧「同窗连续观测」版有流程缝）。
+    /// - lastSeenOnMain == nil：本窗无历史基线，无从谈跨越。
     static func decideMoveToMainArrival(
         moveToMainEnabled: Bool,
-        phaseIdle: Bool,
-        sameWindowAsLastTick: Bool,
         lastSeenOnMain: Bool?,
         nowOnMain: Bool
     ) -> Outcome {
         guard moveToMainEnabled else { return .skipNotEnabled }
-        guard phaseIdle else { return .skipBubbleActive }
-        guard sameWindowAsLastTick else { return .skipSameWindow }
         guard let wasOnMain = lastSeenOnMain else { return .skipNoBaseline }
         guard !wasOnMain else { return .skipAlreadyOnMain }
         guard nowOnMain else { return .skipStillOffMain }
         return .summon
+    }
+
+    enum ArrivalWhileOpen: Equatable { case keepCurrent, retarget }
+
+    /// B184：气泡开着时「另一窗跨到主屏」的处置门。
+    /// - 自动隐藏模式（autoHide=true）：不打扰正在使用的气泡（旧行为）；
+    /// - 绑定跟随模式（默认）：气泡改绑到刚移到主屏的窗（旧窗草稿按窗保留）；
+    /// - 气泡本就绑在到达窗上：跟随引擎已处理，不动。
+    static func decideArrivalWhileBubbleOpen(
+        autoHide: Bool,
+        openForWindowID: UInt32?,
+        arrivedWindowID: UInt32
+    ) -> ArrivalWhileOpen {
+        if autoHide { return .keepCurrent }
+        if openForWindowID == arrivedWindowID { return .keepCurrent }
+        return .retarget
     }
 }
 
@@ -76,9 +89,11 @@ final class InputBubbleAutoShow {
     private var timer: Timer?
     /// 上次评估过的终端窗（CGWindowID）；离开终端域清空 → 回到会话窗自动重弹
     private var lastEvaluatedWindowID: UInt32?
-    /// B180：lastEvaluatedWindowID 窗口上次观测时是否在主屏（nil=首次观测/已清域）。
-    /// 同窗从前值 false 跨到 true = 「被移动到主屏」事实。
-    private var lastEvaluatedWindowOnMain: Bool?
+    /// B184：各窗主屏归属基线表（windowID → 上次观测 onMain）。
+    /// 升级自 B180 的「仅跟踪最顶窗」：窗在非前台时被移动、之后才聚焦的流程，
+    /// 首观测即有历史基线照样触发。容量 64 淘汰最旧，防长会话无界增长。
+    private var onMainBaselineByWindow: [UInt32: Bool] = [:]
+    private var baselineOrder: [UInt32] = []
 
     private init() {}
 
@@ -124,9 +139,11 @@ final class InputBubbleAutoShow {
         }
         let windowChanged = topWindowID != nil && topWindowID != lastEvaluatedWindowID
         let hasLive = topWindowID.map { SessionWindowRegistry.shared.hasLiveSessionBinding(windowID: $0) } ?? false
-        // B180：焦点门 skip 分支会就地改写 lastEvaluated*，跨屏门的事实必须取改写前快照
-        let sameWindowAsLastTick = topWindowID != nil && topWindowID == lastEvaluatedWindowID
-        let lastSeenOnMainBeforeUpdate = lastEvaluatedWindowOnMain
+        // B184：跨屏门的事实=基线表旧值（写入前快照）；本拍观测随后统一落表
+        let baselineBefore = topWindowID.flatMap { onMainBaselineByWindow[$0] }
+        if let tid = topWindowID, let onMain = topWindowOnMain {
+            recordBaseline(windowID: tid, onMain: onMain)
+        }
 
         let outcome = InputBubbleAutoShowGate.decide(
             autoShowEnabled: InputBubblePreferences.autoShowOnFocus,
@@ -139,7 +156,6 @@ final class InputBubbleAutoShow {
         switch outcome {
         case .summon:
             lastEvaluatedWindowID = topWindowID
-            if topWindowID != nil { lastEvaluatedWindowOnMain = topWindowOnMain ?? lastEvaluatedWindowOnMain }
             log("[InputBubble] auto-show summon", fields: [
                 "windowID": topWindowID.map(String.init) ?? "nil",
                 "bundleID": front?.bundleIdentifier ?? "nil"
@@ -149,46 +165,51 @@ final class InputBubbleAutoShow {
             return
         case .skipNotTerminal:
             lastEvaluatedWindowID = nil
-            lastEvaluatedWindowOnMain = nil
         case .skipSameWindow, .skipNoLiveSession:
             if let top = topWindowID { lastEvaluatedWindowID = top }
-        // B180 三个新 case 仅由跨屏门产生，焦点门不会返回；列此仅为穷举。
+        // 跨屏门 case 与 skipNotEnabled/skipBubbleActive 仅列此为穷举。
         case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipNotEnabled, .skipBubbleActive:
             break
         }
 
-        // B180：焦点门未弹出时评估「同窗跨到主屏」门——覆盖摆位热键/鼠标拖动/离屏救援等
-        // 一切移动方式（Stop hook 拉回走 HookEventHandler 里的快路径门，不经此处）。
-        // 与焦点门互斥：焦点门要求 windowChanged，本门要求 !windowChanged，同拍不会双弹。
+        // B184：焦点门未弹出时评估「跨到主屏」门 v2（基线表版——不再要求同窗连续观测，
+        // 先移窗后聚焦同样触发）。气泡开着时不再被「占用」门一刀切冻结：
+        // 跟随模式（autoHide=false 默认）改绑气泡到到达窗；自动隐藏模式维持旧行为不打扰。
         let moveOutcome = InputBubbleAutoShowGate.decideMoveToMainArrival(
             moveToMainEnabled: InputBubblePreferences.autoShowOnMoveToMain,
-            phaseIdle: controller.isIdle,
-            sameWindowAsLastTick: sameWindowAsLastTick,
-            lastSeenOnMain: lastSeenOnMainBeforeUpdate,
+            lastSeenOnMain: baselineBefore,
             nowOnMain: topWindowOnMain ?? false
         )
         switch moveOutcome {
         case .summon:
             guard let tid = topWindowID, let frontApp = front else { return }
-            lastEvaluatedWindowOnMain = true
-            log("[InputBubble] move-to-main auto-show summon", fields: [
-                "windowID": String(tid),
-                "bundleID": frontApp.bundleIdentifier ?? "nil"
-            ])
-            CrashContextRecorder.shared.record("input_bubble_autoshow_move windowID=\(tid)")
-            controller.summonForMovedWindow(
-                windowID: tid,
-                pid: frontApp.processIdentifier,
-                appName: frontApp.localizedName
-            )
-        case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipSameWindow, .skipNoLiveSession:
-            // 簿记：跟踪同窗的主屏归属基线（nil bounds 不覆盖旧值）
-            if topWindowID != nil, let onMain = topWindowOnMain {
-                lastEvaluatedWindowOnMain = onMain
+            if controller.isIdle {
+                log("[InputBubble] move-to-main auto-show summon", fields: [
+                    "windowID": String(tid),
+                    "bundleID": frontApp.bundleIdentifier ?? "nil"
+                ])
+                CrashContextRecorder.shared.record("input_bubble_autoshow_move windowID=\(tid)")
+                controller.summonForMovedWindow(
+                    windowID: tid,
+                    pid: frontApp.processIdentifier,
+                    appName: frontApp.localizedName
+                )
+            } else if case .retarget = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+                autoHide: InputBubblePreferences.autoHide,
+                openForWindowID: controller.target?.windowID,
+                arrivedWindowID: tid) {
+                log("[InputBubble] move-to-main retarget", fields: [
+                    "windowID": String(tid),
+                    "from": (controller.target?.windowID).map(String.init) ?? "nil"
+                ])
+                controller.retargetForMovedWindow(
+                    windowID: tid,
+                    pid: frontApp.processIdentifier,
+                    appName: frontApp.localizedName
+                )
             }
-        // skipNotTerminal 仅由焦点门产生，跨屏门不会返回；列此仅为穷举。
-        case .skipNotTerminal, .skipNotEnabled, .skipBubbleActive:
-            break
+        case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipSameWindow, .skipNoLiveSession, .skipNotTerminal, .skipNotEnabled, .skipBubbleActive:
+            break  // 基线已在观测时统一落表，无需额外簿记
         }
         // B160 诊断：终端前台且未弹出时落一行（归因 tick 链路；summon 分支已有专属日志）。
         // B165 降 debug：此行终端前台稳态下每秒一条（skipSameWindow 常态），INFO 级
@@ -200,6 +221,18 @@ final class InputBubbleAutoShow {
                 "last": lastEvaluatedWindowID.map(String.init) ?? "nil"
             ])
         }
+    }
+
+    /// B184：落基线（首见入表，容量 64 FIFO 淘汰最旧，防长会话无界增长）。
+    private func recordBaseline(windowID: UInt32, onMain: Bool) {
+        if onMainBaselineByWindow[windowID] == nil {
+            baselineOrder.append(windowID)
+            if baselineOrder.count > 64 {
+                let evict = baselineOrder.removeFirst()
+                onMainBaselineByWindow.removeValue(forKey: evict)
+            }
+        }
+        onMainBaselineByWindow[windowID] = onMain
     }
 
     /// 前台终端 app 的最顶层 onscreen 常规窗（CGWindowList 顺序即 z 序，非阻塞）。
