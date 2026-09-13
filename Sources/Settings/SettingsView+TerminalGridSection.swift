@@ -46,6 +46,9 @@ extension SettingsView {
                 .occlusionState.contains(.visible) ?? false
             guard MinimapRefreshPolicy.shouldHeartbeatRefresh(windowVisible: visible) else { return }
             refreshGridMinimap()
+            // debug 级：默认静默（VIBEFOCUS_VERBOSE_LOGS=1 才输出），供真机验证
+            // 心跳节奏与可见性门控，不给生产日志加 3s 一拍的常驻噪声。
+            log("minimap heartbeat refreshed", level: .debug, fields: ["windowVisible": String(visible)])
         }
     }
 
