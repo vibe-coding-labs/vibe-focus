@@ -237,8 +237,11 @@ extension RunnerHarness {
                 captureResult = await SessionRestoreController.shared.captureCurrentLayout(name: "E2E 捕获")
                 capturedSnapshot = SessionRestoreController.shared.snapshotsForRefresh().last { $0.name == "E2E 捕获" }
             }
-            // auto 模式：用 createGrid 自产的 4 格网格快照驱动恢复（无桌面依赖）
-            let capSnap = capturedSnapshot ?? SessionSnapshotMigrator.migrateLegacy(gridSnap)
+            // auto 模式：一律用 createGrid 自产的 4 格网格快照驱动恢复（无桌面依赖）。
+            // 会话恢复 v2 的捕获是全桌面跨屏跨工作区——若拿全桌面快照走恢复，会把
+            // 桌面上既有终端窗（含他人/用户在用窗）卷进注入/重建，E2E 只许碰自己的
+            // scratch 窗（清场纪律红线）。全桌面捕获仅供只读断言。
+            let capSnap = SessionSnapshotMigrator.migrateLegacy(gridSnap)
             // 会话/目录断言基于网格格子在桌面快照中的对应条目（按 tty 关联）
             // 多个格子 ttyPath 可同为 nil（无法枚举 tty 的窗），uniquing 防崩溃
             var capByTTY: [String: SessionPaneSnapshot] = [:]

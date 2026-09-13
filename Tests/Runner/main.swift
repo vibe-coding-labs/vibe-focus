@@ -233,6 +233,7 @@ final class FakeAuditor: RestoreAuditing {
         runYabaiModelTests()
         runPruneExpiryTests()
         runSessionRestoreTests()
+        runSessionRestoreE2E()
         runUsageTableTests()
         runPureSweepA()
         runPureSweepB()
@@ -261,7 +262,8 @@ final class FakeAuditor: RestoreAuditing {
 // 注意：DB 路径由调用方以 shell 环境变量 VIBEFOCUS_DB_PATH=/tmp/vibefocus-grid-e2e.db
 // 注入——进程内 setenv() 不会更新 ProcessInfo.environment（启动时快照），实测无效。
 if ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_E2E"] == "1"
-    || ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_TARGET_E2E"] == "1" {
+    || ProcessInfo.processInfo.environment["VIBEFOCUS_GRID_TARGET_E2E"] == "1"
+    || ProcessInfo.processInfo.environment["VIBEFOCUS_SESSION_RESTORE_E2E"] == "1" {
     for suffix in ["", "-wal", "-shm"] {
         try? FileManager.default.removeItem(atPath: "/tmp/vibefocus-grid-e2e.db\(suffix)")
     }
