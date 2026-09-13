@@ -249,6 +249,27 @@ extension RunnerHarness {
             check("whileOpen: 跟随模式无目标 → retarget", true)
         } else { check("whileOpen: 跟随模式无目标 → retarget", false) }
 
+        // --- B186 语音气泡让位（LazyTyper 录音气泡识别 + 让位决策） ---
+        check("voiceYield: LazyTyper 320×170 录音气泡 ✓", InputBubbleLayout.isVoiceBubbleWindow(ownerName: "LazyTyper", width: 320, height: 170))
+        check("voiceYield: 尺寸下界 280×140 ✓", InputBubbleLayout.isVoiceBubbleWindow(ownerName: "LazyTyper", width: 280, height: 140))
+        check("voiceYield: 尺寸上界 400×220 ✓", InputBubbleLayout.isVoiceBubbleWindow(ownerName: "LazyTyper", width: 400, height: 220))
+        check("voiceYield: 状态项 34×24 ✗", !InputBubbleLayout.isVoiceBubbleWindow(ownerName: "LazyTyper", width: 34, height: 24))
+        check("voiceYield: 主窗 1300×818 ✗", !InputBubbleLayout.isVoiceBubbleWindow(ownerName: "LazyTyper", width: 1300, height: 818))
+        check("voiceYield: 他 app 648×455 ✗", !InputBubbleLayout.isVoiceBubbleWindow(ownerName: "iTerm2", width: 648, height: 455))
+        check("voiceYield: owner 空 ✗", !InputBubbleLayout.isVoiceBubbleWindow(ownerName: nil, width: 320, height: 170))
+        if case .yield = InputBubbleVoiceYieldPlan.decide(voiceBubblePresent: true, alreadyYielded: false) {
+            check("yieldPlan: 语音气泡出现且未让位 → yield", true)
+        } else { check("yieldPlan: 语音气泡出现且未让位 → yield", false) }
+        if case .restore = InputBubbleVoiceYieldPlan.decide(voiceBubblePresent: false, alreadyYielded: true) {
+            check("yieldPlan: 语音气泡消失且已让位 → restore", true)
+        } else { check("yieldPlan: 语音气泡消失且已让位 → restore", false) }
+        if case .none = InputBubbleVoiceYieldPlan.decide(voiceBubblePresent: true, alreadyYielded: true) {
+            check("yieldPlan: 已让位维持 → none", true)
+        } else { check("yieldPlan: 已让位维持 → none", false) }
+        if case .none = InputBubbleVoiceYieldPlan.decide(voiceBubblePresent: false, alreadyYielded: false) {
+            check("yieldPlan: 均无 → none", true)
+        } else { check("yieldPlan: 均无 → none", false) }
+
         // --- B162 草稿预填解析（草稿优先，空白草稿回落前缀） ---
         check("prefill: 无草稿 → 前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "/goal ") == "/goal ")
         check("prefill: 草稿优先于前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: "打到一半", prefix: "/goal ") == "打到一半")

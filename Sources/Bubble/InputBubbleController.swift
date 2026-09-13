@@ -57,6 +57,9 @@ final class InputBubbleController: NSObject {
     var followWindowOrigin: NSPoint?
     var followBubbleOrigin: NSPoint?
     var followTimer: Timer?
+    /// B186 语音气泡让位：true=已降到 .floating 给 LazyTyper 录音气泡让位
+    var voiceYielded = false
+    private var voiceYieldScanCounter = 0
     /// B183：本 app 内点击监视器——失焦后点气泡重新激活+收键
     /// （nonactivatingPanel 点击不激活 app，子视图会吃掉 mouseDown，必须监视器层拦）。
     var clickMonitor: Any?
@@ -293,6 +296,7 @@ final class InputBubbleController: NSObject {
         followWindowOrigin = nil
         followBubbleOrigin = nil
         removeClickMonitor()
+        voiceYielded = false
     }
 
     /// 跟随拍：目标窗位移 → 气泡保偏移平移（夹进所在屏可视区）。
@@ -329,6 +333,37 @@ final class InputBubbleController: NSObject {
         // 基线每拍推进（含未位移拍：窗口尺寸变化等场景不累积漂移）
         followWindowOrigin = windowNow
         followBubbleOrigin = clamped
+        // B186：语音气泡让位巡检（每 5 拍≈1s；全表 CG 扫描频次控制在 ~5Hz→1Hz）
+        voiceYieldScanCounter += 1
+        if voiceYieldScanCounter % 5 == 0 {
+            updateVoiceYield()
+        }
+    }
+
+    /// B186：检测 LazyTyper 录音气泡是否在屏——在则降层让位、消失即恢复。
+    /// 让位发生在录音气泡出现之后，不影响 LazyTyper 的活跃显示器解析（那一刻
+    /// 我们的气泡仍是最顶层窗）。幂等，状态由 voiceYielded 持有。
+    func updateVoiceYield() {
+        guard phase == .open, let panel else { return }
+        let present = cgWindowListAll().contains { entry in
+            entry.isOnScreen && entry.layer == 0
+                && InputBubbleLayout.isVoiceBubbleWindow(
+                    ownerName: entry.ownerName,
+                    width: entry.bounds?.width ?? 0,
+                    height: entry.bounds?.height ?? 0)
+        }
+        switch InputBubbleVoiceYieldPlan.decide(voiceBubblePresent: present, alreadyYielded: voiceYielded) {
+        case .yield:
+            panel.level = .floating
+            voiceYielded = true
+            log("[InputBubble] voice bubble yield: level -> floating")
+        case .restore:
+            panel.level = .statusBar + 1
+            voiceYielded = false
+            log("[InputBubble] voice bubble gone: level restored", level: .debug)
+        case .none:
+            break
+        }
     }
 
     /// B183：失焦后点击气泡 → 重新激活本 app 并恢复 textView 第一响应者（幂等）。

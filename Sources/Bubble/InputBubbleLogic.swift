@@ -241,6 +241,15 @@ enum InputBubbleLayout {
         CGPoint(x: startOrigin.x, y: startOrigin.y + (startSize.height - newSize.height))
     }
 
+    // MARK: 语音气泡让位（B186：LazyTyper 录音气泡出现在我们气泡之上）
+
+    /// 识别 LazyTyper 录音气泡窗口（事实源）：owner 含 LazyTyper 且尺寸落在
+    /// 录音气泡域（320×170 逻辑 ± 容差）。状态项(34×24)/主窗(~1300×818)/他 app 均不匹配。
+    static func isVoiceBubbleWindow(ownerName: String?, width: CGFloat, height: CGFloat) -> Bool {
+        guard ownerName?.contains("LazyTyper") == true else { return false }
+        return width >= 280 && width <= 400 && height >= 140 && height <= 220
+    }
+
     // MARK: 气泡内容布局（B175：提示文案 + 滚动输入区 + 提交钮 + 缩放把手；B183：+关闭钮）
 
     /// 按面板尺寸摆内容（唯一事实源：builtPanel 初建 / 拖拽 relayout / 设置页联动
@@ -276,6 +285,21 @@ enum InputBubbleLayout {
             x: bubbleOrigin.x + (windowOriginNow.x - windowOriginBefore.x),
             y: bubbleOrigin.y + (windowOriginNow.y - windowOriginBefore.y)
         )
+    }
+}
+
+// MARK: - 语音气泡让位决策（B186：LazyTyper 录音气泡出现在我们气泡之上）
+
+/// 我们的气泡开在 statusBar+1（保住 LazyTyper 活跃显示器解析=它的气泡出现瞬间读
+/// 我们最顶层窗），检测到录音气泡出现后降到 .floating 让其浮在我们之上；录音气泡
+/// 消失即恢复。alreadyYielded 即当前让位状态。
+enum InputBubbleVoiceYieldPlan {
+    enum Action: Equatable { case yield, restore, none }
+
+    static func decide(voiceBubblePresent: Bool, alreadyYielded: Bool) -> Action {
+        if voiceBubblePresent, !alreadyYielded { return .yield }
+        if !voiceBubblePresent, alreadyYielded { return .restore }
+        return .none
     }
 }
 
