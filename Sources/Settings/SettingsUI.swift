@@ -49,6 +49,11 @@ public struct SettingsView: View {
     @State var gridMinimapScreens: [ScreenLayoutMapper.InputScreen] = []
     // Minimap 胶囊点击 live 切换的结局反馈（nil = 无进行中的反馈）
     @State var gridSpaceSwitchMessage: String?
+    // minimap 心跳定时器（订阅挂在 terminalGridSection 上，只在编排页在层级时活着；
+    // 周期与可见性门控契约见 MinimapRefreshPolicy）
+    @State var gridMinimapHeartbeat = Timer.publish(
+        every: MinimapRefreshPolicy.autoRefreshIntervalSeconds, on: .main, in: .common
+    ).autoconnect()
     @State var gridGap = Double(TerminalGridPreferences.gap)
     @State var gridAppPreference = TerminalGridPreferences.appPreference
     @State var gridLaunchCommand = TerminalGridPreferences.launchCommand

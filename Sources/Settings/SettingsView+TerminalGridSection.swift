@@ -36,6 +36,17 @@ extension SettingsView {
             // 不再依赖离散的手工刷新点，UI 自愈（2026-09-10 用户要求根治）。
             refreshGridMinimap(ignoreCache: true)
         }
+        .onReceive(gridMinimapHeartbeat) { _ in
+            // 心跳兜底层（MinimapRefreshPolicy）：signal 链没覆盖的外部改动（yabai
+            // 命令行/其它会话/信号注册失效/挂起闸门吞广播）也能在几秒内同步到 LIVE。
+            // 订阅只在本页在层级时活着；窗口不可见（关闭/最小化/完全遮挡/不在当前
+            // Space）时静默跳过，不给主线程白添 fork。cache-aware 路径：信号链刚
+            // 刷过的心跳拍命中 2s 缓存自动去重。
+            let visible = SettingsWindowController.shared.window?
+                .occlusionState.contains(.visible) ?? false
+            guard MinimapRefreshPolicy.shouldHeartbeatRefresh(windowVisible: visible) else { return }
+            refreshGridMinimap()
+        }
     }
 
     /// 主视觉：真实屏幕布局 minimap（点阵画布）
@@ -61,6 +72,20 @@ extension SettingsView {
                 .padding(.vertical, 2.5)
                 .background(Capsule().fill(VibeColors.success.opacity(0.10)))
                 .overlay(Capsule().strokeBorder(VibeColors.success.opacity(0.20), lineWidth: 1))
+                .help("每 \(Int(MinimapRefreshPolicy.autoRefreshIntervalSeconds)) 秒自动刷新（设置窗可见时）")
+
+                // 手动刷新：强制绕过查询缓存（信号链/心跳都是 cache-aware 或带防抖，
+                // 用户显式刷新要「现在立刻最新」，2026-09-13 用户要求）
+                Button {
+                    refreshGridMinimap(ignoreCache: true)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("立即刷新屏幕布局（绕过查询缓存）")
+                .accessibilityLabel("立即刷新屏幕布局")
 
                 Text("点屏幕选目标屏 · 点胶囊切换该屏工作区并设为编排目标")
                     .font(.system(size: 10.5, design: .monospaced))

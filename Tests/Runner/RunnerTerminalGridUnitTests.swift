@@ -598,5 +598,17 @@ extension RunnerHarness {
                   TerminalAutomationScript.resolveCGWindowID(
                       candidates: [(9, nil as CGRect?, true)], nearBounds: target, excluding: []) == nil)
         }
+
+        // ===== MinimapRefreshPolicy：编排页 minimap 心跳/手动刷新契约 =====
+        do {
+            // 心跳周期「每隔几秒」量级，且必须 > querySpaces 缓存 TTL(2s)：
+            // 每拍才能取到新状态；同时相邻信号刷新后的心跳拍命中缓存自动去重
+            check("minimapRefresh: 心跳周期 3s（> 2s 查询缓存 TTL）",
+                  MinimapRefreshPolicy.autoRefreshIntervalSeconds == 3)
+            check("minimapRefresh: 窗口可见 → 心跳放行",
+                  MinimapRefreshPolicy.shouldHeartbeatRefresh(windowVisible: true))
+            check("minimapRefresh: 窗口不可见 → 心跳静默跳过（关窗视图仍挂着，无门控=永不停歇后台 fork 回归锁）",
+                  !MinimapRefreshPolicy.shouldHeartbeatRefresh(windowVisible: false))
+        }
     }
 }
