@@ -115,11 +115,36 @@ final class BubbleCardView: NSView {
     }
 }
 
+// MARK: - 悬停小手光标（B187：✕ / 提交两处可点区给 pointingHand 可点性暗示）
+
+extension NSView {
+    /// 鼠标悬停显示小手。幂等（userInfo 打标防重复添加）；activeAlways 使
+    /// 跟随模式下气泡非 key 时也生效；移出区域由 AppKit cursor 机制自动复位。
+    func installPointingHandCursor() {
+        guard !trackingAreas.contains(where: { $0.userInfo?["pointingHand"] != nil }) else { return }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .cursorUpdate],
+            owner: self,
+            userInfo: ["pointingHand": true]
+        ))
+    }
+}
+
 // MARK: - 提交钮（B175：鼠标路径）
 
 /// 气泡内提交钮：珊瑚→蜜桃渐变胶囊（VibeColors 品牌语的 AppKit 版）。
 /// 动作语义恒为「注入并提交」（.submit），与回车键位语义互不干扰。
 final class BubbleSubmitButton: NSButton {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installPointingHandCursor()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let start = NSColor(rgbHex: isDark ? 0xFF8266 : 0xE64A33)
@@ -150,6 +175,15 @@ final class BubbleCloseButton: NSView {
     var onClose: (() -> Void)?
 
     override var mouseDownCanMoveWindow: Bool { false }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installPointingHandCursor()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
 
     override func mouseDown(with event: NSEvent) {
         onClose?()
