@@ -1,13 +1,13 @@
 import AppKit
 import SwiftUI
 
-// MARK: - 编排页 · 已保存布局快照卡（2026-09-07 从 TerminalGridSection 拆分，行为不变）
+// MARK: - 编排页 · 已保存会话快照卡（2026-09-13 会话恢复 v2：多屏×多工作区×远程会话）
 extension SettingsView {
 
     var savedLayoutsCard: some View {
         SettingsCard(
             title: "已保存布局",
-            subtitle: "捕获的布局快照；恢复时重建窗口并自动 cd 回工作目录、claude --resume。",
+            subtitle: "捕获完整桌面现场：全部屏幕与工作区的终端窗口、工作目录、Claude 会话（含 SSH 远程，恢复时自动登录远端并 claude --resume）。",
             icon: "clock.arrow.circlepath"
         ) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -24,24 +24,30 @@ extension SettingsView {
             }
     }
 
-    /// 快照行：mini 格位图 + 名称/元数据 + 动作
-    func gridSnapshotRow(_ snapshot: TerminalGridSnapshot) -> some View {
+    /// 快照行：屏幕图标 + 名称/元数据 + 动作
+    func gridSnapshotRow(_ snapshot: SessionRestoreSnapshot) -> some View {
         HStack(spacing: 12) {
-            // 显示用覆盖网格而非裸存值：旧快照（推断 3×4 · 16 窗）直接展示存值
-            // 会复现「数字对不上」，且与恢复重排实际使用的网格不一致
-            let displayGrid = snapshot.displayGrid
-            GridSnapshotThumbnail(rows: displayGrid.rows, cols: displayGrid.cols)
+            Image(systemName: "rectangle.on.rectangle")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 40)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(snapshot.name)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text("\(displayGrid.rows)×\(displayGrid.cols)")
+                    Text("\(snapshot.windows.count) 窗")
+                    if snapshot.displayCount > 1 {
+                        Text("·")
+                        Text("\(snapshot.displayCount) 屏")
+                    }
+                    if snapshot.spaceCount > 1 {
+                        Text("·")
+                        Text("\(snapshot.spaceCount) 工作区")
+                    }
                     Text("·")
-                    Text("\(snapshot.cells.count) 窗")
-                    Text("·")
-                    Text("\(snapshot.cells.filter { $0.sessionID != nil }.count) session")
+                    Text("\(snapshot.sessionPaneCount) session")
                     Text("·")
                     Text(snapshot.capturedAt.formatted(date: .abbreviated, time: .shortened))
                 }
@@ -72,13 +78,13 @@ extension SettingsView {
                 .controlSize(.small)
             }
             Button("恢复") {
-                runGridTask { await terminalGridController.restoreLayout(snapshotID: snapshot.id) }
+                runGridTask { await SessionRestoreController.shared.restoreLayout(snapshotID: snapshot.id) }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
             Button {
-                terminalGridController.removeSnapshot(id: snapshot.id)
-                gridSnapshots = terminalGridController.snapshotsForRefresh()
+                SessionRestoreController.shared.removeSnapshot(id: snapshot.id)
+                gridSnapshots = SessionRestoreController.shared.snapshotsForRefresh()
             } label: {
                 Image(systemName: "trash")
             }

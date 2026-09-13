@@ -167,14 +167,14 @@ extension AppDelegate {
 
     @objc func gridCaptureMenuItem() {
         Task {
-            let result = await TerminalGridController.shared.captureLayout()
+            let result = await SessionRestoreController.shared.captureCurrentLayout()
             presentGridResultIfNeeded(result)
         }
     }
 
     @objc func gridRestoreMenuItem() {
         Task {
-            let result = await TerminalGridController.shared.restoreLayout()
+            let result = await SessionRestoreController.shared.restoreLayout()
             presentGridResultIfNeeded(result)
         }
     }

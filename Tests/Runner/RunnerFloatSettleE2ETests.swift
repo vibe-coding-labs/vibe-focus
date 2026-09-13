@@ -138,7 +138,7 @@ extension RunnerHarness {
         var resolvedSelection: TerminalSelection?
         var createResult: TerminalGridController.OperationResult?
         var captureResult: TerminalGridController.OperationResult?
-        var capturedSnapshot: TerminalGridSnapshot?
+        var capturedSnapshot: SessionRestoreSnapshot?
         var autoRestoreResult: TerminalGridController.OperationResult?
         var restoreResult: TerminalGridController.OperationResult?
         var windowCountAfterRestore = 0
@@ -234,15 +234,20 @@ extension RunnerHarness {
             // 阶段 3：捕获桌面——仅在 Terminal.app 目标时执行（iTerm2 无 tty，
             // session/cwd 捕获降级；且污染桌面上 64 格护栏会正确拒绝捕获）
             if isTerminalApp {
-                captureResult = await e2eController.captureLayout(name: "E2E 捕获")
-                capturedSnapshot = e2eController.snapshotsForRefresh().last { $0.name == "E2E 捕获" }
+                captureResult = await SessionRestoreController.shared.captureCurrentLayout(name: "E2E 捕获")
+                capturedSnapshot = SessionRestoreController.shared.snapshotsForRefresh().last { $0.name == "E2E 捕获" }
             }
             // auto 模式：用 createGrid 自产的 4 格网格快照驱动恢复（无桌面依赖）
-            let capSnap = capturedSnapshot ?? gridSnap
+            let capSnap = capturedSnapshot ?? SessionSnapshotMigrator.migrateLegacy(gridSnap)
             // 会话/目录断言基于网格格子在桌面快照中的对应条目（按 tty 关联）
             // 多个格子 ttyPath 可同为 nil（无法枚举 tty 的窗），uniquing 防崩溃
-            let capByTTY = Dictionary(capSnap.cells.map { ($0.ttyPath, $0) },
-                                      uniquingKeysWith: { first, _ in first })
+            var capByTTY: [String: SessionPaneSnapshot] = [:]
+            for restoredWindow in capSnap.windows {
+                for restoredPane in restoredWindow.panes {
+                    guard let tty = restoredPane.tty, capByTTY[tty] == nil else { continue }
+                    capByTTY[tty] = restoredPane
+                }
+            }
             let gridCell0TTY = gridSnap.cells.first?.ttyPath
             let gridCell1TTY = gridSnap.cells.dropFirst().first?.ttyPath
             sessionCellE2ERef = capByTTY[gridCell0TTY ?? ""]?.sessionID
@@ -259,7 +264,7 @@ extension RunnerHarness {
             if let claudeTTY = gridCell0TTY {
                 claudePIDBefore = ClaudeSessionLocator.claudePID(onTTY: claudeTTY)
             }
-            autoRestoreResult = await e2eController.autoRestore(snapshot: capSnap)
+            autoRestoreResult = await SessionRestoreExecutor(controller: .shared).restore(snapshot: capSnap)
             if let claudeTTY = gridCell0TTY {
                 claudePIDAfter = ClaudeSessionLocator.claudePID(onTTY: claudeTTY)
             }
@@ -284,7 +289,7 @@ extension RunnerHarness {
             }
 
             // 阶段 5：手动恢复（cell0 注入 claude --resume）
-            restoreResult = await e2eController.restoreLayout(snapshotID: capSnap.id)
+            restoreResult = await SessionRestoreController.shared.restoreLayout(snapshotID: capSnap.id)
             let countApp = resolvedSelection?.bundleID ?? "com.apple.Terminal"
             // 直接 osascript（不经 bash -c 转义层）， applescript 双引号在 Swift 串里转义
             if let out = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
@@ -309,9 +314,9 @@ extension RunnerHarness {
                   gridSnapAppBundleID == "com.googlecode.iterm2")
         }
         check("E2E: 捕获布局成功", !isTerminalApp || captureResult?.ok == true)
-        let e2eCells = capturedSnapshot?.cells ?? []
-        check("E2E: 快照含 ≥6 个终端窗口", !isTerminalApp || e2eCells.count >= 6)
-        let ttyBackfilled = e2eCells.filter { $0.ttyPath != nil }.count
+        let e2eWindows = capturedSnapshot?.windows ?? []
+        check("E2E: 快照含 ≥6 个终端窗口", !isTerminalApp || e2eWindows.count >= 6)
+        let ttyBackfilled = e2eWindows.flatMap { $0.panes }.filter { $0.tty != nil }.count
         check("E2E: Terminal.app tty 回填 ≥4 格", !isTerminalApp || ttyBackfilled >= 4)
         check("E2E: TTY 兜底定位到存活 claude 会话", !isTerminalApp || sessionCellE2ERef != nil)
         // iTerm2 无 tty 通道，纯 shell 格子的 cwd 捕获结构性不可用（已知降级）

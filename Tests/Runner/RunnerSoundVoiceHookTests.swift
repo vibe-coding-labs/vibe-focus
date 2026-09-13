@@ -114,7 +114,8 @@ extension RunnerHarness {
         check("appPrefDetail: 三分支非空且互异",
               details.allSatisfy { !$0.isEmpty } && Set(details).count == 3)
         check("appPrefDetail: terminal 指明完整支持", details[1].contains("完整支持"))
-        check("appPrefDetail: iterm2 指明部分支持", details[2].contains("部分支持"))
+        check("appPrefDetail: iterm2 指明完整支持（2026-09-13 会话恢复 v2：tty 枚举已补齐）",
+              details[2].contains("完整支持") && details[2].contains("iTerm2"))
 
         // TerminalGridPlanner.steppedGap：2px 步进取整
         check("steppedGap: 0 → 0（无缝）", TerminalGridPlanner.steppedGap(0) == 0)

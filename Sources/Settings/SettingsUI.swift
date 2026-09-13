@@ -59,7 +59,7 @@ public struct SettingsView: View {
     @State var gridLaunchCommand = TerminalGridPreferences.launchCommand
     @State var gridResultMessage = ""
     @State var gridResultIsError = false
-    @State var gridSnapshots: [TerminalGridSnapshot] = []
+    @State var gridSnapshots: [SessionRestoreSnapshot] = []
     @State var gridAutoRestoreEnabled = TerminalGridPreferences.autoRestoreEnabled
     @State var gridAutoRestoreSnapshotID: String? = TerminalGridPreferences.autoRestoreSnapshotID
     @State var gridSelectionPreview: TerminalSelection?

@@ -80,17 +80,17 @@ extension SettingsView {
 
             HStack(spacing: 10) {
                 Button("捕获当前布局") {
-                    runGridTask { await terminalGridController.captureLayout() }
+                    runGridTask { await SessionRestoreController.shared.captureCurrentLayout() }
                 }
                 .buttonStyle(.bordered)
 
                 Button("恢复上次布局") {
-                    runGridTask { await terminalGridController.restoreLayout() }
+                    runGridTask { await SessionRestoreController.shared.restoreLayout() }
                 }
                 .buttonStyle(.bordered)
 
                 Button {
-                    gridSnapshots = terminalGridController.snapshotsForRefresh()
+                    gridSnapshots = SessionRestoreController.shared.snapshotsForRefresh()
                     gridAutoRestoreSnapshotID = TerminalGridPreferences.autoRestoreSnapshotID
                     refreshGridMinimap()
                     refreshSelectionInfo()
@@ -183,7 +183,7 @@ extension SettingsView {
                         gridAutoRestoreEnabled = newValue
                         TerminalGridPreferences.autoRestoreEnabled = newValue
                         if newValue && gridAutoRestoreSnapshotID == nil {
-                            gridAutoRestoreSnapshotID = terminalGridController.snapshotsForRefresh().last?.id
+                            gridAutoRestoreSnapshotID = SessionRestoreController.shared.snapshotsForRefresh().last?.id
                             TerminalGridPreferences.autoRestoreSnapshotID = gridAutoRestoreSnapshotID
                         }
                     }
@@ -225,7 +225,7 @@ extension SettingsView {
             let result = await operation()
             gridResultMessage = result.message
             gridResultIsError = !result.ok
-            gridSnapshots = terminalGridController.snapshotsForRefresh()
+            gridSnapshots = SessionRestoreController.shared.snapshotsForRefresh()
             gridAutoRestoreSnapshotID = TerminalGridPreferences.autoRestoreSnapshotID
         }
     }

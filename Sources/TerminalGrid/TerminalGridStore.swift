@@ -26,7 +26,7 @@ enum TerminalGridPreferences {
             case .terminal:
                 return "手动指定 Terminal.app（完整支持：建窗/注入/tty/精确恢复）。"
             case .iterm2:
-                return "手动指定 iTerm2（部分支持：无 tty 映射，自动恢复降级为只重建缺失格）。"
+                return "手动指定 iTerm2（完整支持：建窗/注入/tty 枚举/会话恢复）。"
             }
         }
     }

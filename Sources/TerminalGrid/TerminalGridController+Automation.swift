@@ -110,7 +110,7 @@ extension TerminalGridController {
     /// 目标终端未运行时自动拉起并等实例就绪（2026-09-12 用户裁定：创建网格
     /// 不该要求终端先在跑——工具的职责就是把环境备好）。仅 notRunning 拉起；
     /// 多实例/临时副本交给后续守卫的诚实拒绝链（寻址安全问题不碰）。
-    private func ensureTerminalRunning(appBundleID: String, op: String) async -> Bool {
+    func ensureTerminalRunning(appBundleID: String, op: String) async -> Bool {
         let verdict = TerminalAutomationScript.automationInstanceVerdict(
             instances: Self.terminalInstances(bundleID: appBundleID))
         guard TerminalAutomationScript.needsTerminalLaunch(verdict) else { return true }
@@ -157,7 +157,7 @@ extension TerminalGridController {
         frame: CGRect,
         op: String,
         excluding: Set<UInt32> = []
-    ) async -> (cgWindowID: UInt32?, corrected: Bool) {
+    ) async -> (cgWindowID: UInt32?, corrected: Bool, appleScriptID: String?) {
         let isIterm = TerminalAutomationScript.usesITermDialect(appBundleID)
         let script = isIterm
             ? TerminalAutomationScript.itermCreateWindow(command: command, quartzFrame: frame)
@@ -167,14 +167,14 @@ extension TerminalGridController {
         guard await ensureTerminalRunning(appBundleID: appBundleID, op: op) else {
             let appName = TerminalSelectionResolver.knownNames[appBundleID] ?? appBundleID
             lastScriptError = "已尝试自动启动 \(appName) 但等待超时仍未检测到实例——请手动启动后重试"
-            return (nil, false)
+            return (nil, false, nil)
         }
         var created: YabaiClient.YabaiResult?
         var failedAttempts = 0
         while created == nil {
             if let refusal = automationInstanceRefusal(appBundleID: appBundleID, allowNotRunning: true) {
                 lastScriptError = refusal
-                return (nil, false)
+                return (nil, false, nil)
             }
             let result = await runScript(script)
             if let result, result.exitCode == 0 {
@@ -183,11 +183,11 @@ extension TerminalGridController {
             }
             // 挂起类故障（未启动 / 30s 超时）：重试只会翻倍等待，快速失败
             guard result != nil else {
-                return (nil, false)
+                return (nil, false, nil)
             }
             failedAttempts += 1
             guard failedAttempts < TerminalAutomationScript.maxCellCreateAttempts else {
-                return (nil, false)
+                return (nil, false, nil)
             }
             let delay = TerminalAutomationScript.cellCreateRetryDelayNanos(failedAttempts: failedAttempts)
             log("[TerminalGrid] cell create failed, retrying", level: .warn, fields: [
@@ -198,7 +198,7 @@ extension TerminalGridController {
             ])
             try? await Task.sleep(nanoseconds: delay)
         }
-        guard let result = created else { return (nil, false) }
+        guard let result = created else { return (nil, false, nil) }
         let appleScriptID = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         try? await Task.sleep(nanoseconds: Self.interWindowDelayNanos)
 
@@ -246,7 +246,7 @@ extension TerminalGridController {
         }
         let converged = actual.map { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: 10) } ?? false
         if converged {
-            return (cgID, false)
+            return (cgID, false, appleScriptID)
         }
         guard let cgID else {
             lastScriptError = "窗口已创建但无法在 CG 窗口列表定位（bounds 回读失败或就近匹配超差）——窗口可能落在了不可见空间或其它实例"
@@ -257,7 +257,7 @@ extension TerminalGridController {
                 "excluding": excluding.sorted().map(String.init).joined(separator: ","),
                 "locateAttempts": String(locateAttempt),
             ])
-            return (nil, false)
+            return (nil, false, nil)
         }
         log("[TerminalGrid] cell placement drifted, correcting via yabai", fields: [
             "op": op,
@@ -265,7 +265,7 @@ extension TerminalGridController {
             "readback": actual.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil"
         ])
         let corrected = WindowManager.shared.placeWindow(windowID: cgID, frame: frame, operationID: op)
-        return (cgID, corrected)
+        return (cgID, corrected, appleScriptID)
     }
 
     /// 按 bundleID + 回读 bounds 找 CG window id（iTerm2 的 AppleScript id 不是

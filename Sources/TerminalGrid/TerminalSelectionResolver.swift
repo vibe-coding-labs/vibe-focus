@@ -5,13 +5,14 @@ import Foundation
 //   1. 用户手动指定（设置页选择器）——最高优先；
 //   2. 自动：支持自动编排的终端里，按「持久化激活计数 + 当前在运行」选最近常用；
 //   3. 兜底：无任何数据 → Terminal.app（macOS 自带，必然存在）。
-// 支持面：Terminal.app = 完整（建窗/注入/tty/精确恢复）；iTerm2 = 部分（无 tty 映射、
-// 自动恢复降级为只重建缺失格）；Warp/Ghostty 等暂无自动化通道 = 暂不支持。
+// 支持面：Terminal.app / iTerm2 = 完整（建窗/注入/tty/会话恢复；iTerm2 的 tty 经
+// AppleScript window→tab→session 枚举，2026-09-13 会话恢复 v2 起生效）；
+// Warp/Ghostty 等暂无自动化通道 = 暂不支持。
 
 /// 编排自动化支持级别
 enum TerminalAutomationSupportLevel: Equatable {
     case full       // 建窗 / 注入 / tty / 精确恢复 全可用
-    case partial    // 可建窗注入，但无 tty 映射，自动恢复降级
+    case partial    // 可建窗注入，会话级恢复能力受限（当前无已知终端落在此档）
     case none       // 暂无自动化通道，无法编排
 }
 
@@ -85,7 +86,7 @@ enum TerminalSelectionResolver {
             let reason: String
             switch candidate.support {
             case .full: reason = "手动指定"
-            case .partial: reason = "手动指定（部分支持：无法读取 tty，自动恢复降级）"
+            case .partial: reason = "手动指定（部分支持：会话级恢复能力受限）"
             case .none: reason = "手动指定（暂无自动化通道，编排可能失败）"
             }
             return TerminalSelection(

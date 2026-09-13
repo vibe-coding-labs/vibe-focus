@@ -145,29 +145,6 @@ enum TerminalGridPlanner {
         return (rows: rows, cols: cols)
     }
 
-    /// 捕获成功文案：括号网格仅在 rows×cols 恰等于窗口数（干净网格）时展示。
-    /// 推断网格是聚类估计，自由摆放时乘积≠窗口数，两数并列会被读成「数字对不上」。
-    static func captureSummaryMessage(cellCount: Int, rows: Int, cols: Int, sessionCount: Int) -> String {
-        let gridNote = rows * cols == cellCount ? "（\(rows)×\(cols)）" : ""
-        return "已捕获 \(cellCount) 个终端窗口\(gridNote)，其中 \(sessionCount) 个关联到 Claude session"
-    }
-
-    /// 自动恢复汇总：四类去处之外若有格子因超出网格容量（>4×4 的快照重排封顶）
-    /// 未获处理，必须显式记账——否则「新建/注入/跳过/失败」加起来 < 格子数，
-    /// 读起来像账全平、实际有格子被静默丢掉。
-    static func autoRestoreSummaryMessage(
-        created: Int, injected: Int, skipped: Int, failures: Int, unprocessed: Int
-    ) -> String {
-        var summary = "自动恢复：新建 \(created)、注入 \(injected)、跳过运行中 \(skipped)"
-        if failures > 0 {
-            summary += "、失败 \(failures)"
-        }
-        if unprocessed > 0 {
-            summary += "；另有 \(unprocessed) 格超出网格容量（4×4）未处理"
-        }
-        return summary
-    }
-
     /// 建格失败文案：失败序号从 1 起计（与快照格子阅读序一致）；此前已建成的窗口
     /// 不会被回收、留在屏上，必须说明——否则用户对着凭空多出的窗不知道哪来的。
     static func cellCreationFailureMessage(failedIndex: Int, createdCount: Int, detail: String) -> String {

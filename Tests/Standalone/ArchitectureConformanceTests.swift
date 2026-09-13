@@ -79,7 +79,7 @@ let rules: [ConformanceRule] = [
     ),
     ConformanceRule(
         id: "R3",
-        description: "setWindowFloat( 只许定义/protocol 声明/三处接线/TerminalGrid 刻意旁路",
+        description: "setWindowFloat( 只许定义/protocol 声明/三处接线/TerminalGrid·SessionRestore 刻意旁路",
         patterns: ["setWindowFloat("],
         contextAnyPatterns: [],
         allowedFiles: [
@@ -89,6 +89,7 @@ let rules: [ConformanceRule] = [
             "ToggleEngine+Restore.swift",
             "TerminalGridController+SpaceDelivery.swift",
             "ToggleEngine+Restore+Stages.swift", // B157：restore 四阶段机械拆出 +Stages.swift（调用点搬家非新增，2026-09-11）
+            "SessionRestoreExecutor.swift", // 会话恢复 v2 跨 Space 投递（泊靠往返与 TerminalGrid 投递同款刻意旁路，2026-09-13）
         ]
     ),
     ConformanceRule(

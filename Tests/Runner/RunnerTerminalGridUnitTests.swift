@@ -27,73 +27,9 @@ extension RunnerHarness {
         check("ttyMap: 首个 | 之后的 | 不撕列", parsed[44] == "/dev/weird|path")
         check("ttyMap: 空输入 → 空 Map", TerminalAutomationScript.parseWindowTTYMap("").isEmpty)
 
-        // ===== sortedByReadingOrder：行带分组阅读序（分支穷尽） =====
-        // 复用 CGWindowEntry(from:) 的 dict 构造（memberwise 被自定义 init 吞掉）。
-        func cgEntry(_ id: UInt32, midX: CGFloat, midY: CGFloat) -> CGWindowEntry {
-            CGWindowEntry(from: [
-                kCGWindowNumber as String: id,
-                kCGWindowOwnerPID as String: pid_t(100),
-                kCGWindowBounds as String: [
-                    "X": midX - 50, "Y": midY - 40, "Width": CGFloat(100), "Height": CGFloat(80)
-                ],
-            ])!
-        }
-        func cgEntryNoBounds(_ id: UInt32) -> CGWindowEntry {
-            CGWindowEntry(from: [
-                kCGWindowNumber as String: id,
-                kCGWindowOwnerPID as String: pid_t(100),
-            ])!
-        }
-        // 上行(y=100) x: 300,100；下行(y=300) x: 200,50 —— 期望阅读序 2,1,4,3
-        let raw = [cgEntry(1, midX: 300, midY: 100), cgEntry(2, midX: 100, midY: 100),
-                   cgEntry(3, midX: 200, midY: 300), cgEntry(4, midX: 50, midY: 300)]
-        let ordered = TerminalGridController.sortedByReadingOrder(raw)
-        check("captureOrder: 行带→midX 阅读序", ordered.map { $0.windowID } == [2, 1, 4, 3])
-        // 无 bounds 条目：windowID 兜底排序
-        let mixed = [cgEntryNoBounds(9), cgEntry(5, midX: 0, midY: 0), cgEntryNoBounds(7)]
-        let orderedMixed = TerminalGridController.sortedByReadingOrder(mixed)
-        check("captureOrder: 无 bounds 按 windowID 兜底",
-              orderedMixed.map { $0.windowID } == [5, 7, 9])
-        check("captureOrder: 空输入 → 空", TerminalGridController.sortedByReadingOrder([]).isEmpty)
-
-        // ===== restoreTargetFrames：复用记录帧 vs 重排（分支穷尽） =====
-        func cell(_ index: Int, x: CGFloat, y: CGFloat) -> TerminalGridCellSnapshot {
-            TerminalGridCellSnapshot(index: index, x: x, y: y, width: 500, height: 400,
-                                     ttyPath: nil, sessionID: nil, cwd: nil, title: nil)
-        }
-        let snapshot = TerminalGridSnapshot(
-            name: "t", appBundleID: "com.apple.Terminal", displayID: 1,
-            displayYabaiIndex: nil, rows: 1, cols: 2,
-            cells: [cell(0, x: 10, y: 20), cell(1, x: 520, y: 20)],
-            launchCommand: nil
-        )
-        let visible = CGRect(x: 0, y: 0, width: 2000, height: 1000)
-        // 分支 1：记录屏仍可用 → 记录帧原样（已在界内，clamp 不动）
-        let reused = TerminalGridController.restoreTargetFrames(
-            snapshot: snapshot, recordedDisplayStillFits: true, visibleFrame: visible)
-        check("restoreFrames: 屏可用 → 记录帧复用",
-              reused.count == 2 && reused[0] == CGRect(x: 10, y: 20, width: 500, height: 400))
-        // 分支 2：记录屏失效 → 按 rows×cols 重排（1×2 网格规划）
-        let replanned = TerminalGridController.restoreTargetFrames(
-            snapshot: snapshot, recordedDisplayStillFits: false, visibleFrame: visible)
-        check("restoreFrames: 屏失效 → 规划重排 1×2",
-              replanned.count == 2 && replanned[0] != replanned[1]
-              && replanned[0].width == replanned[1].width)
-        // 分支 3：屏可用但记录帧越界 → clamp 进可用区
-        let overflowSnapshot = TerminalGridSnapshot(
-            name: "t2", appBundleID: "com.apple.Terminal", displayID: 1,
-            displayYabaiIndex: nil, rows: 1, cols: 1,
-            cells: [cell(0, x: 1900, y: 900)],
-            launchCommand: nil
-        )
-        let clampedFrames = TerminalGridController.restoreTargetFrames(
-            snapshot: overflowSnapshot, recordedDisplayStillFits: true, visibleFrame: visible)
-        check("restoreFrames: 越界记录帧 clamp 进界",
-              clampedFrames.count == 1
-              && clampedFrames[0].maxX <= visible.maxX && clampedFrames[0].maxY <= visible.maxY)
     }
 
-    // ===== coveringGrid + captureSummaryMessage：自由摆法捕获数字自洽 =====
+        // ===== coveringGrid：自由摆法覆盖网格自洽（会话恢复 v2 沿用） =====
     // inferGrid 是几何聚类估计，自由摆法下 rows×cols 乘积≠窗口数（真机实证：16 窗聚成 3×4），
     // 快照照存裸推断网格会让重排恢复帧不足丢窗、文案把两数并列会被读成矛盾。
     do {
@@ -118,41 +54,9 @@ extension RunnerHarness {
         // 退化单格
         check("covering: 单格原样",
               TerminalGridPlanner.coveringGrid(inferred: (1, 1), cellCount: 1) == (rows: 1, cols: 1))
-
-        // 文案：干净网格才并列形状，自由摆法只报窗口数（不再出现「16 (3×4)」式矛盾）
-        check("summary: 干净网格带 (3×4)",
-              TerminalGridPlanner.captureSummaryMessage(cellCount: 12, rows: 3, cols: 4, sessionCount: 2)
-              == "已捕获 12 个终端窗口（3×4），其中 2 个关联到 Claude session")
-        check("summary: 乘积不符省略括号",
-              TerminalGridPlanner.captureSummaryMessage(cellCount: 16, rows: 3, cols: 4, sessionCount: 0)
-              == "已捕获 16 个终端窗口，其中 0 个关联到 Claude session")
-        check("summary: 乘积大于窗数同样省略",
-              TerminalGridPlanner.captureSummaryMessage(cellCount: 5, rows: 3, cols: 2, sessionCount: 1)
-              == "已捕获 5 个终端窗口，其中 1 个关联到 Claude session")
-        check("summary: 单行 fallback 1×N 自洽展示",
-              TerminalGridPlanner.captureSummaryMessage(cellCount: 3, rows: 1, cols: 3, sessionCount: 0)
-              == "已捕获 3 个终端窗口（1×3），其中 0 个关联到 Claude session")
-
-        // 恢复重排：旧快照存的是裸推断网格（3×4/16 格）屏失效 → 覆盖成 4×4，16 窗全有位子
-        func legacyCell(_ index: Int) -> TerminalGridCellSnapshot {
-            TerminalGridCellSnapshot(index: index, x: 10, y: 20, width: 300, height: 200,
-                                     ttyPath: nil, sessionID: nil, cwd: nil, title: nil)
-        }
-        let legacy = TerminalGridSnapshot(
-            name: "legacy", appBundleID: "com.apple.Terminal", displayID: 1,
-            displayYabaiIndex: nil, rows: 3, cols: 4,
-            cells: (0..<16).map(legacyCell),
-            launchCommand: nil
-        )
-        let legacyReplan = TerminalGridController.restoreTargetFrames(
-            snapshot: legacy, recordedDisplayStillFits: false,
-            visibleFrame: CGRect(x: 0, y: 0, width: 2000, height: 1000))
-        check("restoreFrames: 旧快照欠覆盖重排 16 窗全有位子",
-              legacyReplan.count == 16
-              && legacyReplan.allSatisfy { $0.maxX <= 2000 && $0.maxY <= 1000 })
     }
 
-    // ===== B122~B124 文案/记账诚实化：displayGrid / autoRestoreSummary / cellCreationFailure =====
+    // ===== B122~B124 文案诚实化：displayGrid / cellCreationFailure（autoRestoreSummary 由会话恢复 v2 接管） =====
     do {
         func auditCell(_ index: Int) -> TerminalGridCellSnapshot {
             TerminalGridCellSnapshot(index: index, x: 10, y: 20, width: 300, height: 200,
@@ -173,20 +77,6 @@ extension RunnerHarness {
               auditSnapshot(rows: 3, cols: 4, cells: 12).displayGrid == (rows: 3, cols: 4))
         check("displayGrid: 覆盖网格幂等 2×4/8 原样",
               auditSnapshot(rows: 2, cols: 4, cells: 8).displayGrid == (rows: 2, cols: 4))
-
-        // autoRestore 汇总：四类去处之外的超容量格子必须显式记账
-        check("autoSummary: 全部有去处不添尾注",
-              TerminalGridPlanner.autoRestoreSummaryMessage(created: 3, injected: 2, skipped: 4, failures: 0, unprocessed: 0)
-              == "自动恢复：新建 3、注入 2、跳过运行中 4")
-        check("autoSummary: 失败计数并列",
-              TerminalGridPlanner.autoRestoreSummaryMessage(created: 1, injected: 0, skipped: 2, failures: 5, unprocessed: 0)
-              == "自动恢复：新建 1、注入 0、跳过运行中 2、失败 5")
-        check("autoSummary: 超容量差额显式交代",
-              TerminalGridPlanner.autoRestoreSummaryMessage(created: 12, injected: 0, skipped: 0, failures: 0, unprocessed: 4)
-              == "自动恢复：新建 12、注入 0、跳过运行中 0；另有 4 格超出网格容量（4×4）未处理")
-        check("autoSummary: 失败+超容并存",
-              TerminalGridPlanner.autoRestoreSummaryMessage(created: 0, injected: 1, skipped: 0, failures: 2, unprocessed: 3)
-              == "自动恢复：新建 0、注入 1、跳过运行中 0、失败 2；另有 3 格超出网格容量（4×4）未处理")
 
         // 建格失败：序号 1 起与阅读序一致；已建成窗不回收、必须交代去向
         check("cellFail: 首格失败无尾注",
@@ -322,40 +212,6 @@ extension RunnerHarness {
         })
         check("shellPID: 无 /dev/ 前缀原样透传", capturedTTY == "ttys003")
     }
-    }
-
-    // MARK: 捕获过滤纯决策（B105：TerminalGridController+Capture 16% 最薄面——注入式直测）
-
-    func runCaptureFilterTests() {
-        func entry(_ id: UInt32, pid: Int32 = 4242, layer: Int = 0, onScreen: Bool = true,
-                   w: CGFloat = 800, h: CGFloat = 600) -> CGWindowEntry {
-            let d: [String: Any] = [
-                kCGWindowNumber as String: id, kCGWindowOwnerPID as String: pid,
-                kCGWindowLayer as String: layer, kCGWindowIsOnscreen as String: onScreen,
-                kCGWindowBounds as String: ["X": CGFloat(0), "Y": CGFloat(0), "Width": w, "Height": h],
-            ]
-            return CGWindowEntry(from: d)!
-        }
-        let isTerm: (pid_t) -> String? = { _ in "com.apple.Terminal" }
-        let noTerm: (pid_t) -> String? = { _ in nil }
-        let onMain: (CGRect) -> UInt32? = { _ in 1 }
-        let onOther: (CGRect) -> UInt32? = { _ in 2 }
-        check("captureFilter: layer0+onscreen+合格尺寸+终端 owner+目标屏 → 通过",
-              TerminalGridController.isCapturableTerminalEntry(entry(1), targetDisplayID: 1,
-                                                              bundleIDOf: isTerm, displayIDOf: onMain))
-        check("captureFilter: 非零 layer/离屏/小窗（<100pt）拒绝",
-              !TerminalGridController.isCapturableTerminalEntry(entry(2, layer: 3), targetDisplayID: 1,
-                                                               bundleIDOf: isTerm, displayIDOf: onMain)
-              && !TerminalGridController.isCapturableTerminalEntry(entry(3, onScreen: false), targetDisplayID: 1,
-                                                                  bundleIDOf: isTerm, displayIDOf: onMain)
-              && !TerminalGridController.isCapturableTerminalEntry(entry(4, w: 99, h: 99), targetDisplayID: 1,
-                                                                  bundleIDOf: isTerm, displayIDOf: onMain))
-        check("captureFilter: owner 非终端（nil bundleID）拒绝",
-              !TerminalGridController.isCapturableTerminalEntry(entry(5), targetDisplayID: 1,
-                                                               bundleIDOf: noTerm, displayIDOf: onMain))
-        check("captureFilter: 目标 display 不符拒绝",
-              !TerminalGridController.isCapturableTerminalEntry(entry(6), targetDisplayID: 1,
-                                                                bundleIDOf: isTerm, displayIDOf: onOther))
     }
 
     // MARK: TerminalUsageTable 纯表操作（B150：record/ranked/编码解码此前零直测——

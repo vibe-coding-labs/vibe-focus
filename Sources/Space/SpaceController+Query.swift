@@ -220,6 +220,24 @@ extension SpaceController {
         return decodeArray(YabaiDisplayInfo.self, from: result.stdout)
     }
 
+    /// yabai 全量窗口查询（跨屏跨 Space 全可见，含最小化）。
+    /// 会话恢复捕获的数据骨架（CGWindowList isOnScreen 只见当前可见 Space，
+    /// 其它屏/其它工作区全漏拍——2026-09-13 会话恢复 v2 根因）。
+    func queryAllWindows(caller: String = #function) -> [YabaiWindowInfo]? {
+        guard let result = runYabai(arguments: ["-m", "query", "--windows"]),
+              result.exitCode == 0 else {
+            log("[SpaceController] queryAllWindows failed", level: .warn, fields: ["caller": caller])
+            return nil
+        }
+        let windows = decodeArray(YabaiWindowInfo.self, from: result.stdout)
+        if windows == nil, !result.stdout.isEmpty {
+            log("[SpaceController] queryAllWindows decode failed", level: .warn, fields: [
+                "caller": caller, "stdoutLen": String(result.stdout.count)
+            ])
+        }
+        return windows
+    }
+
     // MARK: - 显示器索引精确解析（几何匹配 + 短缓存；热路径唯一入口）
 
     /// 重建几何匹配表；yabai 不可用返回 nil（调用方回退猜序版）。

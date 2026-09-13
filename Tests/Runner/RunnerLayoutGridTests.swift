@@ -273,38 +273,6 @@ extension RunnerHarness {
               && !ClaudeSessionLocator.isClaudeProcess(commandLine: "vim notes-about-claude.md"))
     }
 
-    // 自动恢复规划器：建/注入/跳过三态 + 一窗一格去重 + 不支持注入降级
-    do {
-        let cells = [
-            TerminalGridCellSnapshot(index: 0, x: 0, y: 0, width: 800, height: 500, ttyPath: "/dev/ttys001", sessionID: "s1", cwd: "/a", title: nil),
-            TerminalGridCellSnapshot(index: 1, x: 808, y: 0, width: 800, height: 500, ttyPath: nil, sessionID: nil, cwd: nil, title: nil)
-        ]
-        let frames = [CGRect(x: 0, y: 0, width: 800, height: 500), CGRect(x: 808, y: 0, width: 800, height: 500)]
-        let liveClaude = TerminalLiveWindow(windowID: 101, frame: frames[0], ttyPath: "/dev/ttys001", hasLiveClaude: true)
-        let liveIdle = TerminalLiveWindow(windowID: 102, frame: CGRect(x: 810, y: 2, width: 800, height: 500), ttyPath: nil, hasLiveClaude: false)
-        let actions = TerminalAutoRestorePlanner.plan(cells: cells, targetFrames: frames, liveWindows: [liveClaude, liveIdle])
-        check("规划器: claude 仍在跑 → skipRunning", actions[0] == .skipRunning)
-        check("规划器: 空闲活窗口 → inject 且带窗口 id", actions[1] == .inject(windowID: 102))
-        check("规划器: 格位空 → create",
-              TerminalAutoRestorePlanner.plan(cells: cells, targetFrames: frames, liveWindows: [])
-              == [.create, .create])
-        let far = TerminalLiveWindow(windowID: 103, frame: CGRect(x: 5000, y: 5000, width: 800, height: 500), ttyPath: nil, hasLiveClaude: false)
-        check("规划器: 中心距离超容差不匹配",
-              TerminalAutoRestorePlanner.plan(cells: [cells[0]], targetFrames: [frames[0]], liveWindows: [far]) == [.create])
-        check("规划器: 不支持注入时匹配到的窗口一律 skipRunning，缺失格仍 create",
-              TerminalAutoRestorePlanner.plan(cells: cells, targetFrames: frames, liveWindows: [liveClaude], injectEnabled: false)
-              == [.skipRunning, .create])
-        // 两 cell 都想认领同一窗口：第一个赢，第二个 create（used 去重）
-        let stacked = [
-            TerminalGridCellSnapshot(index: 0, x: 0, y: 0, width: 800, height: 500, ttyPath: nil, sessionID: nil, cwd: nil, title: nil),
-            TerminalGridCellSnapshot(index: 1, x: 2, y: 2, width: 800, height: 500, ttyPath: nil, sessionID: nil, cwd: nil, title: nil)
-        ]
-        let oneLive = TerminalLiveWindow(windowID: 201, frame: CGRect(x: 0, y: 0, width: 800, height: 500), ttyPath: nil, hasLiveClaude: false)
-        check("规划器: 同窗口不被两个格子重复认领",
-              TerminalAutoRestorePlanner.plan(cells: stacked, targetFrames: [frames[0], frames[0]], liveWindows: [oneLive])
-              == [.inject(windowID: 201), .create])
-    }
-
     // 快照格子数安全护栏（真机事故：604 格污染快照 → autoRestore 新建 539 扇窗）
     check("护栏: 格子数上限 64 的边界判定",
           TerminalGridPlanner.isValidSnapshotCellCount(1)
