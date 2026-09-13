@@ -345,8 +345,9 @@ final class InputBubbleController: NSObject {
     /// 我们的气泡仍是最顶层窗）。幂等，状态由 voiceYielded 持有。
     func updateVoiceYield() {
         guard phase == .open, let panel else { return }
+        // 不筛 layer：LazyTyper 录音气泡实测 layer=5（floating 域），按 owner+尺寸识别
         let present = cgWindowListAll().contains { entry in
-            entry.isOnScreen && entry.layer == 0
+            entry.isOnScreen
                 && InputBubbleLayout.isVoiceBubbleWindow(
                     ownerName: entry.ownerName,
                     width: entry.bounds?.width ?? 0,
