@@ -100,6 +100,16 @@ final class InputBubbleAutoShow {
     func start() {
         guard observer == nil else { return }
         let autoshow = InputBubbleAutoShow.shared
+        // B185：启动即全量播种基线——部署重启频繁，重启后基线表为空，第一次
+        // 「副屏→主屏」必然无基线不弹（用户复测踩中）；启动扫一遍所有终端窗的
+        // 主屏归属，之后照常由 tick 增量更新。屏幕重排时重播种防基线过期。
+        autoshow.seedBaselines()
+        NotificationCenter.default.addObserver(
+            autoshow,
+            selector: #selector(screenConfigurationDidChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -118,6 +128,32 @@ final class InputBubbleAutoShow {
             }
         }
         log("[InputBubble] auto-show started")
+    }
+
+    /// B185：屏幕插拔/重排 → 基线重播种（窗口随屏重排后 onMain 可能整体翻转）。
+    @objc private func screenConfigurationDidChange() {
+        seedBaselines()
+    }
+
+    /// B185：把当前所有终端 app 的 onscreen 常规窗主屏归属一次扫入基线表。
+    /// 幂等：重复播种只刷新值，不清 tick 增量建立的历史。
+    func seedBaselines() {
+        var terminalPIDs: Set<pid_t> = []
+        var seeded = 0
+        let entries = cgWindowListAll()
+        for entry in entries where entry.layer == 0 && entry.isOnScreen {
+            guard let bounds = entry.bounds else { continue }
+            if !terminalPIDs.contains(entry.ownerPID) {
+                guard let app = NSRunningApplication(processIdentifier: entry.ownerPID),
+                      TerminalRegistry.isTerminalOrIDEApp(appName: app.localizedName, bundleIdentifier: app.bundleIdentifier) else { continue }
+                terminalPIDs.insert(entry.ownerPID)
+            }
+            recordBaseline(windowID: entry.windowID, onMain: CoordinateKit.isOnMainScreen(bounds))
+            seeded += 1
+        }
+        if seeded > 0 {
+            log("[InputBubble] baseline seeded", level: .debug, fields: ["windows": String(seeded)])
+        }
     }
 
     func tick() {
