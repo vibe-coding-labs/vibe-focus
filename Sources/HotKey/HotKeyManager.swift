@@ -66,7 +66,7 @@ public final class HotKeyManager: ObservableObject {
         }
     }
 
-    /// Nonisolated entry point for input bubble hotkey（B162 默认 ⌘B）— CGEventTap C callback 域调用，
+    /// Nonisolated entry point for input bubble hotkey（B188 默认 ⌃X）— CGEventTap C callback 域调用，
     /// TitleEditor 同款模式：绕 @MainActor，main 队列转回隔离域（summon 内自查偏好开关）。
     nonisolated static func triggerInputBubble() {
         log("[HotKey] Input bubble hotkey matched")
@@ -335,7 +335,7 @@ public final class HotKeyManager: ObservableObject {
         CrashContextRecorder.shared.record("layout_hotkey_enabled value=\(enabled)")
     }
 
-    // MARK: 输入气泡唤起热键（B162：默认 ⌘B，设置页可自定义）
+    // MARK: 输入气泡唤起热键（B188：默认 ⌃X，设置页可自定义）
 
     /// 录制气泡唤起热键。返回错误信息（nil = 成功）。
     /// 校验链：修饰键/系统冲突（validate）→ 与主 toggle 键撞车 → 与摆位键撞车。
@@ -360,7 +360,7 @@ public final class HotKeyManager: ObservableObject {
         return nil
     }
 
-    /// 恢复气泡唤起热键默认值（⌘B）。
+    /// 恢复气泡唤起热键默认值（⌃X）。
     func resetBubbleShortcut() {
         InputBubblePreferences.hotKey = InputBubbleHotKeyPlan.defaultConfig
         registerHotKey()

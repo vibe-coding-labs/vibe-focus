@@ -174,7 +174,7 @@ extension HotKeyManager {
             }
         }
 
-        // B129/B162 输入气泡唤起热键（默认 ⌘B，fallback monitor 通道）：功能开启且
+        // B129/B162 输入气泡唤起热键（默认 ⌃X，fallback monitor 通道）：功能开启且
         // 未被主键/摆位键占用时消费。不并入 ToggleTriggerGate（Runner 锁定签名），
         // 保持 gate 语义不动。
         if InputBubblePreferences.isEnabled,

@@ -91,7 +91,7 @@ enum InputBubblePreferences {
         set { UserDefaults.standard.set(newValue, forKey: autoShowKey) }
     }
 
-    /// B162：唤起热键（默认 ⌘B，设置页可自定义；JSON 持久化，
+    /// B188：唤起热键（默认 ⌃X，设置页可自定义；JSON 持久化，
     /// 解析失败回落 defaultConfig——手写 defaults 不致崩）。
     static var hotKey: HotKeyConfiguration {
         get {

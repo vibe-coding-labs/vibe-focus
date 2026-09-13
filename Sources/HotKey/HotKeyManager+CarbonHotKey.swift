@@ -99,7 +99,7 @@ extension HotKeyManager {
             log("[HotKey] Failed to register title editor Carbon hotkey: \(titleEditorStatus)", level: .warn)
         }
 
-        // B129/B162: Register input bubble Carbon hotkey（默认 ⌘B，设置页可自定义）
+        // B129/B162: Register input bubble Carbon hotkey（默认 ⌃X，设置页可自定义）
         // — 主键/摆位键占用时让位不注册（Carbon 同组合重复注册行为未定义，
         // 注册时一次性判定最稳）
         if let inputBubbleHotKeyRef {

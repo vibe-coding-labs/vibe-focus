@@ -4,7 +4,7 @@ import CoreGraphics
 import Foundation
 
 // MARK: - 输入气泡控制器（B129）
-// 生命周期：快捷键唤起（默认 ⌘B，仅聚焦终端窗时）→ 本地打字 → Enter/⌘Enter 注入 → 焦点还给终端。
+// 生命周期：快捷键唤起（默认 ⌃X，仅聚焦终端窗时）→ 本地打字 → Enter/⌘Enter 注入 → 焦点还给终端。
 // 行为约束：
 // - 目标在弹 UI 前捕获（TitleEditor 2026-09-07 焦点劫持教训：弹 UI 后前台已是 VibeFocus，
 //   再按前台取目标必盲射）；
@@ -98,7 +98,7 @@ final class InputBubbleController: NSObject {
 
     // MARK: 唤起 / 关闭
 
-    /// 快捷键唤起（默认 ⌘B）：开着则关（toggle）；没开则捕获聚焦终端窗并弹气泡。
+    /// 快捷键唤起（默认 ⌃X）：开着则关（toggle）；没开则捕获聚焦终端窗并弹气泡。
     /// 前台不是可识别终端时 beep 拒绝（静默吞键会让用户以为失灵，与摆位热键同款反馈）。
     func summon() {
         PerfMonitor.shared.beginSection("bubble.summon")

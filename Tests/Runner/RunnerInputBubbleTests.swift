@@ -12,16 +12,16 @@ extension RunnerHarness {
     func runInputBubbleTests() {
         print("\n=== InputBubble (B129) ===")
 
-        // --- B162 唤起热键：默认 ⌘B 契约 + 配置化匹配矩阵 ---
-        check("bubble hotkey: 默认配置 = ⌘B", InputBubbleHotKeyPlan.defaultConfig
-            == HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_B), modifiers: UInt32(cmdKey)))
+        // --- B188 唤起热键：默认 ⌃X 契约 + 配置化匹配矩阵 ---
+        check("bubble hotkey: 默认配置 = ⌃X", InputBubbleHotKeyPlan.defaultConfig
+            == HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_X), modifiers: UInt32(controlKey)))
         let bk = InputBubbleHotKeyPlan.defaultConfig
-        check("bubble hotkey: ⌘B 命中", InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(cmdKey)))
-        check("bubble hotkey: 仅 ⌥ 不命中（⌥⌘B 退役）", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(optionKey)))
-        check("bubble hotkey: ⌥⌘ 不命中（旧默认退役）", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(optionKey | cmdKey)))
-        check("bubble hotkey: ⌃⌘ 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(controlKey | cmdKey)))
-        check("bubble hotkey: ⌘+⇧ 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: 11, carbonModifiers: UInt32(cmdKey | shiftKey)))
-        check("bubble hotkey: 其他键 ⌘ 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_C), carbonModifiers: UInt32(cmdKey)))
+        check("bubble hotkey: ⌃X 命中", InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey)))
+        check("bubble hotkey: ⌘B 不命中（旧默认退役）", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_B), carbonModifiers: UInt32(cmdKey)))
+        check("bubble hotkey: ⌘X 不命中（修饰位错）", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(cmdKey)))
+        check("bubble hotkey: ⌃⌘X 不命中（多修饰）", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey | cmdKey)))
+        check("bubble hotkey: ⌃⇧X 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey | shiftKey)))
+        check("bubble hotkey: 其他键 ⌃ 不命中", !InputBubbleHotKeyPlan.matches(config: bk, keyCode: UInt32(kVK_ANSI_C), carbonModifiers: UInt32(controlKey)))
         check("bubble hotkey: 自定义配置按值匹配", InputBubbleHotKeyPlan.matches(
             config: HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_K), modifiers: UInt32(controlKey | optionKey)),
             keyCode: UInt32(kVK_ANSI_K), carbonModifiers: UInt32(controlKey | optionKey)))
@@ -418,14 +418,14 @@ extension RunnerHarness {
             )!
         }
 
-        // --- 录制转换契约：from(event:) 产出 Carbon 位，过校验、命中默认 ⌘B ---
-        // 回归锁：旧实现直接塞 NSEvent.ModifierFlags.rawValue（⌘=1<<20），与 Carbon 位
-        // （⌘=1<<8）完全错位——校验必败，三处录制自诞生起从未生效（用户报障根因）。
-        let captured = HotKeyConfiguration.from(event: keyEvent(keyCode: UInt16(kVK_ANSI_B), modifiers: [.command]))
-        check("recorder: ⌘B 捕获 keyCode = B", captured?.keyCode == UInt32(kVK_ANSI_B))
-        check("recorder: ⌘B 捕获修饰位 = Carbon cmdKey（非 NSEvent 位）",
-              captured?.modifiers == UInt32(cmdKey)
-              && captured?.modifiers != UInt32(NSEvent.ModifierFlags.command.rawValue))
+        // --- 录制转换契约：from(event:) 产出 Carbon 位，过校验、命中默认 ⌃X ---
+        // 回归锁：旧实现直接塞 NSEvent.ModifierFlags.rawValue（⌃=1<<18），与 Carbon 位
+        // （⌃=1<<12）完全错位——校验必败，三处录制自诞生起从未生效（用户报障根因）。
+        let captured = HotKeyConfiguration.from(event: keyEvent(keyCode: UInt16(kVK_ANSI_X), modifiers: [.control]))
+        check("recorder: ⌃X 捕获 keyCode = X", captured?.keyCode == UInt32(kVK_ANSI_X))
+        check("recorder: ⌃X 捕获修饰位 = Carbon controlKey（非 NSEvent 位）",
+              captured?.modifiers == UInt32(controlKey)
+              && captured?.modifiers != UInt32(NSEvent.ModifierFlags.control.rawValue))
         check("recorder: 捕获配置与默认唤起键全等", captured == InputBubbleHotKeyPlan.defaultConfig)
         check("recorder: 捕获配置通过校验（旧 bug 卡死的一步）",
               captured != nil && HotKeyManager.validationError(for: captured!) == nil)

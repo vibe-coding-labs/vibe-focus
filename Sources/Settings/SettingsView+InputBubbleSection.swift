@@ -40,7 +40,7 @@ private struct InputBubbleSectionView: View {
     var body: some View {
         SettingsCard(
             title: "输入气泡",
-            subtitle: "SSH 远程会话逐键回显卡顿的对症通道：快捷键（默认 ⌘B）唤起本地气泡打字，一次性注入终端；输入按目标窗保留，拖动位置也会记住。气泡右下角可直接拖拽调大小，与下方尺寸设置实时联动。",
+            subtitle: "SSH 远程会话逐键回显卡顿的对症通道：快捷键（默认 ⌃X）唤起本地气泡打字，一次性注入终端；输入按目标窗保留，拖动位置也会记住。气泡右下角可直接拖拽调大小，与下方尺寸设置实时联动。",
             icon: "text.bubble"
         ) {
             SettingsRow(
@@ -59,7 +59,7 @@ private struct InputBubbleSectionView: View {
 
             SettingsRow(
                 title: "唤起快捷键",
-                detail: "默认 ⌘B，点击录制后按下新组合键；与主开关/摆位键冲突时气泡自动让位。"
+                detail: "默认 ⌃X，点击录制后按下新组合键；与主开关/摆位键冲突时气泡自动让位。"
             ) {
                 HStack(spacing: 8) {
                     ShortcutRecorderView(displayedShortcut: bubbleHotKeyDisplay) { hotKey in
@@ -83,7 +83,7 @@ private struct InputBubbleSectionView: View {
                             Image(systemName: "arrow.counterclockwise")
                         }
                         .buttonStyle(.bordered)
-                        .help("恢复默认 ⌘B")
+                        .help("恢复默认 ⌃X")
                     }
                 }
                 .disabled(!enabled)

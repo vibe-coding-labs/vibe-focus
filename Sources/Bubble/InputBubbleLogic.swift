@@ -18,15 +18,15 @@ enum InputBubbleSubmitMode: Equatable {
     case cancel
 }
 
-/// 气泡唤起热键计划（B162：默认 ⌘B + 设置页可自定义；三通道共用匹配）。
+/// 气泡唤起热键计划（B188：默认 ⌃X + 设置页可自定义；三通道共用匹配）。
 /// 组合键唯一事实源在 InputBubblePreferences.hotKey（持久化），此处的默认值
 /// 与匹配纯函数供 Carbon/CGEventTap/NSEvent fallback 与 Runner 直测共用。
 /// 冲突让位（主键/摆位键占用组合时不注册/不消费）在各注册通道内联判定。
 enum InputBubbleHotKeyPlan {
-    /// B162 默认 ⌘B（历史 ⌥⌘B 退役——用户指定默认改 ⌘B）。
+    /// B188 默认 ⌃X（历史 ⌘B 退役——用户指定默认改 ⌃X）。
     static let defaultConfig = HotKeyConfiguration(
-        keyCode: UInt32(kVK_ANSI_B),
-        modifiers: UInt32(cmdKey)
+        keyCode: UInt32(kVK_ANSI_X),
+        modifiers: UInt32(controlKey)
     )
 
     /// 纯匹配：Carbon / CGEventTap / NSEvent fallback 三通道共用（carbon 修饰位语义）。
