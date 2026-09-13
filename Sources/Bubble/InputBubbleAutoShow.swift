@@ -211,6 +211,15 @@ final class InputBubbleAutoShow {
         // B184：焦点门未弹出时评估「跨到主屏」门 v2（基线表版——不再要求同窗连续观测，
         // 先移窗后聚焦同样触发）。气泡开着时不再被「占用」门一刀切冻结：
         // 跟随模式（autoHide=false 默认）改绑气泡到到达窗；自动隐藏模式维持旧行为不打扰。
+        // B185 诊断：跨屏事件本体落 INFO（真实跨越是稀有事件，不构成日志洪水），
+        // 归因 skip 原因不再依赖 debug 级日志。
+        if topWindowID != nil, let before = baselineBefore, let now = topWindowOnMain, before != now {
+            log("[InputBubble] cross-screen observed", fields: [
+                "windowID": String(topWindowID!),
+                "from": String(before),
+                "to": String(now)
+            ])
+        }
         let moveOutcome = InputBubbleAutoShowGate.decideMoveToMainArrival(
             moveToMainEnabled: InputBubblePreferences.autoShowOnMoveToMain,
             lastSeenOnMain: baselineBefore,
@@ -230,19 +239,23 @@ final class InputBubbleAutoShow {
                     pid: frontApp.processIdentifier,
                     appName: frontApp.localizedName
                 )
-            } else if case .retarget = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
-                autoHide: InputBubblePreferences.autoHide,
-                openForWindowID: controller.target?.windowID,
-                arrivedWindowID: tid) {
-                log("[InputBubble] move-to-main retarget", fields: [
+            } else {
+                let disposition = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+                    autoHide: InputBubblePreferences.autoHide,
+                    openForWindowID: controller.target?.windowID,
+                    arrivedWindowID: tid)
+                log("[InputBubble] move-to-main arrival while bubble open", fields: [
                     "windowID": String(tid),
-                    "from": (controller.target?.windowID).map(String.init) ?? "nil"
+                    "openFor": (controller.target?.windowID).map(String.init) ?? "nil",
+                    "disposition": String(describing: disposition)
                 ])
-                controller.retargetForMovedWindow(
-                    windowID: tid,
-                    pid: frontApp.processIdentifier,
-                    appName: frontApp.localizedName
-                )
+                if case .retarget = disposition {
+                    controller.retargetForMovedWindow(
+                        windowID: tid,
+                        pid: frontApp.processIdentifier,
+                        appName: frontApp.localizedName
+                    )
+                }
             }
         case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipSameWindow, .skipNoLiveSession, .skipNotTerminal, .skipNotEnabled, .skipBubbleActive:
             break  // 基线已在观测时统一落表，无需额外簿记
