@@ -165,21 +165,32 @@ final class InputBubbleAutoShow {
 
         var topWindowID: UInt32?
         var topWindowOnMain: Bool?
-        if frontIsTerminal, let frontApp = front,
-           let entry = topmostOnscreenWindowEntry(pid: frontApp.processIdentifier) {
-            topWindowID = entry.windowID
-            // B180：CG bounds（Quartz 系）→ 主屏归属（中心点判据，CoordinateKit 唯一事实源）。
-            if let bounds = entry.bounds {
-                topWindowOnMain = CoordinateKit.isOnMainScreen(bounds)
+        // B185：跨屏检测扫描前台终端 app 的「全部」onscreen 常规窗——多窗多屏下
+        // z 序最顶窗未必是用户刚移动的窗（真机探针实锤：z 顶停留旧窗时，被移窗的
+        // 跨越永远不可见）；基线表按 windowID 记录，天然支持逐窗比对。
+        var terminalWindows: [CGWindowEntry] = []
+        var currentOnMain: [UInt32: Bool] = [:]
+        if frontIsTerminal, let frontApp = front {
+            terminalWindows = cgWindowListAll().filter {
+                $0.ownerPID == frontApp.processIdentifier && $0.layer == 0 && $0.isOnScreen
+            }
+            for entry in terminalWindows {
+                guard let bounds = entry.bounds else { continue }
+                currentOnMain[entry.windowID] = CoordinateKit.isOnMainScreen(bounds)
             }
         }
+        // B185 诊断探针（临时）：每拍 INFO 记录 top 窗/归属/基线，定位跨屏检测失明原因后移除。
+        log("[InputBubble][PROBE] tick", fields: [
+            "front": front?.bundleIdentifier ?? "nil",
+            "frontIsTerminal": String(frontIsTerminal),
+            "top": topWindowID.map(String.init) ?? "nil",
+            "onMain": (topWindowID.flatMap { currentOnMain[$0] }).map { String($0) } ?? "nil",
+            "map": (topWindowID.flatMap { onMainBaselineByWindow[$0] }).map { String($0) } ?? "nil",
+            "scan": String(terminalWindows.count),
+            "phase": String(describing: controller.phase)
+        ])
         let windowChanged = topWindowID != nil && topWindowID != lastEvaluatedWindowID
         let hasLive = topWindowID.map { SessionWindowRegistry.shared.hasLiveSessionBinding(windowID: $0) } ?? false
-        // B184：跨屏门的事实=基线表旧值（写入前快照）；本拍观测随后统一落表
-        let baselineBefore = topWindowID.flatMap { onMainBaselineByWindow[$0] }
-        if let tid = topWindowID, let onMain = topWindowOnMain {
-            recordBaseline(windowID: tid, onMain: onMain)
-        }
 
         let outcome = InputBubbleAutoShowGate.decide(
             autoShowEnabled: InputBubblePreferences.autoShowOnFocus,
@@ -203,39 +214,34 @@ final class InputBubbleAutoShow {
             lastEvaluatedWindowID = nil
         case .skipSameWindow, .skipNoLiveSession:
             if let top = topWindowID { lastEvaluatedWindowID = top }
-        // 跨屏门 case 与 skipNotEnabled/skipBubbleActive 仅列此为穷举。
         case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipNotEnabled, .skipBubbleActive:
             break
         }
 
-        // B184：焦点门未弹出时评估「跨到主屏」门 v2（基线表版——不再要求同窗连续观测，
-        // 先移窗后聚焦同样触发）。气泡开着时不再被「占用」门一刀切冻结：
-        // 跟随模式（autoHide=false 默认）改绑气泡到到达窗；自动隐藏模式维持旧行为不打扰。
-        // B185 诊断：跨屏事件本体落 INFO（真实跨越是稀有事件，不构成日志洪水），
-        // 归因 skip 原因不再依赖 debug 级日志。
-        if topWindowID != nil, let before = baselineBefore, let now = topWindowOnMain, before != now {
-            log("[InputBubble] cross-screen observed", fields: [
-                "windowID": String(topWindowID!),
-                "from": String(before),
-                "to": String(now)
-            ])
+        // B185：跨屏检测 v3——扫描前台终端 app 的「全部」onscreen 常规窗，逐窗比对
+        // 基线表旧值（读旧→判跨越→再落表，顺序不可换）。多窗多屏下 z 序最顶窗未必是
+        // 用户刚移动的窗（真机探针实锤），单窗观测版有结构性盲区。
+        // 气泡开着时：跟随模式改绑到到达窗；自动隐藏模式维持旧行为不打扰。
+        var arrivedEntry: CGWindowEntry?
+        for entry in terminalWindows {
+            guard let nowOnMain = currentOnMain[entry.windowID] else { continue }
+            if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
+                moveToMainEnabled: InputBubblePreferences.autoShowOnMoveToMain,
+                lastSeenOnMain: onMainBaselineByWindow[entry.windowID],
+                nowOnMain: nowOnMain) {
+                arrivedEntry = entry
+                break
+            }
         }
-        let moveOutcome = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: InputBubblePreferences.autoShowOnMoveToMain,
-            lastSeenOnMain: baselineBefore,
-            nowOnMain: topWindowOnMain ?? false
-        )
-        switch moveOutcome {
-        case .summon:
-            guard let tid = topWindowID, let frontApp = front else { return }
+        if let arrived = arrivedEntry, let frontApp = front {
             if controller.isIdle {
                 log("[InputBubble] move-to-main auto-show summon", fields: [
-                    "windowID": String(tid),
+                    "windowID": String(arrived.windowID),
                     "bundleID": frontApp.bundleIdentifier ?? "nil"
                 ])
-                CrashContextRecorder.shared.record("input_bubble_autoshow_move windowID=\(tid)")
+                CrashContextRecorder.shared.record("input_bubble_autoshow_move windowID=\(arrived.windowID)")
                 controller.summonForMovedWindow(
-                    windowID: tid,
+                    windowID: arrived.windowID,
                     pid: frontApp.processIdentifier,
                     appName: frontApp.localizedName
                 )
@@ -243,22 +249,26 @@ final class InputBubbleAutoShow {
                 let disposition = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
                     autoHide: InputBubblePreferences.autoHide,
                     openForWindowID: controller.target?.windowID,
-                    arrivedWindowID: tid)
+                    arrivedWindowID: arrived.windowID)
                 log("[InputBubble] move-to-main arrival while bubble open", fields: [
-                    "windowID": String(tid),
+                    "windowID": String(arrived.windowID),
                     "openFor": (controller.target?.windowID).map(String.init) ?? "nil",
                     "disposition": String(describing: disposition)
                 ])
                 if case .retarget = disposition {
                     controller.retargetForMovedWindow(
-                        windowID: tid,
+                        windowID: arrived.windowID,
                         pid: frontApp.processIdentifier,
                         appName: frontApp.localizedName
                     )
                 }
             }
-        case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipSameWindow, .skipNoLiveSession, .skipNotTerminal, .skipNotEnabled, .skipBubbleActive:
-            break  // 基线已在观测时统一落表，无需额外簿记
+        }
+        // 跨越判定完成后统一落基线（含无跨越拍：刷新现值）
+        for entry in terminalWindows {
+            if let nowOnMain = currentOnMain[entry.windowID] {
+                recordBaseline(windowID: entry.windowID, onMain: nowOnMain)
+            }
         }
         // B160 诊断：终端前台且未弹出时落一行（归因 tick 链路；summon 分支已有专属日志）。
         // B165 降 debug：此行终端前台稳态下每秒一条（skipSameWindow 常态），INFO 级
