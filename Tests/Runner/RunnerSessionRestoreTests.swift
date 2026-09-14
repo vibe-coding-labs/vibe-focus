@@ -142,6 +142,46 @@ extension RunnerHarness {
     private func runRemoteProbeTests() {
         check("探针: 脚本单引号契约（外层 sh -c 包裹完整性）",
               RemoteSessionProbe.scriptHasNoSingleQuotes())
+        // ⚠️ Swift 字面量转义回归锁（2026-09-14 真机 E2E 产品 bug）：grep 模式必须
+        // 含 shell 层 `\"`（字节级反斜杠+引号）。Swift 源码写 `\"` 会被编译期吞成
+        // 裸 `"`，远端 sh 语法错误 → 探针恒空 → remoteLive 恒 0、远程恢复整体降级
+        // 裸回放——此断言锁的是脚本字节，不是语义等价物。
+        check("探针: grep 模式含 shell 层 \\\" 字面反斜杠（Swift 转义吞反斜杠回归锁）",
+              RemoteSessionProbe.probeScript.contains("\\\"cwd\\\":\\\"[^\\\"]*\\\"")
+              && !RemoteSessionProbe.probeScript.contains("\"\"cwd"))
+        check("探针: 单行 sh -c 包裹形态",
+              RemoteSessionProbe.remoteCommand.hasPrefix("sh -c '")
+              && RemoteSessionProbe.remoteCommand.hasSuffix("'"))
+
+        // 传输重试语义（2026-09-14 真机实锤 TUN 代理间歇秒断 255）：首次失败第二次
+        // 成功 → 捞回；双失败 → 空表；exit 0 空表 = 远端真没会话，不烧第二次
+        let goodOut = "PROJ|-tmp/|68560ea4-14a7-411c-aed2-d40df38ccbb9.jsonl|\"cwd\":\"/tmp\""
+        do {
+            var calls = 0
+            let entries = RemoteSessionProbe.probe(target: "u@h", port: nil, runner: { _, _, _ in
+                calls += 1
+                return calls == 1
+                    ? YabaiClient.YabaiResult(exitCode: 255, stdout: "", stderr: "Connection closed by 198.18.0.205")
+                    : YabaiClient.YabaiResult(exitCode: 0, stdout: goodOut, stderr: "")
+            })
+            check("探针: 传输秒断后重试一次捞回", entries.count == 1 && entries[0].cwd == "/tmp" && calls == 2)
+        }
+        do {
+            var calls = 0
+            let entries = RemoteSessionProbe.probe(target: "u@h", port: nil, runner: { _, _, _ in
+                calls += 1
+                return YabaiClient.YabaiResult(exitCode: 255, stdout: "", stderr: "closed")
+            })
+            check("探针: 双失败诚实空表", entries.isEmpty && calls == 2)
+        }
+        do {
+            var calls = 0
+            let entries = RemoteSessionProbe.probe(target: "u@h", port: nil, runner: { _, _, _ in
+                calls += 1
+                return YabaiClient.YabaiResult(exitCode: 0, stdout: "", stderr: "")
+            })
+            check("探针: exit 0 空输出不重试（远端真无会话）", entries.isEmpty && calls == 1)
+        }
         let out = [
             "PROJ|-home-cc11001100-github-aigchub-repos-chat-show/|46fb8e4c-3939-4b17-9fec-96f959368588.jsonl|\"cwd\":\"/home/cc11001100/github/aigchub-repos/chat-show\"",
             "PROJ|-private-tmp/|a0a41632-d0a6-47e6-860e-a8791bd0ba44.jsonl|",

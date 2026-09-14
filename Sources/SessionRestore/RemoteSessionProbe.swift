@@ -23,12 +23,17 @@ enum RemoteSessionProbe {
     /// 兼容 Linux/macOS 远端（只用 sh + ls + grep）。输出 `PROJ|<dir>|<sessionID>` 行。
     /// 转义边界：脚本内**只允许双引号**——整段以单引号包裹交给远端 `sh -c`，
     /// 出现单引号会撕开包裹（Runner 锁定 noSingleQuotes 契约）。
+    /// ⚠️ Swift 字面量转义边界（2026-09-14 真机 E2E 抓到的产品 bug）：grep 模式
+    /// 需要 shell 层的 `\"`（双引号内的字面引号），Swift 源码必须写 `\\\"`——
+    /// 写 `\"` 会被 Swift 编译期吞成裸 `"`，远端收到 `""cwd":"[^"]*""` 直接语法
+    /// 错误，探针永远空手而归（真机实锤：快照 remoteLive=0，远程恢复整体降级
+    /// 裸回放不带 --resume）。
     static let probeScript = """
         cd "$HOME/.claude/projects" 2>/dev/null || exit 0
         for d in */; do
             f=$(ls -t "./$d" 2>/dev/null | grep .jsonl | head -1)
             if [ -n "$f" ]; then
-                w=$(grep -o -m 1 "\"cwd\":\"[^\"]*\"" "./$d$f" 2>/dev/null | head -1)
+                w=$(grep -o -m 1 "\\\"cwd\\\":\\\"[^\\\"]*\\\"" "./$d$f" 2>/dev/null | head -1)
                 echo "PROJ|$d|$f|$w"
             fi
         done
@@ -99,7 +104,11 @@ enum RemoteSessionProbe {
     }
 
     /// 对一个 ssh 目的地执行探针（真身 IO，runner 可注入供 Runner 直测）。
-    /// 超时 6s（含远端 load 高的情况）；任何失败 → 空表。
+    /// 每次尝试 6s 预算；传输失败小退避重试一次——2026-09-14 真机实锤本机 TUN
+    /// 代理（fake-IP 198.18.x）对 LAN ssh 有三种间歇病态：秒断 exit=255
+    /// （Connection closed by 198.18.x）、静默挂死不退、握手后无输出——单发成功
+    /// 率不稳，一次重试把偶发抖动从「永久降级裸回放」里捞回来（最坏 ~12.4s/目标，
+    /// capture 探针按 4 并发分批，整体有界）。任何失败 → 空表（诚实降级）。
     /// target 形如 `user@host`；显式端口由调用方并入 target（host 形态目标不带端口）。
     static func probe(
         target: String,
@@ -118,9 +127,12 @@ enum RemoteSessionProbe {
             target,
             remoteCommand,
         ]
-        guard let result = runner("/usr/bin/ssh", argv, 6), result.exitCode == 0 else {
-            return []
+        for attempt in 0..<2 {
+            if attempt > 0 { Thread.sleep(forTimeInterval: 0.4) }
+            guard let result = runner("/usr/bin/ssh", argv, 6), result.exitCode == 0 else { continue }
+            // exit 0 即采信（空表 = 远端确实无会话目录，不重试）
+            return parseProbeOutput(result.stdout)
         }
-        return parseProbeOutput(result.stdout)
+        return []
     }
 }
