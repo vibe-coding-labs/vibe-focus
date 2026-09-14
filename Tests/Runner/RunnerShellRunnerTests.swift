@@ -49,6 +49,21 @@ extension RunnerHarness {
               ShellRunner.runShell("exit 3") == nil)
         check("shellRunner: runShell 语法错误 → nil",
               ShellRunner.runShell(" vf-双引号\"断裂") == nil)
+
+        // 7. 管道缓冲死锁回归锁（2026-09-14 真机实锤）：输出超过 macOS 管道缓冲
+        // （16KB）时，「等退出再读」的旧实现让写端子进程永远阻塞 → 恒超时 nil
+        // （ssh 远程探针 23KB 输出 6s 超时即此病）。~140KB 输出必须完整返回。
+        do {
+            let t0 = Date()
+            let r = ShellRunner.run(
+                executable: "/bin/sh",
+                arguments: ["-c", "i=0; while [ $i -lt 20000 ]; do echo \"line-$i\"; i=$((i+1)); done"],
+                timeout: 5)
+            let wall = Date().timeIntervalSince(t0)
+            let lineCount = (r?.stdout ?? "").split(separator: "\n").count
+            check("shellRunner: >16KB 大输出不被管道缓冲死锁（20000 行完整返回）",
+                  r?.exitCode == 0 && lineCount == 20000 && wall < 4.0)
+        }
     }
 }
 
