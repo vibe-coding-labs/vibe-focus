@@ -119,7 +119,8 @@ enum InputBubblePreferences {
     }
 
     /// B176：气泡提交（注入含 Return）落地后把窗还原到 toggle 记录原位（默认开）。
-    /// 仅影响气泡提交路径；UPS hook 的 userPlacedSkip 语义（B126）不变。
+    /// 2026-09-16 起与 UPS hook 归位语义一致（不论记录来源一律回原位，userPlacedSkip 已退役）；
+    /// UPS 侧独立开关是 claudeHookAutoRestoreOnPromptSubmit。
     static var autoRestoreOnSubmit: Bool {
         get {
             UserDefaults.standard.object(forKey: autoRestoreOnSubmitKey) != nil

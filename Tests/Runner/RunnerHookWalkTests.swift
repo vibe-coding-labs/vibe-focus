@@ -189,80 +189,72 @@ extension RunnerHarness {
 
     do {
         // A. 守护顺序穷举：每道门 + 前门不满足时才看后门。
-        //    （2026-09-10 新增记录门：有 toggle 记录优先回原位——Stop 拉主屏后
-        //    提交提示词回原位即本门；窗口已在主屏也照样回，因为记录指向的就是原始位置。）
+        //    （2026-09-10 新增记录门：有 toggle 记录优先回原位——拉主屏后
+        //    提交提示词回原位即本门；窗口已在主屏也照样回，因为记录指向的就是原始位置。
+        //    2026-09-16 用户定案：记录不论来源（手动热键/Stop）一律回原位，
+        //    与气泡提交 InputBubbleAutoRestoreGate 语义一致；userPlacedSkip 退役。）
         check("ups A1: 自动恢复关闭 → autoRestoreDisabled（最优先）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: false, hasWindowIdentity: false, rateLimited: true,
                                                 recentUPSCount: 99, maxUPSEvents: 20, hasToggleRecord: true,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: false,
                                                 isInCooldown: true, cooldownRemainingSeconds: 5) == .autoRestoreDisabled)
         check("ups A2: 无窗口身份 → noBinding",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: false, rateLimited: true,
                                                 recentUPSCount: 99, maxUPSEvents: 20, hasToggleRecord: false,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: false,
                                                 isInCooldown: true, cooldownRemainingSeconds: 5) == .noBinding)
         check("ups A3: 限流 → rateLimited(计数/阈值)（有记录也先限流）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: true,
                                                 recentUPSCount: 20, maxUPSEvents: 20, hasToggleRecord: true,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: false,
                                                 isInCooldown: false, cooldownRemainingSeconds: 0)
               == .rateLimited(recentCount: 20, maxEvents: 20))
-        check("ups A4: 有 toggle 记录 → restoreToOriginal（先于主屏/冷却判定；Stop 拉主屏后提交即回原位）",
+        check("ups A4: 有 toggle 记录 → restoreToOriginal（先于主屏/冷却判定；拉主屏后提交即回原位）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: true,
                                                 isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreToOriginal)
         check("ups A4b: 有记录且窗口已被手动挪走 → 仍回原位",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: false,
                                                 isInCooldown: false, cooldownRemainingSeconds: 0) == .restoreToOriginal)
-        // B126：记录由用户手动热键创建 = 窗口是用户自己放置的，提交不 Undo 其放置
-        //（真机事故：语音输入中窗口被自动恢复甩回副屏，连续三次）
-        check("ups A4c: 记录为用户手动放置 → userPlacedSkip（不 Undo 用户放置）",
+        // 2026-09-16 回归锁：手动 ⌃Q 创建的记录（reason=manual_hotkey）在 UPS 上同样归位
+        //（用户报告：关掉气泡后直接在 Claude Code 输入框回车不归位；2026-09-15 生产日志
+        // 实锤同一手动放置窗口气泡提交归位、UPS userPlacedSkip 分叉——该分支已退役）。
+        check("ups A4c: 手动热键记录（在主屏）→ restoreToOriginal（与气泡提交语义一致）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                recordCreatedByUser: true,
                                                 isOnMainScreen: true,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .userPlacedSkip)
-        check("ups A4d: 手动放置记录且窗口被挪走 → 仍 userPlacedSkip",
+                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .restoreToOriginal)
+        check("ups A4d: 手动热键记录且窗口被挪走 → 仍 restoreToOriginal",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                recordCreatedByUser: true,
                                                 isOnMainScreen: false,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .userPlacedSkip)
+                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .restoreToOriginal)
         check("ups A5: 无记录冷却中 → cooldownActive(剩余秒)",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: false,
                                                 isInCooldown: true, cooldownRemainingSeconds: 7) == .cooldownActive(remainingSeconds: 7))
         check("ups A6: 无记录非主屏 → stayOnCurrentScreen（UPS 永不搬窗，拉主屏只归 Stop）",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: false,
                                                 isInCooldown: false, cooldownRemainingSeconds: 0) == .stayOnCurrentScreen)
         check("ups A7: 无记录已在主屏 → alreadyOnMain",
               HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
                                                 recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
-                                                recordCreatedByUser: false,
                                                 isOnMainScreen: true,
                                                 isInCooldown: false, cooldownRemainingSeconds: 0) == .alreadyOnMain)
 
         // B. 响应映射表：码/状态逐项锁定。
         func code(_ r: (statusCode: Int, response: ClaudeHookResponse)) -> String { r.response.code }
-        check("ups B: 八决策响应码唯一且稳定",
+        check("ups B: 七决策响应码唯一且稳定",
               code(HookEventHandler.promptHttpResponse(for: .autoRestoreDisabled, sessionID: "s")) == "auto_restore_disabled"
               && code(HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s")) == "no_binding_skip"
               && code(HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")) == "session_rate_limited"
               && code(HookEventHandler.promptHttpResponse(for: .restoreToOriginal, sessionID: "s")) == "restore_to_original"
-              && code(HookEventHandler.promptHttpResponse(for: .userPlacedSkip, sessionID: "s")) == "user_placed_skip"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s")) == "already_on_main_screen"
               && code(HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 3), sessionID: "s")) == "cooldown_active"
               && code(HookEventHandler.promptHttpResponse(for: .stayOnCurrentScreen, sessionID: "s")) == "stay_on_current_screen")

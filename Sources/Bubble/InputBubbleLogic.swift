@@ -134,9 +134,9 @@ enum InputBubbleClipboardPlan {
 
 /// 提交后自动归位决策门（B176）。
 /// 气泡提交（注入含 Return）= 用户显式「用完此窗」信号，注入落地后把窗还原到
-/// toggle 记录的原位——与 UPS 的 userPlacedSkip 不冲突：B126 保护的是 ambient
-/// hook 事件（语音流/后台提交）不得 Undo 用户放置，气泡提交是用户当下的动作
-/// （2026-09-12 用户实测：SSH 窗手动移主屏 → 气泡提交 → 期望自动回副屏）。
+/// toggle 记录的原位。2026-09-16 用户定案：直接在 Claude Code 输入框回车同样归位
+/// （UPS 侧 userPlacedSkip 已退役，两链路语义一致）；「提交后自动归位」偏好关闭时
+/// 气泡路径不动作，UPS 路径由 claudeHookAutoRestoreOnPromptSubmit 独立把关。
 /// 判序：偏好关 → 非提交（⌘Enter 仅粘贴/Esc）→ 无 toggle 记录（无从知原位，
 /// 诚实不动作）→ 窗不在主屏（本就在家/别处）→ 归位。
 enum InputBubbleAutoRestoreGate {
