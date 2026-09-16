@@ -138,6 +138,10 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
    （Task + executor，B180 hook UPS 同款）双双下放后台串行队列；toggle 族五个
    extension 摘除 @MainActor、MoveCooldownRegistry 加锁（B180/B191 后读写不再
    天然串行）、语音播报单点跳主线程。验收=合成 ⌃Q 往返 + 零 STALL/FORK-ON-MAIN。
+   ⚠️勘误（2026-09-17）：排查中把 claudeHookTriggerOnStop=false 当「静默漂移/被谁写关」
+   并复位过 true——实为用户主动在设置页关闭（触发时机两勾本就不该默认勾选）；
+   B177 的「复位」同理是违背用户设置。B192 起 Stop 触发代码默认=false、设置页去
+   「推荐」字样、setter 值变更落 INFO 日志、--diagnose 亮触发器状态（关=合法态）。
 
 ## 设计约束（改代码前必读）
 

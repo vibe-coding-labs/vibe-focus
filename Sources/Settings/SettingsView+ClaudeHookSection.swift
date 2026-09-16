@@ -107,7 +107,7 @@ extension SettingsView {
 
             SettingsRow(title: "触发时机", detail: "选择何时自动将终端窗口拉回主屏幕") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle("对话完成（Stop 事件，推荐）", isOn: Binding(
+                    Toggle("对话完成（Stop 事件）", isOn: Binding(
                         get: { triggerOnStop },
                         set: { newValue in
                             triggerOnStop = newValue

@@ -259,6 +259,15 @@ enum Doctor {
             }
         }
 
+        // B192: hook 触发开关可见化——Stop 拉主屏曾被静默写关（claudeHookTriggerOnStop=false
+        // → Stop 全部 trigger_disabled_skip → 窗不会被拉到主屏 → 用户感知「回车不归位」，
+        // UPS/Stop 链路本身健康）。--diagnose 直接亮状态，排查不再从响应码反推。
+        out.append("")
+        out.append(contentsOf: hookTriggerReportLines(
+            triggerOnStop: ClaudeHookPreferences.triggerOnStop,
+            triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd
+        ))
+
         // B178 性能监控：主线程停顿（卡顿取证入口）——看门狗停顿行 + 计数器快照文件。
         let snapshotData = try? Data(contentsOf: URL(fileURLWithPath: PerfMonitor.snapshotPath))
         out.append("")
@@ -276,6 +285,19 @@ enum Doctor {
             out.append("  下一步：比对上方 .ips/归档 mtime 与 launch 时刻；再看 keepalive 决策行。")
         }
         return out.joined(separator: "\n")
+    }
+
+    /// B192: hook 触发开关报告行（纯函数 Runner 直测）。关=合法默认态
+    ///（2026-09-17 用户定调：两触发默认不勾选），只陈述事实+跳过码线索，不作告警。
+    static func hookTriggerReportLines(triggerOnStop: Bool, triggerOnSessionEnd: Bool) -> [String] {
+        var out = ["[Hook 触发器] 窗口自动迁移开关"]
+        out.append(triggerOnStop
+            ? "  Stop 拉主屏（agent 完成→拉到主屏）: 开"
+            : "  Stop 拉主屏（agent 完成→拉到主屏）: 关（Stop 事件全部 trigger_disabled_skip）")
+        out.append(triggerOnSessionEnd
+            ? "  SessionEnd 触发: 开"
+            : "  SessionEnd 触发: 关（SessionEnd 事件被忽略）")
+        return out
     }
 
     /// ISO8601 审计时间 → 距 now 的秒数；解析失败（如信号审计行的 "-"）返回 nil。

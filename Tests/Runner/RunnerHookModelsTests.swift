@@ -137,5 +137,20 @@ extension RunnerHarness {
               !ClaudeHookPreferences.generateRemoteInstallScript(
                 host: "192.168.1.83", port: 39277, token: "tok", labelOverride: nil,
                 extraHosts: ["192.168.1.83"]).contains("\"hosts\""))
+
+        // ===== B192 hookTriggerReportLines：触发开关报告行（关=合法默认态，无告警口径） =====
+        do {
+            let on = Doctor.hookTriggerReportLines(triggerOnStop: true, triggerOnSessionEnd: true).joined(separator: "\n")
+            check("hookModels B192: 双开态两行都报开",
+                  on.contains("Stop 拉主屏（agent 完成→拉到主屏）: 开") && on.contains("SessionEnd 触发: 开"))
+            let off = Doctor.hookTriggerReportLines(triggerOnStop: false, triggerOnSessionEnd: false).joined(separator: "\n")
+            check("hookModels B192: 关态陈述事实+跳过码线索，无告警符号",
+                  off.contains(": 关（Stop 事件全部 trigger_disabled_skip）")
+                  && off.contains("SessionEnd 触发: 关（SessionEnd 事件被忽略）") && !off.contains("⚠️"))
+            check("hookModels B192: Stop 触发代码默认=不勾选（用户明令 2026-09-17）",
+                  ClaudeHookPreferences.defaultTriggerOnStop == false)
+            check("hookModels B192: SessionEnd 触发代码默认=不勾选",
+                  ClaudeHookPreferences.defaultTriggerOnSessionEnd == false)
+        }
     }
 }

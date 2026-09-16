@@ -23,7 +23,9 @@ enum ClaudeHookPreferences {
 
     static let defaultEnabled = false
     private static let defaultAutoFocusOnSessionEnd = true
-    static let defaultTriggerOnStop = true
+    /// B192 起 Stop 拉主屏默认不勾选（用户明令：触发时机两勾不得默认勾选；
+    /// 旧默认 true 曾与用户主动关偏好反复打架——B177「复位」实为违背用户设置）。
+    static let defaultTriggerOnStop = false
     static let defaultTriggerOnSessionEnd = false
     static let defaultAutoRestoreOnPromptSubmit = true
 
@@ -155,9 +157,18 @@ enum ClaudeHookPreferences {
         }
         set {
             let sStart = Date()
+            let oldValue = UserDefaults.standard.object(forKey: triggerOnStopKey) as? Bool ?? defaultTriggerOnStop
             UserDefaults.standard.set(newValue, forKey: triggerOnStopKey)
             let durMs = elapsedMilliseconds(since: sStart)
             if durMs >= 5 { log("ClaudeHookPreferences.triggerOnStop set slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+            // B192 翻转取证：本开关曾被静默写成 false（Stop 拉主屏整链停用，用户感知
+            // 「回车不归位」；日志窗不覆盖翻转时刻无法定罪写入者，B177 同款悬案二犯）。
+            // 从此每次值变更落 INFO 行——下次翻转带时间戳+线程，直接归因。
+            if oldValue != newValue {
+                log("[ClaudeHookPreferences] triggerOnStop changed \(oldValue) -> \(newValue)", level: .info, fields: [
+                    "thread": Thread.isMainThread ? "main" : "background"
+                ])
+            }
         }
     }
 
