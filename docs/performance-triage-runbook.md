@@ -132,9 +132,12 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
    两个监控自身缺陷：journal 环被 0.5~5Hz 周期区间 13 秒刷满（▶ 轨迹全是
    refreshIndices/followTick，停顿前真迹丢失）+ legacy P-INST 慢 fork 日志编译开关
    未开（生产全瞎）。B190 处置：journal 静默名单 + ShellRunner 常开 fork 计数 +
-   FORK-ON-MAIN 告警行 + restore/toggle 子阶段区间。**修复方向（未实施）**：
-   手动 toggle / 气泡提交 autoRestore 下放 WindowWorkExecutor（B180 hook 路径同款），
-   需真机验收——动窗口行为的变更单测全绿不算数。
+   FORK-ON-MAIN 告警行 + restore/toggle 子阶段区间。**B191 修复（2026-09-16）**：
+   手动 toggle（async 化，重核心 performToggleCore 下放 WindowWorkExecutor，
+   主线程只留 overlay 挂起/恢复 + 前台/崩溃快照读取）与气泡提交 autoRestore
+   （Task + executor，B180 hook UPS 同款）双双下放后台串行队列；toggle 族五个
+   extension 摘除 @MainActor、MoveCooldownRegistry 加锁（B180/B191 后读写不再
+   天然串行）、语音播报单点跳主线程。验收=合成 ⌃Q 往返 + 零 STALL/FORK-ON-MAIN。
 
 ## 设计约束（改代码前必读）
 

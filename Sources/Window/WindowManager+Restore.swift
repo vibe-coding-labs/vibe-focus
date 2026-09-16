@@ -1,7 +1,9 @@
 import AppKit
 import Foundation
 
-@MainActor
+// B191：@MainActor 摘除——本 extension 只做窗口识别 + 委托 ToggleEngine.restore +
+// 语音播报（VoiceAnnouncementManager 内部队列），无 NSApp/NSWindow 依赖；
+// 唯一调用者 toggle() 的重核心已在 WindowWorkExecutor 执行（B191）。
 extension WindowManager {
 
     /// Restore the focused window to its pre-toggle position.
@@ -77,11 +79,15 @@ extension WindowManager {
         // 两通道分别由语音模式与音效类型开关控制，关闭即静默）。
         // B176：本路径唯一调用者是 toggle（用户手动热键），成功不再播完成音——
         // ding 收口为「agent 完成」语义（Stop 拉主屏自播），失败 Basso 恒播。
-        VoiceAnnouncementManager.shared.announceRestoreOutcome(
-            outcome,
-            windowID: currentWindowID,
-            playsSuccessSound: false
-        )
+        // B191：本函数已随 toggle 核心下放 WindowWorkExecutor；VoiceAnnouncementManager
+        // 保持 @MainActor，播报经 Task 跳主线程发起（fire-and-forget 反馈，时序无感）。
+        Task { @MainActor in
+            VoiceAnnouncementManager.shared.announceRestoreOutcome(
+                outcome,
+                windowID: currentWindowID,
+                playsSuccessSound: false
+            )
+        }
 
         guard case .restored(let spaceExact) = outcome else {
             // 2026-09-02 诚实化：失败/放弃不再伪装成功。aborted = 移动前放弃；

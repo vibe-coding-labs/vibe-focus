@@ -2,13 +2,20 @@ import AppKit
 import Foundation
 
 // MARK: - Toggle 主编排层
-// 文件分层（2026-08-31 拆分，行为不变）：
-//   +Toggle.swift（本文件）      — toggle 入口编排：suspend/resume overlay、解析焦点窗口、
-//                                 三路分发（restore / stuck / move_to_main）、耗时归因日志
+// 文件分层（2026-08-31 拆分；B191 线程重构）：
+//   +Toggle.swift（本文件）      — toggle 入口编排（async：主线程快前后置 + 重核心下放
+//                                 WindowWorkExecutor）+ performToggleCore 执行体
 //   +Toggle+FocusResolution.swift — CGWindowList→yabai→AX 三级焦点窗口解析 + frame 解析纯函数
 //   +Toggle+Routes.swift         — moveStuckWindowToSecondaryScreen / moveToMainScreen 路径实现
 //   +Toggle+Decision.swift       — RestoreDecision 决策（decideRestore / shouldRestoreCurrentWindow）
 //   +Restore.swift               — restore 路径实现
+//
+// B191 线程模型（装机 34 条 STALL 取证后，B180 hook 路径同款方案补齐手动路径）：
+// 主线程只保留 overlay 挂起/恢复与前台读取（<5ms）；重核心（快照+三级焦点解析+
+// 决策+三路分发，实测 0.3~1.4s）在 WindowWorkExecutor 串行队列执行，await 期间
+// 主线程解放——⌃Q 期间气泡打字/菜单/整个 app 不再冻结。四个子 extension
+// （FocusResolution/Decision/Routes/Restore）随之 @MainActor 摘除（体内只有
+// AX/CG/yabai/SQLite/NSWorkspace 读，无 NSApp/NSWindow——B180 编译探针结论）。
 
 @MainActor
 extension WindowManager {
@@ -16,7 +23,7 @@ extension WindowManager {
     /// Core toggle operation: move focused window between main and secondary screens.
     ///
     /// ## 场景
-    /// - 触发源：热键（HotKeyManager）、菜单栏、hook 请求；每次调用在主线程同步完成。
+    /// - 触发源：热键（HotKeyManager）、菜单栏；B191 起为 async。
     /// - 路由规则：副屏 → move_to_main（最大化）；有有效 toggle record → restore 回原位；
     ///   主屏且无 record → stuck 解堵（移副屏）。
     ///
@@ -25,9 +32,12 @@ extension WindowManager {
     ///   space_changed signal → SIGUSR1 → force refresh 风暴（多屏 3 次 × 每 screen 2 fork
     ///   = 大量主线程阻塞，是"主屏退回副屏"卡顿的主因）。入口 suspend，defer 中 resume +
     ///   debounce 补刷新——defer 保证无论 toggle 如何退出（含提前 return）都恢复。
+    ///   suspend/resume 属 ScreenOverlayManager（@MainActor），保持在主线程调用。
     /// - **焦点解析必须实时**：入口解析的 windowID/identity 贯穿整个 toggle 传递
     ///   （+Toggle+FocusResolution 的三分支），禁止中途重新解析焦点（副屏 AX 阻塞 1.5s+
-    ///   且焦点可能已变化）。
+    ///   且焦点可能已变化）。B191 核心在执行队列开拍即跑（队列空闲毫秒级启动）；
+    ///   队列被长 hook 作业占住时解析延迟，以执行时实际窗态为准 + 诚实日志兜底
+    ///   （hook 移动完成后聚焦的正是目标终端窗，解析结果通常仍是用户面前那扇窗）。
     ///
     /// ## 样例（耗时归因日志）
     /// `durationMs ≈ snapshotMs + ctxMs + decisionMs + coreOpMs`；ctx 主导耗时看
@@ -36,12 +46,9 @@ extension WindowManager {
     /// - Parameters:
     ///   - operationID: Unique identifier for this operation (auto-generated if nil)
     ///   - triggerSource: Origin of the toggle (hotkey, hook, etc.)
-    func toggle(operationID: String? = nil, triggerSource: String = "unknown") {
+    func toggle(operationID: String? = nil, triggerSource: String = "unknown") async {
         let op = operationID ?? makeOperationID(prefix: "toggle")
         let startedAt = Date()
-        // B178 常开埋点：⌃Q toggle 热路径（抓窗/移动/收敛同步占主线程，实测 0.2~1.2s）。
-        PerfMonitor.shared.beginSection("toggle", fields: ["op": op])
-        defer { PerfMonitor.shared.endSection() }
         ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "toggle_in_progress op=\(op)")
         defer {
             // P-INST-9: defer 开销（resume + schedulePostToggleRefresh）。不计入 durationMs（在 defer 前计算），
@@ -59,24 +66,104 @@ extension WindowManager {
             ])
         }
         let frontBefore = frontmostAppDescriptor()
+        // 崩溃快照保持主线程（updateCrashSnapshotFromRuntime/logRuntimeStateSnapshot 是
+        // @MainActor 全局函数，读 NSWorkspace/NSScreen/HotKeyManager 状态——耗时 ~1ms，
+        // B191 前后都在主线程，语义不变）；snapshotMs 传给核心进汇总日志。
         let snapshotStart = Date()
         updateCrashSnapshotFromRuntime()
         logRuntimeStateSnapshot(context: "toggle_start")
         let snapshotMs = elapsedMilliseconds(since: snapshotStart)
+        // B191：toggle 区间栈随核心落在 executor 线程（journal 只记主线程区间开始），
+        // 手动补一条主线程时间线标记——停顿回放仍能看到「用户按了 ⌃Q」。
+        PerfMonitor.shared.journal("▶toggle dispatch op=\(op)")
 
-        // 采集当前窗口上下文。
-        // 优化：frame 用 CGWindowList（非 AX）替代 AX frame(of:) —— 窗口位于副屏 Space 时
-        // AX kAXFrameAttribute 被 WindowServer 阻塞 1500-1900ms（move_to_main ctxMs 主因，
-        // toggle-00000187 ctxMs=1918）。
-        // 缓存主屏引用：toggle 同步执行期间屏幕配置不变，复用避免重复 getMainScreen() 遍历。
-        let cachedMainScreen = getMainScreen()
-        let ctxStart = Date()
+        // B191：重核心下放窗口作业串行队列（await 期间主线程零占用）。返回后
+        // 自动跳回主线程做收尾（frontAfter 读取 + 汇总日志）。
+        let core = await WindowWorkExecutor.run {
+            self.performToggleCore(
+                operationID: op, triggerSource: triggerSource,
+                frontBefore: frontBefore, snapshotMs: snapshotMs)
+        }
+
+        let frontAfter = frontmostAppDescriptor()
+        let durationMs = logOperationDuration(
+            "[WindowManager] toggle finished",
+            startedAt: startedAt,
+            operationID: op,
+            warnThresholdMs: 650,
+            fields: core.finishedFields(frontAfter: frontAfter)
+        )
+        if frontBefore != frontAfter {
+            log(
+                "[WindowManager] frontmost app changed during toggle",
+                level: .warn,
+                fields: core.frontmostChangeFields(frontAfter: frontAfter)
+            )
+        }
+        if durationMs >= 650 {
+            CrashContextRecorder.shared.record("toggle_slow op=\(op) durationMs=\(durationMs) mode=\(core.mode)")
+        }
+    }
+}
+
+// MARK: - 重核心执行体（B191 下放 WindowWorkExecutor；nonisolated，禁碰主线程专属 API）
+
+/// toggle 核心段结果（主线程收尾日志所需字段；Sendable 值类型跨队列传递）。
+struct ToggleCoreOutcome: Sendable {
+    let mode: String
+    let coreOpMs: Int
+    let context: [String: String]
+
+    /// 「toggle finished」汇总日志字段（context 全量 + frontAfter + coreOpMs）。
+    func finishedFields(frontAfter: String) -> [String: String] {
+        var fields = context
+        fields["frontAfter"] = frontAfter
+        fields["coreOpMs"] = String(coreOpMs)
+        return fields
+    }
+
+    /// 前台 app 变化告警字段（op/source/mode/frontBefore/frontAfter）。
+    func frontmostChangeFields(frontAfter: String) -> [String: String] {
+        return [
+            "op": context["op"] ?? "nil",
+            "source": context["source"] ?? "nil",
+            "mode": mode,
+            "frontBefore": context["frontBefore"] ?? "nil",
+            "frontAfter": frontAfter
+        ]
+    }
+}
+
+extension WindowManager {
+
+    /// toggle 重核心（B191 自 toggle() 逐行提取保移）：三级焦点解析 +
+    /// 恢复决策 + 三路分发。在 WindowWorkExecutor 串行队列上执行；禁碰主线程专属
+    /// API（NSApp/NSWindow/ScreenOverlayManager/崩溃快照全局函数）——AX/CG/yabai/
+    /// SQLite/NSWorkspace 读均非主线程专属（B180 编译探针 + hook 路径真机长期验证）。
+    /// E2E（RunnerSizeE2ETests）直接调本函数同步驱动，绕过 actor 调度。
+    nonisolated func performToggleCore(
+        operationID op: String, triggerSource: String,
+        frontBefore: String, snapshotMs: Int
+    ) -> ToggleCoreOutcome {
+        // B178 常开埋点：⌃Q toggle 热路径区间（随执行线程落 executor，
+        // 看门狗跨线程收集——停顿归因不丢）。
+        PerfMonitor.shared.beginSection("toggle", fields: ["op": op])
+        defer { PerfMonitor.shared.endSection() }
+
         var toggleContext: [String: String] = [
             "op": op,
             "source": triggerSource,
             "frontBefore": frontBefore,
             "snapshotMs": String(snapshotMs)
         ]
+
+        // 采集当前窗口上下文。
+        // 优化：frame 用 CGWindowList（非 AX）替代 AX frame(of:) —— 窗口位于副屏 Space 时
+        // AX kAXFrameAttribute 被 WindowServer 阻塞 1500-1900ms（move_to_main ctxMs 主因，
+        // toggle-00000187 ctxMs=1918）。
+        // 缓存主屏引用：核心同步执行期间屏幕配置不变，复用避免重复 getMainScreen() 遍历。
+        let cachedMainScreen = getMainScreen()
+        let ctxStart = Date()
         // 三级焦点窗口解析（CGWindowList→yabai→AX），详见 +Toggle+FocusResolution.swift。
         // P2: yabai query focused window（非 AX）消除了 move_to_main 路径 toggle 入口的
         // focusedWindow(for:) 副屏阻塞 1.5s（toggle-00000541 ctxMs=1501）。
@@ -199,43 +286,6 @@ extension WindowManager {
             }
         }
         let coreOpMs = elapsedMilliseconds(since: coreOpStart)
-
-        let frontAfter = frontmostAppDescriptor()
-        let durationMs = logOperationDuration(
-            "[WindowManager] toggle finished",
-            startedAt: startedAt,
-            operationID: op,
-            warnThresholdMs: 650,
-            fields: [
-                "source": triggerSource,
-                "mode": mode,
-                "frontBefore": frontBefore,
-                "frontAfter": frontAfter,
-                "coreOpMs": String(coreOpMs),
-                // P-INST-8: 汇总关键决策字段到 finished 一行，方便单行瓶颈归因
-                // （durationMs ≈ snapshotMs + ctxMs + decisionMs + coreOpMs；deferMs 见单独 defer 日志）。
-                "ctxMs": toggleContext["ctxMs"] ?? "nil",
-                "focusedWindowSource": toggleContext["focusedWindowSource"] ?? "nil",
-                "focusedBranchMs": toggleContext["focusedBranchMs"] ?? "nil",
-                "candidatesCount": toggleContext["candidatesCount"] ?? "nil",
-                "decisionMs": String(decisionMs)
-            ]
-        )
-        if frontBefore != frontAfter {
-            log(
-                "[WindowManager] frontmost app changed during toggle",
-                level: .warn,
-                fields: [
-                    "op": op,
-                    "source": triggerSource,
-                    "mode": mode,
-                    "frontBefore": frontBefore,
-                    "frontAfter": frontAfter
-                ]
-            )
-        }
-        if durationMs >= 650 {
-            CrashContextRecorder.shared.record("toggle_slow op=\(op) durationMs=\(durationMs) mode=\(mode)")
-        }
+        return ToggleCoreOutcome(mode: mode, coreOpMs: coreOpMs, context: toggleContext)
     }
 }

@@ -38,7 +38,8 @@ func pickFallbackFrontWindow(
     }
 }
 
-@MainActor
+// B191：@MainActor 摘除——体内只有 CGWindowList 读 + NSWorkspace 快照读，
+// 无主线程专属依赖；调用者 performToggleCore 已下放 WindowWorkExecutor。
 extension WindowManager {
 
     /// 无窗口前台兜底解析：`resolveFocusedWindowForToggle` 全空且前台 app 无候选窗口时，

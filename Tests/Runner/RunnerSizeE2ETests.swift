@@ -175,7 +175,7 @@ extension RunnerHarness {
         Thread.sleep(forTimeInterval: 0.5)
         let toggle1Sem = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            WindowManager.shared.toggle(operationID: "size-e2e-toggle-1", triggerSource: "size_e2e")
+            await WindowManager.shared.toggle(operationID: "size-e2e-toggle-1", triggerSource: "size_e2e")
             toggle1Sem.signal()
         }
         while toggle1Sem.wait(timeout: .now()) == .timedOut {
@@ -195,7 +195,7 @@ extension RunnerHarness {
         _ = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "window", "\(wid)", "--focus"], timeout: 30)
         Thread.sleep(forTimeInterval: 0.3)
         Task { @MainActor in
-            WindowManager.shared.toggle(operationID: "size-e2e-toggle-2", triggerSource: "size_e2e")
+            await WindowManager.shared.toggle(operationID: "size-e2e-toggle-2", triggerSource: "size_e2e")
             toggle2Sem.signal()
         }
         while toggle2Sem.wait(timeout: .now()) == .timedOut {
@@ -239,7 +239,7 @@ extension RunnerHarness {
         Thread.sleep(forTimeInterval: 0.5)
         let d2Sem = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            WindowManager.shared.toggle(operationID: "size-e2e-toggle-stuck", triggerSource: "size_e2e")
+            await WindowManager.shared.toggle(operationID: "size-e2e-toggle-stuck", triggerSource: "size_e2e")
             d2Sem.signal()
         }
         while d2Sem.wait(timeout: .now()) == .timedOut {

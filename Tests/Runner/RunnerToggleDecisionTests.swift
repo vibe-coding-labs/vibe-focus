@@ -194,5 +194,28 @@ extension RunnerHarness {
                   !CoordinateKit.isOnMainScreen(CGRect(x: 100, y: -800, width: 800, height: 600),
                                                 mainScreenFrame: main))
         }
+
+        // ===== B191 ToggleCoreOutcome：核心段结果 → 主线程收尾日志字段装配（Sendable 值类型跨队列） =====
+        do {
+            let outcome = ToggleCoreOutcome(
+                mode: "move_to_main",
+                coreOpMs: 283,
+                context: ["op": "toggle-001", "source": "carbon_hotkey",
+                          "frontBefore": "com.apple.Terminal", "ctxMs": "612", "snapshotMs": "1"]
+            )
+            let finished = outcome.finishedFields(frontAfter: "com.apple.Terminal")
+            check("B191 core outcome: finished 字段 = context 全量 + frontAfter + coreOpMs",
+                  finished["op"] == "toggle-001" && finished["ctxMs"] == "612"
+                  && finished["frontAfter"] == "com.apple.Terminal" && finished["coreOpMs"] == "283")
+            check("B191 core outcome: context 不被 finished 装配污染（值类型语义）",
+                  outcome.context["frontAfter"] == nil && outcome.context["coreOpMs"] == nil)
+            let changed = outcome.frontmostChangeFields(frontAfter: "com.google.Chrome")
+            check("B191 core outcome: 前台变化告警字段五键齐全",
+                  changed == ["op": "toggle-001", "source": "carbon_hotkey", "mode": "move_to_main",
+                              "frontBefore": "com.apple.Terminal", "frontAfter": "com.google.Chrome"])
+            check("B191 core outcome: 缺键 context 回退 nil 字面量",
+                  ToggleCoreOutcome(mode: "restore", coreOpMs: 1, context: [:])
+                    .frontmostChangeFields(frontAfter: "x")["op"] == "nil")
+        }
     }
 }

@@ -198,7 +198,10 @@ extension AppDelegate {
                 "frontmost": frontmostAppDescriptor()
             ]
         )
-        WindowManager.shared.toggle(operationID: op, triggerSource: "menu")
+        // B191：toggle async 化（重核心下放 WindowWorkExecutor），菜单动作立即返回。
+        Task { @MainActor in
+            await WindowManager.shared.toggle(operationID: op, triggerSource: "menu")
+        }
     }
 
     @objc func openSettings() {

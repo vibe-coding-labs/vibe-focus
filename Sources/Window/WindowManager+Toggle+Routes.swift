@@ -4,8 +4,9 @@ import Foundation
 // MARK: - Toggle 路径实现层
 // toggle 决策（+Toggle.swift）落到两个具体动作：卡死窗口解堵（副屏）与移主屏最大化。
 // restore 路径实现在 +Restore.swift，决策逻辑在 +Toggle+Decision.swift。
+// B191：@MainActor 摘除——体内只有 AX/CG/yabai/NSWorkspace 快照读，无主线程专属
+// 依赖；调用者 performToggleCore 已下放 WindowWorkExecutor（B191）。
 
-@MainActor
 extension WindowManager {
 
     /// 卡死解堵：窗口在主屏但没有有效 toggle record（上一轮 restore 已消费）时，

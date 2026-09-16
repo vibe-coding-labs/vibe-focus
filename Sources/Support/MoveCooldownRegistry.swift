@@ -11,15 +11,17 @@ import Foundation
 /// HookEventHandler.shared 增删，形成 Hook→Window→Hook 单例环。抽出本中立注册表后，
 /// 两侧只依赖本类型，环断开；冷却语义与时长不变。
 ///
-/// 竞态风险：读（hook 事件决策）与写（移动完成回调）都在主线程串行发生，
-/// 无锁需求；写发生在移动成功之后（含 hook onComplete 回调），冷却起点即落定时刻。
-@MainActor
-final class MoveCooldownRegistry {
+/// 竞态风险：B180 起 hook 移动链在 WindowWorkExecutor 执行、B191 起手动 toggle
+/// 重核心同样下放——读（hook 事件决策，主线程）与写（移动完成回调，执行队列/
+/// 主线程混布）不再天然串行，改 NSLock 守护（临界区只有字典读写，µs 级）；
+/// 冷却起点即落定时刻，语义不变。
+final class MoveCooldownRegistry: @unchecked Sendable {
     static let shared = MoveCooldownRegistry()
 
     /// 冷却窗口时长（秒）；边界语义：恰好 30s 前的记录不算冷却（严格 <）
     static let cooldownSeconds: TimeInterval = 30
 
+    private let lock = NSLock()
     private var lastMoveByWindowID: [UInt32: Date] = [:]
 
     /// 可注入时钟，测试用；生产恒为系统当前时间
@@ -50,21 +52,29 @@ final class MoveCooldownRegistry {
 
     /// 窗口是否仍在冷却期内
     func isInCooldown(windowID: UInt32) -> Bool {
-        Self.isInCooldown(lastMove: lastMoveByWindowID[windowID], now: now())
+        lock.lock()
+        defer { lock.unlock() }
+        return Self.isInCooldown(lastMove: lastMoveByWindowID[windowID], now: now())
     }
 
     /// 冷却剩余秒数（日志展示用）；无记录时返回 0
     func remainingSeconds(windowID: UInt32) -> Int {
-        Self.remainingSeconds(lastMove: lastMoveByWindowID[windowID], now: now())
+        lock.lock()
+        defer { lock.unlock() }
+        return Self.remainingSeconds(lastMove: lastMoveByWindowID[windowID], now: now())
     }
 
     /// 标记窗口进入冷却（移动/恢复成功后调用）
     func setCooldown(windowID: UInt32) {
+        lock.lock()
         lastMoveByWindowID[windowID] = now()
+        lock.unlock()
     }
 
     /// 解除窗口冷却（引擎手动 move_to_main 后调用，允许后续 hook 立即操作该窗口）
     func clearCooldown(windowID: UInt32) {
+        lock.lock()
         lastMoveByWindowID.removeValue(forKey: windowID)
+        lock.unlock()
     }
 }

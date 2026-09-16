@@ -1,11 +1,13 @@
 // WindowManager+Toggle+Decision.swift
 // VibeFocus — Toggle restore 决策逻辑
 // 从 WindowManager+Toggle.swift 中提取
+// B191：@MainActor 摘除——决策只读 CGWindowList + SQLite（ToggleEngine.load）
+// + NSWorkspace 快照读，无主线程专属依赖；调用者 performToggleCore 已下放
+// WindowWorkExecutor（B191）。
 
 import AppKit
 import Foundation
 
-@MainActor
 extension WindowManager {
 
     /// Restore decision — extracted for testability

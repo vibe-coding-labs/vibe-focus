@@ -101,10 +101,6 @@ extension HotKeyManager {
         let startedAt = Date()
         isToggleInFlight = true
         lastToggleTriggeredAt = now
-        defer {
-            lastToggleCompletedAt = Date()
-            isToggleInFlight = false
-        }
 
         log(
             "[HotKey] Trigger accepted",
@@ -112,14 +108,23 @@ extension HotKeyManager {
         )
         CrashContextRecorder.shared.record("hotkey_trigger_accepted op=\(operationID) source=\(source) key=\(hotkey)")
 
-        WindowManager.shared.toggle(operationID: operationID, triggerSource: source)
-
-        let duration = elapsedMilliseconds(since: startedAt)
-        log(
-            "[HotKey] Toggle completed",
-            fields: ["op": operationID, "source": source, "durationMs": String(duration)]
-        )
-        CrashContextRecorder.shared.record("hotkey_toggle_completed op=\(operationID) durationMs=\(duration)")
+        // B191：toggle 已 async 化（重核心下放 WindowWorkExecutor，主线程不再被
+        // 0.3~1.4s 同步占用）。完成簿记（含 in-flight 闸门复位）移入 Task 收尾——
+        // 语义与原 defer 等价：闸门保持到 toggle 真正完成，期间的去重门照常拦截
+        // 「toggle already in flight」；若本 Task 前自持已释放则 guard 兜底复位。
+        // 本类所有热键回调都在主线程，Task 限定 @MainActor 保持簿记单线程。
+        Task { @MainActor [weak self] in
+            await WindowManager.shared.toggle(operationID: operationID, triggerSource: source)
+            guard let self else { return }
+            self.lastToggleCompletedAt = Date()
+            self.isToggleInFlight = false
+            let duration = elapsedMilliseconds(since: startedAt)
+            log(
+                "[HotKey] Toggle completed",
+                fields: ["op": operationID, "source": source, "durationMs": String(duration)]
+            )
+            CrashContextRecorder.shared.record("hotkey_toggle_completed op=\(operationID) durationMs=\(duration)")
+        }
     }
 
     func handleFallbackEvent(_ event: NSEvent, source: String) -> Bool {

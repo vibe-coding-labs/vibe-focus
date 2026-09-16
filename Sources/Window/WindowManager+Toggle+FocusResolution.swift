@@ -7,8 +7,9 @@ import Foundation
 // 历史上最大的耗时来源（副屏 AX 调用被 WindowServer 阻塞 1.5s+），也是多次性能回归的发生地。
 // 分支选择策略已拆到 ToggleFocusBranching 纯内核（P6 步骤 1）——本文件只保留 lazy 探测
 // 顺序（按阻塞代价递增）与计时/日志副作用。
+// B191：@MainActor 摘除——体内只有 CGWindowList/yabai/AX/NSWorkspace 快照读，
+// 无主线程专属依赖；调用者 performToggleCore 已下放 WindowWorkExecutor（B191）。
 
-@MainActor
 extension WindowManager {
 
     /// 三分支解析的结果打包：要操作的窗口身份与命中分支信息。

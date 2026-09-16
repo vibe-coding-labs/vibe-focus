@@ -163,8 +163,6 @@ final class InputBubbleAutoShow {
             TerminalRegistry.isTerminalOrIDEApp(appName: $0.localizedName, bundleIdentifier: $0.bundleIdentifier)
         } ?? false
 
-        var topWindowID: UInt32?
-        var topWindowOnMain: Bool?
         // B185：跨屏检测扫描前台终端 app 的「全部」onscreen 常规窗——多窗多屏下
         // z 序最顶窗未必是用户刚移动的窗（真机探针实锤：z 顶停留旧窗时，被移窗的
         // 跨越永远不可见）；基线表按 windowID 记录，天然支持逐窗比对。
@@ -180,6 +178,9 @@ final class InputBubbleAutoShow {
             }
         }
         // B185 诊断探针（临时）：每拍 INFO 记录 top 窗/归属/基线，定位跨屏检测失明原因后移除。
+        // top = 被扫窗的 z 序最前（CGWindowList 首位）；v1 的单窗观测变量已随 B185 全扫版退役
+        //（此前恒 top=nil，2026-09-16 零警告门禁清账改为真值）。
+        let topWindowID = terminalWindows.first?.windowID
         log("[InputBubble][PROBE] tick", fields: [
             "front": front?.bundleIdentifier ?? "nil",
             "frontIsTerminal": String(frontIsTerminal),

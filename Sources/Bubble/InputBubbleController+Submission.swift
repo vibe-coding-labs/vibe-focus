@@ -92,6 +92,9 @@ extension InputBubbleController {
 
     /// B176：提交注入落地后按门决议归位（经 ToggleEngine 直调，与 UPS restoreToOriginal
     /// 同一执行入口；成功清 toggle 记录，~2s 后到达的 UPS 见无记录 → stay，无冲突）。
+    /// B191：restore 下放 WindowWorkExecutor（B180 hook UPS 同款——装机 34 条 STALL
+    /// 取证中本路径 0.26~2.3s 全部阻塞主线程=提交瞬间气泡/界面冻结主因）；归位在
+    /// 后台串行队列执行，提交收尾立即返回，移动结果日志照常落账。
     private func autoRestoreIfDecided(decision: InputBubbleAutoRestoreGate.Outcome, windowID: UInt32) {
         guard decision == .restore else {
             log("[InputBubble] auto-restore skip", level: .debug, fields: [
@@ -101,22 +104,26 @@ extension InputBubbleController {
             return
         }
         let traceID = "bubble-\(Int(Date().timeIntervalSince1970 * 1000))"
-        let outcome = ToggleEngine.shared.restore(
-            windowID: windowID,
-            triggerSource: "input_bubble_submit",
-            traceID: traceID
-        )
-        if case .restored = outcome {
-            log("[InputBubble] submit auto-restore completed", fields: [
-                "windowID": String(windowID),
-                "traceID": traceID
-            ])
-        } else {
-            log("[InputBubble] submit auto-restore failed", level: .warn, fields: [
-                "windowID": String(windowID),
-                "outcome": outcome.outcomeLabel,
-                "traceID": traceID
-            ])
+        Task { @MainActor in
+            let outcome = await WindowWorkExecutor.run {
+                ToggleEngine.shared.restore(
+                    windowID: windowID,
+                    triggerSource: "input_bubble_submit",
+                    traceID: traceID
+                )
+            }
+            if case .restored = outcome {
+                log("[InputBubble] submit auto-restore completed", fields: [
+                    "windowID": String(windowID),
+                    "traceID": traceID
+                ])
+            } else {
+                log("[InputBubble] submit auto-restore failed", level: .warn, fields: [
+                    "windowID": String(windowID),
+                    "outcome": outcome.outcomeLabel,
+                    "traceID": traceID
+                ])
+            }
         }
     }
 
