@@ -642,6 +642,37 @@ extension RunnerHarness {
                   rec.floatIDs == [77] && !rec.events.contains("postCheck") && !rec.events.contains("save"))
         }
 
+        // J2. B193 残窗防护：失败场景向调用方带出回滚上下文（origFrame/windowID/didModifyWindow）。
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "J2", knownWindowAX: nil, knownOrigFrame: knownFrame, deps: makeDeps(rec, axFrameToRead: nil, applyDirectOK: false))
+            check("pipeline J2: apply_p2 失败带出 didModifyWindow=true（float 已发生）", result.didModifyWindow)
+            check("pipeline J2: 带出移动前快照 knownFrame（回滚目标）", result.origFrame == knownFrame)
+            check("pipeline J2: 带出 effective windowID=77（回滚写目标）", result.windowID == 77)
+            check("pipeline J2: 回滚决策 → rollback(knownFrame)",
+                  MoveRollbackPlan.decide(movedOK: false, didModifyWindow: result.didModifyWindow, origFrame: result.origFrame) == .rollback(frame: knownFrame))
+        }
+        do {
+            let rec = Rec()
+            let result = MoveToMainPipeline.run(identity: identity, op: "J3", knownWindowAX: nil, knownOrigFrame: nil, deps: makeDeps(rec, hasAX: false, axFrameToRead: nil))
+            check("pipeline J3: ax_denied 未动窗 → didModifyWindow=false（无需回滚）", !result.didModifyWindow)
+            check("pipeline J3: 回滚决策 → skip（窗未被改过）",
+                  MoveRollbackPlan.decide(movedOK: false, didModifyWindow: result.didModifyWindow, origFrame: result.origFrame) == .skip)
+        }
+
+        // J4. B193 MoveRollbackPlan 决策表穷尽（真机实锤 move-00000824 残窗事故的防回归锁）。
+        do {
+            let frame = CGRect(x: 966, y: -875, width: 533, height: 437)
+            check("rollback: 移动成功 → skip（不画蛇添足）",
+                  MoveRollbackPlan.decide(movedOK: true, didModifyWindow: true, origFrame: frame) == .skip)
+            check("rollback: 失败+动过+有快照 → 回写原帧",
+                  MoveRollbackPlan.decide(movedOK: false, didModifyWindow: true, origFrame: frame) == .rollback(frame: frame))
+            check("rollback: 失败但窗未被改过 → skip（无残窗可言）",
+                  MoveRollbackPlan.decide(movedOK: false, didModifyWindow: false, origFrame: frame) == .skip)
+            check("rollback: 失败+动过但无快照 → skip（无回滚目标，如实跳过）",
+                  MoveRollbackPlan.decide(movedOK: false, didModifyWindow: true, origFrame: nil) == .skip)
+        }
+
         // L. windowHandle 解析失败 → effectiveWindowID 回退 identity.windowID；
         //    space 上下文字段为 nil 时日志分支如实降级。
         do {

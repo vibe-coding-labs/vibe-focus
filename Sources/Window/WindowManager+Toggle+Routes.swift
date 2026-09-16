@@ -73,6 +73,8 @@ extension WindowManager {
         // float 脱管 + settle（等 yabai 默认重摆落定）→ frame 直写（闭环验证内置）。
         // 序列唯一出口 FloatSettle（Batch 6 收敛）：已 float 零等待（skippedNoOp 无
         // 重摆），真 toggle 时等稳定代等固定；查询缓存失效随原语恒清。
+        // B193 残窗防护基准：float/移动前的原帧快照（失败回滚用）。
+        let origFrameBeforeMove = cgWindowBounds(for: windowID)
         let moveStart = Date()
         floatAndSettle(windowID: windowID, operationID: operationID, knownWindowInfo: windowInfo)
         // 2026-09-06 尺寸保真修复：解堵 = 把卡住的窗口挪去副屏，**保持窗口当前尺寸**
@@ -109,6 +111,22 @@ extension WindowManager {
                 "moveMs": String(moveMs)
             ]
         )
+        // B193 残窗防护：stuck 移动失败同样回滚原帧（宁可没解堵，不可留残窗）。
+        if case .rollback(let rollbackFrame) = MoveRollbackPlan.decide(
+            movedOK: moved, didModifyWindow: true, origFrame: origFrameBeforeMove) {
+            let rolledBack = moveWindowToFrameViaYabai(
+                windowID: windowID,
+                frame: rollbackFrame,
+                op: operationID,
+                stage: "move_to_secondary_rollback",
+                sourceVisibleFrame: nil)
+            log("[WindowManager] moveStuck rollback", level: rolledBack ? .info : .error, fields: [
+                "op": operationID,
+                "windowID": String(windowID),
+                "rollbackFrame": QuartzRect(rollbackFrame).description,
+                "rolledBack": String(rolledBack)
+            ])
+        }
     }
 
     /// Move the currently focused window to the main screen maximized.

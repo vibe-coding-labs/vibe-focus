@@ -285,8 +285,28 @@ extension WindowManager {
         let timings = result.timings
 
         switch result.outcome {
-        case .failed:
+        case .failed(let stage):
             // 失败日志已由管线在各 guard 现场输出（stage 锚点与日志文本一一对应）。
+            // B193 残窗防护：不收敛的移动绝不能把窗留在中间态（真机实锤
+            // move-00000824：目标 1646x1079，读回 263x216，窗以错乱尺寸滞留屏幕）。
+            // 凡管线已动过窗，回写移动前原帧——宁可没移动，不可留残窗。
+            if case .rollback(let rollbackFrame) = MoveRollbackPlan.decide(
+                movedOK: false, didModifyWindow: result.didModifyWindow, origFrame: result.origFrame) {
+                let rollbackID = result.windowID ?? identity.windowID
+                let rolledBack = moveWindowToFrameViaYabai(
+                    windowID: rollbackID,
+                    frame: rollbackFrame,
+                    op: op,
+                    stage: "move_to_main_rollback",
+                    sourceVisibleFrame: nil)
+                log("[WindowManager] moveWindowToMainScreen rollback", level: rolledBack ? .info : .error, fields: [
+                    "op": op,
+                    "failedStage": stage,
+                    "windowID": String(rollbackID),
+                    "rollbackFrame": QuartzRect(rollbackFrame).description,
+                    "rolledBack": String(rolledBack)
+                ])
+            }
             return false
         case .alreadyOnMain:
             return true

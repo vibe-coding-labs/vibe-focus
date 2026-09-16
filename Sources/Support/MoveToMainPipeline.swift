@@ -63,6 +63,27 @@ struct MoveToMainPipeline {
     struct RunResult {
         let outcome: Outcome
         let timings: Timings
+        /// B193 残窗防护：S4 的移动前帧快照（管线失败时调用方据此回写原帧）。
+        let origFrame: CGRect?
+        /// B193：管线内解析出的 effective windowID（失败回滚的写目标）。
+        let windowID: UInt32?
+        /// B193：管线是否已对窗发起过任何改动（float/apply）——false 时失败无需回滚。
+        let didModifyWindow: Bool
+
+        init(outcome: Outcome, timings: Timings, ctx: RunContext) {
+            self.outcome = outcome
+            self.timings = timings
+            self.origFrame = ctx.origFrame
+            self.windowID = ctx.windowID
+            self.didModifyWindow = ctx.didModifyWindow
+        }
+    }
+
+    /// B193：execute 过程中向外带出的窗状态上下文（回滚决策输入）。
+    struct RunContext {
+        var origFrame: CGRect?
+        var windowID: UInt32?
+        var didModifyWindow = false
     }
 
     /// IO 通道全注入：生产实现由 WindowManager 接线，Runner 注入记录调用序列的假通道。
@@ -103,7 +124,9 @@ struct MoveToMainPipeline {
         deps: Deps
     ) -> RunResult {
         var timings = Timings()
-        return RunResult(outcome: execute(identity: identity, op: op, knownWindowAX: knownWindowAX, knownOrigFrame: knownOrigFrame, deps: deps, timings: &timings), timings: timings)
+        var ctx = RunContext()
+        let outcome = execute(identity: identity, op: op, knownWindowAX: knownWindowAX, knownOrigFrame: knownOrigFrame, deps: deps, timings: &timings, ctx: &ctx)
+        return RunResult(outcome: outcome, timings: timings, ctx: ctx)
     }
 
     private static func execute(
@@ -112,7 +135,8 @@ struct MoveToMainPipeline {
         knownWindowAX: AXUIElement?,
         knownOrigFrame: CGRect?,
         deps: Deps,
-        timings: inout Timings
+        timings: inout Timings,
+        ctx: inout RunContext
     ) -> Outcome {
         // S1 AX guard：无授权不发起任何 yabai/AX 通道。
         guard deps.hasAX() else {
@@ -144,6 +168,7 @@ struct MoveToMainPipeline {
             // P2 预 float 脱管（FloatSettle 唯一出口）：已 float 零等待，真 toggle 等
             // 稳定落定——之后 resolve + frame 直写不再重复 float（防二次 toggle）。
             preFloatApplied = true
+            ctx.didModifyWindow = true
             let preFloatStart = Date()
             let p2Float = deps.floatAndSettle(identity.windowID, op, nil)
             timings.p2SpaceMoveMs = elapsedMilliseconds(since: preFloatStart)
@@ -189,6 +214,7 @@ struct MoveToMainPipeline {
             ])
         }
         timings.frameReadMs = elapsedMilliseconds(since: frameReadStart)
+        ctx.origFrame = origFrame
         guard let origFrame else {
             log("moveWindowToMainScreen failed: cannot read current frame", level: .error, fields: ["op": op])
             return .failed(stage: "orig_frame")
@@ -238,6 +264,7 @@ struct MoveToMainPipeline {
 
         // CGWindowID 跨屏移动后不变，提前计算并复用给 post-check/save。
         let effectiveWindowID = deps.windowHandleOf(windowAX) ?? identity.windowID
+        ctx.windowID = effectiveWindowID
 
         // S7 apply：双路径各只 float 一次（P2 已在 S3 预 float；AX 在此 float）。
         let applyStart = Date()
@@ -255,6 +282,7 @@ struct MoveToMainPipeline {
         } else {
             // AX：窗口已在主屏 display（同屏 AX 写有效）。先 float 脱离 yabai 管理
             // 再写（tiled 时 AX size write 会被 re-tile 覆盖）；FloatSettle 等重摆落定。
+            ctx.didModifyWindow = true
             let floatKnownInfo = (effectiveWindowID == identity.windowID) ? windowInfo : nil
             let axFloat = deps.floatAndSettle(effectiveWindowID, op, floatKnownInfo)
             timings.floatMs = axFloat.durationMs
