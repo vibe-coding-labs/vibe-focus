@@ -157,6 +157,12 @@ extension ClaudeHookServer {
                 "durationMs": String(elapsedMilliseconds(since: hhrStart))
             ]
         )
+        // B194 响应码计数器：每条 hook 响应按 code 计入常开计数器（hook.resp.<code>），
+        // 进 perf-snapshot.json 与 --diagnose 窗口迁移健康段——「回车为什么不归位」
+        // 从响应码分布一眼可读（restored_to_original/stay/no_binding_skip/trigger_disabled_skip）。
+        PerfMonitor.shared.record(
+            "hook.resp.\(result.response.code)",
+            durationMs: Double(elapsedMilliseconds(since: hhrStart)))
 
         return result
     }

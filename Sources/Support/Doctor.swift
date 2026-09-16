@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SQLite3
 
 // MARK: - 一键取证报告（--diagnose）
 //
@@ -268,6 +269,26 @@ enum Doctor {
             triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd
         ))
 
+        // B194: 窗口迁移健康——把「回车为什么不归位/⌃Q 循环是否错乱」的排查产品化：
+        // 审计通道新鲜度（B194 前双检互斥 bug 曾静默断写 4 天）+ hook 响应码分布 +
+        // 残窗回滚计数 + 主线程 fork 计数，全部来自已埋数据，不再手工 grep。
+        let snapshot = PerfMonitor.loadSnapshotFile()
+        let respCounters = (snapshot?.counters ?? []).filter { $0.name.hasPrefix("hook.resp.") }
+        let hookResponses = respCounters
+            .map { (code: String($0.name.dropFirst("hook.resp.".count)), count: $0.count) }
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.code < $1.code }
+        let rollbackOK = snapshot?.counters.first { $0.name == "move.rollback.ok" }?.count ?? 0
+        let rollbackFailed = snapshot?.counters.first { $0.name == "move.rollback.failed" }?.count ?? 0
+        let mainForkRecent = logTail.filter { $0.contains("[PERF][FORK-ON-MAIN]") }.count
+        out.append("")
+        out.append(contentsOf: windowMigrationReportLines(
+            auditNewestAgeS: auditNewestAgeSeconds(dbPath: NSHomeDirectory() + "/.vibefocus/vibefocus.db"),
+            hookResponses: hookResponses,
+            rollbackOK: rollbackOK,
+            rollbackFailed: rollbackFailed,
+            mainForkRecent: mainForkRecent
+        ))
+
         // B178 性能监控：主线程停顿（卡顿取证入口）——看门狗停顿行 + 计数器快照文件。
         let snapshotData = try? Data(contentsOf: URL(fileURLWithPath: PerfMonitor.snapshotPath))
         out.append("")
@@ -285,6 +306,61 @@ enum Doctor {
             out.append("  下一步：比对上方 .ips/归档 mtime 与 launch 时刻；再看 keepalive 决策行。")
         }
         return out.joined(separator: "\n")
+    }
+
+    /// B194: 窗口迁移健康报告行（纯函数 Runner 直测）。
+    /// - auditNewestAgeS: 审计表最新行距现在秒数；nil=表空/读不到。>1h 视为断写。
+    /// - hookResponses: hook.resp.* 计数器按次数降序（归位成功/跳过原因一眼可读）。
+    /// - mainForkRecent: 近期日志 FORK-ON-MAIN 行数（主线程同步 fork 活跃度）。
+    static func windowMigrationReportLines(
+        auditNewestAgeS: Double?,
+        hookResponses: [(code: String, count: Int)],
+        rollbackOK: Int,
+        rollbackFailed: Int,
+        mainForkRecent: Int
+    ) -> [String] {
+        var out = ["[窗口迁移健康] 回车归位 / ⌃Q 往返证据链"]
+        switch auditNewestAgeS {
+        case .none:
+            out.append("  审计通道: ⚠️ 无任何记录（表空或库不可读）")
+        case .some(let age) where age > 3600:
+            out.append("  审计通道: ⚠️ 疑似断写（最新记录 \(Int(age / 3600)) 小时前；历史上双检互斥 bug 曾静默断 4 天）")
+        case .some(let age):
+            out.append(String(format: "  审计通道: 正常（最新记录 %.0f 分钟前）", age / 60))
+        }
+        if hookResponses.isEmpty {
+            out.append("  Hook 响应分布: 暂无数据（尚无 hook 事件或快照未落盘）")
+        } else {
+            let dist = hookResponses.prefix(6).map { "\($0.code)×\($0.count)" }.joined(separator: " ")
+            out.append("  Hook 响应分布: \(dist)")
+        }
+        if rollbackOK == 0 && rollbackFailed == 0 {
+            out.append("  残窗回滚: 0 次（未发生收敛失败）")
+        } else {
+            out.append("  残窗回滚: 成功 \(rollbackOK) / 失败 \(rollbackFailed)（>0 即收敛管线异常，grep rollback 日志）")
+        }
+        out.append("  主线程 fork(≥100ms, 日志尾): \(mainForkRecent) 次")
+        return out
+    }
+
+    /// B194: 审计表最新行距现在秒数（--diagnose 跨进程只读 WAL 库；nil=不可读/空表）。
+    static func auditNewestAgeSeconds(dbPath: String, now: Date = Date()) -> Double? {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT MAX(created_at) FROM window_audit_log;", -1, &stmt, nil) == SQLITE_OK else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_type(stmt, 0) != SQLITE_NULL else {
+            return nil
+        }
+        let newest = sqlite3_column_double(stmt, 0)
+        return max(0, now.timeIntervalSince1970 - newest)
     }
 
     /// B192: hook 触发开关报告行（纯函数 Runner 直测）。关=合法默认态

@@ -306,6 +306,10 @@ extension WindowManager {
                     "rollbackFrame": QuartzRect(rollbackFrame).description,
                     "rolledBack": String(rolledBack)
                 ])
+                // B194：回滚是罕见且重大的事件（=收敛管线出了问题），计数 + 立即落
+                // 快照（不等 300s 周期），--diagnose 窗口迁移健康段直接可读。
+                PerfMonitor.shared.record(rolledBack ? "move.rollback.ok" : "move.rollback.failed", durationMs: 0)
+                PerfMonitor.shared.writeSnapshot(reason: "rollback")
             }
             return false
         case .alreadyOnMain:

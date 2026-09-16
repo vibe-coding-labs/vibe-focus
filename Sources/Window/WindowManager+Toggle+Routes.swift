@@ -126,6 +126,9 @@ extension WindowManager {
                 "rollbackFrame": QuartzRect(rollbackFrame).description,
                 "rolledBack": String(rolledBack)
             ])
+            // B194：同 move_to_main 回滚——计数 + 即时落快照。
+            PerfMonitor.shared.record(rolledBack ? "move.rollback.ok" : "move.rollback.failed", durationMs: 0)
+            PerfMonitor.shared.writeSnapshot(reason: "rollback")
         }
     }
 

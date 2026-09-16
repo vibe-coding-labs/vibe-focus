@@ -59,6 +59,10 @@ final class AuditLogger: @unchecked Sendable {
 
     // MARK: - Record
 
+    /// B194 积压看门阈值：缓冲超过此数仍未 flush = 调度链断了（B194 前的
+    /// 双检互斥 bug 曾让调度永不上屏，审计通道静默死亡 4 天无人知）。
+    static let backlogWarnThreshold = 50
+
     nonisolated func record(
         eventType: String,
         windowID: UInt32,
@@ -69,27 +73,25 @@ final class AuditLogger: @unchecked Sendable {
         // 追加到内存缓冲区 — 不阻塞调用者（B180 锁保护，跨线程追加安全）
         stateLock.lock()
         pendingEvents.append((eventType, windowID, pid, sessionID, details))
+        let backlog = pendingEvents.count
         let shouldSchedule = !flushScheduled
-        flushScheduled = shouldSchedule
+        flushScheduled = true
         stateLock.unlock()
+        // B194 积压看门：正常防抖窗内缓冲最多几条；堆积超阈值 = flush 调度链
+        // 断了（本文件 9/13~9/17 事故的防回归哨兵）——ERROR 留证，事件不丢。
+        if backlog >= Self.backlogWarnThreshold {
+            log("[AuditLogger] audit backlog \(backlog) events not flushing — schedule chain broken", level: .error)
+        }
         guard shouldSchedule else { return }
         scheduleFlush()
     }
 
-    /// 调度异步刷新（带防抖）
+    /// 调度异步刷新（带防抖）。
+    /// B194 修复双检互斥：旧实现 record() 已把 flushScheduled 置 true，
+    /// 此处的 alreadyScheduled guard 恒 return——调度从未发出，审计表自
+    /// 2026-09-13 起零写入（4 天无人发现）。现在 schedule 无条件派发，
+    /// 旗标只在 flush 闭包内复位。
     private func scheduleFlush() {
-        // P-INST-258: 审计日志批量写防抖调度入口（DispatchQueue.main.asyncAfter 调度 flushPendingEvents P-INST-66 SQLite 批量写；record() 每次事件追加后调用，实际 flush 已覆盖，此处归因调度入口/防抖频率）。
-        #if PERF_INSTRUMENT
-        let sfStart = Date()
-        defer {
-            log("[AuditLogger] scheduleFlush finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: sfStart))])
-        }
-        #endif
-        stateLock.lock()
-        let alreadyScheduled = flushScheduled
-        flushScheduled = true
-        stateLock.unlock()
-        guard !alreadyScheduled else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + flushDebounceInterval) { [weak self] in
             guard let self else { return }
             self.stateLock.lock()

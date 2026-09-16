@@ -163,5 +163,26 @@ extension RunnerHarness {
         let echoName = PerfMonitorLogic.shellCounterName(executable: "/bin/echo", isMainThread: Thread.isMainThread)
         _ = ShellRunner.run(executable: "/bin/echo", arguments: ["vibefocus-perf-probe"])
         check("perf N3: ShellRunner 真 fork 落账（\(echoName)）", PerfMonitor.shared.snapshotCounters().contains { $0.name == echoName && $0.count >= 1 })
+
+        // O. B194 窗口迁移健康报告行（--diagnose 一键体检的纯渲染层）。
+        do {
+            let healthy = Doctor.windowMigrationReportLines(
+                auditNewestAgeS: 240,
+                hookResponses: [("stay_on_current_screen", 12), ("restored_to_original", 3)],
+                rollbackOK: 2, rollbackFailed: 0, mainForkRecent: 1).joined(separator: "\n")
+            check("perf O1: 审计新鲜（<1h）报正常分钟数", healthy.contains("审计通道: 正常（最新记录 4 分钟前）"))
+            check("perf O2: 响应分布按次数列出 top", healthy.contains("stay_on_current_screen×12") && healthy.contains("restored_to_original×3"))
+            check("perf O3: 回滚计数与主线程 fork 计数渲染",
+                  healthy.contains("残窗回滚: 成功 2 / 失败 0") && healthy.contains("主线程 fork(≥100ms, 日志尾): 1 次"))
+            let stale = Doctor.windowMigrationReportLines(
+                auditNewestAgeS: 4 * 3600 + 120, hookResponses: [], rollbackOK: 0, rollbackFailed: 1, mainForkRecent: 0).joined(separator: "\n")
+            check("perf O4: 审计 >1h 亮断写告警（历史事故口径）",
+                  stale.contains("审计通道: ⚠️ 疑似断写（最新记录 4 小时前"))
+            check("perf O5: 回滚失败>0 提示 grep rollback", stale.contains("失败 1") && stale.contains("grep rollback"))
+            let empty = Doctor.windowMigrationReportLines(
+                auditNewestAgeS: nil, hookResponses: [], rollbackOK: 0, rollbackFailed: 0, mainForkRecent: 0).joined(separator: "\n")
+            check("perf O6: 表空/不可读亮 ⚠️ 无任何记录 + 响应分布暂无数据",
+                  empty.contains("审计通道: ⚠️ 无任何记录") && empty.contains("Hook 响应分布: 暂无数据"))
+        }
     }
 }

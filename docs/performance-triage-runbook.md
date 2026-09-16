@@ -105,6 +105,28 @@ cat ~/Library/Logs/VibeFocus/perf-snapshot.json | python3 -m json.tool
 > hook 移动 807ms+）；修后 25 分钟 0 次，真实 Stop 移动 807ms / UPS 归位 496ms
 > 全程零 STALL。两次观察窗同为自然流量，对比成立。
 
+## 一键体检（--diagnose 先看这三段，2026-09-17 B194 固化）
+
+`--diagnose` 报告头部按顺序读三段，覆盖 90% 的「哪里出问题了」：
+
+1. **[Hook 触发器]** —— Stop/SessionEnd 开关状态（关=合法态，B192 起）；
+   用户感知「回车不归位」先看这里：Stop 关着时窗根本不会上主屏。
+2. **[窗口迁移健康]** ——
+   - `审计通道`：最新审计记录距现在几分钟。>1h 亮断写 ⚠️（审计断写 =
+     证据链瞎眼，B194 前双检互斥 bug 曾静默断 4 天，靠此段即可当场发现）；
+   - `Hook 响应分布`：`restored_to_original×N`（归位成功）/
+     `stay_on_current_screen×N`（窗本就在副屏，正常）/ `no_binding_skip`
+     （会话没绑定到窗）/ `trigger_disabled_skip`（开关没开）——
+     分布直接回答「为什么不归位」；
+   - `残窗回滚`：>0 = 移动收敛失败发生过（B193 回滚已兜底防错乱），
+     `grep rollback ~/Library/Logs/VibeFocus/vibefocus.log` 看现场；
+   - `主线程 fork(≥100ms)`：>0 = 还有路径在主线程同步 fork，
+     `grep FORK-ON-MAIN` 逐条定罪。
+3. **[性能监控]** —— 停顿时间线与直方图（五步法入口）。
+
+监控自身的健康也在看护内：审计缓冲积压 ≥50 条会打
+`audit backlog ... schedule chain broken` ERROR（B194 防抖调度链断写事故的哨兵）。
+
 ## 自测工具（验证监控活着）
 
 ```bash
