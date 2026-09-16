@@ -12,13 +12,15 @@ import Foundation
 // 恢复阶段用代码构造的 mini 快照（scratch 窗位），捕获阶段的全桌面快照仅做只读断言
 // 后即删。
 //
-// 五条腿（2026-09-14 自测加压轮）：
+// 七条腿（2026-09-14 自测加压轮二）：
 //   S-A 全桌面捕获完整性审计：yabai 真值逐窗对账（跨屏 × 跨工作区 × 每窗 space/display）
 //   S-B 双屏恢复：主屏 + 副屏各重建一窗，验「每块屏幕」
 //   S-C claude --resume 注入：sessionID 窗建出后命令行原文进 pane（假 ID 即刻报错退出，
 //       不进交互——真机 2026-09-14 实探 exit=1）
 //   S-D skipAlive：恢复时活窗 tty 上真有 ssh 挂线 → 「仍活着跳过」，同 CG 窗不被重建
 //   S-E 远程 resume 全命令：ssh -t <target> 'cd … && claude --resume …' 原文进 pane
+//   S-F 多 pane：同窗双 tab 捕获逐 pane 记忆 + 恢复（首 pane 建窗 + itermAppendTab）
+//   S-G 自动恢复正式入口：偏好 → 隔离库快照 → runAutoRestoreIfEnabled 异步建窗到位
 //
 // 环境变量：
 //   VIBEFOCUS_SESSION_RESTORE_E2E=1                    开关（必填）
@@ -96,6 +98,11 @@ extension RunnerHarness {
         check("E2E前置: W1(shell腿) 已建且 CG 可定位", w1.cgID != nil)
         let w1ActualFrame = w1.actualFrame ?? w1Frame
 
+        // ── 2b. 建 W_T（S-F 多 pane 腿：同窗 2 个 tab，tab1=/tmp tab2=/etc）──
+        let wt = await createScratchWindowWithTabs(commands: ["cd /tmp", "cd /etc"])
+        check("E2E前置: W_T(多pane腿) 已建且 CG 可定位", wt.cgID != nil)
+        let wtActualFrame = wt.actualFrame
+
         // ── 3. 全桌面捕获 + S-A 逐窗审计（只读）────────────────────────────
         // 真值先取（与捕获内部查询间隔最小化）
         let groundTruth = (SpaceController.shared.queryAllWindows() ?? []).filter {
@@ -142,6 +149,23 @@ extension RunnerHarness {
         check("S-A审计: W1 shell 窗 cwd=/tmp 被记住",
               w1Entry?.panes.first?.kind == .shell
               && (w1Entry?.panes.first?.cwd == "/tmp" || w1Entry?.panes.first?.cwd == "/private/tmp"))
+        // S-F：多 tab 窗逐 pane 记忆（tab 序 = pane 序）
+        if let wtActualFrame {
+            let wtEntry = fullSnap.windows.first { win in
+                win.appBundleID == "com.googlecode.iterm2"
+                    && hypot(win.frame.midX - wtActualFrame.midX, win.frame.midY - wtActualFrame.midY) < 40
+            }
+            let panes = wtEntry?.panes ?? []
+            check("S-F捕获: 多 tab 窗记到 2 个 pane（实得 \(panes.count)）", panes.count == 2)
+            check("S-F捕获: tab1 cwd=/tmp 被记住",
+                  panes.first?.cwd == "/tmp" || panes.first?.cwd == "/private/tmp")
+            check("S-F捕获: tab2 cwd=/etc 被记住",
+                  panes.last?.cwd == "/etc" || panes.last?.cwd == "/private/etc")
+        } else {
+            check("S-F捕获: 多 tab 窗记到 2 个 pane（W_T 未定位，跳过）", false)
+            check("S-F捕获: tab1 cwd=/tmp 被记住（跳过）", false)
+            check("S-F捕获: tab2 cwd=/etc 被记住（跳过）", false)
+        }
         // W_D：远程 ssh 活形态被识别
         let wdEntry = fullSnap.windows.first { win in
             win.appBundleID == "com.googlecode.iterm2"
@@ -182,8 +206,10 @@ extension RunnerHarness {
         print("    [S-A] 桌面实况：\(fullSnap.windows.count) 窗 / \(fullSnap.spaceCount) 工作区 / \(fullSnap.displayCount) 屏；remoteSSH pane=\(remotePaneCount)，session pane=\(sessionPaneCount)")
         check("S-A审计: 桌面远程 ssh pane 被识别（≥1，含 W_D）", remotePaneCount >= 1)
 
-        // ── 4. 关 W1（先进程后窗，防确认框）────────────────────────────────
+        // ── 4. 关 W1 与 W_T（先进程后窗，防确认框；W_T 关窗会连 tab2 的活壳一起
+        // 关，确认 sheet 必弹）──────────────────────────────────────────────
         await closeScratchWindow(asid: w1.asid)
+        await closeScratchWindow(asid: wt.asid)
         await dismissITermCloseConfirmation()
 
         // ── 5. mini 快照构造（S-B/C/D/E 腿；碰撞守卫后落位）────────────────
@@ -207,9 +233,10 @@ extension RunnerHarness {
         let wAFrame = collideFree(scratchFrame(mainPlan, x: 20, y: 440))      // S-B 主屏 shell /tmp
         let wCFrame = collideFree(scratchFrame(mainPlan, x: 640, y: 440))     // S-C claude 注入
         let wEFrame = collideFree(scratchFrame(mainPlan, x: 20, y: 20))       // S-E 远程 resume
+        let wTFrame = collideFree(scratchFrame(mainPlan, x: 640, y: 20))      // S-F 多 pane（2 tab）
         let wBFrame = collideFree(scratchFrame(secondPlan, x: 20, y: 20))     // S-B 副屏 shell /
 
-        let miniWindows = [
+        var miniWindows = [
             SessionWindowSnapshot(
                 appBundleID: "com.googlecode.iterm2", frame: wAFrame,
                 displayID: mainCGID, yabaiDisplay: mainYabaiDisplay, yabaiSpace: visibleBeforeMain,
@@ -227,18 +254,28 @@ extension RunnerHarness {
                 panes: [SessionPaneSnapshot(kind: .remoteSSH, sessionID: "e2e-remote-fake", cwd: "/tmp",
                                             sshTarget: sshTarget)]),
             SessionWindowSnapshot(
+                appBundleID: "com.googlecode.iterm2", frame: wTFrame,
+                displayID: mainCGID, yabaiDisplay: mainYabaiDisplay, yabaiSpace: visibleBeforeMain,
+                title: "SR-E2E-T",
+                panes: [SessionPaneSnapshot(kind: .shell, cwd: "/tmp"),
+                        SessionPaneSnapshot(kind: .shell, cwd: "/etc")]),
+            SessionWindowSnapshot(
                 appBundleID: "com.googlecode.iterm2", frame: wBFrame,
                 displayID: secondCGID, yabaiDisplay: secondYabaiDisplay, yabaiSpace: visibleBeforeSecond,
                 title: "SR-E2E-B",
-                panes: [SessionPaneSnapshot(kind: .shell, cwd: "/")]),
-            // W_D：用实测 frame 精确录入（15px 匹配容差要求）；恢复时应被 skipAlive
-            SessionWindowSnapshot(
+                panes: [SessionPaneSnapshot(kind: .shell, cwd: "/")])
+        ]
+        // W_D：用实测 frame 精确录入（15px 匹配容差要求）；恢复时应被 skipAlive。
+        // 未建成则不录入——否则恢复会在其 frame 上重复建一窗（2026-09-16 级联教训）
+        let wdLegArmed = wd.cgID != nil && (wd.actualFrame ?? wdTargetFrame) != .zero
+        if wdLegArmed {
+            miniWindows.append(SessionWindowSnapshot(
                 appBundleID: "com.googlecode.iterm2", frame: wd.actualFrame ?? wdTargetFrame,
                 displayID: mainCGID, yabaiDisplay: mainYabaiDisplay, yabaiSpace: visibleBeforeMain,
                 title: "SR-E2E-D",
                 panes: [SessionPaneSnapshot(kind: .remoteSSH, sshTarget: sshTarget,
-                                            wasRemoteSessionLive: true)]),
-        ]
+                                            wasRemoteSessionLive: true)]))
+        }
         let mini = SessionRestoreSnapshot(name: "SR-E2E mini", windows: miniWindows, launchCommand: nil)
 
         // ── 6. 恢复前 CG id 基线 → 执行恢复 ────────────────────────────────
@@ -251,8 +288,12 @@ extension RunnerHarness {
         let preIDs = currentItermCGIDs()
         let restoreResult = await SessionRestoreExecutor(controller: controller).restore(snapshot: mini)
         check("E2E恢复: 执行成功（\(restoreResult.message)）", restoreResult.ok)
-        check("E2E恢复: 汇总含新建 4 窗", restoreResult.message.contains("新建 4 窗"))
-        check("E2E恢复: 汇总含仍活着跳过 1 窗（S-D skipAlive）", restoreResult.message.contains("仍活着跳过 1 窗"))
+        check("E2E恢复: 汇总含新建 5 窗", restoreResult.message.contains("新建 5 窗"))
+        if wdLegArmed {
+            check("E2E恢复: 汇总含仍活着跳过 1 窗（S-D skipAlive）", restoreResult.message.contains("仍活着跳过 1 窗"))
+        } else {
+            check("S-D: W_D 未建成，本轮跳过 skipAlive 腿（防级联，见前置 DIAG）", true)
+        }
 
         // ── 7. 恢复后核验 ──────────────────────────────────────────────────
         try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -306,15 +347,31 @@ extension RunnerHarness {
         } else {
             check("S-E: 远程 resume 窗在目标位重建", false)
         }
+        // S-F：多 pane 恢复（首 pane 建窗 + itermAppendTab 追加 tab2）
+        if let wTRestored = newWindow(near: wTFrame) {
+            check("S-F恢复: 多 pane 窗在目标位重建", true)
+            let ttys = iTermSessionTTYs(windowCGID: wTRestored.windowID)
+            check("S-F恢复: 重建窗含 2 个 tab（实得 \(ttys.count)）", ttys.count == 2)
+            let cwds = ttys.map { ClaudeSessionLocator.shellWorkingDirectory(onTTY: $0) }
+            check("S-F恢复: tab1 cwd=/tmp", cwds.first == "/tmp" || cwds.first == "/private/tmp")
+            check("S-F恢复: tab2 cwd=/etc", cwds.last == "/etc" || cwds.last == "/private/etc")
+        } else {
+            check("S-F恢复: 多 pane 窗在目标位重建", false)
+            check("S-F恢复: 重建窗含 2 个 tab（窗未建，跳过）", false)
+            check("S-F恢复: tab1 cwd=/tmp（跳过）", false)
+            check("S-F恢复: tab2 cwd=/etc（跳过）", false)
+        }
         // S-D：W_D 未被重建——同一 CG id 仍在、不在新窗集、未被注入
-        let wdID = wd.cgID
-        let wdStillThere = wdID.map { id in cgWindowListAll().contains { $0.windowID == id } } ?? false
-        check("S-D: 活 ssh 窗未被重建（同 CG id \(wdID.map(String.init) ?? "?") 仍在原位）",
-              wdStillThere && !(wdID.map { newIDs.contains($0) } ?? true))
-        let wdContent = await itermWindowContents(frame: wd.actualFrame ?? wdTargetFrame)
-        check("S-D: 活 ssh 窗未被注入 e2e 命令", !wdContent.contains("e2e-remote-fake") && !wdContent.contains("e2e-fake-session"))
+        if wdLegArmed {
+            let wdID = wd.cgID
+            let wdStillThere = wdID.map { id in cgWindowListAll().contains { $0.windowID == id } } ?? false
+            check("S-D: 活 ssh 窗未被重建（同 CG id \(wdID.map(String.init) ?? "?") 仍在原位）",
+                  wdStillThere && !(wdID.map { newIDs.contains($0) } ?? true))
+            let wdContent = await itermWindowContents(frame: wd.actualFrame ?? wdTargetFrame)
+            check("S-D: 活 ssh 窗未被注入 e2e 命令", !wdContent.contains("e2e-remote-fake") && !wdContent.contains("e2e-fake-session"))
+        }
 
-        // ── 8. 清场：新窗逐个回收 + W_D 强收 + 快照删除 + 零残留复核 ─────────
+        // ── 8. 清场：新窗逐个回收 + W_D 强收 + 快照删除 ────────────────────
         var allScratchIDs = newIDs
         if let wdID = wd.cgID { allScratchIDs.insert(wdID) }
         let restoredASIDs = await liveASWindowIDs(frames: cgWindowListAll().compactMap { entry in
@@ -324,6 +381,59 @@ extension RunnerHarness {
         controller.removeSnapshot(id: fullSnap.id)
         check("E2E清场: 快照已删除", controller.snapshotsForRefresh().contains { $0.name == "SR-E2E 捕获" } == false)
 
+        // ── 9. S-G 自动恢复正式入口（设置页勾选后的生产链路：偏好 → 快照定位 →
+        // runAutoRestoreIfEnabled → 异步恢复）。min 快照落隔离库 + 偏好写 runner
+        // 自有 domain（与装机 app 的 com.openai.vibe-focus 域无关）────────────
+        let sgFrame = collideFree(scratchFrame(mainPlan, x: 640, y: 440))
+        let sgMini = SessionRestoreSnapshot(
+            name: "SR-E2E mini-auto",
+            windows: [SessionWindowSnapshot(
+                appBundleID: "com.googlecode.iterm2", frame: sgFrame,
+                displayID: mainCGID, yabaiDisplay: mainYabaiDisplay, yabaiSpace: visibleBeforeMain,
+                title: "SR-E2E-G",
+                panes: [SessionPaneSnapshot(kind: .shell, cwd: "/tmp")])],
+            launchCommand: nil)
+        controller.store.upsert(sgMini)
+        TerminalGridPreferences.autoRestoreEnabled = true
+        TerminalGridPreferences.autoRestoreSnapshotID = sgMini.id
+        let preGIDs = currentItermCGIDs()
+        controller.runAutoRestoreIfEnabled()
+        check("S-G: 入口幂等门翻转 hasRunAutoRestoreThisLaunch", controller.hasRunAutoRestoreThisLaunch)
+        // 恢复是 fire-and-forget Task：轮询新窗到位（预算 45s）
+        var sgRestored: (windowID: UInt32, bounds: CGRect?)? = nil
+        let sgDeadline = Date().addingTimeInterval(45)
+        while Date() < sgDeadline && sgRestored == nil {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let nowG = currentItermCGIDs().subtracting(preGIDs)
+            if let hit = cgWindowListAll().first(where: {
+                nowG.contains($0.windowID)
+                    && $0.bounds.map { hypot($0.midX - sgFrame.midX, $0.midY - sgFrame.midY) < 48 } == true
+            }) {
+                sgRestored = (hit.windowID, hit.bounds)
+            }
+        }
+        check("S-G: 偏好+快照入口自动建窗到位", sgRestored != nil)
+        if let sgRestored, let tty = iTermSessionTTY(windowCGID: sgRestored.windowID) {
+            let cwd = ClaudeSessionLocator.shellWorkingDirectory(onTTY: tty)
+            check("S-G: 自动恢复 cwd=/tmp", cwd == "/tmp" || cwd == "/private/tmp")
+        } else if sgRestored == nil {
+            check("S-G: 自动恢复 cwd=/tmp（未建窗，跳过）", false)
+        }
+        // S-G 清场：新窗（含断言未命中但确实建出的）逐个回收 + 删快照 + 偏好复位
+        let sgLeftNew = currentItermCGIDs().subtracting(preGIDs)
+        for id in sgLeftNew { allScratchIDs.insert(id) }
+        let sgASIDs = await liveASWindowIDs(frames: cgWindowListAll().compactMap { entry in
+            sgLeftNew.contains(entry.windowID) ? entry.bounds : nil
+        })
+        for asid in sgASIDs { await closeScratchWindow(asid: asid) }
+        await dismissITermCloseConfirmation()
+        controller.removeSnapshot(id: sgMini.id)
+        check("S-G清场: mini 快照已删除", controller.snapshotsForRefresh().contains { $0.name == "SR-E2E mini-auto" } == false)
+        TerminalGridPreferences.autoRestoreEnabled = false
+        TerminalGridPreferences.autoRestoreSnapshotID = nil
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+
+        // ── 10. 零残留终检（全部腿的 scratch id 并集）──────────────────────
         var leftovers = cgWindowListAll().filter { entry in
             allScratchIDs.contains(entry.windowID)
         }
@@ -348,14 +458,65 @@ extension RunnerHarness {
     }
 
     /// 建 scratch 窗并定位 CG id / 实测 frame（iTerm2 set bounds 会被钳制，一切
-    /// 断言以实测为准）
+    /// 断言以实测为准）。建窗失败带一次重试 + stderr 诊断（2026-09-16 真机实测
+    /// 出现过一次无征兆建窗失败，级联出重复建窗）
     private func createScratchWindow(command: String, frame: CGRect) async -> ScratchWindow {
-        guard let asid = await runOsa(
-            TerminalAutomationScript.itermCreateWindow(command: command, quartzFrame: frame)
-        )?.trimmingCharacters(in: .whitespacesAndNewlines), !asid.isEmpty else {
+        var lastDiag = "nil(osascript 超时或启动失败)"
+        for attempt in 0..<2 {
+            if attempt > 0 { try? await Task.sleep(nanoseconds: 600_000_000) }
+            let script = TerminalAutomationScript.itermCreateWindow(command: command, quartzFrame: frame)
+            let result = await Task.detached(priority: .userInitiated) {
+                ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script], timeout: 30)
+            }.value
+            let asid = result?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard result?.exitCode == 0, !asid.isEmpty else {
+                lastDiag = "exit=\(result?.exitCode ?? -999) stderr=\(result?.stderr.prefix(120) ?? "nil")"
+                continue
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            let readback = await runOsa(TerminalAutomationScript.itermGetBounds(windowID: asid))
+                .flatMap { TerminalAutomationScript.parseBounds($0) }
+            var cgID: UInt32?
+            if let rb = readback {
+                let candidates = cgWindowListAll().compactMap { entry -> (windowID: UInt32, bounds: CGRect?, isOnScreen: Bool)? in
+                    guard entry.layer == 0, entry.bounds != nil,
+                          NSRunningApplication(processIdentifier: entry.ownerPID)?.bundleIdentifier == "com.googlecode.iterm2" else { return nil }
+                    return (entry.windowID, entry.bounds, entry.isOnScreen)
+                }
+                cgID = TerminalAutomationScript.resolveCGWindowID(candidates: candidates, nearBounds: rb, excluding: [])
+            }
+            if cgID == nil { lastDiag = "AS id=\(asid) 但 CG 定位失败（readback=\(readback.map { "\($0)" } ?? "nil")）" }
+            if let cgID {
+                let actual = cgWindowListAll().first { $0.windowID == cgID }?.bounds
+                return ScratchWindow(asid: asid, cgID: cgID, actualFrame: actual)
+            }
+        }
+        print("    [DIAG] createScratchWindow 失败: \(lastDiag)")
+        return ScratchWindow(asid: "", cgID: nil, actualFrame: nil)
+    }
+
+    /// 建带多个 tab 的 scratch 窗（S-F 多 pane 腿）：第 1 条命令进 tab1，其余逐个
+    /// create tab + 写入
+    private func createScratchWindowWithTabs(commands: [String]) async -> ScratchWindow {
+        guard let first = commands.first else {
             return ScratchWindow(asid: "", cgID: nil, actualFrame: nil)
         }
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        let escapedFirst = first.replacingOccurrences(of: "\"", with: "\\\"")
+        var script = """
+        tell application id "com.googlecode.iterm2"
+            set w to (create window with default profile)
+            tell current session of w to write text "\(escapedFirst)"
+        """
+        for command in commands.dropFirst() {
+            let escaped = command.replacingOccurrences(of: "\"", with: "\\\"")
+            script += "\n    tell w to create tab with default profile"
+            script += "\n    tell current session of w to write text \"\(escaped)\""
+        }
+        script += "\n    return id of w\nend tell"
+        guard let asid = await runOsa(script)?.trimmingCharacters(in: .whitespacesAndNewlines), !asid.isEmpty else {
+            return ScratchWindow(asid: "", cgID: nil, actualFrame: nil)
+        }
+        try? await Task.sleep(nanoseconds: 1_800_000_000)
         let readback = await runOsa(TerminalAutomationScript.itermGetBounds(windowID: asid))
             .flatMap { TerminalAutomationScript.parseBounds($0) }
         var cgID: UInt32?
@@ -371,9 +532,27 @@ extension RunnerHarness {
         return ScratchWindow(asid: asid, cgID: cgID, actualFrame: actual)
     }
 
-    /// 关 scratch 窗：Ctrl+C 保险（防交互程序占住 pane）→ exit → close
+    /// 关 scratch 窗：先杀 pane 进程（清场纪律=先杀后台进程再关窗：防确认框、
+    /// 断远程 ssh/claude；2026-09-16 实测 iTerm2 关窗确认 sheet 在部分 app 状态下
+    /// 无法渲染=close 永久挂起）→ Ctrl+C/exit 保险 → close → sheet 点掉兜底
     private func closeScratchWindow(asid: String) async {
         guard !asid.isEmpty else { return }
+        let ttyList = await runOsa(
+            "tell application id \"com.googlecode.iterm2\" to get tty of sessions of tabs of window id \(asid)")
+        let ttys = (ttyList ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"")) }
+            .filter { !$0.isEmpty }
+        for tty in ttys {
+            let base = tty.hasPrefix("/dev/") ? String(tty.dropFirst(5)) : tty
+            if let out = ShellRunner.run(executable: "/bin/ps", arguments: ["-t", base, "-o", "pid="], timeout: 2) {
+                for line in out.stdout.split(separator: "\n") {
+                    if let pid = Int(line.trimmingCharacters(in: .whitespaces)) {
+                        _ = ShellRunner.run(executable: "/bin/kill", arguments: ["-9", String(pid)], timeout: 2)
+                    }
+                }
+            }
+        }
         _ = await runOsa("""
         tell application id "com.googlecode.iterm2"
             tell window id \(asid) to tell current session to write text (ASCII character 3)
@@ -425,6 +604,19 @@ extension RunnerHarness {
         let sessions = PaneEnumeration.parseITermSessions(out.stdout)
         let target = sessions.first { hypot($0.windowBounds.midX - bounds.midX, $0.windowBounds.midY - bounds.midY) < 40 }
         return target?.tty
+    }
+
+    /// CG 窗 → 该窗全部 tab 的 tty（tab 序；S-F 多 pane 断言用）
+    private func iTermSessionTTYs(windowCGID: UInt32) -> [String] {
+        guard let entry = cgWindowListAll().first(where: { $0.windowID == windowCGID }),
+              let bounds = entry.bounds else { return [] }
+        guard let out = ShellRunner.run(executable: "/usr/bin/osascript",
+                                        arguments: ["-e", PaneEnumeration.itermEnumerateSessions()], timeout: 30),
+              out.exitCode == 0 else { return [] }
+        return PaneEnumeration.parseITermSessions(out.stdout)
+            .filter { hypot($0.windowBounds.midX - bounds.midX, $0.windowBounds.midY - bounds.midY) < 40 }
+            .sorted { ($0.tabIndex, $0.sessionIndex) < ($1.tabIndex, $1.sessionIndex) }
+            .map(\.tty)
     }
 
     /// 读 iTerm2 窗（frame 就近）当前 session 屏幕文本（命令行回显断言用）
