@@ -58,7 +58,24 @@ grep '\[PERF\]\[STALL\]' ~/Library/Logs/VibeFocus/vibefocus.log | tail -20
 | `grid.create` | `TerminalGridController.swift` |
 | `registry.purge` | `SessionWindowRegistry+State.swift` |
 | `bubble.summon/hide/submit` | `InputBubbleController*.swift` |
+| `restore.lookup/queryWindow/preSwitch/move/guard/tail/failure` | `ToggleEngine+Restore*.swift`（B190 restore 子阶段） |
+| `toggle.ctx` / `toggle.decision` | `WindowManager+Toggle.swift`（B190 三级焦点解析 / 决策子阶段） |
+| `bubble.followTick` / `bubble.voiceYield` / `bubble.draftSave` | `InputBubbleController.swift`（B190 气泡 5Hz 跟随拍 / 1Hz 让位扫描 / 草稿同步段；journal 静默） |
+| `shell.<bin>` / `shell.main.<bin>` | `ShellRunner.swift`（B190 每次 fork 常开计数；`.main.` 中段 = 主线程 fork） |
 | `refreshGridMinimap` 等 | 见 `grep -rn beginSection Sources/` 全表 |
+
+B190 起另有独立告警行（不必等 250ms 停顿看门狗兜底）：
+
+```
+[PERF][FORK-ON-MAIN] ... executable=/opt/homebrew/bin/yabai args=query ... durationMs=635
+```
+
+ShellRunner 在主线程 fork 且 ≥100ms 就打一行 WARN（逐次留痕），同一次 fork 同时计入
+`shell.main.<bin>` 直方图。「主线程 fork 了没有、谁 fork 的、典型多久」直接 grep
+这一行 + 看快照 `shell.*` 计数器。注意：legacy `P-INST-*` 日志（slow fork /
+CGWindowList slow 等）在 `#if PERF_INSTRUMENT` 后面，**装机 release 构建不开**
+（run.sh `swift build -c release` 无 `-DPERF_INSTRUMENT`）——生产证据链只认
+PerfMonitor 常开埋点与这条 B190 告警行。
 
 ### ③ 查量化分布（典型 vs 最差）
 
@@ -106,6 +123,18 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
    与提交节奏重合 → B180 移动链下放 WindowWorkExecutor 串行队列 → 零 STALL。
 3. **sections=0 之谜（B179 装机初期）**：STALL 无区间归因 → 当时机型无 journal/栈采样
    （B182 补齐）→ 若复现，journal + main stack 直接给出主线程行为。
+4. **「仍然偶发卡顿」（2026-09-15，B190 取证）**：装机日志 34 条 STALL + 快照直方图
+   → `toggle`（⌃Q）41 次里 40 次落 200ms~1s 桶（max 1.77s）、`restore`（气泡提交
+   autoRestore）31 次里 29 次同桶（max 3.19s）；两条 ≥1s 的 `main stack` 采样都指向
+   `ShellRunner.run → dispatch_semaphore_wait`——**手动 toggle 与气泡提交 autoRestore
+   仍按 B180 设计决策同步跑在主线程**（B180 只下放了 hook 路径），每次 yabai fork
+   200~700ms、restore 全链 3~7 次 fork 叠加出 0.3~2.3s 主线程冻结。取证同时发现
+   两个监控自身缺陷：journal 环被 0.5~5Hz 周期区间 13 秒刷满（▶ 轨迹全是
+   refreshIndices/followTick，停顿前真迹丢失）+ legacy P-INST 慢 fork 日志编译开关
+   未开（生产全瞎）。B190 处置：journal 静默名单 + ShellRunner 常开 fork 计数 +
+   FORK-ON-MAIN 告警行 + restore/toggle 子阶段区间。**修复方向（未实施）**：
+   手动 toggle / 气泡提交 autoRestore 下放 WindowWorkExecutor（B180 hook 路径同款），
+   需真机验收——动窗口行为的变更单测全绿不算数。
 
 ## 设计约束（改代码前必读）
 
@@ -113,4 +142,6 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
 - 看门狗临界区只做字典读写，**锁内绝不做 IO/日志之外的重活**（防死锁）；
 - 栈采样：suspend 窗口内不调用 dladdr（死锁风险），符号化在 resume 后异步执行；
 - 新增埋点 = `PerfMonitor.shared.beginSection/endSection` defer 配对 +
-  `PerfMonitorLogic` 纯层断言入 `Tests/Runner/RunnerPerfMonitorTests.swift`。
+  `PerfMonitorLogic` 纯层断言入 `Tests/Runner/RunnerPerfMonitorTests.swift`；
+- 高频周期区间（≥0.5Hz）必须进 `PerfMonitorLogic.journalQuietSections` 静默名单，
+  否则 64 条 journal 环十几秒被刷满、停顿归因丢失真迹（B190 教训）。

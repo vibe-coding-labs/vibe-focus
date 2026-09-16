@@ -80,11 +80,14 @@ extension WindowManager {
         // 三级焦点窗口解析（CGWindowList→yabai→AX），详见 +Toggle+FocusResolution.swift。
         // P2: yabai query focused window（非 AX）消除了 move_to_main 路径 toggle 入口的
         // focusedWindow(for:) 副屏阻塞 1.5s（toggle-00000541 ctxMs=1501）。
-        var resolution = resolveFocusedWindowForToggle(
-            frontApp: NSWorkspace.shared.frontmostApplication,
-            cachedMainScreen: cachedMainScreen,
-            toggleContext: &toggleContext
-        )
+        // B190 子阶段区间：ctxMs 典型 ~600ms（yabai 分支）/最差 1.9s，直方图进快照。
+        var resolution = PerfMonitor.shared.measure("toggle.ctx") {
+            resolveFocusedWindowForToggle(
+                frontApp: NSWorkspace.shared.frontmostApplication,
+                cachedMainScreen: cachedMainScreen,
+                toggleContext: &toggleContext
+            )
+        }
         // 无窗口前台兜底：SystemUIServer 等系统表面持焦时三级解析必然全空（candidatesCount==0），
         // 直接路由只会死在 "focused window identity missing"（2026-09-06 toggle-00000182 真机实证，
         // 用户视角 = ⌃Q 死键）。改取 z-order 最前普通窗口继续正常决策。
@@ -111,7 +114,9 @@ extension WindowManager {
         // 决策内部走 CGWindowList(isWindowOnMainScreen) + SQLite(load)，应 <5ms；
         // 若 decisionMs 高，说明 AX fallback 路径未跳过或有 SQLite 阻塞。
         let decisionStart = Date()
-        let decision = evaluateRestoreDecision(windowID: resolvedWindowID, store: ToggleEngine.shared)
+        let decision = PerfMonitor.shared.measure("toggle.decision") {
+            evaluateRestoreDecision(windowID: resolvedWindowID, store: ToggleEngine.shared)
+        }
         let decisionMs = elapsedMilliseconds(since: decisionStart)
         // Batch 5：mode 字符串与执行分支同源（route 唯一映射）——此前 mode 计算
         // 与执行 switch 是两份表示，(decision=.moveToMain, onMain=true) 组合下

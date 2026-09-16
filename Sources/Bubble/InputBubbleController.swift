@@ -301,7 +301,11 @@ final class InputBubbleController: NSObject {
 
     /// 跟随拍：目标窗位移 → 气泡保偏移平移（夹进所在屏可视区）。
     /// bounds 读不到（最小化/目标窗关闭中）= 原地停驻不跳；目标进程消失 = 随之关闭。
+    /// B190 区间埋点：5Hz 主线程周期作业（CGWindowList 单窗读），在「打字卡顿」归因里
+    /// 必须有账可查；journal 静默（journalQuietSections）不刷 64 条环。
     func followTick() {
+        PerfMonitor.shared.beginSection("bubble.followTick")
+        defer { PerfMonitor.shared.endSection() }
         guard phase == .open, let target, let panel,
               let windowBefore = followWindowOrigin, let bubbleBefore = followBubbleOrigin else { return }
         if NSRunningApplication(processIdentifier: target.pid) == nil {
@@ -345,6 +349,9 @@ final class InputBubbleController: NSObject {
     /// 我们的气泡仍是最顶层窗）。幂等，状态由 voiceYielded 持有。
     func updateVoiceYield() {
         guard phase == .open, let panel else { return }
+        // B190 区间埋点：全表 CGWindowList 扫描 ~1Hz（跟随模式开着时），journal 静默同 followTick。
+        PerfMonitor.shared.beginSection("bubble.voiceYield")
+        defer { PerfMonitor.shared.endSection() }
         // 不筛 layer：LazyTyper 录音气泡实测 layer=5（floating 域），按 owner+尺寸识别
         let present = cgWindowListAll().contains { entry in
             entry.isOnScreen
@@ -462,7 +469,11 @@ extension InputBubbleController: NSTextViewDelegate {
     /// B162：编辑实时落草稿（按目标窗绑定；提交成功由 inject 清除）
     func textDidChange(_ notification: Notification) {
         guard phase == .open, let target = target, let textView else { return }
-        InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
+        // B190 区间埋点：打字路径上的每次按键同步开销（store 内部有防抖，此区间量的是
+        // 同步段）；打字卡顿归因时与 followTick/voiceYield 区分。
+        PerfMonitor.shared.measure("bubble.draftSave") {
+            InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
+        }
     }
 }
 

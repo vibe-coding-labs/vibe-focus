@@ -8,7 +8,9 @@ enum ShellRunner {
     static let commandTimeout: TimeInterval = 2.0
 
     /// 并发排空缓冲盒：单写者（排空队列）+ DispatchGroup.wait 建立先序后调用线程才读。
-    private final class DrainBox {
+    /// @unchecked Sendable：数据竞争安全性由「单写者 + group 先序」约定保证（见上），
+    /// 编译器无法验证该协议，2026-09-16 零警告门禁补标。
+    private final class DrainBox: @unchecked Sendable {
         var data = Data()
     }
 
@@ -28,6 +30,25 @@ enum ShellRunner {
             }
         }
         #endif
+        // B190 常开埋点（不走 PERF_INSTRUMENT——装机版默认不开，legacy P-INST 日志全是死代码）：
+        // 每次 fork 计入 shell.<bin> / shell.main.<bin> 直方图（主线程 fork 独立分桶，
+        // 「谁在主线程 fork、典型 vs 最差」直接进 perf-snapshot.json 与停顿报告 top=[...]）；
+        // 主线程 ≥100ms 另打 [PERF][FORK-ON-MAIN] WARN 行，逐次留痕不必等 250ms 停顿兜底。
+        let perfForkStart = Date()
+        defer {
+            let durMs = Double(elapsedMilliseconds(since: perfForkStart))
+            PerfMonitor.shared.record(
+                PerfMonitorLogic.shellCounterName(executable: executable, isMainThread: Thread.isMainThread),
+                durationMs: durMs)
+            if PerfMonitorLogic.shouldWarnMainFork(isMainThread: Thread.isMainThread, durationMs: durMs) {
+                log("[PERF][FORK-ON-MAIN]", level: .warn, fields: [
+                    "executable": executable,
+                    "args": arguments.prefix(4).joined(separator: " "),
+                    "durationMs": String(Int(durMs))
+                ])
+                PerfMonitor.shared.journal(String(format: "fork.main %@ %.0fms", (executable as NSString).lastPathComponent, durMs))
+            }
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -96,6 +117,23 @@ enum ShellRunner {
             }
         }
         #endif
+        // B190 常开埋点（语义同 run(executable:arguments:) 的 B190 段）。
+        let perfStdinStart = Date()
+        defer {
+            let durMs = Double(elapsedMilliseconds(since: perfStdinStart))
+            PerfMonitor.shared.record(
+                PerfMonitorLogic.shellCounterName(executable: executable, isMainThread: Thread.isMainThread),
+                durationMs: durMs)
+            if PerfMonitorLogic.shouldWarnMainFork(isMainThread: Thread.isMainThread, durationMs: durMs) {
+                log("[PERF][FORK-ON-MAIN]", level: .warn, fields: [
+                    "executable": executable,
+                    "args": arguments.prefix(4).joined(separator: " "),
+                    "durationMs": String(Int(durMs)),
+                    "stdin": "yes"
+                ])
+                PerfMonitor.shared.journal(String(format: "fork.main %@ %.0fms", (executable as NSString).lastPathComponent, durMs))
+            }
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments

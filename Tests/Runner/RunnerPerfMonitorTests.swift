@@ -139,5 +139,29 @@ extension RunnerHarness {
         check("perf L1: 直方图渲染", rich.contains(">=1k:1"))
         check("perf L2: 停顿历史渲染", rich.contains("停顿历史") && rich.contains("hook.Stop>move.toMain") && rich.contains("sampled(12 frames)"))
         check("perf L3: journal 尾渲染", rich.contains("▶bubble.summon"))
+
+        // M. B190 ShellRunner 主线程 fork 埋点：命名契约 + 告警判定 + journal 静默名单。
+        check("perf M1: 后台 fork 计数名 shell.<bin>", PerfMonitorLogic.shellCounterName(executable: "/opt/homebrew/bin/yabai", isMainThread: false) == "shell.yabai")
+        check("perf M2: 主线程 fork 计数名 shell.main.<bin>", PerfMonitorLogic.shellCounterName(executable: "/opt/homebrew/bin/yabai", isMainThread: true) == "shell.main.yabai")
+        check("perf M3: osascript 主线程命名", PerfMonitorLogic.shellCounterName(executable: "/usr/bin/osascript", isMainThread: true) == "shell.main.osascript")
+        check("perf M4: 主线程 fork 告警阈值 = 100ms（契约锁）", PerfMonitorLogic.mainForkWarnMs == 100)
+        check("perf M5: 主线程恰等阈值告警", PerfMonitorLogic.shouldWarnMainFork(isMainThread: true, durationMs: 100))
+        check("perf M6: 主线程低于阈值不告警", !PerfMonitorLogic.shouldWarnMainFork(isMainThread: true, durationMs: 99.9))
+        check("perf M7: 后台 fork 再慢也不告警", !PerfMonitorLogic.shouldWarnMainFork(isMainThread: false, durationMs: 2000))
+        check("perf M8: 阈值可注入", PerfMonitorLogic.shouldWarnMainFork(isMainThread: true, durationMs: 50, thresholdMs: 50))
+        let quiet = PerfMonitorLogic.journalQuietSections
+        check("perf M9: 静默名单含四类周期区间", quiet == ["overlay.refreshIndices", "registry.purge", "bubble.followTick", "bubble.voiceYield"])
+        check("perf M10: 关键路径不在静默名单（轨迹必须留）",
+              !quiet.contains("toggle") && !quiet.contains("restore") && !quiet.contains("bubble.submit")
+              && !quiet.contains("hook.request") && !quiet.contains("move.toMain"))
+
+        // N. B190 运行时接线：measure 返回闭包值且落账；ShellRunner 真 fork 计入
+        // shell[.main].<bin> 直方图（Runner 在主线程跑，名带 .main. 中段）。
+        let measured = PerfMonitor.shared.measure("perf.test.measure") { 42 }
+        check("perf N1: measure 返回闭包值", measured == 42)
+        check("perf N2: measure 落账", PerfMonitor.shared.snapshotCounters().contains { $0.name == "perf.test.measure" && $0.count >= 1 })
+        let echoName = PerfMonitorLogic.shellCounterName(executable: "/bin/echo", isMainThread: Thread.isMainThread)
+        _ = ShellRunner.run(executable: "/bin/echo", arguments: ["vibefocus-perf-probe"])
+        check("perf N3: ShellRunner 真 fork 落账（\(echoName)）", PerfMonitor.shared.snapshotCounters().contains { $0.name == echoName && $0.count >= 1 })
     }
 }

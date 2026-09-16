@@ -39,13 +39,18 @@ extension ToggleEngine {
     ) -> Int {
         guard let preMoveSpace else { return 0 }
         let guardStart = Date()
-        switch RestoreSwitchOrchestration.refocusPerspective(
-            channels: channels,
-            preMoveSpace: preMoveSpace,
-            excludingWindowID: excluded,
-            operationID: trace,
-            prefetchedWindows: prefetchedWindows
-        ) {
+        // B190 子阶段区间：守卫内部是 refocus 串行 fork（含预取命中免 fork 路径），
+        // restore 尾段耗时主导时由此直方图定位。
+        let guardOutcome = PerfMonitor.shared.measure("restore.guard") {
+            RestoreSwitchOrchestration.refocusPerspective(
+                channels: channels,
+                preMoveSpace: preMoveSpace,
+                excludingWindowID: excluded,
+                operationID: trace,
+                prefetchedWindows: prefetchedWindows
+            )
+        }
+        switch guardOutcome {
         case .noDrift:
             return 0
         case .refocused(let postSpace):
@@ -111,8 +116,13 @@ extension ToggleEngine {
         }
 
         // 3. Resolve AX window（record 按 windowID 加载，两者恒等；存在性探测兼防窗口已关）
+        // B190 子阶段区间：restore 端到端 0.3~2.3s（装机快照 29/31 落 200ms-1s 桶），
+        // 哪个阶段主导靠子区间直方图定位，不再只靠端到端 max 猜。
         let lookupStart = Date()
-        guard windows.findWindowByPID(record.pid, windowID: windowID) != nil else {
+        let axWindow = PerfMonitor.shared.measure("restore.lookup") {
+            windows.findWindowByPID(record.pid, windowID: windowID)
+        }
+        guard axWindow != nil else {
             log("[ToggleEngine] restore: AX window not found", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID), "pid": String(record.pid)
             ])
@@ -122,7 +132,9 @@ extension ToggleEngine {
 
         // 3.5 yabai 窗口信息（最小化快检 + float 决策共用一次 fork，命中缓存 ~0ms）。
         let queryStart = Date()
-        let windowInfo = channels.queryWindow(windowID: windowID, ignoreCache: false)
+        let windowInfo = PerfMonitor.shared.measure("restore.queryWindow") {
+            channels.queryWindow(windowID: windowID, ignoreCache: false)
+        }
         let queryMs = elapsedMilliseconds(since: queryStart)
 
         // 3.6 最小化快检：最小化窗口上 float/--move 均静默无效，frame 直写必不收敛；
@@ -157,29 +169,37 @@ extension ToggleEngine {
             "targetFrame": QuartzRect(record.targetFrame).description
         ])
 
-        let preMove = Self.performSourcePreSwitch(record: record, channels: channels, windowID: windowID, trace: trace)
+        let preMove = PerfMonitor.shared.measure("restore.preSwitch") {
+            Self.performSourcePreSwitch(record: record, channels: channels, windowID: windowID, trace: trace)
+        }
         let spaceExact = preMove.spaceExact
 
         // 4. Move back to original frame（2026-09-01 重构：float 脱管 → yabai --move/--resize 直写 origFrame）
         // 原 `yabai --space` 在 yabai v7 float 布局下静默失效（exit 0 但窗口不动，
         // Tests/AXMoveValidation.swift T3 实测）；frame 直写经断言验证跨 display 可靠，
         // macOS 窗口归属跟随物理位置自动回到源 display 的 visible space。
-        let (frameOK, moveMs) = Self.performFloatDetachAndFrameMove(
-            windowID: windowID, record: record, windowInfo: windowInfo,
-            windows: windows, channels: channels, trace: trace)
+        let (frameOK, moveMs) = PerfMonitor.shared.measure("restore.move") {
+            Self.performFloatDetachAndFrameMove(
+                windowID: windowID, record: record, windowInfo: windowInfo,
+                windows: windows, channels: channels, trace: trace)
+        }
 
         // 5. 结局裁决（诚实化：frame 未收敛不再伪装成功、不再销毁 record）。
         guard frameOK else {
-            return Self.performMoveFailureStage(
-                record: record, windowID: windowID, triggerSource: triggerSource, trace: trace,
-                spaceExact: spaceExact, preMove: preMove,
-                windows: windows, channels: channels, records: records, auditor: auditor)
+            return PerfMonitor.shared.measure("restore.failure") {
+                Self.performMoveFailureStage(
+                    record: record, windowID: windowID, triggerSource: triggerSource, trace: trace,
+                    spaceExact: spaceExact, preMove: preMove,
+                    windows: windows, channels: channels, records: records, auditor: auditor)
+            }
         }
 
-        return Self.performSuccessTail(
-            record: record, windowID: windowID, triggerSource: triggerSource, trace: trace,
-            spaceExact: spaceExact, frameOK: frameOK, moveMs: moveMs, lookupMs: lookupMs, queryMs: queryMs,
-            preMove: preMove,
-            windows: windows, channels: channels, records: records, auditor: auditor)
+        return PerfMonitor.shared.measure("restore.tail") {
+            Self.performSuccessTail(
+                record: record, windowID: windowID, triggerSource: triggerSource, trace: trace,
+                spaceExact: spaceExact, frameOK: frameOK, moveMs: moveMs, lookupMs: lookupMs, queryMs: queryMs,
+                preMove: preMove,
+                windows: windows, channels: channels, records: records, auditor: auditor)
+        }
     }
 }

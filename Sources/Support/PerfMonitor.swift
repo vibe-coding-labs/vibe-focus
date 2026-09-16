@@ -1,9 +1,21 @@
 import Foundation
 
-// MARK: - 常开性能监控（B178 建，B182 证据链升级）
+// MARK: - 常开性能监控（B178 建，B182 证据链升级，B190 埋点加密）
 // 方法论：任何性能问题的证据链 = [PERF][STALL] 归因行（停顿时长 + 活跃区间栈 +
 // 计数器 Top + 主线程活动轨迹 + ≥1s 停顿的调用栈）→ perf-snapshot.json 直方图
 // （典型 vs 最差分布）→ --diagnose 汇总。排查手册：docs/performance-triage-runbook.md。
+//
+// B190 升级（用户报告「界面仍偶发卡顿」，装机 34 条 STALL 取证后加密埋点）：
+//   1. ShellRunner 每次 fork 常开计数：shell.<bin> / shell.main.<bin> 直方图 +
+//      主线程 ≥100ms 的 [PERF][FORK-ON-MAIN] WARN 逐次留痕——「谁在主线程 fork」
+//      不再依赖 PERF_INSTRUMENT 编译开关（装机 release 默认不开，legacy P-INST
+//      日志全是死代码，2026-09-15 取证实锤）；
+//   2. restore/toggle 热路径子阶段区间（lookup/queryWindow/preSwitch/move/guard/
+//      tail/failure、ctx/decision）——端到端 0.3~2.3s 的内部主导段可定位；
+//   3. 气泡高频拍区间（followTick 5Hz / voiceYield 1Hz / draftSave）——打字卡顿
+//      归因有账可查；
+//   4. journal 静默名单：0.5~5Hz 周期区间不再刷 64 条轨迹环（此前 13s 即被
+//      followTick/refreshIndices 刷满，停顿前真迹全丢）。
 //
 // B182 升级（用户要求「完整证据链、不靠撞大运」）：
 //   1. 区间耗时直方图桶（<10/10-50/50-200/200-1k/≥1k ms）——「max 是不是孤例」
@@ -117,6 +129,37 @@ enum PerfMonitorLogic {
             }
         }
     }
+
+    /// ShellRunner fork 计数器命名（B190 通用底层埋点）：按可执行文件名分桶，
+    /// 主线程 fork 加 `.main.` 中段——「谁在主线程 fork、每次多久」直接进快照直方图
+    /// 与停顿报告 top=[...]，不再依赖 PERF_INSTRUMENT 编译开关（装机版默认不开）。
+    /// executable 取末段（/opt/homebrew/bin/yabai → yabai）。
+    static func shellCounterName(executable: String, isMainThread: Bool) -> String {
+        let bin = (executable as NSString).lastPathComponent
+        return isMainThread ? "shell.main.\(bin)" : "shell.\(bin)"
+    }
+
+    /// 主线程 fork 告警阈值（ms）：ShellRunner 在主线程 fork 且 ≥ 此值时打
+    /// [PERF][FORK-ON-MAIN] WARN 行（不必等 250ms 停顿看门狗兜底）。
+    static let mainForkWarnMs: Double = 100
+
+    /// 主线程 fork 告警判定（纯函数）：仅主线程且达到阈值才告警；后台 fork 再慢
+    /// 也不打（有 shell.<bin> 直方图兜着）。
+    static func shouldWarnMainFork(isMainThread: Bool, durationMs: Double, thresholdMs: Double = mainForkWarnMs) -> Bool {
+        isMainThread && durationMs >= thresholdMs
+    }
+
+    /// 高频周期区间的 journal 静默名单（B190）：beginSection 不写 ▶ 轨迹行。
+    /// journal 环只有 64 条，0.5~5Hz 的周期区间（overlay 兜底 2s / 跟随拍 0.2s /
+    /// 语音让位 1s）会把停顿发生前的真迹在十几秒内冲掉（2026-09-15 装机快照实锤：
+    /// 32 条轨迹 31 条是 ▶overlay.refreshIndices）。只降 ▶ 噪声：≥100ms 的 ✓ 结束行、
+    /// 停顿归因 sections、快照直方图全都不受影响。
+    static let journalQuietSections: Set<String> = [
+        "overlay.refreshIndices",
+        "registry.purge",
+        "bubble.followTick",
+        "bubble.voiceYield"
+    ]
 
     /// 单次停顿的持久化记录（快照文件内）。
     struct StallRecord: Codable, Equatable {
@@ -263,7 +306,7 @@ final class PerfMonitor: @unchecked Sendable {
         lock.lock()
         activeSections[key, default: []] = PerfMonitorLogic.push(stack: activeSections[key] ?? [], section: section)
         lock.unlock()
-        if Thread.isMainThread {
+        if Thread.isMainThread, !PerfMonitorLogic.journalQuietSections.contains(name) {
             journal("▶\(name)")
         }
     }
@@ -296,6 +339,14 @@ final class PerfMonitor: @unchecked Sendable {
         PerfMonitorLogic.record(counter: &existing, name: name, durationMs: durationMs)
         if let existing { counters[name] = existing }
         lock.unlock()
+    }
+
+    /// 同步区间测量（B190）：begin/end 自动配对，返回闭包值。闭包须在调用线程
+    /// 内同步完成（区间栈按线程配对）。restore/toggle 子阶段埋点用它免 defer 样板。
+    func measure<T>(_ name: String, fields: [String: String] = [:], _ body: () throws -> T) rethrows -> T {
+        beginSection(name, fields: fields)
+        defer { endSection() }
+        return try body()
     }
 
     // MARK: 看门狗（后台线程巡检）
