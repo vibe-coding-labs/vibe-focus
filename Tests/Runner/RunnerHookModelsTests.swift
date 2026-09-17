@@ -11,13 +11,14 @@ import Foundation
 extension RunnerHarness {
     func runHookModelsTests() {
         // A. ClaudeHookEventType：穷举/rawValue/Codable/非法拒绝。
-        check("hookModels: eventType 五 case 且 rawValue 即线上 JSON 契约（B196 起 +Notification）",
-              ClaudeHookEventType.allCases.count == 5
+        check("hookModels: eventType 六 case 且 rawValue 即线上 JSON 契约（B206 起 +PermissionRequest）",
+              ClaudeHookEventType.allCases.count == 6
               && ClaudeHookEventType.sessionStart.rawValue == "SessionStart"
               && ClaudeHookEventType.stop.rawValue == "Stop"
               && ClaudeHookEventType.sessionEnd.rawValue == "SessionEnd"
               && ClaudeHookEventType.userPromptSubmit.rawValue == "UserPromptSubmit"
-              && ClaudeHookEventType.notification.rawValue == "Notification")
+              && ClaudeHookEventType.notification.rawValue == "Notification"
+              && ClaudeHookEventType.permissionRequest.rawValue == "PermissionRequest")
         let eventTypeRoundtripOK = ClaudeHookEventType.allCases.allSatisfy { e in
             (try? JSONDecoder().decode(ClaudeHookEventType.self, from: JSONEncoder().encode(e))) == e
         }

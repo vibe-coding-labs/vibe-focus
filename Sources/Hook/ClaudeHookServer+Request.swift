@@ -135,9 +135,11 @@ extension ClaudeHookServer {
             result = await eventHandler.handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
         case .userPromptSubmit:
             result = await eventHandler.handleUserPromptSubmit(payload: payload)
-        case .notification:
+        case .notification, .permissionRequest:
             // B196: 等待输入 → 通知中心（快路径，无窗口作业）。远程会话经 spool
             // 回灌的事件走同一分发，远程机上的等待同样能提醒到 Mac 侧。
+            // B206: codex 的 PermissionRequest（弹权限确认停下等用户批准）与
+            // Claude 的 Notification「等用户」同义，共用同一通知管线与开关门控。
             result = await eventHandler.handleNotification(payload: payload)
         }
 

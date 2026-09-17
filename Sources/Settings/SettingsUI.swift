@@ -68,6 +68,7 @@ public struct SettingsView: View {
     // Codex CLI Hook 安装状态
     @State var codexInstallMessage: String?
     @State var codexInstallSucceeded = true
+    @State var codexTestMessage: String?
 
     // Hook 触发开关
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop

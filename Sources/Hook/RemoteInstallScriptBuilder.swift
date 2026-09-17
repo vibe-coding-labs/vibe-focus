@@ -53,7 +53,10 @@ extension ClaudeHookPreferences {
         // 真身绝对路径在远程不存在，hook 会静默空转（真机 002 实锤）
         let hooksJSON = generateHooksDictJSON(scriptPath: remoteHelperScriptPath)
         let codexHooksJSON = generateCodexHooksDictJSON(scriptPath: remoteHelperScriptPath)
-        let codexEvents = triggerOnSessionEnd ? "SessionStart + SessionEnd" : "SessionStart"
+        // B206：PermissionRequest（等用户批准→通知中心）恒装，不再随 SessionEnd 开关缺席
+        let codexEvents = triggerOnSessionEnd
+            ? "SessionStart + PermissionRequest + SessionEnd"
+            : "SessionStart + PermissionRequest"
 
         return """
         #!/bin/bash

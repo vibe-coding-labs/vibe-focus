@@ -363,6 +363,9 @@ extension ClaudeHookPreferences {
     static func generateCodexHooksDictJSON(scriptPath: String = helperScriptPath) -> String {
         var hooks: [String: Any] = [:]
         hooks["SessionStart"] = [makeHookEntry(scriptPath: scriptPath)]
+        // B206：与本地 codexHooksDict 同步——PermissionRequest（等用户批准）恒装，
+        // 服务端按「等待输入通知」开关门控，远程机上的等待经 spool 回灌同样提醒。
+        hooks["PermissionRequest"] = [makeHookEntry(scriptPath: scriptPath)]
         if triggerOnSessionEnd {
             hooks["SessionEnd"] = [makeHookEntry(scriptPath: scriptPath)]
         }

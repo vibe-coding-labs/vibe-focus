@@ -4,10 +4,11 @@
 // hooks 字段，事件字典必须包在顶层 "hooks" 下；事件键 PascalCase。codex 事件集为
 // PreToolUse/PermissionRequest/PostToolUse/PreCompact/PostCompact/SessionStart/
 // SessionEnd/SubagentStart/SubagentStop/Interrupt——没有 Claude 的 Stop 与
-// UserPromptSubmit（写入也永不触发）。故只注册 codex 可触发的事件
-// （SessionStart 恒装 + SessionEnd 按开关），文件统一写规范形状；历史版本曾写
-// 顶层事件键（codex 解析失败、hooks 整体不加载），读取/清理双形状兼容以迁移。
-// Codex 有 hook trust 机制，首次运行需用户在 TUI 确认信任。
+// UserPromptSubmit（写入也永不触发）。故只注册 codex 可触发的事件：
+// SessionStart 恒装（绑定自愈）+ PermissionRequest 恒装（B206：等用户批准 →
+// 通知中心，服务端按「等待输入通知」开关门控）+ SessionEnd 按开关，
+// 文件统一写规范形状；历史版本曾写顶层事件键（codex 解析失败、hooks 整体不加载），
+// 读取/清理双形状兼容以迁移。Codex 有 hook trust 机制，首次运行需用户在 TUI 确认信任。
 
 import Foundation
 
@@ -79,14 +80,18 @@ enum CodexHookPreferences {
     }
 
     /// Codex 可触发事件字典：SessionStart 恒注册（远程 label 绑定自愈入口）+
-    /// SessionEnd 按触发开关。Stop/UserPromptSubmit 是 Claude 特有事件，codex 无对应
-    /// 事件、写入永不触发。
+    /// SessionEnd 按触发开关 + PermissionRequest 恒注册（B206：codex 弹权限确认
+    /// 停下等用户批准 → 通知中心 + live 面板 waiting，与 Claude Notification 同管线，
+    /// 服务端按同一「等待输入通知」开关门控——装进 hooks.json 但开关即时生效，
+    /// 无需重装）。Stop/UserPromptSubmit 是 Claude 特有事件，codex 无对应事件、
+    /// 写入永不触发。
     static func codexHooksDict(scriptPath: String = ClaudeHookPreferences.helperScriptPath) -> [String: Any] {
         var hooks: [String: Any] = [:]
         // B132 形状对齐：事件值必须为 entry 数组（与远程生成器 generateCodexHooksDictJSON
         // 及 isHookInstalled 认可的规范形状一致）；此前裸字典让本地装机与远程通道分裂，
         // 且 cleanVibeFocusHooks（[[String:Any]] 语义）对裸字典卸载失灵。
         hooks["SessionStart"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
+        hooks["PermissionRequest"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
         if ClaudeHookPreferences.triggerOnSessionEnd {
             hooks["SessionEnd"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
         }
@@ -222,7 +227,7 @@ enum CodexHookPreferences {
         cleanVibeFocusHooks(from: &document, scriptPath: scriptPath, targetURL: targetURL)
         // B130 语义补齐：历史错形状的顶层事件键整体降级（该形状 codex 解析失败整文件
         // 不加载，顶层事件无可达语义；我方条目已迁入规范 hooks 层，foreign 条目一并弃置）
-        for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
+        for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "PermissionRequest"] {
             document.removeValue(forKey: key)
         }
         document["hooks"] = wrapped
@@ -275,7 +280,7 @@ enum CodexHookPreferences {
         log("[CodexHookPreferences] cleanVibeFocusHooks() entered", level: .debug, fields: [
             "keysBefore": hooks.keys.sorted().joined(separator: ",")
         ])
-        for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"] {
+        for key in ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "PermissionRequest"] {
             guard let entries = hooks[key] as? [[String: Any]] else { continue }
             let stripped = HookSettingsComposition.stripVibeFocusEntries(
                 from: entries, targetURL: targetURL, scriptPath: scriptPath)

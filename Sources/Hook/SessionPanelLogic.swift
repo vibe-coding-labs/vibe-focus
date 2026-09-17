@@ -36,7 +36,7 @@ enum SessionPanelLogic {
     static func deriveStatus(lastEvent: ClaudeHookEventType) -> SessionLiveStatus {
         switch lastEvent {
         case .userPromptSubmit: return .running
-        case .notification: return .waiting
+        case .notification, .permissionRequest: return .waiting
         case .stop: return .done
         case .sessionStart: return .bound
         case .sessionEnd: return .ended

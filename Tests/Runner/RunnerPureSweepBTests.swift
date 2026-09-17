@@ -488,9 +488,9 @@ extension RunnerHarness {
 
     do {
         // ClaudeHookEventType / WindowMoveReason：线上 JSON 契约的 rawValue（与 hook 脚本/审计行互为表里）。
-        check("hookEvent: 五事件 PascalCase rawValue 契约（B196 起 +Notification）",
+        check("hookEvent: 六事件 PascalCase rawValue 契约（B206 起 +PermissionRequest）",
               ClaudeHookEventType.allCases.map(\.rawValue)
-              == ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "Notification"])
+              == ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "Notification", "PermissionRequest"])
         check("moveReason: 三原因 snake_case rawValue 回环",
               WindowMoveReason(rawValue: "manual_hotkey") == .manualHotkey
               && WindowMoveReason(rawValue: "claude_session_end") == .claudeSessionEnd

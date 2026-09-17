@@ -4,12 +4,15 @@ import Foundation
 /// Notification).
 /// Notification = Claude 需要权限确认或空闲等待输入时触发——「等用户」这一态此前
 /// 完全无感知，B196 接入后联动 macOS 通知中心。
+/// PermissionRequest = Codex 特有事件（B206）：codex 弹权限确认停下等用户批准，
+/// 与 Claude 的「等用户」同义，走同一条通知管线（服务端按同一开关门控）。
 enum ClaudeHookEventType: String, Codable, CaseIterable {
     case sessionStart = "SessionStart"
     case stop = "Stop"
     case sessionEnd = "SessionEnd"
     case userPromptSubmit = "UserPromptSubmit"
     case notification = "Notification"
+    case permissionRequest = "PermissionRequest"
 }
 
 /// Claude Code hook 辅助脚本捕获的终端上下文信息
