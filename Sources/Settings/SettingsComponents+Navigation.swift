@@ -68,6 +68,7 @@ enum SettingsTab: String, CaseIterable {
     case workspace = "工作区"
     case orchestration = "编排"
     case claudeIntegration = "Claude 集成"
+    case codexIntegration = "Codex 集成"
     case appearance = "外观与反馈"
 
     var icon: String {
@@ -76,6 +77,7 @@ enum SettingsTab: String, CaseIterable {
         case .workspace: return "macwindow"
         case .orchestration: return "rectangle.split.2x2"
         case .claudeIntegration: return "link"
+        case .codexIntegration: return "terminal.fill"
         case .appearance: return "paintbrush"
         }
     }

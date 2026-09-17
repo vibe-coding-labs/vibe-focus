@@ -185,6 +185,18 @@ extension RunnerHarness {
               && SettingsView.CodexInstallPresentation.pillTintName(installed: false) == "warning")
     }
 
+    // MARK: SettingsTab 契约（B205：Codex 独立标签页）
+
+    do {
+        let tabs = SettingsTab.allCases
+        check("settingsTab: 共 6 个标签", tabs.count == 6)
+        check("settingsTab: 含 Codex 集成", tabs.contains(.codexIntegration) && SettingsTab.codexIntegration.rawValue == "Codex 集成")
+        check("settingsTab: Codex 图标 terminal.fill", SettingsTab.codexIntegration.icon == "terminal.fill")
+        check("settingsTab: Codex 紧随 Claude 集成",
+              tabs.firstIndex(of: .codexIntegration)! == tabs.firstIndex(of: .claudeIntegration)! + 1)
+        check("settingsTab: 无重复 rawValue", Set(tabs.map(\.rawValue)).count == tabs.count)
+    }
+
     // MARK: PromptMoveDecision + UPSRateLimiter（真实实现——UPS 搬窗决策链与防循环限流，Batch 14）
 
     do {

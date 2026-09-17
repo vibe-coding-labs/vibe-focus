@@ -1,8 +1,10 @@
 import SwiftUI
 
-// MARK: - Codex CLI 集成（2026-09-07 B21 从 ClaudeHookSection 拆分）
+// MARK: - Codex CLI 集成（2026-09-07 B21 自 ClaudeHookSection 拆出视图；B205 升独立标签页）
 // Codex 的 Hook schema 与 Claude Code 同构，复用同一 Hook 服务与辅助脚本。
 // 安装状态的三处三元表达式收敛为 InstallPresentation 单一事实源（Runner 直测）。
+// B205：不再是 Claude 集成页卡片内的尾块，独立成「Codex 集成」标签页——
+// 主开关（Hook 服务）仍在「Claude 集成」页，跨页依赖用置顶提示交代。
 
 extension SettingsView {
 
@@ -15,36 +17,22 @@ extension SettingsView {
         }
     }
 
-    @ViewBuilder
-    var codexHookRows: some View {
-            // MARK: - Codex CLI 集成
+    /// 「Codex 集成」标签页内容（B205：独立 SettingsCard）
+    var codexSection: some View {
+        SettingsCard(
+            title: "Codex CLI 集成",
+            subtitle: "Codex 的 Hook schema 与 Claude Code 同构，复用同一个 Hook 服务与辅助脚本，写入独立的 ~/.codex/hooks.json。语音播报同样在 Stop 事件触发。",
+            icon: "terminal.fill"
+        ) {
+            if !hookEnabled {
+                InfoBanner(
+                    style: .warning,
+                    title: "Hook 服务未开启",
+                    text: "Codex 安装与触发依赖 Hook 服务。请先到「Claude 集成」页打开「Hook 服务」开关，再回到这里安装。"
+                )
 
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "terminal.fill")
-                    .foregroundStyle(VibeColors.accent.opacity(0.8))
-                    .font(.system(size: 14))
-                    .padding(.top, 2)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Codex CLI")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("Codex 的 Hook schema 与 Claude Code 同构，复用同一个 Hook 服务与辅助脚本，写入独立的 ~/.codex/hooks.json。语音播报同样在 Stop 事件触发。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Divider()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
-                    .fill(VibeColors.accent.opacity(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
-                    .strokeBorder(VibeColors.accent.opacity(0.14), lineWidth: 1)
-            )
 
             HStack(spacing: 12) {
                 Button(CodexHookPreferences.isHookInstalled() ? "重新安装" : "安装到 Codex CLI") {
@@ -74,16 +62,22 @@ extension SettingsView {
                     .foregroundStyle(codexInstallSucceeded ? VibeColors.success : VibeColors.danger)
             }
 
-            Text("Codex 首次运行 Hook 时需在 Codex 界面确认信任（hook trust 机制）。触发时机与上方 Claude Code 设置共享。")
+            Text("Codex 首次运行 Hook 时需在 Codex 界面确认信任（hook trust 机制）。触发时机与「Claude 集成」页的 Claude Code 设置共享。")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-        SettingsRow(
-            title: "Codex Hook 安装状态",
-            detail: CodexInstallPresentation.detailText(installed: CodexHookPreferences.isHookInstalled())
-        ) {
-            SettingsStatusPill(
-                title: CodexInstallPresentation.pillTitle(installed: CodexHookPreferences.isHookInstalled()),
-                tint: CodexInstallPresentation.pillTintName(installed: CodexHookPreferences.isHookInstalled()) == "success" ? VibeColors.success : VibeColors.warning
-            )
+            Divider()
+
+            SettingsRow(
+                title: "Codex Hook 安装状态",
+                detail: CodexInstallPresentation.detailText(installed: CodexHookPreferences.isHookInstalled())
+            ) {
+                SettingsStatusPill(
+                    title: CodexInstallPresentation.pillTitle(installed: CodexHookPreferences.isHookInstalled()),
+                    tint: CodexInstallPresentation.pillTintName(installed: CodexHookPreferences.isHookInstalled()) == "success" ? VibeColors.success : VibeColors.warning
+                )
+            }
         }
     }
 }

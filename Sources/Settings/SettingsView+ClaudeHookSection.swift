@@ -275,13 +275,6 @@ extension SettingsView {
             Text("测试：SessionStart 绑定当前窗口 → 1 秒后 SessionEnd 触发移动")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-
-            Divider()
-
-            codexHookRows
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

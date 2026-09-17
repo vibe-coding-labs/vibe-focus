@@ -158,6 +158,14 @@ public struct SettingsView: View {
             }
             .scrollIndicators(.visible)
 
+        case .codexIntegration:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    codexSection
+                }
+            }
+            .scrollIndicators(.visible)
+
         case .appearance:
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
