@@ -95,7 +95,7 @@ extension SettingsView {
 
                 SettingsRow(
                     title: "文案模板",
-                    detail: "支持变量：{project_name} {model} {cwd} {session_id}"
+                    detail: "支持变量：{project_name} {model} {cwd} {session_id} {tokens}（最后一轮 token 用量，B200）"
                 ) {
                     TextEditor(text: Binding(
                         get: { voiceAnnouncementManager.preferences.templateText },

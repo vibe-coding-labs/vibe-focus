@@ -72,11 +72,13 @@ struct VoiceAnnouncementPreferences: Codable {
 /// ```
 enum VoiceAnnouncementTemplate {
 
-    /// 将模板中的 {project_name} / {model} / {cwd} / {session_id} 替换为 payload 中的实际值。
+    /// 将模板中的 {project_name} / {model} / {cwd} / {session_id} / {tokens} 替换为实际值。
     ///
     /// 变量取值规则：project_name 取 claudeProjectDir 的最后一段路径（去首尾 `/`），
-    /// 缺失时各变量用「未知项目 / 未知模型 / 空串 / 原样 sessionID」兜底。
-    static func interpolate(_ template: String, payload: ClaudeHookPayload) -> String {
+    /// 缺失时各变量用「未知项目 / 未知模型 / 空串 / 原样 sessionID / 未知」兜底。
+    /// {tokens}（B200）= transcript 最后一轮 token 用量合计（四项含 cache），
+    /// 由调用方读 transcript 得出传入（插值保持纯函数，不做 IO）。
+    static func interpolate(_ template: String, payload: ClaudeHookPayload, tokens: Int? = nil) -> String {
         let projectName = payload.terminalCtx?.claudeProjectDir?
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             .components(separatedBy: "/").last
@@ -90,6 +92,7 @@ enum VoiceAnnouncementTemplate {
             .replacingOccurrences(of: "{model}", with: model)
             .replacingOccurrences(of: "{cwd}", with: cwd)
             .replacingOccurrences(of: "{session_id}", with: sessionID)
+            .replacingOccurrences(of: "{tokens}", with: tokens.map { String($0) } ?? "未知")
     }
 }
 

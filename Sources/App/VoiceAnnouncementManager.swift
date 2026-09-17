@@ -102,17 +102,23 @@ final class VoiceAnnouncementManager: NSObject, ObservableObject {
             let brief = question.count > 80 ? String(question.prefix(80)) + "…" : question
             return TranscriptTailReader.waitingPrefix + "：" + brief
         }
+        // B200: 最后一轮 token 用量（模板 {tokens} 变量的数据源）。
+        let lastTurnTokens = payload.transcriptPath.flatMap {
+            TranscriptTailReader.readLastTurnUsage(path: $0)
+        }?.totalTokens
         log("[VoiceAnnouncementManager] transcript tail consumed", level: .debug, fields: [
             "sessionID": payload.sessionID,
             "tailCount": String(transcriptTail.count),
-            "pendingQuestion": String(pendingQuestion)
+            "pendingQuestion": String(pendingQuestion),
+            "lastTurnTokens": lastTurnTokens.map(String.init) ?? "nil"
         ])
 
         switch preferences.mode {
         case .none:
             return
         case .template:
-            let text = VoiceAnnouncementTemplate.interpolate(preferences.templateText, payload: payload)
+            let text = VoiceAnnouncementTemplate.interpolate(
+                preferences.templateText, payload: payload, tokens: lastTurnTokens)
             var spoken = text.isEmpty ? "对话完成" : text
             if pendingQuestion, let waitingText { spoken += "。" + waitingText }
             enqueueAnnouncement(.text(spoken), sessionID: payload.sessionID)

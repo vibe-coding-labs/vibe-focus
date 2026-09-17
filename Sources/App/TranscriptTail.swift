@@ -65,6 +65,16 @@ enum TranscriptTailReader {
         maxMessages: Int = maxMessages,
         perMessageCap: Int = perMessageCap
     ) -> [String] {
+        let lines = readLines(path: path, maxBytes: maxBytes)
+        let texts = parseAssistantTexts(fromLines: lines)
+        // 首行落在读界上可能是半行 JSON——解析自然失败被跳过，无需特判。
+        return texts.suffix(maxMessages).map { text in
+            text.count > perMessageCap ? String(text.prefix(perMessageCap)) : text
+        }
+    }
+
+    /// 读文件尾部为行数组（读界上的半行 JSON 由调用方解析时自然跳过）。
+    static func readLines(path: String, maxBytes: Int) -> [String] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
         let size = Int64((try? handle.seekToEnd()) ?? 0)
@@ -73,14 +83,50 @@ enum TranscriptTailReader {
         try? handle.seek(toOffset: UInt64(offset))
         let data = (try? handle.read(upToCount: Int(readBytes))) ?? Data()
         guard !data.isEmpty else { return [] }
-        let lines = String(data: data, encoding: .utf8)?
+        return String(data: data, encoding: .utf8)?
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map(String.init) ?? []
-        let texts = parseAssistantTexts(fromLines: lines)
-        // 首行落在读界上可能是半行 JSON——解析自然失败被跳过，无需特判。
-        return texts.suffix(maxMessages).map { text in
-            text.count > perMessageCap ? String(text.prefix(perMessageCap)) : text
+    }
+
+    // MARK: - B200 token 用量提取
+
+    /// 最后一轮回合的 token 用量（transcript assistant 行 message.usage 实测形状：
+    /// input_tokens / cache_creation_input_tokens / cache_read_input_tokens /
+    /// output_tokens；嵌套 server_tool_use 等未知字段防御性忽略）。
+    struct TurnUsage: Equatable {
+        let inputTokens: Int
+        let outputTokens: Int
+        let cacheReadTokens: Int
+        let cacheCreationTokens: Int
+        /// 四项合计（cache 计入——中转计费口径看总量）。
+        var totalTokens: Int {
+            inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens
         }
+    }
+
+    /// 从 JSONL 行提取最后一轮用量（行序遍历，后写覆盖前写=最后一轮胜出）。
+    static func parseLastUsage(fromLines lines: [String]) -> TurnUsage? {
+        var usage: TurnUsage?
+        for line in lines {
+            guard let data = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  obj["type"] as? String == "assistant",
+                  let message = obj["message"] as? [String: Any],
+                  let u = message["usage"] as? [String: Any] else { continue }
+            func int(_ key: String) -> Int { u[key] as? Int ?? 0 }
+            usage = TurnUsage(
+                inputTokens: int("input_tokens"),
+                outputTokens: int("output_tokens"),
+                cacheReadTokens: int("cache_read_input_tokens"),
+                cacheCreationTokens: int("cache_creation_input_tokens")
+            )
+        }
+        return usage
+    }
+
+    /// 读 transcript 尾部并提取最后一轮 token 用量；不可得返回 nil。
+    static func readLastTurnUsage(path: String, maxBytes: Int = maxReadBytes) -> TurnUsage? {
+        parseLastUsage(fromLines: readLines(path: path, maxBytes: maxBytes))
     }
 
     /// 等待输入前缀（模板/音频/LLM fallback 三路共用同一措辞，听感一致）。

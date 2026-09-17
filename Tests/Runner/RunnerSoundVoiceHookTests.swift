@@ -486,6 +486,32 @@ extension RunnerHarness {
             context: [String(repeating: "早", count: 1500)])
         check("transcript: user content 总量截断 2000 字（保留尾部=最近内容优先）",
               huge.count == 2000 && huge.hasSuffix(String(repeating: "尾", count: 1500)))
+
+        // B200: token 用量提取 + {tokens} 模板变量
+        let usageLines = [
+            #"{"type":"user","message":{"role":"user","content":[]}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":400,"server_tool_use":{"web_search_requests":0}}}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"b"}],"usage":{"input_tokens":26270,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":380}}}"#,
+        ]
+        let usage = TranscriptTailReader.parseLastUsage(fromLines: usageLines)
+        check("transcript B200: usage 最后一轮胜出且四项合计（含 cache）",
+              usage?.inputTokens == 26270 && usage?.outputTokens == 380
+              && usage?.cacheReadTokens == 5000 && usage?.cacheCreationTokens == 0
+              && usage?.totalTokens == 31650)
+        check("transcript B200: 无 usage 行 → nil",
+              TranscriptTailReader.parseLastUsage(fromLines: [usageLines[0]]) == nil)
+        let usagePath = dir + "/usage.jsonl"
+        FileManager.default.createFile(atPath: usagePath, contents: Data(usageLines.joined(separator: "\n").utf8))
+        check("transcript B200: readLastTurnUsage 走真实文件",
+              TranscriptTailReader.readLastTurnUsage(path: usagePath)?.totalTokens == 31650)
+        let payloadB200 = ClaudeHookPayload(
+            event: .stop, sessionID: "s-b200", source: nil, timestamp: nil,
+            cwd: "/tmp/p", model: "m-1", terminalCtx: nil,
+            lastAssistantMessage: nil, transcriptPath: nil)
+        check("transcript B200: {tokens} 插值（有值出数字、缺省出「未知」、既有四变量不受扰）",
+              VoiceAnnouncementTemplate.interpolate("{tokens}", payload: payloadB200, tokens: 31650) == "31650"
+              && VoiceAnnouncementTemplate.interpolate("{tokens}", payload: payloadB200) == "未知"
+              && VoiceAnnouncementTemplate.interpolate("{model}/{tokens}", payload: payloadB200, tokens: 7) == "m-1/7")
     }
     }
 }
