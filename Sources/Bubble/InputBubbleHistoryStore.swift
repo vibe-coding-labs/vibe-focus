@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - 气泡输入历史（B195 数据环 + B196 状态/窗口归属/面板底座）
+// MARK: - 气泡输入历史（B195 数据环 + B196 状态/窗口归属/面板底座 + B203 搜索/翻阅口径/批量清理）
 // 用户定案（2026-09-17）：没按回车、只要与默认文案不一致就算草稿——历史必须区分
 // 「草稿 / 已提交」两种状态，并带窗口归属（面板默认按窗过滤，可切全部）。
 // 用例：提交注入失败的 BUG 再现时，用户来历史里复制/回填，文本永不蒸发。
@@ -73,6 +73,35 @@ enum InputBubbleHistoryFilter {
         guard let currentWindowID else { return [] }
         return entries.filter { $0.windowID == currentWindowID }
     }
+
+    /// 搜索过滤（B203）：大小写/变音符/全半角折叠后的子串匹配，命中正文或窗标题
+    /// 快照任一即保留。空白查询=不过滤（原样返回）。
+    static func search(
+        _ entries: [InputBubbleHistoryEntry],
+        query: String
+    ) -> [InputBubbleHistoryEntry] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return entries }
+        let key = fold(trimmed)
+        return entries.filter { entry in
+            fold(entry.text).contains(key)
+                || (entry.windowTitle.map { fold($0).contains(key) } ?? false)
+        }
+    }
+
+    /// ↑↓ 翻阅口径（B203）：与面板默认一致优先本窗；本窗无任何历史时回落全部
+    /// （保留 B195 的跨窗兜底——窗一关一开 CGWindowID 换新后，翻阅与恢复不至于清零）。
+    static func navEntries(
+        _ entries: [InputBubbleHistoryEntry],
+        currentWindowID: UInt32?
+    ) -> [InputBubbleHistoryEntry] {
+        let perWindow = select(entries, scope: .currentWindow, currentWindowID: currentWindowID)
+        return perWindow.isEmpty ? entries : perWindow
+    }
+
+    private static func fold(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+    }
 }
 
 @MainActor
@@ -122,6 +151,14 @@ final class InputBubbleHistoryStore {
     func remove(at id: Date) {
         let filtered = entries().filter { $0.at != id }
         guard filtered.count != entries().count else { return }
+        persist(filtered)
+    }
+
+    /// 批量删除（B203 面板「清空本视图」）：谓词命中的全部移除，一条未命中则静默。
+    func remove(where shouldRemove: (InputBubbleHistoryEntry) -> Bool) {
+        let before = entries()
+        let filtered = before.filter { !shouldRemove($0) }
+        guard filtered.count != before.count else { return }
         persist(filtered)
     }
 

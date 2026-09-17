@@ -356,8 +356,20 @@ final class InputBubbleController: NSObject {
 
     /// 面板「填充」：把历史文本回填进打开中的气泡（替换全文），基线同步推进
     /// （防脏守卫/干净关闭语义把回填误判为用户新输入）。
+    /// B203 防蒸发：覆盖前若现场是用户改动过的非空白文本，先落一条草稿历史——
+    /// 正在输入的草稿不再被回填静默顶掉。
     func fillFromHistory(_ text: String) {
         guard phase == .open, let textView else { return }
+        if let target,
+           InputBubbleFillGuard.shouldPreserveCurrent(
+            currentText: textView.string, baseText: lastRestoredBaseText) {
+            InputBubbleHistoryStore.shared.record(
+                textView.string,
+                windowID: target.windowID,
+                windowTitle: target.title,
+                status: .draft
+            )
+        }
         textView.string = text
         lastRestoredBaseText = text
         textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
@@ -372,32 +384,41 @@ final class InputBubbleController: NSObject {
         ])
     }
 
-    // MARK: ↑↓ 输入历史翻阅（B195）
+    // MARK: ↑↓ 输入历史翻阅（B195；B203 起口径=本窗优先，本窗无历史回落全部）
 
     /// ↑：逐条变旧。返回 true=已消费（textView 不再走 super 光标移动）。
     /// 首次进入翻阅自动 stash 现场文本；到最旧停住。
     func historyPrevious() -> Bool {
         guard phase == .open, let textView else { return false }
-        let entries = InputBubbleHistoryStore.shared.entries()
+        let entries = InputBubbleHistoryFilter.navEntries(
+            InputBubbleHistoryStore.shared.entries(),
+            currentWindowID: target?.windowID
+        )
         let action = InputBubbleHistoryNavPlan.up(currentIndex: historyNavIndex, entryCount: entries.count)
-        return applyHistoryNav(action, textView: textView)
+        return applyHistoryNav(action, entries: entries, textView: textView)
     }
 
     /// ↓：逐条变新；走出最新一条回编辑现场（stash 还原）。未在翻阅中=不消费。
     func historyNext() -> Bool {
         guard phase == .open, let textView else { return false }
-        let entries = InputBubbleHistoryStore.shared.entries()
+        let entries = InputBubbleHistoryFilter.navEntries(
+            InputBubbleHistoryStore.shared.entries(),
+            currentWindowID: target?.windowID
+        )
         let action = InputBubbleHistoryNavPlan.down(currentIndex: historyNavIndex, entryCount: entries.count)
-        return applyHistoryNav(action, textView: textView)
+        return applyHistoryNav(action, entries: entries, textView: textView)
     }
 
-    private func applyHistoryNav(_ action: InputBubbleHistoryNavPlan.Action, textView: NSTextView) -> Bool {
+    private func applyHistoryNav(
+        _ action: InputBubbleHistoryNavPlan.Action,
+        entries: [InputBubbleHistoryEntry],
+        textView: NSTextView
+    ) -> Bool {
         PerfMonitor.shared.measure("bubble.historyNav") {
             switch action {
             case .none:
                 return
             case .moveTo(let index):
-                let entries = InputBubbleHistoryStore.shared.entries()
                 guard index < entries.count else { return }
                 if historyNavIndex == nil { historyStashedText = textView.string }
                 historyNavIndex = index

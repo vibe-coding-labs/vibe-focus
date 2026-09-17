@@ -1,12 +1,14 @@
 import AppKit
 import Carbon
 
-// MARK: - 输入历史面板（B196）
+// MARK: - 输入历史面板（B196 底座 + B203 搜索/清空/操作反馈）
 // 气泡底栏「历史」钮的落地页：草稿/已提交全量时间线。
 // 产品定案（2026-09-17）：
 // - 默认按气泡当前绑定窗过滤（本窗），可一键切「全部」；
 // - 单击条目展开全文（长内容可滚动、可选中复制），再点收起；
 // - 每条：复制（拷全文）/ 填充（回填气泡输入框）/ ✕（删除该条）；
+// - B203：头部搜索框（正文/窗名子串折叠匹配，Esc 先清搜索再关面板）+
+//   「清空」两段确认钮（只清当前过滤结果）+ 删除/清空 toast + 重排保留滚动位置；
 // - 用例：提交注入失败的 BUG 再现时，来这里把文本捞回来。
 // 样式沿用气泡卡片语系（奶油暖底 + 珊瑚强调，light/dark 动态）；手工 frame 布局，
 // 状态变化整表重建（条目量 ≤ 容量 200，重建开销毫秒级，不做增量 diff）。
@@ -50,7 +52,8 @@ final class HistoryStatusBadge: NSView {
 // MARK: - 迷你文字钮（复制 / 填充 / ✕）
 
 final class HistoryMiniButton: NSView {
-    let title: String
+    // var：清空钮两段确认（B203）需要改标题；draw 每帧读现值
+    var title: String
     var onClick: (() -> Void)?
     private var isPressed = false
 
@@ -268,6 +271,12 @@ final class InputBubbleHistoryPanelController: NSObject {
     private var toastLabel: NSTextField?
     private var toastWorkItem: DispatchWorkItem?
     private var monitors: [Any] = []
+    // B203：搜索与两段确认清空的状态
+    private var searchQuery = ""
+    private var searchField: NSTextField?
+    private var clearButton: HistoryMiniButton?
+    private var clearArmed = false
+    private var clearDisarmWorkItem: DispatchWorkItem?
     private let panelWidth: CGFloat = 460
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -289,6 +298,12 @@ final class InputBubbleHistoryPanelController: NSObject {
         toastLabel = nil
         expandedID = nil
         toastWorkItem?.cancel()
+        // B203：搜索与清空确认态随面板生命周期复位（下次打开是新现场）
+        searchQuery = ""
+        searchField = nil
+        clearButton = nil
+        clearArmed = false
+        clearDisarmWorkItem?.cancel()
     }
 
     private func open(anchorFrame: CGRect, currentWindowID: UInt32?, fill: @escaping (String) -> Void) {
@@ -352,7 +367,7 @@ final class InputBubbleHistoryPanelController: NSObject {
         let toast = NSTextField(labelWithString: "")
         toast.font = NSFont.systemFont(ofSize: 10, weight: .medium)
         toast.textColor = NSColor(rgbHex: isDark ? 0xFF8266 : 0xE64A33)
-        toast.frame = NSRect(x: 108, y: contentHeight - 26, width: 160, height: 14)
+        toast.frame = NSRect(x: 108, y: contentHeight - 26, width: w - 188, height: 14)
         content.addSubview(toast)
         toastLabel = toast
 
@@ -360,6 +375,14 @@ final class InputBubbleHistoryPanelController: NSObject {
         closeButton.frame = NSRect(x: w - 32, y: contentHeight - 28, width: 20, height: 18)
         closeButton.onClick = { [weak self] in self?.close() }
         content.addSubview(closeButton)
+
+        // B203 清空：两段确认（首点变「确认清空」，3s 不跟第二点自动还原），
+        // 只清当前过滤结果（本窗/全部 × 搜索词），不动其它窗的历史。
+        let clear = HistoryMiniButton(title: "清空", width: 60)
+        clear.frame = NSRect(x: w - 96, y: contentHeight - 28, width: 60, height: 18)
+        clear.onClick = { [weak self] in self?.clearVisibleEntries() }
+        content.addSubview(clear)
+        clearButton = clear
 
         let segmented = NSSegmentedControl(
             labels: ["本窗", "全部"], trackingMode: .selectOne, target: self, action: #selector(scopeDidChange(_:))
@@ -371,9 +394,19 @@ final class InputBubbleHistoryPanelController: NSObject {
         let count = NSTextField(labelWithString: "")
         count.font = NSFont.systemFont(ofSize: 10)
         count.textColor = NSColor(rgbHex: isDark ? 0x8A7B68 : 0xA99A80)
-        count.frame = NSRect(x: 152, y: contentHeight - 50, width: w - 190, height: 14)
+        count.frame = NSRect(x: 152, y: contentHeight - 50, width: 84, height: 14)
         content.addSubview(count)
         countLabel = count
+
+        // B203 搜索框：正文/窗名子串折叠匹配；输入即刷（整表重建毫秒级）
+        let field = NSTextField(frame: NSRect(x: 242, y: contentHeight - 54, width: w - 242 - 14, height: 22))
+        field.placeholderString = "搜索正文或窗名…"
+        field.font = NSFont.systemFont(ofSize: 10.5)
+        field.delegate = self
+        field.usesSingleLineMode = true
+        field.lineBreakMode = .byTruncatingTail
+        content.addSubview(field)
+        searchField = field
     }
 
     @objc private func scopeDidChange(_ sender: NSSegmentedControl) {
@@ -384,14 +417,23 @@ final class InputBubbleHistoryPanelController: NSObject {
 
     // MARK: 列表整表重建
 
+    /// 当前过滤结果（scope × 搜索词）——清空钮的作用域即此集合。
+    private func currentVisibleEntries() -> [InputBubbleHistoryEntry] {
+        let all = InputBubbleHistoryStore.shared.entries()
+        let scoped = InputBubbleHistoryFilter.select(all, scope: scope, currentWindowID: currentWindowID)
+        return InputBubbleHistoryFilter.search(scoped, query: searchQuery)
+    }
+
     private func refresh() {
         guard let listScroll else { return }
-        let all = InputBubbleHistoryStore.shared.entries()
-        let visible = InputBubbleHistoryFilter.select(all, scope: scope, currentWindowID: currentWindowID)
+        let visible = currentVisibleEntries()
+        let queryBlank = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         countLabel?.stringValue = visible.isEmpty
-            ? "暂无记录"
+            ? (queryBlank ? "暂无记录" : "无匹配")
             : "\(visible.count) 条 · \(scope == .currentWindow ? "本窗" : "全部")"
 
+        // B203：重排（展开/删除/搜索）保留视口，不再跳回顶部
+        let previousOffset = listScroll.contentView.bounds.origin.y
         let contentWidth = listScroll.frame.width
         let rowWidth = contentWidth - 4
         let totalHeight = visible.reduce(0) { $0 + HistoryRowView.height(isExpanded: $1.at == expandedID) + 6 }
@@ -420,10 +462,13 @@ final class InputBubbleHistoryPanelController: NSObject {
                 InputBubbleHistoryStore.shared.remove(at: entry.at)
                 if self?.expandedID == entry.at { self?.expandedID = nil }
                 self?.refresh()
+                self?.showToast("已删除 1 条 ✓")
             }
             document.addSubview(row)
         }
         listScroll.documentView = document
+        let maxOffset = max(document.frame.height - listScroll.contentSize.height, 0)
+        listScroll.contentView.bounds.origin.y = min(max(previousOffset, 0), maxOffset)
         listScroll.reflectScrolledClipView(listScroll.contentView)
     }
 
@@ -456,12 +501,64 @@ final class InputBubbleHistoryPanelController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: item)
     }
 
-    // MARK: 事件监视（Esc 关 / 点面板与气泡之外关）
+    // MARK: 清空本视图（B203 两段确认：首点武装 3s，第二点执行；只清当前过滤结果）
+
+    private func clearVisibleEntries() {
+        guard clearArmed else {
+            armClear()
+            return
+        }
+        disarmClear()
+        let doomed = currentVisibleEntries()
+        guard !doomed.isEmpty else {
+            showToast("没有可清空的记录")
+            return
+        }
+        let doomedIDs = Set(doomed.map(\.at))
+        InputBubbleHistoryStore.shared.remove { doomedIDs.contains($0.at) }
+        expandedID = nil
+        refresh()
+        showToast("已清空 \(doomed.count) 条 ✓")
+        log("[InputBubble] history cleared", fields: [
+            "count": String(doomed.count),
+            "scope": String(describing: scope),
+            "queryBlank": String(searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        ])
+    }
+
+    private func armClear() {
+        clearArmed = true
+        clearButton?.title = "确认清空"
+        clearButton?.needsDisplay = true
+        let item = DispatchWorkItem { [weak self] in self?.disarmClear() }
+        clearDisarmWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: item)
+    }
+
+    private func disarmClear() {
+        clearDisarmWorkItem?.cancel()
+        clearDisarmWorkItem = nil
+        guard clearArmed else { return }
+        clearArmed = false
+        clearButton?.title = "清空"
+        clearButton?.needsDisplay = true
+    }
+
+    // MARK: 事件监视（Esc：搜索有词先清词、否则关面板；点面板与气泡之外关）
 
     private func installMonitors() {
         removeMonitors()
         let keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isVisible, event.keyCode == UInt16(kVK_Escape) else { return event }
+            // B203：正在搜索框打字时第一档 Esc 只清搜索词，再按才关面板
+            if let field = self.searchField,
+               !field.stringValue.isEmpty,
+               field.currentEditor() != nil {
+                field.stringValue = ""
+                self.searchQuery = ""
+                self.refresh()
+                return nil
+            }
             self.close()
             return nil
         }
@@ -499,6 +596,17 @@ final class InputBubbleHistoryPanelController: NSObject {
         let center = CGPoint(x: anchorFrame.midX, y: anchorFrame.midY)
         let screen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) } ?? NSScreen.main
         return screen?.visibleFrame ?? anchorFrame
+    }
+}
+
+// MARK: - 搜索框实时过滤（B203：输入即刷；查询变化后展开态不再有意义，一并复位）
+
+extension InputBubbleHistoryPanelController: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, field === searchField else { return }
+        searchQuery = field.stringValue
+        expandedID = nil
+        refresh()
     }
 }
 

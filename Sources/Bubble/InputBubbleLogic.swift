@@ -144,6 +144,17 @@ enum InputBubbleHistoryNavPlan {
     }
 }
 
+/// 填充防蒸发门（B203）：面板「填充」会用历史文本整段覆盖气泡现场——若现场文本是
+/// 用户改动过的（≠恢复基准）非空白内容，覆盖前必须先落一条草稿历史，兑现
+/// 「文本永不蒸发」承诺（B198 前的回填会静默顶掉正在输入的草稿）。
+enum InputBubbleFillGuard {
+    /// true = 覆盖前先把现场文本存草稿历史。
+    static func shouldPreserveCurrent(currentText: String, baseText: String) -> Bool {
+        currentText != baseText
+            && !currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// 注入前决策门（唯一判定点，执行器照办不二次判断）。
 /// 判序：空文本/cancel 只关气泡 → 目标窗失效 beep 拒绝 → 前台不符 beep 拒绝 → 放行。
 /// 严格性依据 B125 教训：宁可不注入，不可射进错窗。

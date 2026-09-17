@@ -732,3 +732,76 @@ extension RunnerHarness {
         _ = rowEntry
     }
 }
+
+extension RunnerHarness {
+    /// B203：搜索过滤 / ↑↓ 翻阅口径 / 批量清空 / 填充防蒸发门。
+    func runBubbleHistorySearchTests() {
+        print("\n=== BubbleHistorySearch (B203) ===")
+
+        let now = Date()
+        func entry(_ text: String, windowID: UInt32?, title: String? = "win") -> InputBubbleHistoryEntry {
+            InputBubbleHistoryEntry(
+                text: text, at: now.addingTimeInterval(-Double(text.hashValue % 1000).magnitude),
+                windowID: windowID, windowTitle: title, status: .draft
+            )
+        }
+
+        // --- Filter.search：折叠子串匹配正文/窗名，空白查询透传 ---
+        let corpus: [InputBubbleHistoryEntry] = [
+            entry("Fix the LoginService bug", windowID: 1),
+            entry("写单元测试", windowID: 2, title: "remote-server-001"),
+            entry(" unrelated ", windowID: 3, title: "Finder"),
+        ]
+        check("search: 空查询透传全量", InputBubbleHistoryFilter.search(corpus, query: "").count == 3)
+        check("search: 纯空白查询透传", InputBubbleHistoryFilter.search(corpus, query: "   \n ").count == 3)
+        check("search: 大小写折叠命中", InputBubbleHistoryFilter.search(corpus, query: "loginservice").map(\.text) == ["Fix the LoginService bug"])
+        check("search: 中文子串命中正文", InputBubbleHistoryFilter.search(corpus, query: "单元测试").map(\.text) == ["写单元测试"])
+        check("search: 窗名命中（正文不含）", InputBubbleHistoryFilter.search(corpus, query: "remote-server").map(\.text) == ["写单元测试"])
+        check("search: 全半角折叠命中", InputBubbleHistoryFilter.search(corpus, query: "ｌｏｇｉｎ").map(\.text) == ["Fix the LoginService bug"])
+        check("search: 无命中返回空", InputBubbleHistoryFilter.search(corpus, query: "不存在的词xyz").isEmpty)
+        check("search: 首尾空白查询裁剪后命中", InputBubbleHistoryFilter.search(corpus, query: "  login  ").count == 1)
+        // legacy 无窗名条目：只按正文匹配，不崩
+        let legacyOnly: [InputBubbleHistoryEntry] = [InputBubbleHistoryEntry(text: "legacy text", at: now)]
+        check("search: legacy 无窗名按正文匹配", InputBubbleHistoryFilter.search(legacyOnly, query: "LEGACY").count == 1)
+
+        // --- Filter.navEntries：本窗优先，本窗空回落全部（保留跨窗兜底） ---
+        let mixed: [InputBubbleHistoryEntry] = [
+            entry("窗A-1", windowID: 100),
+            entry("窗B-1", windowID: 200),
+            InputBubbleHistoryEntry(text: "legacy", at: now.addingTimeInterval(-9)),
+        ]
+        check("nav: 本窗有历史只翻本窗", InputBubbleHistoryFilter.navEntries(mixed, currentWindowID: 100).map(\.text) == ["窗A-1"])
+        check("nav: 本窗无历史回落全部", InputBubbleHistoryFilter.navEntries(mixed, currentWindowID: 300).count == 3)
+        check("nav: 无当前窗回落全部", InputBubbleHistoryFilter.navEntries(mixed, currentWindowID: nil).count == 3)
+        check("nav: 空历史仍空", InputBubbleHistoryFilter.navEntries([], currentWindowID: 1).isEmpty)
+        // 与面板同源：本窗口径 = select(.currentWindow)
+        check("nav: 与面板本窗口径一致", InputBubbleHistoryFilter.navEntries(mixed, currentWindowID: 200) == InputBubbleHistoryFilter.select(mixed, scope: .currentWindow, currentWindowID: 200))
+
+        // --- FillGuard：现场文本改动过且非空白才需要在覆盖前抢救 ---
+        check("fill: 改动过非空白 → 抢救", InputBubbleFillGuard.shouldPreserveCurrent(currentText: "打到一半", baseText: ""))
+        check("fill: 未改动 → 不抢救", !InputBubbleFillGuard.shouldPreserveCurrent(currentText: "同文", baseText: "同文"))
+        check("fill: 改动过但空白 → 不抢救", !InputBubbleFillGuard.shouldPreserveCurrent(currentText: "  ", baseText: ""))
+        check("fill: 基准非空被改动 → 抢救", InputBubbleFillGuard.shouldPreserveCurrent(currentText: "/goal 新内容", baseText: "/goal "))
+
+        // --- Store.remove(where:)：批量删除只动命中集 ---
+        let suiteName = "RunnerBubbleHistorySearchTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let store = InputBubbleHistoryStore(defaults: defaults)
+        store.record("甲", windowID: 1, status: .draft)
+        store.record("乙", windowID: 2, status: .submitted)
+        store.record("丙", windowID: 3, status: .draft)
+        store.remove { $0.windowID == 2 }
+        check("remove(where:): 只删命中窗", store.entries().map(\.text) == ["丙", "甲"])
+        store.remove { _ in false }
+        check("remove(where:): 零命中不动存储", store.entries().count == 2)
+        store.remove { _ in true }
+        check("remove(where:): 全命中清空", store.entries().isEmpty)
+        defaults.removePersistentDomain(forName: suiteName)
+
+        // --- scope × search 组合口径（面板 currentVisibleEntries 的纯函数镜像） ---
+        let scoped = InputBubbleHistoryFilter.select(mixed, scope: .currentWindow, currentWindowID: 100)
+        check("compose: 本窗内再搜索", InputBubbleHistoryFilter.search(scoped, query: "窗A").count == 1)
+        let scopedAll = InputBubbleHistoryFilter.select(mixed, scope: .all, currentWindowID: 100)
+        check("compose: 全部内搜索窗名", InputBubbleHistoryFilter.search(scopedAll, query: "win").count == 2)
+    }
+}
