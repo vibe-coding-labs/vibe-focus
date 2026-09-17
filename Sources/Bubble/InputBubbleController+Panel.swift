@@ -94,6 +94,13 @@ extension InputBubbleController {
         textView.onEnterKey = { [weak self] commandHeld in
             self?.handleEnter(commandHeld: commandHeld)
         }
+        // B195：↑↓ 输入历史翻阅
+        textView.onHistoryPrevious = { [weak self] in
+            self?.historyPrevious() ?? false
+        }
+        textView.onHistoryNext = { [weak self] in
+            self?.historyNext() ?? false
+        }
         textView.font = NSFont.systemFont(ofSize: 13)
         textView.textColor = Self.dynamicColor(lightHex: 0x40362B, darkHex: 0xF1E9DE)
         textView.drawsBackground = false

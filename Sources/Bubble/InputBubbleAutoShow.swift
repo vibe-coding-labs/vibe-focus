@@ -61,17 +61,22 @@ enum InputBubbleAutoShowGate {
 
     enum ArrivalWhileOpen: Equatable { case keepCurrent, retarget }
 
-    /// B184：气泡开着时「另一窗跨到主屏」的处置门。
+    /// B184：气泡开着时「另一窗跨到主屏」的处置门。B195 加输入中守卫。
     /// - 自动隐藏模式（autoHide=true）：不打扰正在使用的气泡（旧行为）；
-    /// - 绑定跟随模式（默认）：气泡改绑到刚移到主屏的窗（旧窗草稿按窗保留）；
-    /// - 气泡本就绑在到达窗上：跟随引擎已处理，不动。
+    /// - 气泡本就绑在到达窗上：跟随引擎已处理，不动；
+    /// - 输入中（isDirty：文本≠打开时恢复的基准）→ 不改绑（真机实锤 2026-09-16
+    ///   16:28 七秒连改绑两次 250→690→685：正在打的字被换成一窗空前缀=用户主诉
+    ///   「气泡搞没了/被重置」；改绑收益让位输入连续性，到达窗不再弹不追补）；
+    /// - 绑定跟随模式（默认）且空闲：气泡改绑到刚移到主屏的窗（旧窗草稿按窗保留）。
     static func decideArrivalWhileBubbleOpen(
         autoHide: Bool,
         openForWindowID: UInt32?,
-        arrivedWindowID: UInt32
+        arrivedWindowID: UInt32,
+        isDirty: Bool = false
     ) -> ArrivalWhileOpen {
         if autoHide { return .keepCurrent }
         if openForWindowID == arrivedWindowID { return .keepCurrent }
+        if isDirty { return .keepCurrent }
         return .retarget
     }
 }

@@ -77,21 +77,70 @@ enum InputBubbleKeyPlan {
         return commandHeld ? .submit : nil
     }
 
-    /// 气泡底部快捷键提示文案（随回车语义同步，防文案与行为漂移）。
+    /// 气泡底部快捷键提示文案（随回车语义同步，防文案与行为漂移）。B195：+↑↓ 历史。
     static func hintText(submitOnEnter: Bool) -> String {
         submitOnEnter
-            ? "Enter 注入并提交 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · Esc 关闭"
-            : "Enter 换行 · ⌘Enter 注入并提交 · Esc 关闭"
+            ? "Enter 注入并提交 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · ↑↓ 历史 · Esc 关闭"
+            : "Enter 换行 · ⌘Enter 注入并提交 · ↑↓ 历史 · Esc 关闭"
+    }
+}
+
+/// 唤起来源（B195）：恢复决策按来源分流——手动唤起给历史兜底，自动弹出保守。
+enum InputBubbleSummonSource: Equatable {
+    case manualHotKey   // ⌃X 快捷键（用户显式要输入）
+    case autoShow       // 焦点/移主屏自动弹出（系统主动，不塞旧内容）
+}
+
+/// 气泡初始文本恢复决策门（B195，取代 B162 的草稿直读）。
+/// 真机取证（2026-09-17）：生产 restoredDraft=true 仅 4/45 次——草稿按 CGWindowID
+/// 绑定，窗一关一开 ID 换新即成孤儿，改绑/换窗唤起必落空前缀=用户主诉「重开被重置」。
+/// 判序：窗草稿非空白 → 窗草稿（同窗续写）→ 手动唤起且有历史 → 最近一条输入
+/// （跨窗兜底）→ 默认前缀。
+enum InputBubbleDraftRestorePlan {
+    enum Source: String, Equatable {
+        case windowDraft   // 本窗草稿（CGWindowID 绑定）
+        case history       // 全局最近输入（B195 兜底）
+        case prefix        // 默认前缀（真·新输入）
     }
 
-    /// B162：气泡打开的初始文本 = 目标窗草稿优先（输入跟窗绑定，关了再开不丢）；
-    /// 无草稿（含空白草稿）回落默认前缀。
-    static func resolveInitialText(savedDraft: String?, prefix: String) -> String {
-        if let draft = savedDraft,
+    static func resolve(
+        windowDraft: String?,
+        latestHistory: String?,
+        source: InputBubbleSummonSource,
+        prefix: String
+    ) -> (text: String, from: Source) {
+        if let draft = windowDraft,
            !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return draft
+            return (draft, .windowDraft)
         }
-        return prefix
+        if source == .manualHotKey,
+           let history = latestHistory,
+           !history.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return (history, .history)
+        }
+        return (prefix, .prefix)
+    }
+}
+
+/// ↑↓ 历史翻阅计划（B195）：entries 最新在前；currentIndex = 当前展示的历史条目
+/// 下标（nil = 还在编辑现场，未进入翻阅）。↑ 逐条变旧（到最旧停住）；↓ 逐条变新，
+/// 走出最新一条回到编辑现场（stash 的现场文本）。空历史不消费按键。
+enum InputBubbleHistoryNavPlan {
+    enum Action: Equatable {
+        case none                 // 不消费（无历史）
+        case moveTo(index: Int)   // 展示 entries[index]（首次进入自动 stash 现场）
+        case exitToStashed        // 回编辑现场（恢复 stash）
+    }
+
+    static func up(currentIndex: Int?, entryCount: Int) -> Action {
+        guard entryCount > 0 else { return .none }
+        let next = (currentIndex ?? -1) + 1
+        return .moveTo(index: min(next, entryCount - 1))
+    }
+
+    static func down(currentIndex: Int?, entryCount: Int) -> Action {
+        guard let index = currentIndex else { return .none }
+        return index <= 0 ? .exitToStashed : .moveTo(index: index - 1)
     }
 }
 

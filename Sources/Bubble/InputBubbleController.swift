@@ -52,6 +52,14 @@ final class InputBubbleController: NSObject {
     /// B175：右下角拖拽调尺寸的起点快照（beginResizeDrag 置位，finish 后清空）
     var resizeDragStart: (origin: NSPoint, size: NSSize)?
 
+    /// B195：本次打开恢复出的基准文本（↑↓ 翻阅 stash 与改绑脏守卫的比对基准）。
+    /// 用户打字后 textView.string != 此值 = 输入中（dirty）。
+    var lastRestoredBaseText: String = ""
+    /// B195：↑↓ 历史翻阅态——index = 当前展示的历史条目下标（nil=编辑现场）；
+    /// stash = 进入翻阅前的现场文本（↓ 走出最新一条时还原）。
+    var historyNavIndex: Int?
+    var historyStashedText: String?
+
     /// B183 绑定跟随模式（autoHide=false 默认）：跟随基线与轮询定时器。
     /// baseline = 上次同步点的目标窗 origin 与气泡 origin（均 AppKit 全局坐标）。
     var followWindowOrigin: NSPoint?
@@ -158,7 +166,7 @@ final class InputBubbleController: NSObject {
         }
 
         let captured = Target(pid: pid, bundleID: bundleID, windowID: windowID, title: WindowManager.shared.title(of: windowAX))
-        showPanel(target: captured, cgFrame: cgFrame)
+        showPanel(target: captured, cgFrame: cgFrame, source: .manualHotKey)
         CrashContextRecorder.shared.record("input_bubble_summon windowID=\(windowID) pid=\(pid)")
     }
 
@@ -181,14 +189,29 @@ final class InputBubbleController: NSObject {
             return
         }
         let target = Target(pid: pid, bundleID: app.bundleIdentifier, windowID: windowID, title: appName)
-        showPanel(target: target, cgFrame: cgFrame)
+        showPanel(target: target, cgFrame: cgFrame, source: .autoShow)
         CrashContextRecorder.shared.record("input_bubble_summon_moved windowID=\(windowID) pid=\(pid)")
     }
 
     /// B184：绑定跟随模式下，另一窗跨到主屏而气泡开着 → 气泡改绑到到达窗。
     /// 旧窗草稿按窗落盘不丢（InputBubbleDraftStore），dismiss+定向重弹即完成换绑。
+    /// B195：输入中（文本≠恢复基准）不改绑——真机实锤七秒连改绑两次，正在打的字
+    /// 被换成一窗空前缀=「气泡搞没了/被重置」主诉；改绑让位输入连续性。
     func retargetForMovedWindow(windowID: UInt32, pid: pid_t, appName: String?) {
         guard phase == .open, let current = target, current.windowID != windowID else { return }
+        let isDirty = (textView?.string ?? "") != lastRestoredBaseText
+        guard case .retarget = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: InputBubblePreferences.autoHide,
+            openForWindowID: current.windowID,
+            arrivedWindowID: windowID,
+            isDirty: isDirty
+        ) else {
+            log("[InputBubble] arrival retarget skipped (drafting)", fields: [
+                "openFor": String(current.windowID),
+                "windowID": String(windowID)
+            ])
+            return
+        }
         log("[InputBubble] follow retarget \(current.windowID) -> \(windowID)", fields: [
             "appName": appName ?? "nil"
         ])
@@ -196,9 +219,12 @@ final class InputBubbleController: NSObject {
         summonForMovedWindow(windowID: windowID, pid: pid, appName: appName)
     }
 
-    private func showPanel(target: Target, cgFrame: CGRect) {
+    private func showPanel(target: Target, cgFrame: CGRect, source: InputBubbleSummonSource) {
         self.target = target
         phase = .open
+        // B195：↑↓ 翻阅态随开随清（每次打开都是新现场）
+        historyNavIndex = nil
+        historyStashedText = nil
 
         // 先收起设置窗（若可见）：防止其以 main window 身份抢 key（实测存在）
         let settingsWindow = SettingsWindowController.shared.window
@@ -212,9 +238,16 @@ final class InputBubbleController: NSObject {
         suppressMoveTracking = true
         panel.setFrameOrigin(origin)
         suppressMoveTracking = false
-        // B161→B162：预填默认前缀，草稿优先——同一目标窗关了再开，打到一半的内容还在
-        let savedDraft = InputBubbleDraftStore.shared.draft(for: target.windowID)
-        let initial = InputBubbleKeyPlan.resolveInitialText(savedDraft: savedDraft, prefix: InputBubblePreferences.defaultPrefix)
+        // B195：恢复决策门——窗草稿优先；手动唤起兜底全局最近输入（窗重建/换窗
+        // 也能拿回内容）；自动弹出保守（窗草稿否则前缀，不塞未经邀请的旧内容）。
+        let restored = InputBubbleDraftRestorePlan.resolve(
+            windowDraft: InputBubbleDraftStore.shared.draft(for: target.windowID),
+            latestHistory: InputBubbleHistoryStore.shared.latestEntry()?.text,
+            source: source,
+            prefix: InputBubblePreferences.defaultPrefix
+        )
+        let initial = restored.text
+        lastRestoredBaseText = initial
         textView.string = initial
         textView.setSelectedRange(NSRange(location: (initial as NSString).length, length: 0))
         // B178：光标跳尾的 scrollRangeToVisible 可能带偏横向 origin（宽度暂态/滚动条
@@ -243,7 +276,7 @@ final class InputBubbleController: NSObject {
             "bundleID": target.bundleID ?? "nil",
             "title": truncateForLog(target.title ?? "", limit: 60),
             "origin": "\(Int(origin.x)),\(Int(origin.y))",
-            "restoredDraft": String(savedDraft != nil)
+            "restoredFrom": restored.from.rawValue
         ])
     }
 
@@ -254,11 +287,21 @@ final class InputBubbleController: NSObject {
         defer { PerfMonitor.shared.endSection() }
         guard phase == .open else { return }
         let captured = target
+        // B195：关闭即抓当前文本落盘（不再依赖 300ms 防抖的最后一次 textDidChange——
+        // 真机曾丢尾编辑）+ 进全局历史（重开/换窗都能拿回）。干净关闭（文本=恢复
+        // 基准，用户没打字）零写入——不把默认前缀当草稿/历史污染存储。
+        if let textView, let target, textView.string != lastRestoredBaseText {
+            InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
+            InputBubbleDraftStore.shared.flushPending()
+            InputBubbleHistoryStore.shared.record(textView.string)
+        }
         panel?.orderOut(nil)
         panel = nil
         textView = nil
         target = nil
         phase = .idle
+        historyNavIndex = nil
+        historyStashedText = nil
         NSApp.setActivationPolicy(.accessory)
         // B183：跟随引擎与点击监视器随气泡生命周期终止
         stopFollowing()
@@ -269,6 +312,69 @@ final class InputBubbleController: NSObject {
             _ = NSRunningApplication(processIdentifier: t.pid)?.activate(options: .activateIgnoringOtherApps)
         }
         log("[InputBubble] bubble dismissed", level: .debug)
+    }
+
+    /// B195：SIGTERM 收尾（部署杀进程高频）——气泡开着且输入中时把当前文本落
+    /// 草稿+历史，重启后重开不丢。与 dismiss 的差别：不动 UI/状态机（进程将死）。
+    func flushDraftForTermination() {
+        guard phase == .open, let textView, let target,
+              textView.string != lastRestoredBaseText else { return }
+        InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
+        InputBubbleDraftStore.shared.flushPending()
+        InputBubbleHistoryStore.shared.record(textView.string)
+        log("[InputBubble] draft flushed on termination", fields: [
+            "windowID": String(target.windowID)
+        ])
+    }
+
+    // MARK: ↑↓ 输入历史翻阅（B195）
+
+    /// ↑：逐条变旧。返回 true=已消费（textView 不再走 super 光标移动）。
+    /// 首次进入翻阅自动 stash 现场文本；到最旧停住。
+    func historyPrevious() -> Bool {
+        guard phase == .open, let textView else { return false }
+        let entries = InputBubbleHistoryStore.shared.entries()
+        let action = InputBubbleHistoryNavPlan.up(currentIndex: historyNavIndex, entryCount: entries.count)
+        return applyHistoryNav(action, textView: textView)
+    }
+
+    /// ↓：逐条变新；走出最新一条回编辑现场（stash 还原）。未在翻阅中=不消费。
+    func historyNext() -> Bool {
+        guard phase == .open, let textView else { return false }
+        let entries = InputBubbleHistoryStore.shared.entries()
+        let action = InputBubbleHistoryNavPlan.down(currentIndex: historyNavIndex, entryCount: entries.count)
+        return applyHistoryNav(action, textView: textView)
+    }
+
+    private func applyHistoryNav(_ action: InputBubbleHistoryNavPlan.Action, textView: NSTextView) -> Bool {
+        PerfMonitor.shared.measure("bubble.historyNav") {
+            switch action {
+            case .none:
+                return
+            case .moveTo(let index):
+                let entries = InputBubbleHistoryStore.shared.entries()
+                guard index < entries.count else { return }
+                if historyNavIndex == nil { historyStashedText = textView.string }
+                historyNavIndex = index
+                setNavText(entries[index].text, textView: textView)
+            case .exitToStashed:
+                historyNavIndex = nil
+                setNavText(historyStashedText ?? "", textView: textView)
+                historyStashedText = nil
+            }
+        }
+        return action != .none
+    }
+
+    /// 翻阅换文本：草稿同步（programmatic set 不触发 textDidChange，手动落）
+    /// + 光标跳尾 + 横向归零（B178 同款）。
+    private func setNavText(_ text: String, textView: NSTextView) {
+        textView.string = text
+        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        if let target {
+            InputBubbleDraftStore.shared.save(text, for: target.windowID)
+        }
+        (panel?.contentView as? BubbleCardView)?.normalizeHorizontalOrigin()
     }
 
     // MARK: 绑定跟随（B183：autoHide=false 默认模式——气泡跟目标窗走）

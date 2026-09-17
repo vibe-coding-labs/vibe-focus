@@ -21,7 +21,7 @@ extension InputBubbleController {
             )
             switch gate {
             case .proceed(let steps):
-                inject(steps: steps, target: target)
+                inject(steps: steps, target: target, text: text)
             case .dismissOnly:
                 finishSubmission()
             case .abortMissingTarget:
@@ -50,13 +50,16 @@ extension InputBubbleController {
         }
     }
 
-    func inject(steps: [InputBubbleKeyPlan.Step], target: Target) {
+    func inject(steps: [InputBubbleKeyPlan.Step], target: Target, text: String) {
         log("[InputBubble] injecting", fields: [
             "steps": steps.map { $0 == .paste ? "paste" : "return" }.joined(separator: ","),
             "windowID": String(target.windowID),
             "pid": String(target.pid)
         ])
         CrashContextRecorder.shared.record("input_bubble_inject windowID=\(target.windowID) steps=\(steps.count)")
+        // B195：提交内容进全局历史（↑↓ 翻阅/跨窗恢复兜底），随后照旧清草稿。
+        // abort 不清不记（abortSubmission 路径不经此处）。
+        InputBubbleHistoryStore.shared.record(text)
         // B162：注入放行即消费草稿（abort 不清——文本保留在草稿里，重开气泡可续）
         InputBubbleDraftStore.shared.clear(for: target.windowID)
 

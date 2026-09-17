@@ -248,6 +248,19 @@ extension RunnerHarness {
             autoHide: false, openForWindowID: nil, arrivedWindowID: 43) {
             check("whileOpen: 跟随模式无目标 → retarget", true)
         } else { check("whileOpen: 跟随模式无目标 → retarget", false) }
+        // B195 输入中守卫：改绑让位输入连续性（真机七秒连改绑两次拽走打字主诉）
+        if case .keepCurrent = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: false, openForWindowID: 42, arrivedWindowID: 43, isDirty: true) {
+            check("whileOpen: 输入中异窗到达 → keepCurrent（不改绑）", true)
+        } else { check("whileOpen: 输入中异窗到达 → keepCurrent（不改绑）", false) }
+        if case .keepCurrent = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: true, openForWindowID: 42, arrivedWindowID: 43, isDirty: true) {
+            check("whileOpen: 自动隐藏+输入中 → keepCurrent（判序在前）", true)
+        } else { check("whileOpen: 自动隐藏+输入中 → keepCurrent（判序在前）", false) }
+        if case .retarget = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
+            autoHide: false, openForWindowID: 42, arrivedWindowID: 43, isDirty: false) {
+            check("whileOpen: 干净气泡异窗到达 → retarget（B184 语义保持）", true)
+        } else { check("whileOpen: 干净气泡异窗到达 → retarget（B184 语义保持）", false) }
 
         // --- B186 语音气泡让位（LazyTyper 录音气泡识别 + 让位决策） ---
         check("voiceYield: LazyTyper 320×170 录音气泡 ✓", InputBubbleLayout.isVoiceBubbleWindow(ownerName: "LazyTyper", width: 320, height: 170))
@@ -270,11 +283,15 @@ extension RunnerHarness {
             check("yieldPlan: 均无 → none", true)
         } else { check("yieldPlan: 均无 → none", false) }
 
-        // --- B162 草稿预填解析（草稿优先，空白草稿回落前缀） ---
-        check("prefill: 无草稿 → 前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "/goal ") == "/goal ")
-        check("prefill: 草稿优先于前缀", InputBubbleKeyPlan.resolveInitialText(savedDraft: "打到一半", prefix: "/goal ") == "打到一半")
-        check("prefill: 空白草稿视为无草稿", InputBubbleKeyPlan.resolveInitialText(savedDraft: "  \n ", prefix: "/goal ") == "/goal ")
-        check("prefill: 双空 → 空串", InputBubbleKeyPlan.resolveInitialText(savedDraft: nil, prefix: "") == "")
+        // --- B195 初始文本恢复决策门（窗草稿 > 手动唤起历史兜底 > 前缀） ---
+        check("restore: 窗草稿优先（手动唤起）", InputBubbleDraftRestorePlan.resolve(windowDraft: "打到一半", latestHistory: "已提交的", source: .manualHotKey, prefix: "/goal ") == (text: "打到一半", from: .windowDraft))
+        check("restore: 窗草稿优先（自动弹出同款）", InputBubbleDraftRestorePlan.resolve(windowDraft: "打到一半", latestHistory: "已提交的", source: .autoShow, prefix: "/goal ") == (text: "打到一半", from: .windowDraft))
+        check("restore: 无窗草稿+手动 → 历史兜底", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: "刚提交的提示词", source: .manualHotKey, prefix: "/goal ") == (text: "刚提交的提示词", from: .history))
+        check("restore: 无窗草稿+自动弹 → 前缀（不塞旧内容）", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: "刚提交的提示词", source: .autoShow, prefix: "/goal ") == (text: "/goal ", from: .prefix))
+        check("restore: 空白窗草稿视为无草稿", InputBubbleDraftRestorePlan.resolve(windowDraft: "  \n ", latestHistory: nil, source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
+        check("restore: 空白历史不兜底", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: "   ", source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
+        check("restore: 无草稿无历史手动 → 前缀", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: nil, source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
+        check("restore: 双空+空前缀 → 空串", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: nil, source: .manualHotKey, prefix: "") == (text: "", from: .prefix))
 
         // --- B162 位置记忆编解码 + 夹取 ---
         let saved = CGRect(x: -1920.5, y: 100.25, width: 480, height: 150)
@@ -333,6 +350,79 @@ extension RunnerHarness {
         }
         let capacityPruned = InputBubbleDraftStore.prune(aged, now: now, maxAge: 7 * 24 * 3600, capacity: 32)
         check("prune: 容量裁剪保留最新 32 条", capacityPruned.count == 32 && capacityPruned["39"] != nil && capacityPruned["7"] == nil)
+    }
+}
+
+// MARK: - B195：全局输入历史环 + ↑↓ 翻阅计划 + 恢复决策门
+
+extension RunnerHarness {
+    func runBubbleHistoryTests() {
+        print("\n=== BubbleHistory (B195) ===")
+
+        // --- 历史环存取（隔离 suite，真实存取行为） ---
+        let suiteName = "RunnerBubbleHistoryTests-\(UUID().uuidString)"
+        let historyDefaults = UserDefaults(suiteName: suiteName)!
+        let store = InputBubbleHistoryStore(defaults: historyDefaults)
+        check("history: 空存储 latest nil", store.latestEntry() == nil)
+        store.record("第一条提示词")
+        store.record("第二条提示词")
+        check("history: 后记的在前（最新在前）", store.entries().map(\.text) == ["第二条提示词", "第一条提示词"])
+        check("history: latest = 最新一条", store.latestEntry()?.text == "第二条提示词")
+        store.record("第二条提示词")  // 与最新同文
+        check("history: 与最新同文去重不重复入列", store.entries().map(\.text) == ["第二条提示词", "第一条提示词"] && store.entries().count == 2)
+        store.record("   \n  ")
+        check("history: 空白文本忽略", store.entries().count == 2)
+        // 跨实例（重启语义）
+        let store2 = InputBubbleHistoryStore(defaults: historyDefaults)
+        check("history: 持久化跨实例可读", store2.latestEntry()?.text == "第二条提示词")
+        store2.clear()
+        check("history: clear 后空", store2.entries().isEmpty && historyDefaults.data(forKey: "inputBubbleHistory") == nil)
+        historyDefaults.removePersistentDomain(forName: suiteName)
+
+        // --- 历史环纯函数：同文去重刷时间戳 / 时效与容量清理 ---
+        let now = Date()
+        func hEntry(_ text: String, ageSeconds: TimeInterval) -> InputBubbleHistoryEntry {
+            InputBubbleHistoryEntry(text: text, at: now.addingTimeInterval(-ageSeconds))
+        }
+        let appended = InputBubbleHistoryStore.append(
+            [hEntry("旧文本", ageSeconds: 10)],
+            text: "旧文本  ", at: now)  // 去空白后同文 → 刷新不重复
+        check("historyAppend: 同文（去空白比对）刷新不重复", appended.count == 1 && appended[0].at == now)
+        let appendedNew = InputBubbleHistoryStore.append(
+            [hEntry("旧文本", ageSeconds: 10)],
+            text: "新文本", at: now)
+        check("historyAppend: 新文插入最前", appendedNew.map(\.text) == ["新文本", "旧文本"])
+        let expiredPruned = InputBubbleHistoryStore.prune(
+            [hEntry("太老", ageSeconds: 31 * 24 * 3600), hEntry("新鲜", ageSeconds: 3600)],
+            now: now, maxAge: 30 * 24 * 3600, capacity: 50)
+        check("historyPrune: 过期剔除", expiredPruned.map(\.text) == ["新鲜"])
+        var many: [InputBubbleHistoryEntry] = []
+        for index in 0..<60 { many.append(hEntry("t\(index)", ageSeconds: TimeInterval(60 - index))) }
+        let capPruned = InputBubbleHistoryStore.prune(many, now: now, maxAge: 30 * 24 * 3600, capacity: 50)
+        check("historyPrune: 容量裁剪保最新 50 条", capPruned.count == 50 && capPruned.first?.text == "t0" && capPruned.last?.text == "t49")
+
+        // --- ↑↓ 翻阅计划（最新在前；↑ 变旧到最旧停住；↓ 变新走出回现场；空历史不消费） ---
+        if case .moveTo(let index) = InputBubbleHistoryNavPlan.up(currentIndex: nil, entryCount: 3), index == 0 {
+            check("navUp: 未翻阅 → 进入最新(0)", true)
+        } else { check("navUp: 未翻阅 → 进入最新(0)", false) }
+        if case .moveTo(let index) = InputBubbleHistoryNavPlan.up(currentIndex: 0, entryCount: 3), index == 1 {
+            check("navUp: 0→1（变旧）", true)
+        } else { check("navUp: 0→1（变旧）", false) }
+        if case .moveTo(let index) = InputBubbleHistoryNavPlan.up(currentIndex: 2, entryCount: 3), index == 2 {
+            check("navUp: 最旧停住", true)
+        } else { check("navUp: 最旧停住", false) }
+        if case .none = InputBubbleHistoryNavPlan.up(currentIndex: nil, entryCount: 0) {
+            check("navUp: 空历史不消费", true)
+        } else { check("navUp: 空历史不消费", false) }
+        if case .none = InputBubbleHistoryNavPlan.down(currentIndex: nil, entryCount: 3) {
+            check("navDown: 未在翻阅不消费", true)
+        } else { check("navDown: 未在翻阅不消费", false) }
+        if case .exitToStashed = InputBubbleHistoryNavPlan.down(currentIndex: 0, entryCount: 3) {
+            check("navDown: 最新一条再↓ → 回编辑现场", true)
+        } else { check("navDown: 最新一条再↓ → 回编辑现场", false) }
+        if case .moveTo(let index) = InputBubbleHistoryNavPlan.down(currentIndex: 2, entryCount: 3), index == 1 {
+            check("navDown: 2→1（变新）", true)
+        } else { check("navDown: 2→1（变新）", false) }
     }
 }
 

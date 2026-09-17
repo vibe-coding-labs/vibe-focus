@@ -19,9 +19,15 @@ final class InputBubblePanel: NSPanel {
 /// ⌘Enter 因此静默失效（生产日志：气泡打开后零 injecting/dismiss 记录）。
 /// keyDown 事件本体始终携带 ⌘ 修饰到达（同实验验证），在此拦截最可靠；
 /// ⇧Enter 不拦截（落 super → 默认换行）。
+/// B195：↑↓ 历史翻阅——光标在首行按 ↑ / 末行按 ↓ 才进历史回调（多行编辑的
+/// 光标移动不受干扰）；回调返回 false（无历史可翻）落 super 正常移动光标；
+/// IME 组词态一律放行（B172 同款）。
 final class InputBubbleTextView: NSTextView {
     /// 非 ⇧ 的 Return/小键盘 Enter 按下回调（commandHeld = ⌘ 是否按住）
     var onEnterKey: ((Bool) -> Void)?
+    /// B195：↑↓ 历史翻阅回调，返回 true=已消费
+    var onHistoryPrevious: (() -> Bool)?
+    var onHistoryNext: (() -> Bool)?
 
     private static let enterKeyCodes: Set<UInt16> = [UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter)]
 
@@ -35,7 +41,29 @@ final class InputBubbleTextView: NSTextView {
             onEnterKey?(event.modifierFlags.contains(.command))
             return
         }
+        if !hasMarkedText(),
+           event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty {
+            if event.keyCode == UInt16(kVK_UpArrow), isSelectionOnFirstLine,
+               onHistoryPrevious?() == true {
+                return
+            }
+            if event.keyCode == UInt16(kVK_DownArrow), isSelectionOnLastLine,
+               onHistoryNext?() == true {
+                return
+            }
+        }
         super.keyDown(with: event)
+    }
+
+    /// 光标（选区起点）所在行是否为文本首行（历史 ↑ 的准入条件）
+    var isSelectionOnFirstLine: Bool {
+        (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0)).location == 0
+    }
+
+    /// 光标（选区起点）所在行是否为文本末行（历史 ↓ 的准入条件）
+    var isSelectionOnLastLine: Bool {
+        let line = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0))
+        return NSMaxRange(line) >= (string as NSString).length
     }
 }
 

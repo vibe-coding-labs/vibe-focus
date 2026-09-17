@@ -15,6 +15,8 @@ extension AppDelegate {
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         source.setEventHandler {
             MainActor.assumeIsolated {
+                // B195：部署杀进程高频，气泡开着时先落草稿+历史再走退出流程
+                InputBubbleController.shared.flushDraftForTermination()
                 ExitJournal.recordExit(reason: "sigterm-graceful")
                 NSApp.terminate(nil)
             }
