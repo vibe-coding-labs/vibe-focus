@@ -783,6 +783,44 @@ extension RunnerHarness {
         check("fill: 改动过但空白 → 不抢救", !InputBubbleFillGuard.shouldPreserveCurrent(currentText: "  ", baseText: ""))
         check("fill: 基准非空被改动 → 抢救", InputBubbleFillGuard.shouldPreserveCurrent(currentText: "/goal 新内容", baseText: "/goal "))
 
+        // --- append 近端合并（B203 续）：翻阅往返不再堆重复对 ---
+        func dEntry(_ text: String, windowID: UInt32?, status: InputBubbleHistoryStatus) -> InputBubbleHistoryEntry {
+            InputBubbleHistoryEntry(text: text, at: now.addingTimeInterval(-Double((text.hashValue % 900).magnitude)), windowID: windowID, windowTitle: "w", status: status)
+        }
+        // 往返翻阅：乙→甲→乙→甲 四次镜像记账只留 2 条（旧规则会堆出 4 条）
+        var nav = [dEntry("甲文", windowID: 5, status: .draft)]
+        nav = InputBubbleHistoryStore.append(nav, text: "乙文", at: now, windowID: 5, status: .draft)
+        nav = InputBubbleHistoryStore.append(nav, text: "甲文", at: now, windowID: 5, status: .draft)
+        nav = InputBubbleHistoryStore.append(nav, text: "乙文", at: now, windowID: 5, status: .draft)
+        check("append: 往返翻阅收口不堆重复对", nav.count == 2 && nav[0].text == "乙文" && nav[1].text == "甲文")
+        // 窗深内命中（深度 3）：置顶刷新不加条
+        let deep = [
+            dEntry("目标文", windowID: 6, status: .draft),
+            dEntry("垫1", windowID: 6, status: .draft),
+            dEntry("垫2", windowID: 6, status: .draft),
+        ]
+        let mergedDeep = InputBubbleHistoryStore.append(deep, text: "目标文", at: now, windowID: 6, status: .draft)
+        check("append: 窗深内命中置顶刷新", mergedDeep.count == 3 && mergedDeep[0].text == "目标文" && mergedDeep[0].at == now && mergedDeep[1].text == "垫1")
+        // 窗深外（第 9 条起）：照常新增
+        var far: [InputBubbleHistoryEntry] = [dEntry("目标文", windowID: 7, status: .draft)]
+        for i in 1...8 { far.insert(dEntry("垫\(i)", windowID: 7, status: .draft), at: 0) }
+        let mergedFar = InputBubbleHistoryStore.append(far, text: "目标文", at: now, windowID: 7, status: .draft)
+        check("append: 窗深外照常新增", mergedFar.count == 10 && mergedFar[0].text == "目标文" && mergedFar[0].at == now)
+        // 深度命中已提交不降级 / 草稿晋升
+        let notDemotedDeep = InputBubbleHistoryStore.append(
+            [dEntry("已提交文", windowID: 8, status: .submitted), dEntry("垫", windowID: 8, status: .draft)],
+            text: "已提交文", at: now, windowID: 8, status: .draft)
+        check("append: 深度命中已提交不降级", notDemotedDeep.count == 2 && notDemotedDeep[0].status == .submitted)
+        let promotedDeep = InputBubbleHistoryStore.append(
+            [dEntry("草稿文", windowID: 9, status: .draft), dEntry("垫", windowID: 9, status: .draft)],
+            text: "草稿文", at: now, windowID: 9, status: .submitted)
+        check("append: 深度命中草稿晋升已提交", promotedDeep.count == 2 && promotedDeep[0].status == .submitted)
+        // 深度内同文异窗：不合并
+        let diffWinDeep = InputBubbleHistoryStore.append(
+            [dEntry("同文", windowID: 10, status: .draft), dEntry("垫", windowID: 10, status: .draft)],
+            text: "同文", at: now, windowID: 11, status: .draft)
+        check("append: 深度内同文异窗仍新增", diffWinDeep.count == 3 && diffWinDeep[0].windowID == 11)
+
         // --- Store.remove(where:)：批量删除只动命中集 ---
         let suiteName = "RunnerBubbleHistorySearchTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

@@ -182,11 +182,15 @@ final class InputBubbleHistoryStore {
 
     // MARK: 纯函数（Runner 直测）
 
-    /// 追加到最前，头部合并规则（只看最新一条，更老条目保持原样）：
-    /// - 同文 + 同窗 + 草稿→已提交 → 原地晋升（一次输入旅程一条时间线）；
-    /// - 同文 + 同窗其余组合（同状态刷新 / 已提交头部遇草稿回写）→ 保持头部状态
-    ///   只刷时间戳（已提交不被降级，↑↓ 翻阅回写历史条目不产生草稿残影）；
-    /// - 同文但异窗 → 新条目（不同窗各归各的时间线）。
+    /// 近端合并窗深：同文同窗条目在此深度内命中即刷新置顶，不再新增。
+    /// 依据：↑↓ 翻阅每步都同步草稿（B195 设计），flush 镜像把路过的文本逐条记账，
+    /// 只看头部的旧规则让来回翻阅在头部两侧交替堆重复对（B203 真机 smoke 实锤：
+    /// ↑↓ 各 2 次造出 3 对重复）；8 的窗深覆盖往返翻阅+穿插打字的回看距离。
+    static let mergeLookback = 8
+
+    /// 追加规则：近端（前 mergeLookback 条）内同文+同窗 → 命中条刷新置顶
+    /// （草稿→已提交晋升；已提交不被草稿降级；时间戳/窗名快照刷新为本次值）；
+    /// 近端无命中 → 新条目插到最前（不同窗各归各的时间线，更老条目保持原样）。
     static func append(
         _ existing: [InputBubbleHistoryEntry],
         text: String,
@@ -196,21 +200,19 @@ final class InputBubbleHistoryStore {
         status: InputBubbleHistoryStatus = .draft
     ) -> [InputBubbleHistoryEntry] {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let head = existing.first,
-           head.text.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed,
-           head.windowID == windowID {
-            switch (head.status, status) {
-            case (.draft, .submitted):
-                return [InputBubbleHistoryEntry(
-                    text: text, at: at, windowID: head.windowID,
-                    windowTitle: windowTitle ?? head.windowTitle, status: .submitted
-                )] + existing.dropFirst()
-            default:
-                return [InputBubbleHistoryEntry(
-                    text: text, at: at, windowID: head.windowID,
-                    windowTitle: windowTitle ?? head.windowTitle, status: head.status
-                )] + existing.dropFirst()
-            }
+        if let idx = existing.prefix(mergeLookback).firstIndex(where: {
+            $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+                && $0.windowID == windowID
+        }) {
+            let hit = existing[idx]
+            let merged: InputBubbleHistoryStatus = hit.status == .submitted ? .submitted : status
+            var updated = existing
+            updated.remove(at: idx)
+            updated.insert(InputBubbleHistoryEntry(
+                text: text, at: at, windowID: hit.windowID,
+                windowTitle: windowTitle ?? hit.windowTitle, status: merged
+            ), at: 0)
+            return updated
         }
         return [InputBubbleHistoryEntry(
             text: text, at: at, windowID: windowID,
