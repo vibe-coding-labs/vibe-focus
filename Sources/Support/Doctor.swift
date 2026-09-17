@@ -12,9 +12,23 @@ import SQLite3
 // 镜像测试直接覆盖，report 走真实文件系统。
 
 /// AppEntry（--diagnose）跨模块入口；Doctor 本体保持 internal，测试走镜像。
+/// @MainActor——live 会话面板段读 registry（主 actor）并 fork 一次 yabai 地理
+/// 查询；AppEntry 的 App.init 在主 actor 上调用。活动状态读持久化文件而非
+/// 内存单例——--diagnose 是独立进程，内存里永远空白（B202 真机首验实锤）。
 public enum VibeFocusDoctor {
+    @MainActor
     public static func report() -> String {
-        Doctor.report(paths: .live())
+        let windows = YabaiClient.queryJSON([YabaiWindowInfo].self, arguments: ["query", "--windows"]) ?? []
+        let panelLines = SessionPanelLogic.reportLines(
+            rows: SessionPanelLogic.buildRows(
+                bindings: SessionWindowRegistry.shared.activeBindingsForUI,
+                activities: SessionActivityTracker.loadPersisted(),
+                geo: SessionPanelLogic.geoMap(fromWindows: windows),
+                now: Date()
+            ),
+            now: Date()
+        )
+        return Doctor.report(paths: .live(), sessionPanelLines: panelLines)
     }
 }
 
@@ -117,7 +131,11 @@ enum Doctor {
 
     // MARK: - 报告
 
-    static func report(paths: DoctorPaths = .live(), now: Date = Date()) -> String {
+    static func report(
+        paths: DoctorPaths = .live(),
+        now: Date = Date(),
+        sessionPanelLines: [String]? = nil
+    ) -> String {
         var out: [String] = []
         let pid = ProcessInfo.processInfo.processIdentifier
         out.append("=== VibeFocus Doctor (\(ExitJournal.timestamp(now)), pid=\(pid) \(ProcessInfo.processInfo.processName)) ===")
@@ -290,6 +308,14 @@ enum Doctor {
             mainForkRecent: mainForkRecent
         ))
 
+        // B202 live 会话面板段：渲染行由公开入口（@MainActor）预构建传入——
+        // report(paths:) 保持非隔离（Runner fixture 测试零 yabai fork、零扰动，
+        // 默认 nil=不出本段）。
+        if let sessionPanelLines {
+            out.append("")
+            out.append(contentsOf: sessionPanelLines)
+        }
+
         // B178 性能监控：主线程停顿（卡顿取证入口）——看门狗停顿行 + 计数器快照文件。
         let snapshotData = try? Data(contentsOf: URL(fileURLWithPath: PerfMonitor.snapshotPath))
         out.append("")
@@ -391,6 +417,19 @@ enum Doctor {
         df.formatOptions = [.withInternetDateTime]
         guard let date = df.date(from: fromISO) else { return nil }
         return max(0, now.timeIntervalSince(date))
+    }
+
+    /// B202: 会话面板报告行（渲染全权委托 SessionPanelLogic 纯函数，Runner 直测）。
+    static func sessionPanelReportLines(
+        bindings: [WindowState],
+        activities: [String: SessionActivity],
+        geo: [UInt32: SessionWindowGeo],
+        now: Date
+    ) -> [String] {
+        SessionPanelLogic.reportLines(
+            rows: SessionPanelLogic.buildRows(bindings: bindings, activities: activities, geo: geo, now: now),
+            now: now
+        )
     }
 
     // MARK: - 性能监控报告（B178，纯逻辑 Runner 直测）

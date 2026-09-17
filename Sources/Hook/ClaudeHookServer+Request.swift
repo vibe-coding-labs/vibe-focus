@@ -141,6 +141,14 @@ extension ClaudeHookServer {
             result = await eventHandler.handleNotification(payload: payload)
         }
 
+        // B202: 活动追踪——live 会话面板的状态源（最后一个事件说了算）。
+        // 解码成功即记（含 disabled/skip 等门控码——门控不影响「会话活跃」事实）。
+        SessionActivityTracker.shared.record(
+            sessionID: payload.sessionID,
+            event: payload.event,
+            code: result.response.code
+        )
+
         // Track handled requests based on the response
         if result.response.handled {
             handledRequestCount += 1

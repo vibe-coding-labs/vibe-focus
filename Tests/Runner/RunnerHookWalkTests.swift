@@ -1233,6 +1233,144 @@ extension RunnerHarness {
                   && hooksAfter["PreToolUse"] != nil)
         }
 
+        // B202: live 会话面板——状态派生/追踪器/快照 join/渲染（Runner 穷尽直测）
+        do {
+            // 状态派生：五事件穷尽 + 标签 + 排序权重（等待输入最前）
+            check("livePanel: deriveStatus 五事件穷尽（最后事件说了算）",
+                  SessionPanelLogic.deriveStatus(lastEvent: .userPromptSubmit) == .running
+                  && SessionPanelLogic.deriveStatus(lastEvent: .notification) == .waiting
+                  && SessionPanelLogic.deriveStatus(lastEvent: .stop) == .done
+                  && SessionPanelLogic.deriveStatus(lastEvent: .sessionStart) == .bound
+                  && SessionPanelLogic.deriveStatus(lastEvent: .sessionEnd) == .ended)
+            check("livePanel: 标签与排序权重（waiting=0 最前 / ended=4 最后）",
+                  SessionLiveStatus.waiting.label == "等待输入"
+                  && SessionLiveStatus.running.label == "运行中"
+                  && SessionLiveStatus.done.label == "已完成"
+                  && SessionLiveStatus.bound.label == "已绑定"
+                  && SessionLiveStatus.ended.label == "已结束"
+                  && SessionLiveStatus.waiting.sortPriority == 0
+                  && SessionLiveStatus.running.sortPriority == 1
+                  && SessionLiveStatus.ended.sortPriority == 4)
+
+            // 追踪器：记录/读取/超龄剪枝/容量淘汰/重置
+            let tracker = SessionActivityTracker.shared
+            tracker.resetForTesting()
+            let t0 = Date()
+            tracker.record(sessionID: "s-a", event: .userPromptSubmit, code: "restored_to_original", at: t0)
+            check("livePanel: 记录可读（事件+码+时间）",
+                  tracker.activity(for: "s-a")?.lastEvent == .userPromptSubmit
+                  && tracker.activity(for: "s-a")?.lastCode == "restored_to_original")
+            tracker.record(sessionID: "s-a", event: .notification, code: "notification_sent", at: t0.addingTimeInterval(5))
+            check("livePanel: 同会话后写覆盖（最后一事件说了算）",
+                  tracker.activity(for: "s-a")?.lastEvent == .notification)
+            tracker.record(sessionID: "old", event: .stop, code: nil, at: t0.addingTimeInterval(-100_000))
+            tracker.prune(now: t0, maxAge: 86_400, maxSessions: 128)
+            check("livePanel: 超龄条目剪枝", tracker.activity(for: "old") == nil)
+            tracker.resetForTesting()
+            for i in 0..<130 {
+                tracker.record(sessionID: "cap-\(i)", event: .sessionStart, code: nil, at: t0.addingTimeInterval(Double(i)))
+            }
+            check("livePanel: 容量 128 淘汰最旧（cap-0/cap-1 出、cap-129 留）",
+                  tracker.activity(for: "cap-0") == nil && tracker.activity(for: "cap-1") == nil
+                  && tracker.activity(for: "cap-129") != nil && tracker.activities.count == 128)
+            tracker.resetForTesting()
+
+            // 纯函数：项目名/屏标签/相对时间
+            check("livePanel: projectLabel 尾段+去斜杠+空串 nil",
+                  SessionPanelLogic.projectLabel(cwd: "/Users/x/proj/demo") == "demo"
+                  && SessionPanelLogic.projectLabel(cwd: "/") == nil
+                  && SessionPanelLogic.projectLabel(cwd: nil) == nil)
+            check("livePanel: screenLabel（display1=主屏、2+=副屏n、0/nil=nil）",
+                  SessionPanelLogic.screenLabel(display: 1) == "主屏"
+                  && SessionPanelLogic.screenLabel(display: 2) == "副屏2"
+                  && SessionPanelLogic.screenLabel(display: 0) == nil
+                  && SessionPanelLogic.screenLabel(display: nil) == nil)
+            check("livePanel: relativeAge 三段文案",
+                  SessionPanelLogic.relativeAge(t0, now: t0.addingTimeInterval(30)) == "刚刚"
+                  && SessionPanelLogic.relativeAge(t0, now: t0.addingTimeInterval(180)) == "3 分钟前"
+                  && SessionPanelLogic.relativeAge(t0, now: t0.addingTimeInterval(7200)) == "2 小时前"
+                  && SessionPanelLogic.relativeAge(nil, now: t0) == nil)
+
+            // geoMap：id 映射 + 非法 id 跳过
+            let yabaiWindows = [
+                YabaiWindowInfo(id: 100, pid: 1, app: "A", title: "a", space: 3, display: 1,
+                                frame: nil, isFloatingRaw: false, hasAXReferenceRaw: true,
+                                isMinimizedRaw: false, hasFocusRaw: false),
+                YabaiWindowInfo(id: 0, pid: 1, app: "B", title: "b", space: 2, display: 2,
+                                frame: nil, isFloatingRaw: false, hasAXReferenceRaw: true,
+                                isMinimizedRaw: false, hasFocusRaw: false),
+            ]
+            let geo = SessionPanelLogic.geoMap(fromWindows: yabaiWindows)
+            check("livePanel: geoMap 映射+非法 id(0) 跳过",
+                  geo[100]?.space == 3 && geo[100]?.display == 1 && geo[0] == nil)
+
+            // buildRows：join+派生+排序（waiting 最前）+无活动退 .bound+无 sessionID 丢弃
+            func ws(_ wid: UInt32, session: String?, cwd: String?, remote: Bool = false) -> WindowState {
+                var s = WindowState(
+                    windowID: wid, pid: 100, tty: nil,
+                    axWindowNumber: nil, appName: "Terminal", bundleIdentifier: nil, title: nil,
+                    termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+                    envWindowID: nil, sessionID: session, cwd: cwd, model: nil,
+                    isCompleted: false, createdAt: t0, updatedAt: t0)
+                s.bindingType = remote ? .remote : .local
+                return s
+            }
+            let bindings = [
+                ws(300, session: "sess-done", cwd: "/x/alpha"),
+                ws(301, session: "sess-wait", cwd: "/x/beta", remote: true),
+                ws(302, session: nil, cwd: nil),
+                ws(303, session: "sess-plain", cwd: nil),
+            ]
+            let acts = [
+                "sess-done": SessionActivity(lastEvent: .stop, at: t0.addingTimeInterval(60), lastCode: "trigger_disabled_skip"),
+                "sess-wait": SessionActivity(lastEvent: .notification, at: t0.addingTimeInterval(30), lastCode: "notification_sent"),
+            ]
+            let rows = SessionPanelLogic.buildRows(
+                bindings: bindings, activities: acts,
+                geo: [300: SessionWindowGeo(space: 4, display: 1), 301: SessionWindowGeo(space: 2, display: 3)],
+                now: t0.addingTimeInterval(90))
+            check("livePanel: buildRows 行数（无 sessionID 丢弃）+waiting 排最前",
+                  rows.count == 3 && rows[0].sessionID == "sess-wait")
+            check("livePanel: geo join（主屏+space4/副屏3+space2）+离屏降级",
+                  rows.first { $0.sessionID == "sess-done" }?.screenLabel == "主屏"
+                  && rows.first { $0.sessionID == "sess-done" }?.space == 4
+                  && rows.first { $0.sessionID == "sess-wait" }?.screenLabel == "副屏3"
+                  && rows.first { $0.sessionID == "sess-plain" }?.screenLabel == nil)
+            check("livePanel: 无活动退 .bound（重启后不编造运行态）+远程旗标+项目名",
+                  rows.first { $0.sessionID == "sess-plain" }?.status == .bound
+                  && rows.first { $0.sessionID == "sess-wait" }?.isRemote == true
+                  && rows.first { $0.sessionID == "sess-done" }?.project == "alpha"
+                  && rows.first { $0.sessionID == "sess-wait" }?.status == .waiting)
+
+            // 渲染：空交代 + 行内容（状态/屏/space/项目/远程）
+            let empty = SessionPanelLogic.reportLines(rows: [], now: t0)
+            check("livePanel: 渲染空态给明确交代", empty.count == 1 && empty[0].contains("暂无已绑定会话"))
+            let lines = SessionPanelLogic.reportLines(rows: rows, now: t0.addingTimeInterval(90))
+            check("livePanel: 渲染行含状态/屏/space/项目/远程/计数",
+                  lines[0].contains("3 个会话")
+                  && lines.contains { $0.contains("等待输入") && $0.contains("副屏3") && $0.contains("space2") && $0.contains("远程") }
+                  && lines.contains { $0.contains("已完成") && $0.contains("主屏") && $0.contains("alpha") })
+            check("livePanel: Doctor 报告行委托一致",
+                  Doctor.sessionPanelReportLines(bindings: bindings, activities: acts, geo: geo, now: t0.addingTimeInterval(90)).isEmpty == false)
+
+            // 持久化纯函数：编码→解码回环（ISO8601 时间/缺 code 条目/坏事件跳过）
+            let roundtripActivities = [
+                "sess-x": SessionActivity(lastEvent: .stop, at: t0, lastCode: "trigger_disabled_skip"),
+                "sess-y": SessionActivity(lastEvent: .notification, at: t0.addingTimeInterval(10), lastCode: nil),
+            ]
+            let encoded = SessionActivityTracker.encodeActivities(activities: roundtripActivities)
+            let decoded = encoded.flatMap { SessionActivityTracker.parseActivities(data: $0) }
+            check("livePanel: 持久化编解码回环（时间/事件/码 保真；ISO8601 无小数秒，时间容差 <1s）",
+                  decoded?["sess-x"]?.lastEvent == .stop
+                  && decoded?["sess-x"]?.lastCode == "trigger_disabled_skip"
+                  && decoded?["sess-y"]?.lastEvent == .notification
+                  && decoded?["sess-y"]?.lastCode == nil
+                  && abs((decoded?["sess-y"]?.at.timeIntervalSince(t0) ?? -99) - 10) < 1)
+            let badEncoded = Data(#"{"version":1,"sessions":{"bad":{"event":"Nonsense","at":"2026-01-01T00:00:00Z"},"skip-me":{}}}"#.utf8)
+            check("livePanel: 坏事件/缺字段条目解码跳过不崩",
+                  (SessionActivityTracker.parseActivities(data: badEncoded) ?? [:])["bad"] == nil)
+        }
+
         // uninstallHookFromCodexSettings（B114：卸载路径——外部条目保留/缺文件免卸载/坏 JSON 拒绝）
         do {
             let dir = "/tmp/vibefocus-codex2-\(UUID().uuidString)"
