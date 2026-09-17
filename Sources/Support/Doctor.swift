@@ -266,7 +266,8 @@ enum Doctor {
         out.append("")
         out.append(contentsOf: hookTriggerReportLines(
             triggerOnStop: ClaudeHookPreferences.triggerOnStop,
-            triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd
+            triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd,
+            notifyOnNotification: ClaudeHookPreferences.notifyOnNotification
         ))
 
         // B194: 窗口迁移健康——把「回车为什么不归位/⌃Q 循环是否错乱」的排查产品化：
@@ -365,7 +366,12 @@ enum Doctor {
 
     /// B192: hook 触发开关报告行（纯函数 Runner 直测）。关=合法默认态
     ///（2026-09-17 用户定调：两触发默认不勾选），只陈述事实+跳过码线索，不作告警。
-    static func hookTriggerReportLines(triggerOnStop: Bool, triggerOnSessionEnd: Bool) -> [String] {
+    /// B196: 增 Notification 等待输入通知行（默认开；关=notification_disabled）。
+    static func hookTriggerReportLines(
+        triggerOnStop: Bool,
+        triggerOnSessionEnd: Bool,
+        notifyOnNotification: Bool
+    ) -> [String] {
         var out = ["[Hook 触发器] 窗口自动迁移开关"]
         out.append(triggerOnStop
             ? "  Stop 拉主屏（agent 完成→拉到主屏）: 开"
@@ -373,6 +379,9 @@ enum Doctor {
         out.append(triggerOnSessionEnd
             ? "  SessionEnd 触发: 开"
             : "  SessionEnd 触发: 关（SessionEnd 事件被忽略）")
+        out.append(notifyOnNotification
+            ? "  Notification 等待输入通知: 开"
+            : "  Notification 等待输入通知: 关（Notification 事件全部 notification_disabled）")
         return out
     }
 

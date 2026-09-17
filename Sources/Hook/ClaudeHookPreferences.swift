@@ -13,6 +13,7 @@ enum ClaudeHookPreferences {
     static let triggerOnStopKey = "claudeHookTriggerOnStop"
     static let triggerOnSessionEndKey = "claudeHookTriggerOnSessionEnd"
     static let autoRestoreOnPromptSubmitKey = "claudeHookAutoRestoreOnPromptSubmit"
+    static let notifyOnNotificationKey = "claudeHookNotifyOnNotification"
 
     static let endpointPath = "/claude/hook"
     static let defaultPort = 39277
@@ -28,6 +29,9 @@ enum ClaudeHookPreferences {
     static let defaultTriggerOnStop = false
     static let defaultTriggerOnSessionEnd = false
     static let defaultAutoRestoreOnPromptSubmit = true
+    /// B196 Notification 等待输入通知默认开：它只投递 macOS 通知中心（provisional
+    /// 静默授权、不弹权限框、不动窗口），与 B192「拉窗触发默认关」是两类性质。
+    static let defaultNotifyOnNotification = true
 
     static var helperScriptDir: String {
         (NSHomeDirectory() as NSString).appendingPathComponent(".vibefocus")
@@ -190,7 +194,7 @@ enum ClaudeHookPreferences {
     }
 
     static var autoRestoreOnPromptSubmit: Bool {
-        // P-INST-238: UserPromptSubmit 自动 restore 开关访问耗时（UserDefaults.object 读 / set CFPreferences 写；generateHooksDict 决定是否注册 UserPromptSubmit hook 读，设置 UI 写；slow-op ≥5ms warn）。
+        // P-INST-238: UPS 自动 restore 开关访问耗时（UserDefaults.object 读 / set CFPreferences 写；generateHooksDict 决定是否注册 UserPromptSubmit hook 读，设置 UI 写；slow-op ≥5ms warn）。
         get {
             let gStart = Date()
             let value = UserDefaults.standard.object(forKey: autoRestoreOnPromptSubmitKey) as? Bool ?? defaultAutoRestoreOnPromptSubmit
@@ -203,6 +207,23 @@ enum ClaudeHookPreferences {
             UserDefaults.standard.set(newValue, forKey: autoRestoreOnPromptSubmitKey)
             let durMs = elapsedMilliseconds(since: sStart)
             if durMs >= 5 { log("ClaudeHookPreferences.autoRestoreOnPromptSubmit set slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+        }
+    }
+
+    static var notifyOnNotification: Bool {
+        // B196: Notification 等待输入通知开关（UserDefaults.object 读 / set CFPreferences 写；generateHooksDict 决定是否注册 Notification hook 读，handleNotification 门读，设置 UI 写）。
+        get {
+            let gStart = Date()
+            let value = UserDefaults.standard.object(forKey: notifyOnNotificationKey) as? Bool ?? defaultNotifyOnNotification
+            let durMs = elapsedMilliseconds(since: gStart)
+            if durMs >= 5 { log("ClaudeHookPreferences.notifyOnNotification read slow", level: .warn, fields: ["durationMs": String(durMs)]) }
+            return value
+        }
+        set {
+            let sStart = Date()
+            UserDefaults.standard.set(newValue, forKey: notifyOnNotificationKey)
+            let durMs = elapsedMilliseconds(since: sStart)
+            if durMs >= 5 { log("ClaudeHookPreferences.notifyOnNotification set slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
     }
 

@@ -73,6 +73,7 @@ public struct SettingsView: View {
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop
     @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) var triggerOnSessionEnd = ClaudeHookPreferences.defaultTriggerOnSessionEnd
     @AppStorage(ClaudeHookPreferences.autoRestoreOnPromptSubmitKey) var autoRestoreOnPromptSubmit = ClaudeHookPreferences.defaultAutoRestoreOnPromptSubmit
+    @AppStorage(ClaudeHookPreferences.notifyOnNotificationKey) var notifyOnNotification = ClaudeHookPreferences.defaultNotifyOnNotification
 
     // MARK: - Tab Navigation
 

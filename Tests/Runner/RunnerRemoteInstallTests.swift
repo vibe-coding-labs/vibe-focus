@@ -232,10 +232,10 @@ extension RunnerHarness {
                       && output.contains("[4/6] Updated"))
 
                 let hooks = (readJSON(home + "/.claude/settings.json")?["hooks"] as? [String: Any]) ?? [:]
-                // 种子 PreToolUse + 生成的三事件并存（合并语义）
+                // 种子 PreToolUse + 生成的四事件并存（合并语义；B196 起 +Notification）
                 let registered = hooks.keys.sorted()
-                check("remoteInstall[jq]: 注册 SessionStart/Stop/UserPromptSubmit 且种子 hook 保留",
-                      registered == ["PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
+                check("remoteInstall[jq]: 注册 SessionStart/Stop/UserPromptSubmit/Notification 且种子 hook 保留",
+                      registered == ["Notification", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
 
                 let entryOK = (hooks["Stop"] as? [[String: Any]])?.first != nil
                     && ((hooks["Stop"] as? [[String: Any]])?[0]["hooks"] as? [[String: Any]])?.first != nil
@@ -308,8 +308,8 @@ extension RunnerHarness {
 
             check("remoteInstall[nojq]: 脚本零错误退出（jq 缺失走 python3 降级）", exit == 0)
             let nojqHooks = (readJSON(home + "/.claude/settings.json")?["hooks"] as? [String: Any]) ?? [:]
-            check("remoteInstall[nojq]: python3 合并——种子保留 + 三事件注册",
-                  nojqHooks.keys.sorted() == ["PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
+            check("remoteInstall[nojq]: python3 合并——种子保留 + 四事件注册（B196 起 +Notification）",
+                  nojqHooks.keys.sorted() == ["Notification", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
             check("remoteInstall[nojq]: 输出 python3 降级标记",
                   output.contains("(via python3)"))
             // codex 路径同样只依赖 python3，无 jq 环境下照常落盘

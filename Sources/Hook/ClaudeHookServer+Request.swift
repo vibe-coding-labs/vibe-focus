@@ -135,6 +135,10 @@ extension ClaudeHookServer {
             result = await eventHandler.handleWindowMoveTrigger(payload: payload, triggerName: "SessionEnd")
         case .userPromptSubmit:
             result = await eventHandler.handleUserPromptSubmit(payload: payload)
+        case .notification:
+            // B196: 等待输入 → 通知中心（快路径，无窗口作业）。远程会话经 spool
+            // 回灌的事件走同一分发，远程机上的等待同样能提醒到 Mac 侧。
+            result = await eventHandler.handleNotification(payload: payload)
         }
 
         // Track handled requests based on the response

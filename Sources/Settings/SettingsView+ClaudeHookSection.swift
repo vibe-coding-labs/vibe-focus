@@ -158,6 +158,28 @@ extension SettingsView {
             Divider()
 
             SettingsRow(
+                title: "等待输入系统通知",
+                detail: "Claude 需要权限确认或空闲等待时，在 macOS 通知中心提醒（按会话去重，不动窗口）"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { notifyOnNotification },
+                    set: { newValue in
+                        notifyOnNotification = newValue
+                        ClaudeHookPreferences.notifyOnNotification = newValue
+                        if hookEnabled { hookServer.applyPreferences() }
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+            }
+
+            Text("Notification：Claude 卡在等待你操作的瞬间提醒，多会话时一眼知道该看哪一个。首次投递走系统临时授权，安静进通知中心，不弹权限框。")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            SettingsRow(
                 title: "监听端口",
                 detail: "默认 \(ClaudeHookPreferences.defaultPort)"
             ) {

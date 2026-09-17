@@ -1073,28 +1073,110 @@ extension RunnerHarness {
                   Set(twice.keys) == Set(fresh.keys))
         }
 
-        // generateHooksDict 三开关组合（B117：默认四事件字典契约——Stop 恒注册）
+        // generateHooksDict 开关组合（B117 四事件 + B196 Notification——Stop/SessionStart 恒注册）
         do {
             let saved = (ClaudeHookPreferences.triggerOnStop,
                          ClaudeHookPreferences.triggerOnSessionEnd,
-                         ClaudeHookPreferences.autoRestoreOnPromptSubmit)
+                         ClaudeHookPreferences.autoRestoreOnPromptSubmit,
+                         ClaudeHookPreferences.notifyOnNotification)
             defer {
                 ClaudeHookPreferences.triggerOnStop = saved.0
                 ClaudeHookPreferences.triggerOnSessionEnd = saved.1
                 ClaudeHookPreferences.autoRestoreOnPromptSubmit = saved.2
+                ClaudeHookPreferences.notifyOnNotification = saved.3
             }
             ClaudeHookPreferences.triggerOnStop = true
             ClaudeHookPreferences.triggerOnSessionEnd = true
             ClaudeHookPreferences.autoRestoreOnPromptSubmit = true
+            ClaudeHookPreferences.notifyOnNotification = true
             let all = ClaudeHookPreferences.generateHooksDict()
-            check("hooksDict: 三开关全开 → 四事件键齐且条目嵌 hooks 含 helper 命令",
-                  Set(all.keys) == ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"]
+            check("hooksDict: 全开 → 五事件键齐且条目嵌 hooks 含 helper 命令",
+                  Set(all.keys) == ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "Notification"]
                   && ((all["Stop"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])?.first?["command"] != nil)
             ClaudeHookPreferences.triggerOnSessionEnd = false
             ClaudeHookPreferences.autoRestoreOnPromptSubmit = false
+            ClaudeHookPreferences.notifyOnNotification = false
             let trimmed = ClaudeHookPreferences.generateHooksDict()
-            check("hooksDict: 开关关 → SessionEnd/UserPromptSubmit 不注册、Stop 恒注册",
+            check("hooksDict: 开关关 → SessionEnd/UserPromptSubmit/Notification 不注册、Stop 恒注册",
                   Set(trimmed.keys) == ["SessionStart", "Stop"])
+        }
+
+        // B196: Notification 事件——内容构造纯函数 + handler 三态（fake poster 注入，不触碰 UN 框架）
+        do {
+            @MainActor final class FakeNotificationPoster: NotificationPosting {
+                var stub: Bool
+                var received: [HookNotificationContent] = []
+                init(stub: Bool) { self.stub = stub }
+                func post(_ content: HookNotificationContent) async -> Bool {
+                    received.append(content)
+                    return stub
+                }
+            }
+            check("hookNotify: 内容构造（cwd 尾段进标题+message 透传+identifier 会话去重）",
+                  HookEventHandler.makeNotificationContent(
+                    sessionID: "s-1", message: "Claude needs your permission to use Bash",
+                    cwd: "/Users/x/proj/demo")
+                  == HookNotificationContent(
+                    identifier: "vf-hook-s-1", title: "Claude 等待输入 · demo",
+                    body: "Claude needs your permission to use Bash"))
+            check("hookNotify: 空白消息回退默认文案 + 无 cwd 无项目名",
+                  HookEventHandler.makeNotificationContent(sessionID: "s-2", message: "   ", cwd: nil)
+                  == HookNotificationContent(
+                    identifier: "vf-hook-s-2", title: "Claude 等待输入",
+                    body: "会话等待你的输入（权限确认或空闲等待）"))
+
+            final class NotifyResultBox {
+                var statusCode = 0
+                var code: String?
+                var handled = false
+            }
+            // 同步 harness 桥接 @MainActor async handler：短片等待 + 泵主 RunLoop
+            //（B154 httpPost 同款——handler 在主队列，长阻塞 wait 会饿死它）。
+            func runNotification(_ payload: ClaudeHookPayload, poster: NotificationPosting) -> NotifyResultBox {
+                let box = NotifyResultBox()
+                let sem = DispatchSemaphore(value: 0)
+                Task { @MainActor in
+                    let r = await HookEventHandler.shared.handleNotification(payload: payload, poster: poster)
+                    box.statusCode = r.statusCode
+                    box.code = r.response.code
+                    box.handled = r.response.handled
+                    sem.signal()
+                }
+                let deadline = Date().addingTimeInterval(10)
+                while Date() < deadline {
+                    if sem.wait(timeout: .now() + 0.05) == .success { break }
+                    RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+                }
+                return box
+            }
+            let payload = ClaudeHookPayload(
+                event: .notification, sessionID: "s-notify", source: nil, timestamp: nil,
+                cwd: "/tmp/pj", model: nil, terminalCtx: nil,
+                lastAssistantMessage: nil, transcriptPath: nil,
+                message: "Claude is waiting for your input")
+            let savedNotify = ClaudeHookPreferences.notifyOnNotification
+            defer { ClaudeHookPreferences.notifyOnNotification = savedNotify }
+
+            ClaudeHookPreferences.notifyOnNotification = true
+            let okPoster = FakeNotificationPoster(stub: true)
+            let sent = runNotification(payload, poster: okPoster)
+            check("hookNotify: 开+投递成功 → notification_sent handled=true 且内容送达",
+                  sent.code == "notification_sent" && sent.handled && sent.statusCode == 200
+                  && okPoster.received.count == 1
+                  && okPoster.received.first?.identifier == "vf-hook-s-notify"
+                  && SessionWindowRegistry.shared.lastEventDescription.contains("已投递"))
+            let failPoster = FakeNotificationPoster(stub: false)
+            let failed = runNotification(payload, poster: failPoster)
+            check("hookNotify: 投递失败 → notification_post_failed handled=false（诚实记账）",
+                  failed.code == "notification_post_failed" && !failed.handled)
+
+            ClaudeHookPreferences.notifyOnNotification = false
+            let disabledPoster = FakeNotificationPoster(stub: true)
+            let disabled = runNotification(payload, poster: disabledPoster)
+            check("hookNotify: 开关关 → notification_disabled 且不触碰投递器",
+                  disabled.code == "notification_disabled" && !disabled.handled
+                  && disabledPoster.received.isEmpty
+                  && SessionWindowRegistry.shared.lastEventDescription.contains("已关闭"))
         }
 
         // uninstallHookFromCodexSettings（B114：卸载路径——外部条目保留/缺文件免卸载/坏 JSON 拒绝）

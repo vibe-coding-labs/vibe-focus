@@ -285,7 +285,8 @@ extension ClaudeHookPreferences {
         log("ClaudeHookPreferences.generateHooksDict() entered", level: .debug, fields: [
             "triggerOnStop": String(triggerOnStop),
             "triggerOnSessionEnd": String(triggerOnSessionEnd),
-            "autoRestoreOnPromptSubmit": String(autoRestoreOnPromptSubmit)
+            "autoRestoreOnPromptSubmit": String(autoRestoreOnPromptSubmit),
+            "notifyOnNotification": String(notifyOnNotification)
         ])
         var hooks: [String: Any] = [:]
         hooks["SessionStart"] = [makeHookEntry(scriptPath: scriptPath)]
@@ -296,6 +297,10 @@ extension ClaudeHookPreferences {
         }
         if autoRestoreOnPromptSubmit {
             hooks["UserPromptSubmit"] = [makeHookEntry(scriptPath: scriptPath)]
+        }
+        // B196: Notification（等待权限确认/空闲等待）→ 通知中心提醒，按开关注册
+        if notifyOnNotification {
+            hooks["Notification"] = [makeHookEntry(scriptPath: scriptPath)]
         }
         log("ClaudeHookPreferences.generateHooksDict() returning", level: .debug, fields: [
             "hookEvents": hooks.keys.sorted().joined(separator: ",")

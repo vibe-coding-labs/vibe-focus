@@ -1,11 +1,15 @@
 import Foundation
 
-/// Claude Code hook event types (SessionStart, SessionEnd, UserPromptSubmit, Stop).
+/// Claude Code hook event types (SessionStart, SessionEnd, UserPromptSubmit, Stop,
+/// Notification).
+/// Notification = Claude 需要权限确认或空闲等待输入时触发——「等用户」这一态此前
+/// 完全无感知，B196 接入后联动 macOS 通知中心。
 enum ClaudeHookEventType: String, Codable, CaseIterable {
     case sessionStart = "SessionStart"
     case stop = "Stop"
     case sessionEnd = "SessionEnd"
     case userPromptSubmit = "UserPromptSubmit"
+    case notification = "Notification"
 }
 
 /// Claude Code hook 辅助脚本捕获的终端上下文信息
@@ -99,6 +103,9 @@ struct ClaudeHookPayload: Decodable {
     let lastAssistantMessage: String?
     /// 会话 transcript 文件路径（Stop hook payload 携带，目前未使用，留作未来扩展）
     let transcriptPath: String?
+    /// 等待原因正文（Claude Code Notification hook 携带，如
+    /// "Claude needs your permission to use Bash"）；其余事件无此字段。
+    let message: String?
 
     private enum CodingKeys: String, CodingKey {
         case event
@@ -112,6 +119,7 @@ struct ClaudeHookPayload: Decodable {
         case terminalCtx = "terminal_ctx"
         case lastAssistantMessage = "last_assistant_message"
         case transcriptPath = "transcript_path"
+        case message
     }
 
     /// Memberwise initializer（用于非解码路径构造，如语音播报试听）
@@ -124,7 +132,8 @@ struct ClaudeHookPayload: Decodable {
         model: String?,
         terminalCtx: TerminalContext?,
         lastAssistantMessage: String?,
-        transcriptPath: String?
+        transcriptPath: String?,
+        message: String? = nil
     ) {
         self.event = event
         self.sessionID = sessionID
@@ -135,6 +144,7 @@ struct ClaudeHookPayload: Decodable {
         self.terminalCtx = terminalCtx
         self.lastAssistantMessage = lastAssistantMessage
         self.transcriptPath = transcriptPath
+        self.message = message
     }
 
     init(from decoder: Decoder) throws {
@@ -177,6 +187,7 @@ struct ClaudeHookPayload: Decodable {
         terminalCtx = try container.decodeIfPresent(TerminalContext.self, forKey: .terminalCtx)
         lastAssistantMessage = try container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
 
         log("ClaudeHookPayload decoded successfully", level: .debug, fields: [
             "event": event.rawValue,
@@ -186,7 +197,8 @@ struct ClaudeHookPayload: Decodable {
             "model": model ?? "nil",
             "hasTerminalCtx": String(terminalCtx != nil),
             "hasLastAssistantMessage": String(lastAssistantMessage != nil),
-            "hasTranscriptPath": String(transcriptPath != nil)
+            "hasTranscriptPath": String(transcriptPath != nil),
+            "hasMessage": String(message != nil)
         ])
     }
 }

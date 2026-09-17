@@ -11,12 +11,13 @@ import Foundation
 extension RunnerHarness {
     func runHookModelsTests() {
         // A. ClaudeHookEventType：穷举/rawValue/Codable/非法拒绝。
-        check("hookModels: eventType 四 case 且 rawValue 即线上 JSON 契约",
-              ClaudeHookEventType.allCases.count == 4
+        check("hookModels: eventType 五 case 且 rawValue 即线上 JSON 契约（B196 起 +Notification）",
+              ClaudeHookEventType.allCases.count == 5
               && ClaudeHookEventType.sessionStart.rawValue == "SessionStart"
               && ClaudeHookEventType.stop.rawValue == "Stop"
               && ClaudeHookEventType.sessionEnd.rawValue == "SessionEnd"
-              && ClaudeHookEventType.userPromptSubmit.rawValue == "UserPromptSubmit")
+              && ClaudeHookEventType.userPromptSubmit.rawValue == "UserPromptSubmit"
+              && ClaudeHookEventType.notification.rawValue == "Notification")
         let eventTypeRoundtripOK = ClaudeHookEventType.allCases.allSatisfy { e in
             (try? JSONDecoder().decode(ClaudeHookEventType.self, from: JSONEncoder().encode(e))) == e
         }
@@ -51,11 +52,17 @@ extension RunnerHarness {
         check("hookModels: payload 可选字段缺省全 nil",
               { let p = decode(#"{"event": "Stop", "session_id": "s4"}"#)
                 return p?.source == nil && p?.timestamp == nil && p?.cwd == nil && p?.model == nil
-                  && p?.terminalCtx == nil && p?.lastAssistantMessage == nil && p?.transcriptPath == nil }())
+                  && p?.terminalCtx == nil && p?.lastAssistantMessage == nil && p?.transcriptPath == nil
+                  && p?.message == nil }())
         let p3 = decode(#"{"event": "Stop", "session_id": "s5", "model": "claude-sonnet-4-6", "last_assistant_message": "done", "transcript_path": "/t.jsonl"}"#)
         check("hookModels: payload 扩展字段解码（model/last_assistant_message/transcript_path）",
               p3?.model == "claude-sonnet-4-6" && p3?.lastAssistantMessage == "done"
               && p3?.transcriptPath == "/t.jsonl")
+        // B196: Notification 事件 + message 字段（hook_event_name 键形同兼容）
+        let p4 = decode(#"{"hook_event_name": "Notification", "session_id": "s6", "message": "Claude needs your permission to use Bash", "cwd": "/tmp/demo"}"#)
+        check("hookModels B196: Notification 事件解码 + message/cwd 透传",
+              p4?.event == .notification && p4?.message == "Claude needs your permission to use Bash"
+              && p4?.cwd == "/tmp/demo")
 
         // C. ClaudeHookResponse 编码线格式（session_id 键名 + nil 键省略）。
         func wire(_ r: ClaudeHookResponse) -> [String: Any] {
@@ -140,10 +147,10 @@ extension RunnerHarness {
 
         // ===== B192 hookTriggerReportLines：触发开关报告行（关=合法默认态，无告警口径） =====
         do {
-            let on = Doctor.hookTriggerReportLines(triggerOnStop: true, triggerOnSessionEnd: true).joined(separator: "\n")
+            let on = Doctor.hookTriggerReportLines(triggerOnStop: true, triggerOnSessionEnd: true, notifyOnNotification: true).joined(separator: "\n")
             check("hookModels B192: 双开态两行都报开",
                   on.contains("Stop 拉主屏（agent 完成→拉到主屏）: 开") && on.contains("SessionEnd 触发: 开"))
-            let off = Doctor.hookTriggerReportLines(triggerOnStop: false, triggerOnSessionEnd: false).joined(separator: "\n")
+            let off = Doctor.hookTriggerReportLines(triggerOnStop: false, triggerOnSessionEnd: false, notifyOnNotification: false).joined(separator: "\n")
             check("hookModels B192: 关态陈述事实+跳过码线索，无告警符号",
                   off.contains(": 关（Stop 事件全部 trigger_disabled_skip）")
                   && off.contains("SessionEnd 触发: 关（SessionEnd 事件被忽略）") && !off.contains("⚠️"))
@@ -151,6 +158,12 @@ extension RunnerHarness {
                   ClaudeHookPreferences.defaultTriggerOnStop == false)
             check("hookModels B192: SessionEnd 触发代码默认=不勾选",
                   ClaudeHookPreferences.defaultTriggerOnSessionEnd == false)
+            // B196: Notification 通知开关报告行 + 默认开
+            check("hookModels B196: Notification 行开态报开、关态给 notification_disabled 线索",
+                  on.contains("Notification 等待输入通知: 开")
+                  && off.contains("Notification 等待输入通知: 关（Notification 事件全部 notification_disabled）"))
+            check("hookModels B196: Notification 通知默认开（信息投递类，非 B192 拉窗类）",
+                  ClaudeHookPreferences.defaultNotifyOnNotification == true)
         }
     }
 }
