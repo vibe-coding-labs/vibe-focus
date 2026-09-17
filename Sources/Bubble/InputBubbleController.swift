@@ -354,6 +354,15 @@ final class InputBubbleController: NSObject {
         )
     }
 
+    /// ⌘Y（B204）：唤出/收回历史面板，返回 true=已消费。
+    /// 气泡焦点态走这里；面板焦点态（搜索框打字中）由面板本地监视器同键收回，
+    /// 两侧互斥接收、各收各的，不会双 toggle。
+    func toggleHistoryPanel() -> Bool {
+        guard phase == .open, panel != nil else { return false }
+        showHistoryPanel()
+        return true
+    }
+
     /// 面板「填充」：把历史文本回填进打开中的气泡（替换全文），基线同步推进
     /// （防脏守卫/干净关闭语义把回填误判为用户新输入）。
     /// B203 防蒸发：覆盖前若现场是用户改动过的非空白文本，先落一条草稿历史——

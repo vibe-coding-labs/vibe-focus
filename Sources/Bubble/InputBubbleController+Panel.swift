@@ -79,7 +79,7 @@ extension InputBubbleController {
 
         // B196：底栏最左历史入口钮——单击开历史面板（草稿/已提交，默认本窗过滤）
         let historyButton = BubbleHistoryButton(frame: .zero)
-        historyButton.toolTip = "输入历史（草稿与已提交；可复制/回填）"
+        historyButton.toolTip = "输入历史 ⌘Y（草稿与已提交；可复制/回填）"
         historyButton.onOpen = { [weak self] in
             self?.showHistoryPanel()
         }
@@ -109,6 +109,10 @@ extension InputBubbleController {
         }
         textView.onHistoryNext = { [weak self] in
             self?.historyNext() ?? false
+        }
+        // B204：⌘Y 唤出/收回历史面板（与光标位置无关的直达通道）
+        textView.onHistoryPanelToggle = { [weak self] in
+            self?.toggleHistoryPanel() ?? false
         }
         textView.font = NSFont.systemFont(ofSize: 13)
         textView.textColor = Self.dynamicColor(lightHex: 0x40362B, darkHex: 0xF1E9DE)

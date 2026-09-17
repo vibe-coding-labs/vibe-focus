@@ -28,6 +28,8 @@ final class InputBubbleTextView: NSTextView {
     /// B195：↑↓ 历史翻阅回调，返回 true=已消费
     var onHistoryPrevious: (() -> Bool)?
     var onHistoryNext: (() -> Bool)?
+    /// B204：⌘Y 唤出/收回历史面板回调，返回 true=已消费
+    var onHistoryPanelToggle: (() -> Bool)?
 
     private static let enterKeyCodes: Set<UInt16> = [UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter)]
 
@@ -39,6 +41,12 @@ final class InputBubbleTextView: NSTextView {
            !event.modifierFlags.contains(.shift),
            !hasMarkedText() {
             onEnterKey?(event.modifierFlags.contains(.command))
+            return
+        }
+        // B204：⌘Y 直达历史面板（与光标位置无关；IME 组词态照旧放行）
+        if !hasMarkedText(),
+           InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: event.keyCode, flags: event.modifierFlags),
+           onHistoryPanelToggle?() == true {
             return
         }
         if !hasMarkedText(),

@@ -843,3 +843,32 @@ extension RunnerHarness {
         check("compose: 全部内搜索窗名", InputBubbleHistoryFilter.search(scopedAll, query: "win").count == 2)
     }
 }
+
+extension RunnerHarness {
+    /// B204：⌘Y 历史面板快捷键决策 + 搜索框回车填充目标 + 底栏提示契约。
+    func runBubbleHistoryPanelKeyTests() {
+        print("\n=== BubbleHistoryPanelKey (B204) ===")
+
+        // --- ⌘Y 识别：裸 ⌘+Y 命中，其余修饰组合/键位一律不命中 ---
+        let yKey = UInt16(0x10)  // kVK_ANSI_Y
+        check("key: ⌘Y 命中", InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: yKey, flags: .command))
+        check("key: 裸 Y 不命中", !InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: yKey, flags: []))
+        check("key: ⇧⌘Y 不命中", !InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: yKey, flags: [.command, .shift]))
+        check("key: ⌥⌘Y 不命中", !InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: yKey, flags: [.command, .option]))
+        check("key: ⌃⌘Y 不命中", !InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: yKey, flags: [.command, .control]))
+        check("key: ⌘X 不命中", !InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: 0x07, flags: .command))
+
+        // --- 搜索框回车的填充目标：第一条可见记录；空列表不动作 ---
+        let now = Date()
+        let visible = [
+            InputBubbleHistoryEntry(text: "第一条", at: now, windowID: 1, windowTitle: "w", status: .draft),
+            InputBubbleHistoryEntry(text: "第二条", at: now.addingTimeInterval(-1), windowID: 1, windowTitle: "w", status: .submitted),
+        ]
+        check("fill: 搜索回车取第一条可见", InputBubbleHistoryPanelKeyPlan.fillTarget(visible: visible)?.text == "第一条")
+        check("fill: 空列表回车不动作", InputBubbleHistoryPanelKeyPlan.fillTarget(visible: []) == nil)
+
+        // --- 底栏提示契约：两种回车键位模式都带 ⌘Y 面板提示（文案与行为防漂移） ---
+        check("hint: ⌘Y 提示进底栏文案（提交模式）", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("⌘Y 历史面板"))
+        check("hint: ⌘Y 提示进底栏文案（默认模式）", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("⌘Y 历史面板"))
+    }
+}

@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import CoreGraphics
 import Foundation
@@ -77,11 +78,11 @@ enum InputBubbleKeyPlan {
         return commandHeld ? .submit : nil
     }
 
-    /// 气泡底部快捷键提示文案（随回车语义同步，防文案与行为漂移）。B195：+↑↓ 历史。
+    /// 气泡底部快捷键提示文案（随回车语义同步，防文案与行为漂移）。B195：+↑↓ 历史。B204：+⌘Y 历史面板。
     static func hintText(submitOnEnter: Bool) -> String {
         submitOnEnter
-            ? "Enter 注入并提交 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · ↑↓ 历史 · Esc 关闭"
-            : "Enter 换行 · ⌘Enter 注入并提交 · ↑↓ 历史 · Esc 关闭"
+            ? "Enter 注入并提交 · Shift+Enter 换行 · ⌘Enter 仅粘贴 · ↑↓ 历史 · ⌘Y 历史面板 · Esc 关闭"
+            : "Enter 换行 · ⌘Enter 注入并提交 · ↑↓ 历史 · ⌘Y 历史面板 · Esc 关闭"
     }
 }
 
@@ -152,6 +153,26 @@ enum InputBubbleFillGuard {
     static func shouldPreserveCurrent(currentText: String, baseText: String) -> Bool {
         currentText != baseText
             && !currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// 历史面板快捷键决策（B204）：气泡与历史面板两侧同键同义——⌘Y 唤出/收回面板。
+/// 缺口依据（用户 2026-09-17 亲证）：面板唯一入口是底栏小字「历史」钮（易漏看），
+/// ↑↓ 只是逐条翻阅不是面板——键盘没有任何通道直达面板（搜索/复制/清空全靠鼠标）。
+enum InputBubbleHistoryPanelKeyPlan {
+    /// 裸 ⌘Y（⇧/⌥/⌃ 任一按住都不算，组合键留给系统与用户）= 唤出/收回历史面板。
+    static func isHistoryPanelToggle(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+        keyCode == UInt16(kVK_ANSI_Y)
+            && flags.contains(.command)
+            && !flags.contains(.shift)
+            && !flags.contains(.option)
+            && !flags.contains(.control)
+    }
+
+    /// 搜索框回车的填充目标：第一条可见记录（键盘闭环 ⌘Y→输入搜索词→Enter 直接填充；
+    /// 空列表返回 nil=不动作）。填充语义与面板「填充」钮完全一致（B203 防蒸发门保护现场）。
+    static func fillTarget(visible: [InputBubbleHistoryEntry]) -> InputBubbleHistoryEntry? {
+        visible.first
     }
 }
 

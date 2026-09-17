@@ -544,12 +544,18 @@ final class InputBubbleHistoryPanelController: NSObject {
         clearButton?.needsDisplay = true
     }
 
-    // MARK: 事件监视（Esc：搜索有词先清词、否则关面板；点面板与气泡之外关）
+    // MARK: 事件监视（⌘Y 同键收回；Esc：搜索有词先清词、否则关面板；点面板与气泡之外关）
 
     private func installMonitors() {
         removeMonitors()
         let keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.isVisible, event.keyCode == UInt16(kVK_Escape) else { return event }
+            guard let self, self.isVisible else { return event }
+            // B204：⌘Y 与气泡侧同键同义——面板开着时收回（toggle 闭环，两侧互斥接收）
+            if InputBubbleHistoryPanelKeyPlan.isHistoryPanelToggle(keyCode: event.keyCode, flags: event.modifierFlags) {
+                self.close()
+                return nil
+            }
+            guard event.keyCode == UInt16(kVK_Escape) else { return event }
             // B203：正在搜索框打字时第一档 Esc 只清搜索词，再按才关面板
             if let field = self.searchField,
                !field.stringValue.isEmpty,
@@ -600,6 +606,7 @@ final class InputBubbleHistoryPanelController: NSObject {
 }
 
 // MARK: - 搜索框实时过滤（B203：输入即刷；查询变化后展开态不再有意义，一并复位）
+//         B204：搜索框回车=填充第一条可见记录（⌘Y→搜索→Enter 全键盘闭环）
 
 extension InputBubbleHistoryPanelController: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
@@ -607,6 +614,17 @@ extension InputBubbleHistoryPanelController: NSTextFieldDelegate {
         searchQuery = field.stringValue
         expandedID = nil
         refresh()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === searchField,
+              commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
+        // 空列表：消费回车不动作（不往搜索框插换行、面板留着继续改词）
+        guard let target = InputBubbleHistoryPanelKeyPlan.fillTarget(visible: currentVisibleEntries()) else {
+            return true
+        }
+        fill(target.text)
+        return true
     }
 }
 

@@ -252,6 +252,7 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleHistoryTests()
         runBubbleHistoryPanelTests()
         runBubbleHistorySearchTests()
+        runBubbleHistoryPanelKeyTests()
         runPerfMonitorTests()
     // MARK: 汇总
 
