@@ -89,12 +89,33 @@ final class VoiceAnnouncementManager: NSObject, ObservableObject {
             return
         }
 
+        // B197: transcript 尾部消费（transcript_path 此前零消费）。取近期助手文本 +
+        // 检测「以提问结束回合」——Claude 提问等输入时 Stop 同样触发，播「完成」
+        // 是撒谎。读尾部 ≤64KB（<1ms 量级）在 Stop 异步播报路径上，不阻塞 hook 响应。
+        let transcriptTail = payload.transcriptPath.flatMap {
+            TranscriptTailReader.readTail(path: $0)
+        } ?? []
+        let pendingQuestion = transcriptTail.last.map {
+            TranscriptTailReader.isQuestionLike($0)
+        } ?? false
+        let waitingText = transcriptTail.last.map { question -> String in
+            let brief = question.count > 80 ? String(question.prefix(80)) + "…" : question
+            return TranscriptTailReader.waitingPrefix + "：" + brief
+        }
+        log("[VoiceAnnouncementManager] transcript tail consumed", level: .debug, fields: [
+            "sessionID": payload.sessionID,
+            "tailCount": String(transcriptTail.count),
+            "pendingQuestion": String(pendingQuestion)
+        ])
+
         switch preferences.mode {
         case .none:
             return
         case .template:
             let text = VoiceAnnouncementTemplate.interpolate(preferences.templateText, payload: payload)
-            enqueueAnnouncement(.text(text.isEmpty ? "对话完成" : text), sessionID: payload.sessionID)
+            var spoken = text.isEmpty ? "对话完成" : text
+            if pendingQuestion, let waitingText { spoken += "。" + waitingText }
+            enqueueAnnouncement(.text(spoken), sessionID: payload.sessionID)
         case .audioFile:
             if let path = preferences.audioFilePath, !path.isEmpty {
                 enqueueAnnouncement(.audioFile(path: path), sessionID: payload.sessionID)
@@ -103,10 +124,18 @@ final class VoiceAnnouncementManager: NSObject, ObservableObject {
                 log("[VoiceAnnouncementManager] audioFile mode but path empty, falling back", level: .warn)
                 enqueueAnnouncement(.text("对话完成"), sessionID: payload.sessionID)
             }
+            // 音频放完队列里补一条等待提示（音频无法插话，只能追加）
+            if pendingQuestion, let waitingText {
+                enqueueAnnouncement(.text(waitingText), sessionID: payload.sessionID)
+            }
         case .llmSummary:
             // 最新优先：抢占在播内容并取消旧 LLM 请求（llmTask 取消机制）
             stopAll()
-            summarizeAndSpeak(payload: payload)
+            summarizeAndSpeak(
+                payload: payload,
+                transcriptTail: transcriptTail,
+                pendingQuestion: pendingQuestion
+            )
         }
     }
 

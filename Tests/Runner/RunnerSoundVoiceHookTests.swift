@@ -418,5 +418,74 @@ extension RunnerHarness {
         check("soundType: 非法值拒绝解码",
               (try? JSONDecoder().decode(CompletionSoundType.self, from: Data("\"unknown_sound\"".utf8))) == nil)
     }
+
+    // MARK: B197 TranscriptTailReader — transcript 尾部消费（LLM 上下文 + 等待输入检测）
+
+    do {
+        // 真机 0.0.60 transcript JSONL 形状：assistant 行 content 为块数组（text/tool_use），
+        // user 行/裸元数据行（last-prompt）/坏行跳过；content 纯字符串形状防御兼容。
+        let lines = [
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"x"}]}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"我先看下文件。"},{"type":"tool_use","name":"Read"}]}}"#,
+            "not-json-at-all",
+            #"{"type":"last-prompt"}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":"纯字符串内容形状"}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"你想用方案 A 还是 B？"}]}}"#,
+        ]
+        let texts = TranscriptTailReader.parseAssistantTexts(fromLines: lines)
+        check("transcript: 解码（旧→新序、text 块提取、tool_use/user/坏行/元数据行跳过、纯字符串兼容）",
+              texts == ["我先看下文件。", "纯字符串内容形状", "你想用方案 A 还是 B？"])
+
+        check("transcript: isQuestionLike 问号判定（全角/半角真、句号/空白假）",
+              TranscriptTailReader.isQuestionLike("选 A 还是 B？")
+              && TranscriptTailReader.isQuestionLike("continue?  ")
+              && !TranscriptTailReader.isQuestionLike("已完成。")
+              && !TranscriptTailReader.isQuestionLike("   "))
+        check("transcript: isQuestionLike 只认结尾问号（保守不猜请确认句式）",
+              !TranscriptTailReader.isQuestionLike("请确认后继续。"))
+
+        // readTail：临时 JSONL 夹具——提取成功 + 条数取尾 + 越界路径空数组
+        let dir = "/tmp/vibefocus-b197-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let transcriptPath = dir + "/session.jsonl"
+        var fixture = ""
+        for i in 1...8 {
+            let text = i == 8 ? "最后一条在提问？" : "第\(i)条回复"
+            fixture += #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" "# + text + #""}]}}"# + "\n"
+        }
+        FileManager.default.createFile(atPath: transcriptPath, contents: Data(fixture.utf8))
+        let tail = TranscriptTailReader.readTail(path: transcriptPath, maxMessages: 3, perMessageCap: 100)
+        check("transcript: readTail 提取+只留尾部 N 条（取尾 3 条、text 首尾空白裁剪）",
+              tail.count == 3 && tail.last == "最后一条在提问？" && tail.first == "第6条回复")
+        check("transcript: readTail 不存在路径 → 空数组（播报不因取证失败失败）",
+              TranscriptTailReader.readTail(path: dir + "/missing.jsonl").isEmpty)
+
+        let longText = String(repeating: "长", count: 500)
+        let capped = TranscriptTailReader.readTail(
+            path: {
+                let p = dir + "/long.jsonl"
+                let line = #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":""# + longText + #""}]}}"#
+                FileManager.default.createFile(atPath: p, contents: Data(line.utf8))
+                return p
+            }(), maxMessages: 6, perMessageCap: 100)
+        check("transcript: 单条截断 perMessageCap（500 字压到 100）",
+              capped.count == 1 && capped[0].count == 100)
+
+        // LLM prompt 纯函数：待问指令 + 上下文拼接 + 2000 字截断
+        check("transcript: system prompt 待问时加「需要你的输入」前缀要求",
+              VoiceAnnouncementManager.llmSystemPrompt(pendingQuestion: true, maxChars: 30).contains("需要你的输入，")
+              && VoiceAnnouncementManager.llmSystemPrompt(pendingQuestion: false, maxChars: 30).contains("不超过30字")
+              && !VoiceAnnouncementManager.llmSystemPrompt(pendingQuestion: false, maxChars: 30).contains("需要你的输入"))
+        let userContent = VoiceAnnouncementManager.llmUserContent(
+            message: "最终回复", context: ["早前上下文一", "早前上下文二"])
+        check("transcript: user content 上下文在前最后一条压轴、--- 分隔",
+              userContent == "早前上下文一\n---\n早前上下文二\n---\n最终回复")
+        let huge = VoiceAnnouncementManager.llmUserContent(
+            message: String(repeating: "尾", count: 1500),
+            context: [String(repeating: "早", count: 1500)])
+        check("transcript: user content 总量截断 2000 字（保留尾部=最近内容优先）",
+              huge.count == 2000 && huge.hasSuffix(String(repeating: "尾", count: 1500)))
+    }
     }
 }
