@@ -293,7 +293,13 @@ final class InputBubbleController: NSObject {
         if let textView, let target, textView.string != lastRestoredBaseText {
             InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
             InputBubbleDraftStore.shared.flushPending()
-            InputBubbleHistoryStore.shared.record(textView.string)
+            // B196：带状态/窗口归属（草稿态；防抖镜像同文会被 append 去重合并）
+            InputBubbleHistoryStore.shared.record(
+                textView.string,
+                windowID: target.windowID,
+                windowTitle: target.title,
+                status: .draft
+            )
         }
         panel?.orderOut(nil)
         panel = nil
@@ -302,6 +308,8 @@ final class InputBubbleController: NSObject {
         phase = .idle
         historyNavIndex = nil
         historyStashedText = nil
+        // B196：气泡没了历史面板必联动收起（填充按钮的宿主不在了）
+        InputBubbleHistoryPanelController.shared.close()
         NSApp.setActivationPolicy(.accessory)
         // B183：跟随引擎与点击监视器随气泡生命周期终止
         stopFollowing()
@@ -321,9 +329,46 @@ final class InputBubbleController: NSObject {
               textView.string != lastRestoredBaseText else { return }
         InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
         InputBubbleDraftStore.shared.flushPending()
-        InputBubbleHistoryStore.shared.record(textView.string)
+        InputBubbleHistoryStore.shared.record(
+            textView.string,
+            windowID: target.windowID,
+            windowTitle: target.title,
+            status: .draft
+        )
         log("[InputBubble] draft flushed on termination", fields: [
             "windowID": String(target.windowID)
+        ])
+    }
+
+    // MARK: 历史面板（B196）
+
+    /// 气泡上的「历史」入口：打开/聚焦历史面板（默认按当前绑定窗过滤）。
+    func showHistoryPanel() {
+        guard let bubbleFrame = panel?.frame else { return }
+        InputBubbleHistoryPanelController.shared.toggle(
+            anchorFrame: bubbleFrame,
+            currentWindowID: target?.windowID,
+            fill: { [weak self] text in
+                self?.fillFromHistory(text)
+            }
+        )
+    }
+
+    /// 面板「填充」：把历史文本回填进打开中的气泡（替换全文），基线同步推进
+    /// （防脏守卫/干净关闭语义把回填误判为用户新输入）。
+    func fillFromHistory(_ text: String) {
+        guard phase == .open, let textView else { return }
+        textView.string = text
+        lastRestoredBaseText = text
+        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        if let target {
+            InputBubbleDraftStore.shared.save(text, for: target.windowID)
+        }
+        (panel?.contentView as? BubbleCardView)?.normalizeHorizontalOrigin()
+        refocusPanel()
+        log("[InputBubble] history filled into bubble", fields: [
+            "windowID": target.map { String($0.windowID) } ?? "nil",
+            "length": String(text.count)
         ])
     }
 

@@ -58,8 +58,14 @@ extension InputBubbleController {
         ])
         CrashContextRecorder.shared.record("input_bubble_inject windowID=\(target.windowID) steps=\(steps.count)")
         // B195：提交内容进全局历史（↑↓ 翻阅/跨窗恢复兜底），随后照旧清草稿。
+        // B196：状态=已提交，带窗口归属（面板按窗过滤/草稿晋升依赖）。
         // abort 不清不记（abortSubmission 路径不经此处）。
-        InputBubbleHistoryStore.shared.record(text)
+        InputBubbleHistoryStore.shared.record(
+            text,
+            windowID: target.windowID,
+            windowTitle: target.title,
+            status: .submitted
+        )
         // B162：注入放行即消费草稿（abort 不清——文本保留在草稿里，重开气泡可续）
         InputBubbleDraftStore.shared.clear(for: target.windowID)
 
@@ -148,6 +154,8 @@ extension InputBubbleController {
         textView = nil
         target = nil
         NSApp.setActivationPolicy(.accessory)
+        // B196：气泡没了历史面板必联动收起（与 dismiss 同款）
+        InputBubbleHistoryPanelController.shared.close()
         // B183：提交收尾终止跟随引擎与点击监视器（dismiss 路径同款）
         stopFollowing()
         // B180：气泡会话结束，还原自家浮层（幂等；dismiss 路径同款）

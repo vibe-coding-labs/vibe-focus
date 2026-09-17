@@ -183,6 +183,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         TerminalUsageTracker.shared.start()
         // B160 输入气泡「聚焦会话自动弹出」观察器（激活通知 + 1s 同 app 窗口切换兜底轮询）
         InputBubbleAutoShow.shared.start()
+        // B196：草稿防抖落盘镜像进历史（草稿态）——强杀场景历史面板也有最近草稿可捞。
+        // 只在 app 启动接线，Runner 的隔离 DraftStore 实例不受影响。
+        // 窗标题从气泡当前目标补齐（镜像路径拿不到 AX 元素；目标不匹配时标题留空）。
+        InputBubbleDraftStore.shared.onFlushNonBlank = { text, windowID in
+            let target = InputBubbleController.shared.target
+            let title = target?.windowID == windowID ? target?.title : nil
+            InputBubbleHistoryStore.shared.record(text, windowID: windowID, windowTitle: title, status: .draft)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppBecameActive),

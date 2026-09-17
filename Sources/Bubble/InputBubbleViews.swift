@@ -76,6 +76,8 @@ final class BubbleCardView: NSView {
     var submitButton: BubbleSubmitButton?
     var resizeHandle: BubbleResizeHandleView?
     var closeButton: BubbleCloseButton?
+    /// B196：底栏最左的历史入口钮
+    var historyButton: BubbleHistoryButton?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -107,6 +109,7 @@ final class BubbleCardView: NSView {
         submitButton?.frame = frames.button
         resizeHandle?.frame = frames.grip
         closeButton?.frame = frames.close
+        historyButton?.frame = frames.history
         if let scrollView, let textView = scrollView.documentView as? NSTextView {
             // B178：显式 tile 同步 clip/滚动条与 documentView 宽度（不依赖活窗口布局时机，
             // legacy 滚动条槽出现/消失的可视宽变化也在这一步收敛）
@@ -231,6 +234,56 @@ final class BubbleCloseButton: NSView {
         path.move(to: NSPoint(x: b.maxX - inset, y: b.minY + inset))
         path.line(to: NSPoint(x: b.minX + inset, y: b.maxY - inset))
         path.stroke()
+    }
+}
+
+// MARK: - 历史入口钮（B196：底栏最左「历史」，单击开历史面板）
+
+/// 文字小钮：底栏同色系（米棕），悬停小手；点击只发回调（控制器开面板），不抢键。
+final class BubbleHistoryButton: NSView {
+    var onOpen: (() -> Void)?
+    private var isPressed = false
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installPointingHandCursor()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let wasPressed = isPressed
+        isPressed = false
+        needsDisplay = true
+        // 按下与抬起都在钮内才算点击（拖出去取消，标准按钮语义）
+        if wasPressed, bounds.contains(convert(event.locationInWindow, from: nil)) {
+            onOpen?()
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let base = isDark ? NSColor.white.withAlphaComponent(0.45) : NSColor(rgbHex: 0xA08D6E)
+        let color = isPressed ? NSColor(rgbHex: isDark ? 0xFF8266 : 0xE64A33) : base
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: color
+        ]
+        let label = "历史" as NSString
+        let size = label.size(withAttributes: attributes)
+        label.draw(
+            at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
+            withAttributes: attributes
+        )
     }
 }
 

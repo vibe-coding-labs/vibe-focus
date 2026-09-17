@@ -452,12 +452,13 @@ extension RunnerHarness {
         for size in [CGSize(width: 320, height: 100), CGSize(width: 480, height: 150), CGSize(width: 720, height: 300)] {
             let frames = InputBubbleLayout.contentFrames(for: size)
             let label = "\(Int(size.width))x\(Int(size.height))"
-            check("frames[\(label)]: 提示-提交钮-把手从左到右不重叠",
-                  frames.hint.maxX <= frames.button.minX && frames.button.maxX <= frames.grip.minX)
+            check("frames[\(label)]: 历史-提示-提交钮-把手从左到右不重叠",
+                  frames.history.maxX <= frames.hint.minX && frames.hint.maxX <= frames.button.minX && frames.button.maxX <= frames.grip.minX)
             check("frames[\(label)]: 把手贴右缘在界内", frames.grip.maxX <= size.width && frames.grip.minX >= frames.button.maxX)
-            check("frames[\(label)]: 底栏三件都落在底栏区(y≤26)", frames.button.maxY <= 26 && frames.grip.maxY <= 26 && frames.hint.maxY <= 26)
+            check("frames[\(label)]: 底栏四件都落在底栏区(y≤26)", frames.button.maxY <= 26 && frames.grip.maxY <= 26 && frames.hint.maxY <= 26 && frames.history.maxY <= 26)
             check("frames[\(label)]: 滚动区在底栏上方且有正高度", frames.scroll.minY == 26 && frames.scroll.height > 0 && frames.scroll.maxY <= size.height)
             check("frames[\(label)]: 提示宽度为正", frames.hint.width > 0)
+            check("frames[\(label)]: 历史钮在界内", frames.history.minX >= 0 && frames.history.maxX <= frames.hint.minX)
         }
 
         // --- 视图契约：把手不搬窗（与背景拖动移窗解耦） ---
@@ -647,5 +648,87 @@ extension RunnerHarness {
         controller.panel = nil
         controller.textView = nil
         controller.panelBuiltFor = nil
+    }
+}
+
+// MARK: - B196：历史状态/窗口归属 + 过滤 + 宽松解码（草稿晋升、跨窗隔离）
+
+extension RunnerHarness {
+    func runBubbleHistoryPanelTests() {
+        print("\n=== BubbleHistoryPanel (B196) ===")
+
+        // --- append 头部合并规则 v2（同窗同文去重/草稿晋升/跨窗隔离） ---
+        let now = Date()
+        func entry(_ text: String, at: Date, windowID: UInt32?, status: InputBubbleHistoryStatus) -> InputBubbleHistoryEntry {
+            InputBubbleHistoryEntry(text: text, at: at, windowID: windowID, windowTitle: "win", status: status)
+        }
+        // 草稿→已提交：同窗同文原地晋升，不新增条目
+        let promoted = InputBubbleHistoryStore.append(
+            [entry("同一个提示词", at: now.addingTimeInterval(-60), windowID: 100, status: .draft)],
+            text: "同一个提示词", at: now, windowID: 100, windowTitle: "win2", status: .submitted)
+        check("append: 同窗同文草稿→已提交 原地晋升", promoted.count == 1 && promoted[0].status == .submitted && promoted[0].at == now && promoted[0].windowTitle == "win2")
+        // 已提交头部 + 同文草稿回写：不降级
+        let notDemoted = InputBubbleHistoryStore.append(
+            [entry("已提交文本", at: now.addingTimeInterval(-60), windowID: 100, status: .submitted)],
+            text: "已提交文本", at: now, windowID: 100, status: .draft)
+        check("append: 已提交头部不被草稿记录降级", notDemoted.count == 1 && notDemoted[0].status == .submitted)
+        // 同文异窗：各归各的时间线，新条目
+        let crossWindow = InputBubbleHistoryStore.append(
+            [entry("同文", at: now.addingTimeInterval(-60), windowID: 100, status: .draft)],
+            text: "同文", at: now, windowID: 200, status: .draft)
+        check("append: 同文异窗 → 新条目不合并", crossWindow.count == 2 && crossWindow[0].windowID == 200 && crossWindow[1].windowID == 100)
+        // 同窗同文同状态：只刷时间戳
+        let refreshed = InputBubbleHistoryStore.append(
+            [entry("草稿A", at: now.addingTimeInterval(-60), windowID: 100, status: .draft)],
+            text: "草稿A", at: now, windowID: 100, status: .draft)
+        check("append: 同窗同文同状态 → 只刷时间戳", refreshed.count == 1 && refreshed[0].at == now)
+        // 异文：照常新增
+        let newEntry = InputBubbleHistoryStore.append(
+            [entry("旧草稿", at: now.addingTimeInterval(-60), windowID: 100, status: .draft)],
+            text: "新草稿", at: now, windowID: 100, status: .draft)
+        check("append: 异文照常新增", newEntry.count == 2 && newEntry[0].text == "新草稿")
+
+        // --- 过滤口径：默认本窗 / 全部 / legacy 无窗条目只在全部 ---
+        let mixed: [InputBubbleHistoryEntry] = [
+            entry("窗A-1", at: now, windowID: 100, status: .submitted),
+            entry("窗B-1", at: now.addingTimeInterval(-1), windowID: 200, status: .draft),
+            InputBubbleHistoryEntry(text: "legacy", at: now.addingTimeInterval(-2)),  // 无 windowID
+        ]
+        let currentOnly = InputBubbleHistoryFilter.select(mixed, scope: .currentWindow, currentWindowID: 100)
+        check("filter: 本窗只出该窗条目", currentOnly.map(\.text) == ["窗A-1"])
+        let allWindows = InputBubbleHistoryFilter.select(mixed, scope: .all, currentWindowID: 100)
+        check("filter: 全部含所有窗+legacy", allWindows.count == 3)
+        check("filter: 无当前窗时本窗口径为空", InputBubbleHistoryFilter.select(mixed, scope: .currentWindow, currentWindowID: nil).isEmpty)
+
+        // --- 宽松解码：B195 旧条目（无 status/windowID 字段）不拒解 ---
+        let legacyJSON = "[{\"text\":\"旧数据\",\"at\":780000000.0}]"
+        let legacyDecoded = try? JSONDecoder().decode([InputBubbleHistoryEntry].self, from: legacyJSON.data(using: .utf8)!)
+        check("decode: legacy 条目补默认草稿态+nil窗", legacyDecoded?.count == 1 && legacyDecoded?[0].status == .draft && legacyDecoded?[0].windowID == nil && legacyDecoded?[0].text == "旧数据")
+        let newJSON = "[{\"text\":\"新数据\",\"at\":780000000.0,\"windowID\":300,\"windowTitle\":\"t\",\"status\":\"submitted\"}]"
+        let newDecoded = try? JSONDecoder().decode([InputBubbleHistoryEntry].self, from: newJSON.data(using: .utf8)!)
+        check("decode: 新格式字段齐全保真", newDecoded?[0].windowID == 300 && newDecoded?[0].status == .submitted && newDecoded?[0].windowTitle == "t")
+
+        // --- 存取闭环（隔离 suite）：状态化记录 + 晋升 + 删除 ---
+        let suiteName = "RunnerBubbleHistoryPanelTests-\(UUID().uuidString)"
+        let historyDefaults = UserDefaults(suiteName: suiteName)!
+        let store = InputBubbleHistoryStore(defaults: historyDefaults)
+        store.record("打到一半的草稿", windowID: 42, windowTitle: "bot-service", status: .draft)
+        check("store: 草稿记录带窗归属", store.entries().count == 1 && store.entries()[0].windowID == 42 && store.entries()[0].status == .draft && store.entries()[0].windowTitle == "bot-service")
+        store.record("打到一半的草稿", windowID: 42, windowTitle: "bot-service", status: .submitted)
+        check("store: 提交晋升同一条", store.entries().count == 1 && store.entries()[0].status == .submitted)
+        let entryID = store.entries()[0].at
+        store.record("另一窗草稿", windowID: 43, status: .draft)
+        store.remove(at: entryID)
+        check("store: 按 at 删除单条", store.entries().count == 1 && store.entries()[0].text == "另一窗草稿")
+        store.remove(at: now.addingTimeInterval(-9999))
+        check("store: 删不存在条目静默", store.entries().count == 1)
+        historyDefaults.removePersistentDomain(forName: suiteName)
+
+        // --- 面板行几何契约：展开增高/收起固定/时间文本非空 ---
+        let rowEntry = InputBubbleHistoryEntry(text: "行几何", at: now, windowID: 7, windowTitle: "w", status: .submitted)
+        check("row: 收起高度固定", HistoryRowView.height(isExpanded: false) == 56)
+        check("row: 展开高度=收起+全文区", HistoryRowView.height(isExpanded: true) == HistoryRowView.collapsedHeight + HistoryRowView.expandedExtraHeight)
+        check("row: 时间文本非空", !HistoryRowView.timeText(for: now).isEmpty)
+        _ = rowEntry
     }
 }
