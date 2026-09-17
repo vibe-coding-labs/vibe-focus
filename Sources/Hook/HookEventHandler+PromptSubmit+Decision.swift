@@ -130,5 +130,29 @@ extension HookEventHandler {
         }
     }
 
+    // MARK: - B198 additionalContext 注入（纯函数，Runner 直测）
 
+    /// UPS 响应的环境上下文文案。绑定成功=一句轻量环境感知（窗在主/副屏）；
+    /// 解析失败=诚实告知自动化不会生效（用户中途抱怨「窗口没动」时模型有据可答）。
+    static func makeUPSAdditionalContext(identityResolved: Bool, onMainScreen: Bool) -> String {
+        if identityResolved {
+            return "[VibeFocus] 会话已绑定终端窗（\(onMainScreen ? "主屏" : "副屏")）。"
+        }
+        return "[VibeFocus] 注意：本会话未绑定终端窗口，窗口自动化（完成拉主屏/提交归位）不会生效。"
+    }
+
+    /// 给 UPS 响应挂 hookSpecificOutput（Claude Code UserPromptSubmit 契约）。
+    /// context=nil 原样返回——线格式与历史一致。
+    static func injecting(
+        _ base: (statusCode: Int, response: ClaudeHookResponse),
+        context: String?
+    ) -> (statusCode: Int, response: ClaudeHookResponse) {
+        guard let context, !context.isEmpty else { return base }
+        var response = base.response
+        response.hookSpecificOutput = HookSpecificOutput(
+            hookEventName: "UserPromptSubmit",
+            additionalContext: context
+        )
+        return (base.statusCode, response)
+    }
 }

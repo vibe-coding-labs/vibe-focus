@@ -203,6 +203,14 @@ struct ClaudeHookPayload: Decodable {
     }
 }
 
+/// Claude Code hook 响应的事件级扩展（B198）——UserPromptSubmit 注入 additionalContext
+/// 用。键名是 Claude Code 的 JSON 输出契约（camelCase，非本项目 snake_case 风格）：
+/// {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "..."}}
+struct HookSpecificOutput: Equatable, Encodable {
+    let hookEventName: String
+    let additionalContext: String
+}
+
 /// HTTP response sent back to Claude Code after processing a hook event.
 struct ClaudeHookResponse: Encodable {
     let ok: Bool
@@ -210,6 +218,10 @@ struct ClaudeHookResponse: Encodable {
     let message: String
     let sessionID: String?
     let handled: Bool
+    /// B198: 仅 UserPromptSubmit 注入环境上下文时非 nil；JSONEncoder 对 nil
+    /// optional 整键省略——其余事件线格式与历史逐字节一致（wire 测试锁定）。
+    /// 带默认值=既有构造点零涟漪。
+    var hookSpecificOutput: HookSpecificOutput? = nil
 
     private enum CodingKeys: String, CodingKey {
         case ok
@@ -217,5 +229,6 @@ struct ClaudeHookResponse: Encodable {
         case message
         case sessionID = "session_id"
         case handled
+        case hookSpecificOutput
     }
 }

@@ -130,8 +130,8 @@ extension RunnerHarness {
               forwarder.contains("VF_HINT_FILE") && forwarder.contains("VF_HINT_TTL=600"))
         check("spoolDrain: forwarder 上报 ssh_user 供自注册",
               forwarder.contains("whoami") && forwarder.contains("ssh_user"))
-        check("spoolDrain[B172]: forwarder 只认 2xx 为已投递（401/404 不再吞事件）",
-              forwarder.contains("-w '%{http_code}'")
+        check("spoolDrain[B172]: forwarder 只认 2xx 为已投递（401/404 不再吞事件；B198 起 -w 带换行分隔切码/体）",
+              forwarder.contains("-w $'\\n%{http_code}'")
               && forwarder.contains("case \"$VF_CODE\" in")
               && forwarder.contains("2*)"))
         check("spoolDrain[B172]: forwarder 追加 SSH_CLIENT 自学习候选",

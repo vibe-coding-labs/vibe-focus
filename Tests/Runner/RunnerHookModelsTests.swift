@@ -76,6 +76,18 @@ extension RunnerHarness {
         let w2 = wire(ClaudeHookResponse(ok: false, code: "error", message: "denied", sessionID: nil, handled: false))
         check("hookModels: response nil sessionID 键整体省略",
               w2["session_id"] == nil && w2.count == 4)
+        // B198: hookSpecificOutput（Claude Code UserPromptSubmit 契约，camelCase 键原样）
+        let w3 = wire(ClaudeHookResponse(
+            ok: true, code: "already_on_main_screen", message: "m", sessionID: "s", handled: false,
+            hookSpecificOutput: HookSpecificOutput(
+                hookEventName: "UserPromptSubmit",
+                additionalContext: "[VibeFocus] 会话已绑定终端窗（主屏）。")))
+        let w3out = w3["hookSpecificOutput"] as? [String: Any]
+        check("hookModels B198: hookSpecificOutput camelCase 键原样（hookEventName/additionalContext）",
+              (w3out?["hookEventName"] as? String) == "UserPromptSubmit"
+              && (w3out?["additionalContext"] as? String)?.hasPrefix("[VibeFocus]") == true)
+        check("hookModels B198: nil hookSpecificOutput 整键省略（其余事件线格式与历史逐字节一致）",
+              w1["hookSpecificOutput"] == nil && w2["hookSpecificOutput"] == nil)
 
         // E. BindingType 持久化契约（B109：bindingType 落 SQLite/审计行的 rawValue 稳定性）
         do {
@@ -120,6 +132,32 @@ extension RunnerHarness {
               helper.contains("http://127.0.0.1:$VF_PORT/claude/hook")
               && !helper.contains("VF_HOST")
               && helper.contains("--connect-timeout 1"))
+        // B198: 两份转发器都把响应体回传 stdout（Claude Code 解析 hook stdout JSON）
+        do {
+            func bashSyntax(_ script: String) -> Bool {
+                let path = "/tmp/vf-b198-\(UUID().uuidString).sh"
+                FileManager.default.createFile(atPath: path, contents: Data(script.utf8))
+                defer { try? FileManager.default.removeItem(atPath: path) }
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+                proc.arguments = ["-n", path]
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError = pipe
+                do { try proc.run() } catch { return false }
+                proc.waitUntilExit()
+                return proc.terminationStatus == 0
+            }
+            let remoteScript = ClaudeHookPreferences.generateRemoteHelperScriptContent()
+            check("hookModels B198: 两份转发器 bash -n 语法过（$'\\n' 切分改动零语法伤）",
+                  bashSyntax(helper) && bashSyntax(remoteScript))
+            check("hookModels B198: 本机转发器回传响应体（VF_RESP printf stdout）",
+                  helper.contains("VF_RESP=$(curl \"${VF_CURL_ARGS[@]}\" 2>/dev/null) || true")
+                  && helper.contains("printf '%s' \"$VF_RESP\""))
+            check("hookModels B198: 远程转发器 2xx 时回传 body（VF_RAW 切码/体）",
+                  remoteScript.contains("-w $'\\n%{http_code}'")
+                  && remoteScript.contains("printf '%s' \"$VF_BODY\""))
+        }
         check("hookModels: machineLabel 点转连字符",
               ClaudeHookPreferences.machineLabel(forHost: "192.168.1.83") == "remote-192-168-1-83")
         check("hookModels: hookConfigJSON 四键模板逐字（extraHosts 空保持旧形状）",

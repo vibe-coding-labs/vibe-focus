@@ -143,6 +143,10 @@ extension RunnerHarness {
 
                 if exit != 0 { print("[诊断-b165-failover] exit=\(exit) output<<\n\(output.prefix(800))\n>>") }
                 check("remoteInstall[failover]: 死地址后回退 127.0.0.1 投递成功", exit == 0)
+                // B198: 2xx 响应体回传 stdout（catcher 恒答 body "ok"）——转发器
+                // 从「吞响应」变「双向通道」的真实行为断言
+                check("remoteInstall[failover]: B198 响应体中继到 stdout（catcher body ok 可见）",
+                      output.contains("ok"))
                 check("remoteInstall[failover]: catcher 收到请求体（terminal_ctx/鉴权头/label）",
                       pollUntil(requestFile + ".1", timeout: 10)
                       && (FileManager.default.contents(atPath: requestFile + ".1") as Data?).map { body in

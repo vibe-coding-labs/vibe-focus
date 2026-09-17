@@ -1179,6 +1179,34 @@ extension RunnerHarness {
                   && SessionWindowRegistry.shared.lastEventDescription.contains("已关闭"))
         }
 
+        // B198: UPS additionalContext 注入——纯函数 + 包裹器（双向通道）
+        do {
+            check("hookInject: 已绑定 → 主屏/副屏 环境行",
+                  HookEventHandler.makeUPSAdditionalContext(identityResolved: true, onMainScreen: true).contains("主屏")
+                  && HookEventHandler.makeUPSAdditionalContext(identityResolved: true, onMainScreen: false).contains("副屏")
+                  && !HookEventHandler.makeUPSAdditionalContext(identityResolved: true, onMainScreen: false).contains("不会生效"))
+            check("hookInject: 未绑定 → 诚实警示自动化不生效",
+                  HookEventHandler.makeUPSAdditionalContext(identityResolved: false, onMainScreen: false).contains("未绑定终端窗口")
+                  && HookEventHandler.makeUPSAdditionalContext(identityResolved: false, onMainScreen: false).contains("不会生效"))
+            let base: (statusCode: Int, response: ClaudeHookResponse) = (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "already_on_main_screen", message: "m",
+                    sessionID: "s-b198", handled: false)
+            )
+            let injected = HookEventHandler.injecting(
+                base, context: HookEventHandler.makeUPSAdditionalContext(identityResolved: true, onMainScreen: true))
+            let bare = HookEventHandler.injecting(base, context: nil)
+            check("hookInject: 包裹挂 hookSpecificOutput（UserPromptSubmit 事件名+上下文）",
+                  injected.response.hookSpecificOutput?.hookEventName == "UserPromptSubmit"
+                  && injected.response.hookSpecificOutput?.additionalContext.contains("主屏") == true
+                  && injected.response.code == base.1.code && injected.statusCode == 200)
+            check("hookInject: context nil 原样透传（不挂空键）",
+                  bare.response.hookSpecificOutput == nil
+                  && bare.response.sessionID == base.1.sessionID
+                  && bare.statusCode == base.statusCode)
+        }
+
         // uninstallHookFromCodexSettings（B114：卸载路径——外部条目保留/缺文件免卸载/坏 JSON 拒绝）
         do {
             let dir = "/tmp/vibefocus-codex2-\(UUID().uuidString)"

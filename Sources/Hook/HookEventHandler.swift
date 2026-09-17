@@ -88,7 +88,10 @@ final class HookEventHandler {
                     "machineLabel": payload.terminalCtx?.machineLabel ?? "nil"
                 ]
             )
-            return Self.promptHttpResponse(for: .noBinding, sessionID: payload.sessionID)
+            return Self.injecting(
+                Self.promptHttpResponse(for: .noBinding, sessionID: payload.sessionID),
+                context: Self.makeUPSAdditionalContext(identityResolved: false, onMainScreen: false)
+            )
         }
 
         // 门 2：Session 级 UPS 限流（先剪枝计数后注册，连发持续被限）。
@@ -106,6 +109,8 @@ final class HookEventHandler {
         let onMain = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
         let inCooldown = MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID)
         let cooldownRemaining = inCooldown ? MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID) : 0
+        // B198: 绑定成功后的环境感知行（窗在主/副屏），注入本函数全部后续响应。
+        let envContext = Self.makeUPSAdditionalContext(identityResolved: true, onMainScreen: onMain)
 
         let decision = Self.decidePromptMove(
             autoRestoreEnabled: true,
@@ -121,7 +126,7 @@ final class HookEventHandler {
 
         switch decision {
         case .autoRestoreDisabled, .noBinding:
-            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .restoreToOriginal:
             // 有 toggle 记录 = Stop 拉主屏时保存过原始屏幕/工作区/位置 → 经
@@ -163,17 +168,20 @@ final class HookEventHandler {
                     ]
                 )
             }
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true,
-                    code: restored ? "restored_to_original" : "restore_failed",
-                    message: restored
-                        ? "Window restored to original screen/space/position"
-                        : "Restore to original position failed (\(outcome.outcomeLabel))",
-                    sessionID: payload.sessionID,
-                    handled: restored
-                )
+            return Self.injecting(
+                (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true,
+                        code: restored ? "restored_to_original" : "restore_failed",
+                        message: restored
+                            ? "Window restored to original screen/space/position"
+                            : "Restore to original position failed (\(outcome.outcomeLabel))",
+                        sessionID: payload.sessionID,
+                        handled: restored
+                    )
+                ),
+                context: envContext
             )
 
         case .rateLimited:
@@ -192,7 +200,7 @@ final class HookEventHandler {
                 sessionID: payload.sessionID,
                 message: "UserPromptSubmit 被限流（session 自动化检测）"
             )
-            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .alreadyOnMain:
             log(
@@ -204,7 +212,7 @@ final class HookEventHandler {
                 ]
             )
             SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .cooldownActive(let remaining):
             log(
@@ -216,7 +224,7 @@ final class HookEventHandler {
                     "cooldownRemaining": String(remaining) + "s"
                 ]
             )
-            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .stayOnCurrentScreen:
             // B126：用户在副屏/其它屏提交提示词 = 正在该屏交互，窗口原地不动。
@@ -231,7 +239,7 @@ final class HookEventHandler {
                     "sessionID": payload.sessionID
                 ]
             )
-            return Self.promptHttpResponse(for: decision, sessionID: payload.sessionID)
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
         }
     }
 

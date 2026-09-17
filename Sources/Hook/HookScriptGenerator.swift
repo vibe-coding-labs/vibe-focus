@@ -69,7 +69,13 @@ extension ClaudeHookPreferences {
             VF_CURL_ARGS+=(-H "X-VibeFocus-Token: $VF_TOKEN")
         fi
         VF_CURL_ARGS+=(--data "$VF_ENRICHED")
-        curl "${VF_CURL_ARGS[@]}" >/dev/null 2>&1 || true
+        # B198: 响应体回传 stdout——Claude Code 解析 hook stdout JSON，
+        # UserPromptSubmit 的 hookSpecificOutput.additionalContext 借此进入模型上下文。
+        # 非 JSON 响应/空响应静默忽略（|| true 保底，绝不让转发失败打断 Claude）。
+        VF_RESP=$(curl "${VF_CURL_ARGS[@]}" 2>/dev/null) || true
+        if [ -n "$VF_RESP" ]; then
+            printf '%s' "$VF_RESP"
+        fi
         """
     }
 
@@ -229,12 +235,19 @@ extension ClaudeHookPreferences {
             # B172: 只认 2xx=已投递。401/403（token 轮换未重部署）/404 等此前被
             # 「任意应答即成功」吞掉——落下一候选/进 spool（拉取通道带 Mac 当前
             # token，天然免疫轮换，事件不丢）。
-            VF_CODE=$(curl "${VF_CURL_ARGS[@]}" -o /dev/null -w '%{http_code}' 2>/dev/null) || VF_CODE=000
+            # B198: 2xx 时响应体回传 stdout（Claude Code hookSpecificOutput 契约）。
+            # curl -w 在响应体后追加换行+状态码，命令替换后按最后一个换行切出两者。
+            VF_RAW=$(curl "${VF_CURL_ARGS[@]}" -w $'\\n%{http_code}' 2>/dev/null) || VF_RAW=""
+            VF_CODE="${VF_RAW##*$'\\n'}"
+            VF_BODY="${VF_RAW%$'\\n'*}"
             case "$VF_CODE" in
                 2*)
                     printf '%s\n' "$VF_HOST" > "$VF_LASTHOST_FILE" 2>/dev/null || true
                     VF_SENT=1
                     rm -f "$VF_HINT_FILE" 2>/dev/null || true
+                    if [ -n "$VF_BODY" ]; then
+                        printf '%s' "$VF_BODY"
+                    fi
                     break
                     ;;
             esac
