@@ -1207,6 +1207,32 @@ extension RunnerHarness {
                   && bare.statusCode == base.statusCode)
         }
 
+        // B201: 项目级 hook 安装（<project>/.claude/settings.json——外部保留/全局脚本不删）
+        do {
+            check("projectHook: 路径拼装（.claude/settings.json 与 .claude 目录）",
+                  ClaudeHookPreferences.projectClaudeSettingsPath(projectDir: "/proj") == "/proj/.claude/settings.json"
+                  && ClaudeHookPreferences.projectClaudeSettingsDir(projectDir: "/proj") == "/proj/.claude")
+            let proj = "/tmp/vibefocus-b201-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: proj + "/.claude", withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: proj) }
+            let foreign = #"{"hooks":{"PreToolUse":[{"hooks":[{"command":"/usr/bin/other"}]}]}}"#
+            FileManager.default.createFile(
+                atPath: ClaudeHookPreferences.projectClaudeSettingsPath(projectDir: proj),
+                contents: Data(foreign.utf8))
+            let (okInstall, _) = ClaudeHookPreferences.installHookToProject(proj)
+            let hooks = ((try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: URL(fileURLWithPath: ClaudeHookPreferences.projectClaudeSettingsPath(projectDir: proj)))) as? [String: Any]) ?? [:])["hooks"] as? [String: Any] ?? [:]
+            check("projectHook: 安装后 SessionStart/Stop 恒注册且外部 PreToolUse 保留",
+                  okInstall && hooks["SessionStart"] != nil && hooks["Stop"] != nil
+                  && hooks["PreToolUse"] != nil)
+            let (okUninstall, _) = ClaudeHookPreferences.uninstallHookFromProject(proj)
+            let hooksAfter = ((try? JSONSerialization.jsonObject(
+                with: Data(contentsOf: URL(fileURLWithPath: ClaudeHookPreferences.projectClaudeSettingsPath(projectDir: proj)))) as? [String: Any]) ?? [:])["hooks"] as? [String: Any] ?? [:]
+            check("projectHook: 卸载后我方事件清空、外部条目保留",
+                  okUninstall && hooksAfter["SessionStart"] == nil && hooksAfter["Stop"] == nil
+                  && hooksAfter["PreToolUse"] != nil)
+        }
+
         // uninstallHookFromCodexSettings（B114：卸载路径——外部条目保留/缺文件免卸载/坏 JSON 拒绝）
         do {
             let dir = "/tmp/vibefocus-codex2-\(UUID().uuidString)"

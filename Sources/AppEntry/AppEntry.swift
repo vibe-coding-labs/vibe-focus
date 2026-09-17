@@ -55,5 +55,22 @@ struct VibeFocusApp: App {
             fflush(stdout)
             exit(0)
         }
+        // B201 项目级 hook 安装通道：`--install-claude-hook-project <dir>` /
+        // `--uninstall-claude-hook-project <dir>`。只写 <dir>/.claude/settings.json
+        // （团队仓库/按项目选择性启用场景），转发器脚本与 token 仍归全局安装，
+        // 项目目录不落敏感配置。即退不进事件循环、不取单实例锁。
+        let cliArgs = CommandLine.arguments
+        if let i = cliArgs.firstIndex(of: "--install-claude-hook-project"), cliArgs.count > i + 1 {
+            let (ok, msg) = ProjectHookInstaller.install(cliArgs[i + 1])
+            print((ok ? "OK: " : "FAIL: ") + msg)
+            fflush(stdout)
+            exit(ok ? 0 : 1)
+        }
+        if let i = cliArgs.firstIndex(of: "--uninstall-claude-hook-project"), cliArgs.count > i + 1 {
+            let (ok, msg) = ProjectHookInstaller.uninstall(cliArgs[i + 1])
+            print((ok ? "OK: " : "FAIL: ") + msg)
+            fflush(stdout)
+            exit(ok ? 0 : 1)
+        }
     }
 }

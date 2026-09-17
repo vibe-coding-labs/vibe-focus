@@ -158,6 +158,42 @@ extension ClaudeHookPreferences {
         )
     }
 
+    // MARK: - B201 项目级安装（<projectDir>/.claude/settings.json）
+
+    static func projectClaudeSettingsPath(projectDir: String) -> String {
+        (projectDir as NSString).appendingPathComponent(".claude/settings.json")
+    }
+
+    static func projectClaudeSettingsDir(projectDir: String) -> String {
+        (projectDir as NSString).appendingPathComponent(".claude")
+    }
+
+    /// 项目级一键安装：只写 <projectDir>/.claude/settings.json（团队仓库/按项目
+    /// 选择性启用），不触碰全局 settings.json，不落 token/脚本到项目目录——
+    /// 转发器读全局 ~/.vibefocus/hook-config.json（token 单一来源，不进 git）。
+    /// 无 3s 冷却（CLI 一次性动作，非 UI 高频路径）。
+    @discardableResult
+    static func installHookToProject(_ projectDir: String) -> (Bool, String) {
+        ensureTokenGenerated()
+        return installHooks(
+            at: projectClaudeSettingsPath(projectDir: projectDir),
+            dir: projectClaudeSettingsDir(projectDir: projectDir),
+            scriptPath: helperScriptPath,
+            targetURL: endpointURLString(),
+            generated: generateHooksDict()
+        )
+    }
+
+    /// 项目级卸载：摘除我方条目、保留外部 hook；绝不删全局共享的辅助脚本
+    ///（removesHelpers=false——脚本归全局安装所有，项目卸载无权清理）。
+    @discardableResult
+    static func uninstallHookFromProject(_ projectDir: String) -> (Bool, String) {
+        uninstallHookFromClaudeSettings(
+            at: projectClaudeSettingsPath(projectDir: projectDir),
+            removesHelpers: false
+        )
+    }
+
     /// 安装编排核心（B155 注入缝，与卸载侧 B33 对称）：建目录→读盘→composeDesiredHooks
     /// 合并（2.16a 第十七刀）→3s 冷却→原子写。真实辅助脚本安装、hook-config 写入与
     /// UserDefaults 时间戳留在生产壳；测试注入 temp 目录穷举合并/冷却/落盘语义。
@@ -279,5 +315,21 @@ extension ClaudeHookPreferences {
             log("[ClaudeHookPreferences] uninstall write failed: \(error.localizedDescription)", level: .error)
             return (false, "写入失败: \(error.localizedDescription)")
         }
+    }
+}
+
+/// B201 项目级安装的公开 CLI 门面——AppEntry 目标只见 public 符号，
+/// 实现留在 ClaudeHookPreferences（internal，Runner 真身直测）。
+public enum ProjectHookInstaller {
+    /// `--install-claude-hook-project <dir>`：只写 <dir>/.claude/settings.json。
+    @discardableResult
+    public static func install(_ projectDir: String) -> (Bool, String) {
+        ClaudeHookPreferences.installHookToProject(projectDir)
+    }
+
+    /// `--uninstall-claude-hook-project <dir>`：摘我方条目保外部，不删全局脚本。
+    @discardableResult
+    public static func uninstall(_ projectDir: String) -> (Bool, String) {
+        ClaudeHookPreferences.uninstallHookFromProject(projectDir)
     }
 }
