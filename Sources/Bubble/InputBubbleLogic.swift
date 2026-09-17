@@ -299,12 +299,13 @@ enum InputBubbleLayout {
         return width >= 280 && width <= 400 && height >= 140 && height <= 220
     }
 
-    // MARK: 气泡内容布局（B175：提示文案 + 滚动输入区 + 提交钮 + 缩放把手；B183：+关闭钮）
+    // MARK: 气泡内容布局（B175：提示文案 + 滚动输入区 + 提交钮 + 缩放把手；B183：+关闭钮；
+    //       B196：+历史入口钮贴底栏最左）
 
     /// 按面板尺寸摆内容（唯一事实源：builtPanel 初建 / 拖拽 relayout / 设置页联动
-    /// relayout 三方共用）。底栏右端依次提交钮、缩放把手；提示文案让位左对齐；
+    /// relayout 三方共用）。底栏左→右：历史钮、提示文案；右端依次提交钮、缩放把手；
     /// B183 关闭钮（✕）贴右上角，压在滚动区上沿（子视图序在 scroll 之后=可点）。
-    static func contentFrames(for size: CGSize) -> (hint: CGRect, scroll: CGRect, button: CGRect, grip: CGRect, close: CGRect) {
+    static func contentFrames(for size: CGSize) -> (hint: CGRect, scroll: CGRect, button: CGRect, grip: CGRect, close: CGRect, history: CGRect) {
         let gripSide: CGFloat = 14
         let buttonSize = CGSize(width: 58, height: 18)
         let grip = CGRect(x: size.width - gripSide - 6, y: 7, width: gripSide, height: gripSide)
@@ -314,11 +315,13 @@ enum InputBubbleLayout {
             width: buttonSize.width,
             height: buttonSize.height
         )
-        let hint = CGRect(x: 14, y: 8, width: max(button.minX - 14 - 6, 0), height: 14)
+        // B196：历史入口钮贴最左（「历史」二字 10pt），提示文案让位其右
+        let history = CGRect(x: 10, y: 6, width: 30, height: 14)
+        let hint = CGRect(x: history.maxX + 5, y: 8, width: max(button.minX - history.maxX - 11, 0), height: 14)
         let scroll = CGRect(x: 12, y: 26, width: size.width - 24, height: size.height - 40)
         let closeSide: CGFloat = 16
         let close = CGRect(x: size.width - closeSide - 5, y: size.height - closeSide - 5, width: closeSide, height: closeSide)
-        return (hint, scroll, button, grip, close)
+        return (hint, scroll, button, grip, close, history)
     }
 
     // MARK: 跟随定位（B183：绑定跟随模式）

@@ -77,6 +77,15 @@ extension InputBubbleController {
         // 子视图序在 scroll 之后 = z 序更高，压在滚动区上沿可点
         card.addSubview(closeButton)
 
+        // B196：底栏最左历史入口钮——单击开历史面板（草稿/已提交，默认本窗过滤）
+        let historyButton = BubbleHistoryButton(frame: .zero)
+        historyButton.toolTip = "输入历史（草稿与已提交；可复制/回填）"
+        historyButton.onOpen = { [weak self] in
+            self?.showHistoryPanel()
+        }
+        card.historyButton = historyButton
+        card.addSubview(historyButton)
+
         // B178：滚动视图带真实初始帧创建（零帧起步会产生「容器宽 0」退化窗口：
         // 此间灌入长文本+光标跳尾 → scrollRangeToVisible 横向偏移且无人复位 →
         // 文本左缘被裁，用户截图实锤）；横向滚动条部件与横向弹性一并显式禁用——

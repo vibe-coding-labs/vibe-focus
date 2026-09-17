@@ -27,6 +27,9 @@ final class InputBubbleDraftStore {
     private let saveDebounceInterval: TimeInterval
     private var pendingEdits: [UInt32: String] = [:]
     private var flushWorkItem: DispatchWorkItem?
+    /// B196：flush 落盘的非空白文本镜像钩子（app 启动时接到 HistoryStore.record(.draft)）——
+    /// 强杀（无 SIGTERM）场景下历史面板也有最近草稿可捞。Runner 的隔离实例不接线。
+    var onFlushNonBlank: ((String, UInt32) -> Void)?
 
     init(
         defaults: UserDefaults = .standard,
@@ -78,16 +81,23 @@ final class InputBubbleDraftStore {
     func flushPending(now: Date = Date()) {
         guard !pendingEdits.isEmpty else { return }
         var all = entries()
+        var flushedNonBlank: [(String, UInt32)] = []
         for (windowID, text) in pendingEdits {
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 all.removeValue(forKey: key(windowID))
             } else {
                 all[key(windowID)] = InputBubbleDraftEntry(text: text, at: now)
+                flushedNonBlank.append((text, windowID))
             }
         }
         pendingEdits.removeAll()
         let pruned = Self.prune(all, now: now, maxAge: maxAge, capacity: capacity)
         persist(pruned)
+        // B196：草稿镜像进历史（去重/晋升语义在 HistoryStore.append 里收敛，
+        // 打字期间反复 flush 同文只刷时间戳不刷屏）
+        for (text, windowID) in flushedNonBlank {
+            onFlushNonBlank?(text, windowID)
+        }
     }
 
     // MARK: 存取
