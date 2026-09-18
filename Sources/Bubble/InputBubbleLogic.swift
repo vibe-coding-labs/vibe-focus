@@ -86,44 +86,28 @@ enum InputBubbleKeyPlan {
     }
 }
 
-/// 唤起来源（B195）：恢复决策按来源分流——手动唤起给历史兜底，自动弹出保守。
-enum InputBubbleSummonSource: Equatable {
-    case manualHotKey   // ⌃X 快捷键（用户显式要输入）
-    case autoShow       // 焦点/移主屏自动弹出（系统主动，不塞旧内容）
-}
-
-/// 气泡初始文本恢复决策门（B195，取代 B162 的草稿直读）。
-/// 真机取证（2026-09-17）：生产 restoredDraft=true 仅 4/45 次——草稿按 CGWindowID
-/// 绑定，窗一关一开 ID 换新即成孤儿，改绑/换窗唤起必落空前缀=用户主诉「重开被重置」。
-/// 判序：窗草稿非空白 → 窗草稿（同窗续写）→ 手动唤起且有**未提交草稿** → 最近一条
-/// 草稿（跨窗兜底）→ 默认前缀。
-/// B208 用户定案（2026-09-18）：已提交（回车发出过）的内容**绝不自动回填**——提交
-/// 路径已清本窗草稿，此前「最近一条历史」无状态过滤把刚提交的条目原样填回，用户
-/// 每次都得手动清空。兜底只认 .draft（没按回车的未发文本找回，B195 窗重开场景）；
-/// ↑↓ 翻阅/历史面板/⌘Y 填充是显式操作，不受此限。状态校验在决策表内兜底（就算
-/// 调用方接线退化成无过滤 latestEntry，已提交条目也进不来）。
+/// 气泡初始文本恢复决策门（B195，取代 B162 的草稿直读；B210 收敛为严格本窗草稿）。
+/// 判序：窗草稿非空白 → 窗草稿（同一 CGWindowID 的未发文本续写）→ 默认前缀。
+/// 用户定案（2026-09-18 两连震诉）：**手动唤起绝不容忍任何「上一次内容」自动出现**。
+/// 演进史：B195 曾设「手动唤起兜底全局最近历史」救窗重开丢草稿；B208 收窄到只认
+/// 未提交草稿（已提交回填是第一轮投诉）；B210 实证仍不达意——历史里积存的旧草稿
+/// 快照（翻阅落点/改稿前旧文/其它窗口的草稿）随时会被兜底捞回，用户视角=「还在
+/// 自动填上次内容」。故全局兜底整个移除：唤起只读本窗草稿；旧内容走显式通道
+/// （↑↓ 翻阅 / ⌘Y 历史面板 / 面板填充钮）。窗重开换 ID 场景的未发文本同样从
+/// 面板找回——比「 surprise 回填每次都要手动清空」的代价小得多。
 enum InputBubbleDraftRestorePlan {
     enum Source: String, Equatable {
         case windowDraft   // 本窗草稿（CGWindowID 绑定）
-        case history       // 全局最近**草稿**（B195 兜底；B208 起拒绝已提交条目）
         case prefix        // 默认前缀（真·新输入）
     }
 
     static func resolve(
         windowDraft: String?,
-        latestHistory: InputBubbleHistoryEntry?,
-        source: InputBubbleSummonSource,
         prefix: String
     ) -> (text: String, from: Source) {
         if let draft = windowDraft,
            !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return (draft, .windowDraft)
-        }
-        if source == .manualHotKey,
-           let history = latestHistory,
-           history.status == .draft,
-           !history.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return (history.text, .history)
         }
         return (prefix, .prefix)
     }

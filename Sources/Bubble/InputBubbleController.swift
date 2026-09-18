@@ -166,7 +166,7 @@ final class InputBubbleController: NSObject {
         }
 
         let captured = Target(pid: pid, bundleID: bundleID, windowID: windowID, title: WindowManager.shared.title(of: windowAX))
-        showPanel(target: captured, cgFrame: cgFrame, source: .manualHotKey)
+        showPanel(target: captured, cgFrame: cgFrame)
         CrashContextRecorder.shared.record("input_bubble_summon windowID=\(windowID) pid=\(pid)")
     }
 
@@ -189,7 +189,7 @@ final class InputBubbleController: NSObject {
             return
         }
         let target = Target(pid: pid, bundleID: app.bundleIdentifier, windowID: windowID, title: appName)
-        showPanel(target: target, cgFrame: cgFrame, source: .autoShow)
+        showPanel(target: target, cgFrame: cgFrame)
         CrashContextRecorder.shared.record("input_bubble_summon_moved windowID=\(windowID) pid=\(pid)")
     }
 
@@ -219,7 +219,7 @@ final class InputBubbleController: NSObject {
         summonForMovedWindow(windowID: windowID, pid: pid, appName: appName)
     }
 
-    private func showPanel(target: Target, cgFrame: CGRect, source: InputBubbleSummonSource) {
+    private func showPanel(target: Target, cgFrame: CGRect) {
         self.target = target
         phase = .open
         // B195：↑↓ 翻阅态随开随清（每次打开都是新现场）
@@ -238,13 +238,11 @@ final class InputBubbleController: NSObject {
         suppressMoveTracking = true
         panel.setFrameOrigin(origin)
         suppressMoveTracking = false
-        // B195：恢复决策门——窗草稿优先；手动唤起兜底全局最近**草稿**（窗重建/换窗
-        // 也能拿回未发文本）；自动弹出保守（窗草稿否则前缀，不塞未经邀请的旧内容）。
-        // B208：兜底只认未提交草稿——已提交内容绝不自动回填（用户定案 2026-09-18）。
+        // B195：恢复决策门；B210 收敛——只读本窗草稿（同一 CGWindowID 的未发文本
+        // 续写），全局历史兜底整个移除（用户定案：唤起绝不容忍「上一次内容」自动
+        // 出现；旧内容走 ↑↓/⌘Y 面板显式通道）。自动弹出同款语义。
         let restored = InputBubbleDraftRestorePlan.resolve(
             windowDraft: InputBubbleDraftStore.shared.draft(for: target.windowID),
-            latestHistory: InputBubbleHistoryStore.shared.latestDraftEntry(),
-            source: source,
             prefix: InputBubblePreferences.defaultPrefix
         )
         let initial = restored.text
