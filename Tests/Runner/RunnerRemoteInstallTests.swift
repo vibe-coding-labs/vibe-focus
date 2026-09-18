@@ -14,9 +14,10 @@ import Foundation
 // 5. 无 jq 环境 → settings.json 走 python3 降级合并（同语义，不再只警告跳过——
 //    真机 local-server-002 无 jq，旧降级导致 hooks 注册被静默跳过）。
 // 6. ~/.codex/hooks.json 规范形状（codex 0.153.4 实证：事件字典必须包在顶层
-//    "hooks" 字段下，顶层只接受 description/hooks）且只注册 codex 可触发事件
-//    （SessionStart[+SessionEnd]；Claude 的 Stop/UserPromptSubmit 在 codex 无
-//    对应事件、写入永不触发）。
+//    "hooks" 字段下，顶层只接受 description/hooks）。B207 勘误：codex 0.146+
+//    支持与 Claude 同名的 Stop/UserPromptSubmit（payload 同构），注册集 =
+//    SessionStart/Stop/PermissionRequest 恒装 + UserPromptSubmit/SessionEnd 按开关；
+//    旧版 codex 无这些事件时写入不触发、无副作用。
 
 extension RunnerHarness {
 
@@ -267,10 +268,16 @@ extension RunnerHarness {
                 check("remoteInstall[jq]: codex hooks.json 规范形状（事件包在 hooks 字段下）",
                       !codexDoc.isEmpty && codexDoc["hooks"] != nil
                       && codexHooks["SessionStart"] != nil)
-                check("remoteInstall[jq]: codex 只注册可触发事件（无 Stop/UserPromptSubmit）",
-                      codexHooks["Stop"] == nil && codexHooks["UserPromptSubmit"] == nil)
-                check("remoteInstall[jq]: codex 步骤回显",
-                      output.contains("[5/6] Updated ~/.codex/hooks.json"))
+                // B207：受控偏好（SessionEnd 关、AutoRestore 开）下 codex 注册四事件：
+                // SessionStart+Stop+PermissionRequest 恒装 + UserPromptSubmit 随开关
+                check("remoteInstall[jq]: codex 注册 SessionStart/Stop/PermissionRequest/UserPromptSubmit（开关定集）",
+                      codexHooks["SessionStart"] != nil && codexHooks["Stop"] != nil
+                      && codexHooks["PermissionRequest"] != nil && codexHooks["UserPromptSubmit"] != nil
+                      && codexHooks["SessionEnd"] == nil)
+                check("remoteInstall[jq]: codex 步骤回显含事件清单与信任指引",
+                      output.contains("[5/6] Updated ~/.codex/hooks.json")
+                      && output.contains("SessionStart + Stop + PermissionRequest + UserPromptSubmit")
+                      && output.contains("/hooks"))
 
                 // B124 回归锁：远程 hook 命令必须 $HOME 形态——真身绝对路径
                 //（/Users/...）在远程机器不存在，hook 静默空转（真机 002 实锤）

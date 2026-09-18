@@ -276,11 +276,11 @@ extension ClaudeHookPreferences {
 
     // MARK: - Hooks JSON Generation
 
-    static func makeHookEntry(scriptPath: String = helperScriptPath) -> [String: Any] {
+    static func makeHookEntry(scriptPath: String = helperScriptPath, timeout: Int = 10) -> [String: Any] {
         [
             "matcher": "",
             "hooks": [
-                ["type": "command", "command": "bash \"\(scriptPath)\"", "timeout": 10]
+                ["type": "command", "command": "bash \"\(scriptPath)\"", "timeout": timeout]
             ]
         ]
     }
@@ -355,21 +355,14 @@ extension ClaudeHookPreferences {
     }
 
     /// Codex hooks.json 的事件字典 JSON（不含顶层 "hooks" 包裹，与远程安装脚本的
-    /// python 合并语义对齐：读 doc["hooks"] 清理后 update）。事件集 = codex 可触发的
-    /// SessionStart 恒注册 + SessionEnd 按开关——codex 0.153.4 实证事件集
-    /// （PreToolUse/PermissionRequest/PostToolUse/PreCompact/PostCompact/SessionStart/
-    /// SessionEnd/SubagentStart/SubagentStop/Interrupt）没有 Claude 的 Stop 与
-    /// UserPromptSubmit，写了也永不触发，白条目不写。
+    /// python 合并语义对齐：读 doc["hooks"] 清理后 update）。B207 起直接序列化
+    /// CodexHookPreferences.codexHooksDict——本地装机与远程通道的唯一事实源，
+    /// 消除两处手抄漂移（B206 曾因双处维护被迫手工同步）。事件集 = SessionStart
+    /// 恒注册 + Stop 恒注册（服务端 triggerOnStop 门控）+ UserPromptSubmit 按
+    /// 「提交后自动归位」开关 + PermissionRequest 恒注册（等用户批准→通知管线）+
+    /// SessionEnd 按开关（超时 3s）。旧版 codex 无 Stop/UPS 事件时写入不触发。
     static func generateCodexHooksDictJSON(scriptPath: String = helperScriptPath) -> String {
-        var hooks: [String: Any] = [:]
-        hooks["SessionStart"] = [makeHookEntry(scriptPath: scriptPath)]
-        // B206：与本地 codexHooksDict 同步——PermissionRequest（等用户批准）恒装，
-        // 服务端按「等待输入通知」开关门控，远程机上的等待经 spool 回灌同样提醒。
-        hooks["PermissionRequest"] = [makeHookEntry(scriptPath: scriptPath)]
-        if triggerOnSessionEnd {
-            hooks["SessionEnd"] = [makeHookEntry(scriptPath: scriptPath)]
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: hooks, options: [.sortedKeys]),
+        guard let data = try? JSONSerialization.data(withJSONObject: CodexHookPreferences.codexHooksDict(scriptPath: scriptPath), options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8) else {
             return "{}"
         }

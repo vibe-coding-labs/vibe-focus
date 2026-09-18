@@ -53,10 +53,13 @@ extension ClaudeHookPreferences {
         // 真身绝对路径在远程不存在，hook 会静默空转（真机 002 实锤）
         let hooksJSON = generateHooksDictJSON(scriptPath: remoteHelperScriptPath)
         let codexHooksJSON = generateCodexHooksDictJSON(scriptPath: remoteHelperScriptPath)
-        // B206：PermissionRequest（等用户批准→通知中心）恒装，不再随 SessionEnd 开关缺席
-        let codexEvents = triggerOnSessionEnd
-            ? "SessionStart + PermissionRequest + SessionEnd"
-            : "SessionStart + PermissionRequest"
+        // B207：事件清单随开关如实生成（与 codexHooksDict 同一事实源的展示面）——
+        // Stop 恒装（服务端 triggerOnStop 门控）、UserPromptSubmit 随「提交后自动
+        // 归位」、SessionEnd 随触发开关。
+        var codexEventList = ["SessionStart", "Stop", "PermissionRequest"]
+        if autoRestoreOnPromptSubmit { codexEventList.append("UserPromptSubmit") }
+        if triggerOnSessionEnd { codexEventList.append("SessionEnd") }
+        let codexEvents = codexEventList.joined(separator: " + ")
 
         return """
         #!/bin/bash
@@ -156,8 +159,10 @@ extension ClaudeHookPreferences {
         fi
 
         # 5/6 注册 Hooks 到 ~/.codex/hooks.json（Codex 0.153+：事件字典必须包在顶层
-        # "hooks" 字段下；codex 事件集无 Stop/UserPromptSubmit，只写可触发的
-        # \(codexEvents)。首次在 Codex TUI 运行如提示信任 hook，请确认。）
+        # "hooks" 字段下。B207 勘误：codex 0.146+ 支持与 Claude 同名的 Stop 与
+        # UserPromptSubmit（payload 同构），注册 \(codexEvents)；旧版 codex 无这些
+        # 事件时写入不触发、无副作用。codex 按 hooks 内容 hash 记忆信任：安装后
+        # 需在 Codex TUI 执行 /hooks 确认信任，未信任的 hooks 会被静默跳过。）
         CODEX_HOOKS="$HOME/.codex/hooks.json"
         mkdir -p "$HOME/.codex"
         python3 - "$CODEX_HOOKS" << 'PYCODEX_EOF'
@@ -187,10 +192,10 @@ extension ClaudeHookPreferences {
                         continue
                 kept.append(e)
             return kept
-        for ev in ("SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"):
+        for ev in ("SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "PermissionRequest"):
             if isinstance(hooks.get(ev), list):
                 hooks[ev] = strip(hooks[ev])
-        for ev in ("SessionStart", "Stop", "SessionEnd", "UserPromptSubmit"):
+        for ev in ("SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "PermissionRequest"):
             if isinstance(doc.get(ev), list):
                 doc[ev] = strip(doc[ev])
         OUR = json.loads(r'''\(codexHooksJSON)''')
@@ -208,7 +213,7 @@ extension ClaudeHookPreferences {
         echo "=== Installation Complete ==="
         echo "Hook events will be forwarded to VibeFocus at \(host):\(port)"
         echo "Machine label: \(label)"
-        echo "Codex: hooks.json registered (\(codexEvents)); trust prompt on first TUI run."
+        echo "Codex: hooks.json registered (\(codexEvents)); run /hooks in Codex TUI to (re)trust — hooks are skipped until trusted (codex remembers trust by content hash)."
         echo ""
         echo "To uninstall: rm -rf ~/.vibefocus && remove the VibeFocus hook entries from ~/.claude/settings.json and ~/.codex/hooks.json"
         """

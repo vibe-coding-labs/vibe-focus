@@ -100,7 +100,9 @@ final class VoiceAnnouncementManager: NSObject, ObservableObject {
         } ?? false
         let waitingText = transcriptTail.last.map { question -> String in
             let brief = question.count > 80 ? String(question.prefix(80)) + "…" : question
-            return TranscriptTailReader.waitingPrefix + "：" + brief
+            // B207：CLI 名随 transcript 来源诚实切换——codex 的 Stop 问句收尾
+            // 念「Codex 在等你回复」，不再张冠李戴。
+            return TranscriptTailReader.waitingPrefix(forTranscriptPath: payload.transcriptPath) + "：" + brief
         }
         // B200: 最后一轮 token 用量（模板 {tokens} 变量的数据源）。
         let lastTurnTokens = payload.transcriptPath.flatMap {

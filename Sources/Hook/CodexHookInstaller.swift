@@ -1,14 +1,22 @@
 // CodexHookInstaller.swift
 // VibeFocus — Codex CLI Hook 安装/卸载逻辑
 // Codex hooks.json 文件形状（codex-cli 0.153.4 真机实证）：顶层只接受 description /
-// hooks 字段，事件字典必须包在顶层 "hooks" 下；事件键 PascalCase。codex 事件集为
-// PreToolUse/PermissionRequest/PostToolUse/PreCompact/PostCompact/SessionStart/
-// SessionEnd/SubagentStart/SubagentStop/Interrupt——没有 Claude 的 Stop 与
-// UserPromptSubmit（写入也永不触发）。故只注册 codex 可触发的事件：
-// SessionStart 恒装（绑定自愈）+ PermissionRequest 恒装（B206：等用户批准 →
-// 通知中心，服务端按「等待输入通知」开关门控）+ SessionEnd 按开关，
+// hooks 字段，事件字典必须包在顶层 "hooks" 下；事件键 PascalCase。
+// B207 事件集勘误与扩容（codex-cli 0.146.0 本机沙盒 mock 模型实证 + 官方 hooks 文档）：
+// 此前「codex 没有 Stop/UserPromptSubmit」的断言过时——codex 现完整支持与 Claude
+// 同名的 Stop（payload 带 last_assistant_message/stop_hook_active）与
+// UserPromptSubmit（带 prompt），且事件 payload 与 Claude 逐字段同构
+// （session_id/transcript_path/cwd/hook_event_name/model），同一解码器直接消费。
+// 故注册：SessionStart 恒装（绑定自愈）+ Stop 恒装（服务端按 triggerOnStop
+// remoteOnly 门控：拉主屏+完成语音播报+live 面板 done）+ UserPromptSubmit 按
+// 「提交后自动归位」开关（绑定+归位+live 面板 running+环境上下文注入）+
+// PermissionRequest 恒装（B206：等用户批准 → 通知中心，服务端按「等待输入通知」
+// 开关门控）+ SessionEnd 按开关（codex 对 SessionEnd hook 超时钳 3s 上限，条目
+// 直接写 3 免每次启动 clamp 警告）。旧版 codex 无这些事件时写入不触发、无副作用。
 // 文件统一写规范形状；历史版本曾写顶层事件键（codex 解析失败、hooks 整体不加载），
-// 读取/清理双形状兼容以迁移。Codex 有 hook trust 机制，首次运行需用户在 TUI 确认信任。
+// 读取/清理双形状兼容以迁移。Codex 有 hook trust 机制：按 hooks 当前内容 hash 记忆
+// 信任，安装/变更后需用户在 TUI（/hooks）确认（自动化场景可用
+// --dangerously-bypass-hook-trust），未信任的 hooks 被静默跳过。
 
 import Foundation
 
@@ -79,21 +87,30 @@ enum CodexHookPreferences {
         return false
     }
 
-    /// Codex 可触发事件字典：SessionStart 恒注册（远程 label 绑定自愈入口）+
-    /// SessionEnd 按触发开关 + PermissionRequest 恒注册（B206：codex 弹权限确认
-    /// 停下等用户批准 → 通知中心 + live 面板 waiting，与 Claude Notification 同管线，
-    /// 服务端按同一「等待输入通知」开关门控——装进 hooks.json 但开关即时生效，
-    /// 无需重装）。Stop/UserPromptSubmit 是 Claude 特有事件，codex 无对应事件、
-    /// 写入永不触发。
+    /// Codex 可触发事件字典（B207 起：本地与远程 generateCodexHooksDictJSON 的唯一
+    /// 事实源——远程生成器直接序列化本字典，消除两处手抄漂移面）：
+    /// SessionStart 恒注册（远程 label 绑定自愈入口）+ Stop 恒注册（服务端
+    /// handleStop 按 triggerOnStop remoteOnly 门控，与 Claude 同语义：拉主屏+
+    /// 完成语音播报+live 面板 done）+ UserPromptSubmit 按「提交后自动归位」开关
+    /// （绑定+归位+live 面板 running+additionalContext 注入）+ PermissionRequest
+    /// 恒注册（B206：codex 弹权限确认停下等用户批准 → 通知中心 + live 面板
+    /// waiting，与 Claude Notification 同管线，服务端按同一「等待输入通知」开关
+    /// 门控——装进 hooks.json 但开关即时生效，无需重装）+ SessionEnd 按触发开关
+    /// （条目超时写 3：codex 对 SessionEnd 钳 3s 上限，写 10 每次启动弹 clamp 警告）。
+    /// 旧版 codex 无 Stop/UPS 事件时写入不触发、无副作用。
     static func codexHooksDict(scriptPath: String = ClaudeHookPreferences.helperScriptPath) -> [String: Any] {
         var hooks: [String: Any] = [:]
         // B132 形状对齐：事件值必须为 entry 数组（与远程生成器 generateCodexHooksDictJSON
         // 及 isHookInstalled 认可的规范形状一致）；此前裸字典让本地装机与远程通道分裂，
         // 且 cleanVibeFocusHooks（[[String:Any]] 语义）对裸字典卸载失灵。
         hooks["SessionStart"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
+        hooks["Stop"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
         hooks["PermissionRequest"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
+        if ClaudeHookPreferences.autoRestoreOnPromptSubmit {
+            hooks["UserPromptSubmit"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
+        }
         if ClaudeHookPreferences.triggerOnSessionEnd {
-            hooks["SessionEnd"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath)]
+            hooks["SessionEnd"] = [ClaudeHookPreferences.makeHookEntry(scriptPath: scriptPath, timeout: 3)]
         }
         return hooks
     }
@@ -141,6 +158,7 @@ enum CodexHookPreferences {
         let (document, hookEvents) = installedDocument(
             existingData: existingData,
             triggerOnSessionEnd: ClaudeHookPreferences.triggerOnSessionEnd,
+            autoRestoreOnPromptSubmit: ClaudeHookPreferences.autoRestoreOnPromptSubmit,
             scriptPath: ClaudeHookPreferences.helperScriptPath,
             targetURL: ClaudeHookPreferences.endpointURLString()
         )
@@ -160,7 +178,10 @@ enum CodexHookPreferences {
         do {
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
             log("[CodexHookPreferences] hooks installed successfully to \(path)")
-            return (true, "已安装到 Codex（\(path)）")
+            // 信任提示进安装结果文案：codex 按 hooks 内容 hash 记忆信任，注册集
+            // 有变化（含开关翻转增删事件）后未重新信任会被静默跳过——不说这话
+            // 用户会把「事件不到达」误判成 VibeFocus 坏了。
+            return (true, "已安装到 Codex（\(path)）。hooks 有变更时需在 Codex TUI 执行 /hooks 重新信任，否则事件会被静默跳过")
         } catch {
             log("[CodexHookPreferences] install write failed: \(error.localizedDescription)", level: .error)
             return (false, "写入失败: \(error.localizedDescription)")
@@ -203,10 +224,13 @@ enum CodexHookPreferences {
     }
 
     /// 安装后的 codex 文档（纯变换，B130）：读旧文档数据 → 规范形状合并 +
-    /// 历史错形状迁移清理。返回 (新文档, 实际注册事件集)。
+    /// 历史错形状迁移清理。返回 (新文档, 实际注册事件集)。B207：autoRestoreOnPromptSubmit
+    /// 从调用方线程化进来（此前硬编码 false 把 UPS 永远裁掉——当时 codex 无 UPS 事件，
+    /// B207 起 codex 支持 UPS，按「提交后自动归位」开关注册）。
     static func installedDocument(
         existingData: Data?,
         triggerOnSessionEnd: Bool,
+        autoRestoreOnPromptSubmit: Bool,
         scriptPath: String,
         targetURL: String
     ) -> (document: [String: Any], hookEvents: [String]) {
@@ -220,7 +244,7 @@ enum CodexHookPreferences {
             existing: wrapped,
             ourHooks: codexHooksDict(scriptPath: scriptPath),
             triggerOnSessionEnd: triggerOnSessionEnd,
-            autoRestoreOnPromptSubmit: false,
+            autoRestoreOnPromptSubmit: autoRestoreOnPromptSubmit,
             scriptPath: scriptPath,
             targetURL: targetURL
         )

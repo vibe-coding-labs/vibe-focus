@@ -513,5 +513,56 @@ extension RunnerHarness {
               && VoiceAnnouncementTemplate.interpolate("{tokens}", payload: payloadB200) == "未知"
               && VoiceAnnouncementTemplate.interpolate("{model}/{tokens}", payload: payloadB200, tokens: 7) == "m-1/7")
     }
+
+    // MARK: B207 codex rollout 双格式解析 + CLI 显示名（播报诚实化）
+
+    do {
+        // codex rollout 行形状（codex-cli 0.146.0 沙盒 mock 实证）：response_item
+        // assistant 行 content=output_text 块；developer/user 行、session_meta、
+        // event_msg user_message、坏行一律跳过。
+        let codexLines = [
+            #"{"timestamp":"t","type":"session_meta","payload":{"id":"s1","cwd":"/tmp/p"}}"#,
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"帮我查一下"}}"#,
+            #"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>"}]}}"#,
+            #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"第一轮结论。"}]}}"#,
+            "broken-line",
+            #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"你要哪个方案？"}]}}"#,
+        ]
+        let codexTexts = TranscriptTailReader.parseAssistantTexts(fromLines: codexLines)
+        check("transcript codex: response_item assistant 行提取（output_text 块、developer/user/meta/坏行跳过、旧→新序）",
+              codexTexts == ["第一轮结论。", "你要哪个方案？"])
+        // 混排：两格式行进同一解析器互不干扰（Claude 行照常提取）
+        let mixed = codexTexts + TranscriptTailReader.parseAssistantTexts(fromLines: [
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"claude 行"}]}}"#,
+        ])
+        check("transcript codex: Claude 行与 codex 行同解析器共存",
+              mixed == ["第一轮结论。", "你要哪个方案？", "claude 行"])
+        check("transcript codex: 问号收尾判定对 codex 文本同样成立",
+              TranscriptTailReader.isQuestionLike(codexTexts.last ?? ""))
+
+        // codex 最后一轮 usage：token_count.info.last_token_usage——cached_input_tokens=
+        // 读 cache、cache_write_input_tokens=写 cache；info 为 null 的行防御跳过。
+        let codexUsageLines = [
+            #"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#,
+            #"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":5,"total_tokens":15},"last_token_usage":{"input_tokens":100,"cached_input_tokens":30,"cache_write_input_tokens":20,"output_tokens":400,"total_tokens":550}}}}"#,
+        ]
+        let codexUsage = TranscriptTailReader.parseLastUsage(fromLines: codexUsageLines)
+        check("transcript codex: last_token_usage 最后一轮胜出、cache 读写各归其位（info null 行跳过）",
+              codexUsage?.inputTokens == 100 && codexUsage?.outputTokens == 400
+              && codexUsage?.cacheReadTokens == 30 && codexUsage?.cacheCreationTokens == 20
+              && codexUsage?.totalTokens == 550)
+
+        // CLI 显示名：codex rollout 路径（/.codex/sessions/ + rollout- 文件名双判据）
+        // → Codex；Claude 路径/缺前缀/nil → Claude。
+        check("transcript codex: cliDisplayName 路径嗅探双判据",
+              TranscriptTailReader.cliDisplayName(forTranscriptPath: "/Users/x/.codex/sessions/2026/09/18/rollout-2026-09-18T10-00-00-abc.jsonl") == "Codex"
+              && TranscriptTailReader.cliDisplayName(forTranscriptPath: "/Users/x/.claude/projects/p/session-abc.jsonl") == "Claude"
+              && TranscriptTailReader.cliDisplayName(forTranscriptPath: "/Users/x/.codex/sessions/2026/not-rollout.jsonl") == "Claude"
+              && TranscriptTailReader.cliDisplayName(forTranscriptPath: nil) == "Claude")
+        check("transcript codex: waitingPrefix 按 transcript 来源切 CLI 名",
+              TranscriptTailReader.waitingPrefix(forTranscriptPath: "/Users/x/.codex/sessions/2026/09/18/rollout-t-abc.jsonl") == "Codex 在等你回复"
+              && TranscriptTailReader.waitingPrefix(forTranscriptPath: "/Users/x/.claude/projects/p/s.jsonl") == "Claude 在等你回复"
+              && TranscriptTailReader.waitingPrefix(forTranscriptPath: nil) == "Claude 在等你回复")
+    }
     }
 }

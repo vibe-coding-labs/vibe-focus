@@ -53,12 +53,15 @@ extension VoiceAnnouncementManager {
         // 无 API 配置或无消息内容时直接走 fallback
         guard !apiBase.isEmpty, !apiKey.isEmpty, !message.isEmpty else {
             log("[VoiceAnnouncementManager] LLM summary skipped (missing config or message), using fallback", level: .info)
-            speakFallback(message: message, maxChars: maxChars, pendingQuestion: pendingQuestion)
+            speakFallback(message: message, maxChars: maxChars, pendingQuestion: pendingQuestion,
+                          waitingPrefix: TranscriptTailReader.waitingPrefix(forTranscriptPath: payload.transcriptPath))
             log("[VoiceAnnouncementManager] summarizeAndSpeak finished (fallback)", level: .debug, fields: [
                 "durationMs": String(elapsedMilliseconds(since: ssStart))
             ])
             return
         }
+        // B207：CLI 名随 transcript 来源诚实切换（codex 念「Codex 在等你回复」）。
+        let waitingPrefixText = TranscriptTailReader.waitingPrefix(forTranscriptPath: payload.transcriptPath)
 
         llmTask = Task { [weak self] in
             guard let self else { return }
@@ -79,7 +82,8 @@ extension VoiceAnnouncementManager {
                             "sessionID": payload.sessionID
                         ])
                     } else {
-                        self.speakFallback(message: message, maxChars: maxChars, pendingQuestion: pendingQuestion)
+                        self.speakFallback(message: message, maxChars: maxChars, pendingQuestion: pendingQuestion,
+                                           waitingPrefix: waitingPrefixText)
                     }
                     log("[VoiceAnnouncementManager] summarizeAndSpeak finished", level: .debug, fields: [
                         "durationMs": String(elapsedMilliseconds(since: ssStart))
@@ -92,7 +96,8 @@ extension VoiceAnnouncementManager {
                         "error": error.localizedDescription,
                         "sessionID": payload.sessionID
                     ])
-                    self.speakFallback(message: message, maxChars: maxChars, pendingQuestion: pendingQuestion)
+                    self.speakFallback(message: message, maxChars: maxChars, pendingQuestion: pendingQuestion,
+                                       waitingPrefix: waitingPrefixText)
                     log("[VoiceAnnouncementManager] summarizeAndSpeak finished (fallback after error)", level: .debug, fields: [
                         "durationMs": String(elapsedMilliseconds(since: ssStart))
                     ])
@@ -198,7 +203,10 @@ extension VoiceAnnouncementManager {
     /// ## 场景
     /// - LLM 配置缺失、请求失败、返回空总结三种情况的兜底；保证任何路径都有声音反馈。
     /// - pendingQuestion（B197）：等待输入时前置同一措辞提醒，与模板/音频路听感一致。
-    func speakFallback(message: String, maxChars: Int, pendingQuestion: Bool = false) {
+    ///   B207：waitingPrefix 由调用方按 transcript 来源传入（codex 念「Codex 在等你
+    ///   回复」），缺省 Claude 名兼容旧调用（试听路径）。
+    func speakFallback(message: String, maxChars: Int, pendingQuestion: Bool = false,
+                       waitingPrefix: String = TranscriptTailReader.waitingPrefix) {
         // P-INST-280: 语音播报 fallback 耗时（截断 lastAssistantMessage + speak；LLM 失败时调用）。
         #if PERF_INSTRUMENT
         let sfStart = Date()
@@ -212,7 +220,7 @@ extension VoiceAnnouncementManager {
         if !trimmed.isEmpty {
             let truncated = trimmed.count > maxChars ? String(trimmed.prefix(maxChars)) : trimmed
             let spoken = pendingQuestion
-                ? TranscriptTailReader.waitingPrefix + "，" + truncated
+                ? waitingPrefix + "，" + truncated
                 : truncated
             speak(spoken)
             log("[VoiceAnnouncementManager] fallback: speaking truncated lastAssistantMessage", fields: [
@@ -222,7 +230,7 @@ extension VoiceAnnouncementManager {
             return
         }
         if pendingQuestion {
-            speak(TranscriptTailReader.waitingPrefix)
+            speak(waitingPrefix)
             log("[VoiceAnnouncementManager] fallback: speaking waiting prefix only")
             return
         }

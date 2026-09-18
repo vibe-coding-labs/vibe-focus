@@ -962,17 +962,33 @@ extension RunnerHarness {
             FileManager.default.createFile(atPath: wrappedPath, contents: Data(wrappedJSON.utf8))
             check("codexInstalled: 规范形状（hooks 包裹层）识别且 description 字段共存",
                   CodexHookPreferences.isHookInstalled(at: wrappedPath) == true)
-            // codex 可触发事件集：SessionStart 恒注册、PermissionRequest 恒注册（B206
-            // 等用户批准→通知管线）、SessionEnd 按开关、Stop/UserPromptSubmit 为
-            // Claude 特有不写（codex 0.153.4 实证）
+            // B207 事件集（codex 0.146.0 沙盒 mock 实证 Stop/UPS 可触发、payload 与
+            // Claude 同构；旧版 codex 写入不触发无副作用）：SessionStart/Stop/
+            // PermissionRequest 恒注册（Stop 服务端 triggerOnStop remoteOnly 门控，
+            // 与 Claude 同语义）+ UserPromptSubmit 按「提交后自动归位」开关 +
+            // SessionEnd 按触发开关。
             let savedSessionEnd = ClaudeHookPreferences.triggerOnSessionEnd
-            defer { ClaudeHookPreferences.triggerOnSessionEnd = savedSessionEnd }
+            let savedAutoRestore = ClaudeHookPreferences.autoRestoreOnPromptSubmit
+            defer {
+                ClaudeHookPreferences.triggerOnSessionEnd = savedSessionEnd
+                ClaudeHookPreferences.autoRestoreOnPromptSubmit = savedAutoRestore
+            }
             ClaudeHookPreferences.triggerOnSessionEnd = false
-            check("codexHooks: SessionEnd 关 → SessionStart+PermissionRequest（无 Stop/UserPromptSubmit）",
-                  Set(CodexHookPreferences.codexHooksDict().keys) == ["PermissionRequest", "SessionStart"])
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = false
+            check("codexHooks: 两开关全关 → 恒装三事件（SessionStart+Stop+PermissionRequest）",
+                  Set(CodexHookPreferences.codexHooksDict().keys) == ["PermissionRequest", "SessionStart", "Stop"])
             ClaudeHookPreferences.triggerOnSessionEnd = true
-            check("codexHooks: SessionEnd 开 → SessionStart+PermissionRequest+SessionEnd",
-                  Set(CodexHookPreferences.codexHooksDict().keys) == ["PermissionRequest", "SessionEnd", "SessionStart"])
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = true
+            let fullCodexDict = CodexHookPreferences.codexHooksDict()
+            check("codexHooks: 两开关全开 → 五事件就位",
+                  Set(fullCodexDict.keys) == ["PermissionRequest", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"])
+            // codex 对 SessionEnd hook 超时钳 3s 上限：条目直接写 3（写 10 每次启动弹
+            // clamp 警告），其余事件维持 10
+            let seEntry = (fullCodexDict["SessionEnd"] as? [[String: Any]])?.first
+            let seHook = (seEntry?["hooks"] as? [[String: Any]])?.first
+            let stopHook = ((fullCodexDict["Stop"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])?.first
+            check("codexHooks: SessionEnd 条目超时=3（codex clamp 上限）、Stop 条目超时=10",
+                  seHook?["timeout"] as? Int == 3 && stopHook?["timeout"] as? Int == 10)
 
             // B206：PermissionRequest（codex 弹权限确认停下等批准 → 通知管线）端到端契约
             do {
@@ -993,6 +1009,24 @@ extension RunnerHarness {
                 // 远程生成器与本地字典同步（远程 codex 机的等待同样经通知管线提醒）
                 let genJSON = ClaudeHookPreferences.generateCodexHooksDictJSON(scriptPath: "/x/fwd.sh")
                 check("codexPR: 远程生成器同步注册 PermissionRequest", genJSON.contains("PermissionRequest"))
+                // B207：远程生成器=本地 codexHooksDict 的序列化（单一事实源，
+                // 消除两处手抄漂移——同 scriptPath 下逐字节一致）
+                let localDictData = try? JSONSerialization.data(
+                    withJSONObject: CodexHookPreferences.codexHooksDict(scriptPath: "/x/fwd.sh"),
+                    options: [.sortedKeys])
+                check("codexPR: 远程生成器与本地字典逐字节同源",
+                      genJSON == String(data: localDictData ?? Data(), encoding: .utf8))
+                // B207：codex Stop/UPS 事件名走同一 payload 解码通道（与 Claude 同构）
+                let stopPayload = ClaudeHookServer.decodePayload(
+                    from: Data(#"{"hook_event_name":"Stop","session_id":"codex-2","cwd":"/tmp/p","model":"gpt-5","last_assistant_message":"做完了","transcript_path":"/Users/x/.codex/sessions/2026/09/18/rollout-t-abc.jsonl"}"#.utf8))
+                check("codexStop: hook_event_name=Stop 解码 + last_assistant_message/transcript_path 透传",
+                      stopPayload?.event == .stop
+                      && stopPayload?.lastAssistantMessage == "做完了"
+                      && stopPayload?.transcriptPath == "/Users/x/.codex/sessions/2026/09/18/rollout-t-abc.jsonl")
+                let upsPayload = ClaudeHookServer.decodePayload(
+                    from: Data(#"{"hook_event_name":"UserPromptSubmit","session_id":"codex-3","prompt":"修一下这个 bug"}"#.utf8))
+                check("codexUPS: hook_event_name=UserPromptSubmit 解码进枚举",
+                      upsPayload?.event == .userPromptSubmit && upsPayload?.sessionID == "codex-3")
             }
 
             // B130：安装/卸载文档纯变换（真机形状 0.153.4 实证——事件包顶层 "hooks" 下）
@@ -1000,19 +1034,19 @@ extension RunnerHarness {
             let ourEntry: [String: Any] = ["matcher": "", "hooks": [["type": "command", "command": "bash \"\(spB130)\"", "timeout": 10]]]
             let foreignEntry: [String: Any] = ["hooks": [["command": "/usr/bin/other-tool"]]]
             func doc(_ d: [String: Any]) -> Data { try! JSONSerialization.data(withJSONObject: d) }
-            // 安装：全新 + 带 description 的旧文档
+            // 安装：全新 + 带 description 的旧文档（B207：签名 +autoRestoreOnPromptSubmit）
             let freshDoc = CodexHookPreferences.installedDocument(
-                existingData: nil, triggerOnSessionEnd: false, scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
+                existingData: nil, triggerOnSessionEnd: false, autoRestoreOnPromptSubmit: false, scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
             check("codexDoc: 全新安装 → 规范形状顶层仅 hooks 字段",
                   freshDoc.document.keys.sorted() == ["hooks"]
-                  && freshDoc.hookEvents == ["PermissionRequest", "SessionStart"])
+                  && freshDoc.hookEvents == ["PermissionRequest", "SessionStart", "Stop"])
             let legacy = doc(["description": "keep", "Stop": [foreignEntry], "SessionStart": [ourEntry]])
             let migrated = CodexHookPreferences.installedDocument(
-                existingData: legacy, triggerOnSessionEnd: true, scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
+                existingData: legacy, triggerOnSessionEnd: true, autoRestoreOnPromptSubmit: true, scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
             check("codexDoc: 历史顶层事件键迁移清理 + description 保留",
                   migrated.document["description"] as? String == "keep"
                   && (migrated.document["Stop"] as? [[String: Any]]) == nil
-                  && migrated.hookEvents == ["PermissionRequest", "SessionEnd", "SessionStart"])
+                  && migrated.hookEvents == ["PermissionRequest", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"])
             // 卸载：我方条目清除、外部条目与 description 保留
             let afterUninstall = CodexHookPreferences.uninstalledDocument(
                 existingData: doc(migrated.document), scriptPath: spB130, targetURL: "http://127.0.0.1:39277/claude/hook")
