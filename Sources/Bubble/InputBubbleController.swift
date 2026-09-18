@@ -238,11 +238,12 @@ final class InputBubbleController: NSObject {
         suppressMoveTracking = true
         panel.setFrameOrigin(origin)
         suppressMoveTracking = false
-        // B195：恢复决策门——窗草稿优先；手动唤起兜底全局最近输入（窗重建/换窗
-        // 也能拿回内容）；自动弹出保守（窗草稿否则前缀，不塞未经邀请的旧内容）。
+        // B195：恢复决策门——窗草稿优先；手动唤起兜底全局最近**草稿**（窗重建/换窗
+        // 也能拿回未发文本）；自动弹出保守（窗草稿否则前缀，不塞未经邀请的旧内容）。
+        // B208：兜底只认未提交草稿——已提交内容绝不自动回填（用户定案 2026-09-18）。
         let restored = InputBubbleDraftRestorePlan.resolve(
             windowDraft: InputBubbleDraftStore.shared.draft(for: target.windowID),
-            latestHistory: InputBubbleHistoryStore.shared.latestEntry()?.text,
+            latestHistory: InputBubbleHistoryStore.shared.latestDraftEntry(),
             source: source,
             prefix: InputBubblePreferences.defaultPrefix
         )

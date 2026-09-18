@@ -95,18 +95,23 @@ enum InputBubbleSummonSource: Equatable {
 /// 气泡初始文本恢复决策门（B195，取代 B162 的草稿直读）。
 /// 真机取证（2026-09-17）：生产 restoredDraft=true 仅 4/45 次——草稿按 CGWindowID
 /// 绑定，窗一关一开 ID 换新即成孤儿，改绑/换窗唤起必落空前缀=用户主诉「重开被重置」。
-/// 判序：窗草稿非空白 → 窗草稿（同窗续写）→ 手动唤起且有历史 → 最近一条输入
-/// （跨窗兜底）→ 默认前缀。
+/// 判序：窗草稿非空白 → 窗草稿（同窗续写）→ 手动唤起且有**未提交草稿** → 最近一条
+/// 草稿（跨窗兜底）→ 默认前缀。
+/// B208 用户定案（2026-09-18）：已提交（回车发出过）的内容**绝不自动回填**——提交
+/// 路径已清本窗草稿，此前「最近一条历史」无状态过滤把刚提交的条目原样填回，用户
+/// 每次都得手动清空。兜底只认 .draft（没按回车的未发文本找回，B195 窗重开场景）；
+/// ↑↓ 翻阅/历史面板/⌘Y 填充是显式操作，不受此限。状态校验在决策表内兜底（就算
+/// 调用方接线退化成无过滤 latestEntry，已提交条目也进不来）。
 enum InputBubbleDraftRestorePlan {
     enum Source: String, Equatable {
         case windowDraft   // 本窗草稿（CGWindowID 绑定）
-        case history       // 全局最近输入（B195 兜底）
+        case history       // 全局最近**草稿**（B195 兜底；B208 起拒绝已提交条目）
         case prefix        // 默认前缀（真·新输入）
     }
 
     static func resolve(
         windowDraft: String?,
-        latestHistory: String?,
+        latestHistory: InputBubbleHistoryEntry?,
         source: InputBubbleSummonSource,
         prefix: String
     ) -> (text: String, from: Source) {
@@ -116,8 +121,9 @@ enum InputBubbleDraftRestorePlan {
         }
         if source == .manualHotKey,
            let history = latestHistory,
-           !history.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return (history, .history)
+           history.status == .draft,
+           !history.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return (history.text, .history)
         }
         return (prefix, .prefix)
     }

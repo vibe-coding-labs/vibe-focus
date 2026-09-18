@@ -171,6 +171,19 @@ final class InputBubbleHistoryStore {
         entries().first
     }
 
+    /// 最新一条**未提交草稿**（B208 恢复决策兜底专用）：已提交内容绝不自动回填
+    /// （用户 2026-09-18 定案——回车发出过的文本再填回来是打扰）。↑↓ 翻阅/
+    /// 历史面板/⌘Y 填充是显式操作，仍可取已提交条目（走 entries()/面板过滤）。
+    func latestDraftEntry() -> InputBubbleHistoryEntry? {
+        Self.latestDraft(in: entries())
+    }
+
+    /// 纯函数（Runner 直测）：条目数组（最新在前）里第一条 draft 状态条目；
+    /// 全是已提交/空数组返回 nil。
+    static func latestDraft(in entries: [InputBubbleHistoryEntry]) -> InputBubbleHistoryEntry? {
+        entries.first { $0.status == .draft }
+    }
+
     /// 全部历史（最新在前），↑↓ 翻阅与面板消费。
     func entries() -> [InputBubbleHistoryEntry] {
         guard let data = defaults.data(forKey: storageKey),

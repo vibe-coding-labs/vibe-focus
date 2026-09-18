@@ -283,13 +283,18 @@ extension RunnerHarness {
             check("yieldPlan: 均无 → none", true)
         } else { check("yieldPlan: 均无 → none", false) }
 
-        // --- B195 初始文本恢复决策门（窗草稿 > 手动唤起历史兜底 > 前缀） ---
-        check("restore: 窗草稿优先（手动唤起）", InputBubbleDraftRestorePlan.resolve(windowDraft: "打到一半", latestHistory: "已提交的", source: .manualHotKey, prefix: "/goal ") == (text: "打到一半", from: .windowDraft))
-        check("restore: 窗草稿优先（自动弹出同款）", InputBubbleDraftRestorePlan.resolve(windowDraft: "打到一半", latestHistory: "已提交的", source: .autoShow, prefix: "/goal ") == (text: "打到一半", from: .windowDraft))
-        check("restore: 无窗草稿+手动 → 历史兜底", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: "刚提交的提示词", source: .manualHotKey, prefix: "/goal ") == (text: "刚提交的提示词", from: .history))
-        check("restore: 无窗草稿+自动弹 → 前缀（不塞旧内容）", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: "刚提交的提示词", source: .autoShow, prefix: "/goal ") == (text: "/goal ", from: .prefix))
+        // --- B195/B208 初始文本恢复决策门（窗草稿 > 手动唤起最近**草稿** > 前缀；
+        //     B208 用户定案 2026-09-18：已提交内容绝不自动回填） ---
+        func restoreEntry(_ text: String, _ status: InputBubbleHistoryStatus) -> InputBubbleHistoryEntry {
+            InputBubbleHistoryEntry(text: text, at: Date(), windowID: 1, windowTitle: nil, status: status)
+        }
+        check("restore: 窗草稿优先（手动唤起，头部已提交条目不碍事）", InputBubbleDraftRestorePlan.resolve(windowDraft: "打到一半", latestHistory: restoreEntry("已提交的", .submitted), source: .manualHotKey, prefix: "/goal ") == (text: "打到一半", from: .windowDraft))
+        check("restore: 窗草稿优先（自动弹出同款）", InputBubbleDraftRestorePlan.resolve(windowDraft: "打到一半", latestHistory: nil, source: .autoShow, prefix: "/goal ") == (text: "打到一半", from: .windowDraft))
+        check("restore: 无窗草稿+手动+最近草稿 → 历史兜底", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: restoreEntry("没发出去的半截话", .draft), source: .manualHotKey, prefix: "/goal ") == (text: "没发出去的半截话", from: .history))
+        check("restore: B208 已提交条目不回填（手动唤起落前缀）", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: restoreEntry("刚提交的提示词", .submitted), source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
+        check("restore: 已提交条目+自动弹 → 前缀（不塞旧内容）", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: restoreEntry("刚提交的提示词", .submitted), source: .autoShow, prefix: "/goal ") == (text: "/goal ", from: .prefix))
         check("restore: 空白窗草稿视为无草稿", InputBubbleDraftRestorePlan.resolve(windowDraft: "  \n ", latestHistory: nil, source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
-        check("restore: 空白历史不兜底", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: "   ", source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
+        check("restore: 空白草稿文本不兜底", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: restoreEntry("   ", .draft), source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
         check("restore: 无草稿无历史手动 → 前缀", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: nil, source: .manualHotKey, prefix: "/goal ") == (text: "/goal ", from: .prefix))
         check("restore: 双空+空前缀 → 空串", InputBubbleDraftRestorePlan.resolve(windowDraft: nil, latestHistory: nil, source: .manualHotKey, prefix: "") == (text: "", from: .prefix))
 
@@ -375,6 +380,26 @@ extension RunnerHarness {
         // 跨实例（重启语义）
         let store2 = InputBubbleHistoryStore(defaults: historyDefaults)
         check("history: 持久化跨实例可读", store2.latestEntry()?.text == "第二条提示词")
+
+        // --- B208：恢复兜底只认未提交草稿（提交过的内容不再被自动回填） ---
+        check("history B208: 现存全草稿 → latestDraftEntry = 最新一条", store.latestDraftEntry()?.text == "第二条提示词")
+        store.record("纯草稿一", status: .draft)
+        store.record("提交条", status: .submitted)
+        store.record("纯草稿二", status: .draft)
+        check("history B208: latestDraftEntry = 最新一条草稿（跳过头部已提交）",
+              store.latestEntry()?.text == "纯草稿二"
+              && store.latestDraftEntry()?.text == "纯草稿二")
+        store.record("纯草稿一", status: .submitted)  // 近端同文草稿晋升已提交
+        check("history B208: 草稿晋升已提交后退出兜底目标",
+              store.entries().first?.text == "纯草稿一"
+              && (store.entries().first?.status == .submitted)
+              && store.latestDraftEntry()?.text == "纯草稿二")
+        check("history B208: latestDraft 纯函数（全提交/空数组 → nil）",
+              InputBubbleHistoryStore.latestDraft(in: [
+                  InputBubbleHistoryEntry(text: "a", at: Date(), windowID: 1, windowTitle: nil, status: .submitted),
+                  InputBubbleHistoryEntry(text: "b", at: Date().addingTimeInterval(-1), windowID: 1, windowTitle: nil, status: .submitted),
+              ]) == nil
+              && InputBubbleHistoryStore.latestDraft(in: []) == nil)
         store2.clear()
         check("history: clear 后空", store2.entries().isEmpty && historyDefaults.data(forKey: "inputBubbleHistory") == nil)
         historyDefaults.removePersistentDomain(forName: suiteName)
