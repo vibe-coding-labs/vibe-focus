@@ -294,12 +294,12 @@ final class InputBubbleController: NSObject {
         if let textView, let target, textView.string != lastRestoredBaseText {
             InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
             InputBubbleDraftStore.shared.flushPending()
-            // B196：带状态/窗口归属（草稿态；防抖镜像同文会被 append 去重合并）
-            InputBubbleHistoryStore.shared.record(
+            // B196：带状态/窗口归属（草稿态；防抖镜像同文会被 append 去重合并）。
+            // B209：走快照折叠——线性输入链与打字镜像合并为一条滚动草稿。
+            InputBubbleHistoryStore.shared.recordDraftSnapshot(
                 textView.string,
                 windowID: target.windowID,
-                windowTitle: target.title,
-                status: .draft
+                windowTitle: target.title
             )
         }
         panel?.orderOut(nil)
@@ -330,11 +330,11 @@ final class InputBubbleController: NSObject {
               textView.string != lastRestoredBaseText else { return }
         InputBubbleDraftStore.shared.save(textView.string, for: target.windowID)
         InputBubbleDraftStore.shared.flushPending()
-        InputBubbleHistoryStore.shared.record(
+        // B209：快照折叠同 dismiss（线性输入链合并为一条滚动草稿）。
+        InputBubbleHistoryStore.shared.recordDraftSnapshot(
             textView.string,
             windowID: target.windowID,
-            windowTitle: target.title,
-            status: .draft
+            windowTitle: target.title
         )
         log("[InputBubble] draft flushed on termination", fields: [
             "windowID": String(target.windowID)

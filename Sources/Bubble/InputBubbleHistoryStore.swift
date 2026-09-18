@@ -147,6 +147,30 @@ final class InputBubbleHistoryStore {
         persist(Self.prune(updated, now: now, maxAge: maxAge, capacity: capacity))
     }
 
+    /// 记录一条**草稿快照**（B209）：打字期间 DraftStore 防抖 flush 的镜像、
+    /// dismiss/SIGTERM 脏文本统一走这里。同窗口的线性输入链（新文本与该窗最新
+    /// 草稿互为前缀=打字前进/删后退）折叠为一条滚动草稿原位刷新——不再每个
+    /// 停顿堆一条中间态（用户 2026-09-18 投诉：每打一个字历史多一条，面板被
+    /// 快照刷屏、↑↓ 翻阅全是碎片）。前缀无关的新草稿（清空重写/翻阅落点/别的
+    /// 内容）照常新条目——「文本永不蒸发」承诺不破。空白忽略；懒清理同 record。
+    func recordDraftSnapshot(
+        _ text: String,
+        windowID: UInt32?,
+        windowTitle: String?,
+        now: Date = Date()
+    ) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let updated = Self.appendDraftSnapshot(
+            entries(),
+            text: text,
+            at: now,
+            windowID: windowID,
+            windowTitle: windowTitle
+        )
+        persist(Self.prune(updated, now: now, maxAge: maxAge, capacity: capacity))
+    }
+
     /// 按 at 时间戳删除单条（面板 ✕）。找不到（已过期清理等）静默。
     func remove(at id: Date) {
         let filtered = entries().filter { $0.at != id }
@@ -231,6 +255,38 @@ final class InputBubbleHistoryStore {
             text: text, at: at, windowID: windowID,
             windowTitle: windowTitle, status: status
         )] + existing
+    }
+
+    /// 草稿快照折叠规则（B209 纯函数，Runner 直测）：该窗最新一条 .draft 条目与
+    /// 新文本互为前缀（去空白后比较，等值也算）→ 原位替换为快照（文本/时间戳/
+    /// 窗名刷新，移到最前=最近活动序）；找不到滚动草稿或前缀无关 → 落 append
+    /// 既有语义（同文同窗近端去重/晋升、否则新条目）。只认 .draft——已提交条目
+    /// 永不因打字被改写。windowID=nil（legacy）直接落 append。
+    static func appendDraftSnapshot(
+        _ existing: [InputBubbleHistoryEntry],
+        text: String,
+        at: Date,
+        windowID: UInt32?,
+        windowTitle: String?
+    ) -> [InputBubbleHistoryEntry] {
+        guard let windowID else {
+            return append(existing, text: text, at: at, windowID: nil, windowTitle: windowTitle, status: .draft)
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let idx = existing.firstIndex(where: { $0.status == .draft && $0.windowID == windowID }) {
+            let hit = existing[idx]
+            let hitTrimmed = hit.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix(hitTrimmed) || hitTrimmed.hasPrefix(trimmed) {
+                var updated = existing
+                updated.remove(at: idx)
+                updated.insert(InputBubbleHistoryEntry(
+                    text: text, at: at, windowID: hit.windowID,
+                    windowTitle: windowTitle ?? hit.windowTitle, status: .draft
+                ), at: 0)
+                return updated
+            }
+        }
+        return append(existing, text: text, at: at, windowID: windowID, windowTitle: windowTitle, status: .draft)
     }
 
     /// 过期剔除 → 容量裁剪（保最新 capacity 条）。

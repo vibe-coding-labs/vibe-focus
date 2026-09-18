@@ -426,6 +426,62 @@ extension RunnerHarness {
         let capPruned = InputBubbleHistoryStore.prune(many, now: now, maxAge: 30 * 24 * 3600, capacity: 50)
         check("historyPrune: 容量裁剪保最新 50 条", capPruned.count == 50 && capPruned.first?.text == "t0" && capPruned.last?.text == "t49")
 
+        // --- B209 草稿快照折叠（同窗线性输入链=一条滚动草稿；文本永不蒸发） ---
+        // 打字前进链：「我」→「我想」→「我想问一下」全部互为前缀 → 单条原位刷新
+        var rolled = InputBubbleHistoryStore.appendDraftSnapshot(
+            [], text: "我", at: now.addingTimeInterval(-3), windowID: 7, windowTitle: "w")
+        rolled = InputBubbleHistoryStore.appendDraftSnapshot(
+            rolled, text: "我想", at: now.addingTimeInterval(-2), windowID: 7, windowTitle: "w")
+        rolled = InputBubbleHistoryStore.appendDraftSnapshot(
+            rolled, text: "我想问一下", at: now.addingTimeInterval(-1), windowID: 7, windowTitle: "w2")
+        check("snapshot: 打字前进链折叠单条滚动草稿（文本/时间戳/窗名刷新、置顶）",
+              rolled.count == 1 && rolled[0].text == "我想问一下"
+              && rolled[0].at == now.addingTimeInterval(-1)
+              && rolled[0].windowTitle == "w2" && rolled[0].status == .draft)
+        // 删后退链：新文本是旧文本前缀 → 同样原位替换（不堆「删字快照」）
+        rolled = InputBubbleHistoryStore.appendDraftSnapshot(
+            rolled, text: "我想问", at: now, windowID: 7, windowTitle: "w2")
+        check("snapshot: 删退链同条折叠", rolled.count == 1 && rolled[0].text == "我想问")
+        // 前缀无关（清空重写）→ 新条目，旧草稿保留（文本永不蒸发）
+        rolled = InputBubbleHistoryStore.appendDraftSnapshot(
+            rolled, text: "帮我看下这个报错", at: now, windowID: 7, windowTitle: "w2")
+        check("snapshot: 前缀无关新草稿追加、旧草稿保留",
+              rolled.count == 2 && rolled[0].text == "帮我看下这个报错" && rolled[1].text == "我想问")
+        // 已提交条目永不被打字快照改写：头部 submitted 同前缀也不折叠
+        let withSubmitted = [
+            InputBubbleHistoryEntry(text: "我想问", at: now, windowID: 8, windowTitle: nil, status: .submitted),
+        ]
+        let afterSubmitted = InputBubbleHistoryStore.appendDraftSnapshot(
+            withSubmitted, text: "我想问一下", at: now, windowID: 8, windowTitle: nil)
+        check("snapshot: 已提交条目不被打字改写（新草稿条目独立）",
+              afterSubmitted.count == 2 && afterSubmitted[0].status == .draft
+              && afterSubmitted[1].status == .submitted && afterSubmitted[1].text == "我想问")
+        // 跨窗独立：窗 9 的滚动草稿不接窗 7 的链
+        let crossWin = InputBubbleHistoryStore.appendDraftSnapshot(
+            rolled, text: "我想问一下", at: now, windowID: 9, windowTitle: nil)
+        check("snapshot: 跨窗各归各的滚动链", crossWin.count == 3 && crossWin[0].windowID == 9)
+        // windowID=nil（legacy 通道）落 append 语义
+        let legacy = InputBubbleHistoryStore.appendDraftSnapshot(
+            [], text: "无窗草稿", at: now, windowID: nil, windowTitle: nil)
+        check("snapshot: windowID=nil 落 append 语义", legacy.count == 1 && legacy[0].windowID == nil && legacy[0].status == .draft)
+        // 去空白比对：等值/空白差折叠
+        let wsFold = InputBubbleHistoryStore.appendDraftSnapshot(
+            [InputBubbleHistoryEntry(text: "  同文  ", at: now.addingTimeInterval(-5), windowID: 3, windowTitle: nil, status: .draft)],
+            text: "同文", at: now, windowID: 3, windowTitle: nil)
+        check("snapshot: 去空白等值折叠", wsFold.count == 1 && wsFold[0].text == "同文" && wsFold[0].at == now)
+        // store 实例路径：recordDraftSnapshot 真实存取（隔离 suite）
+        let snapSuite = "RunnerBubbleSnapTests-\(UUID().uuidString)"
+        let snapDefaults = UserDefaults(suiteName: snapSuite)!
+        let snapStore = InputBubbleHistoryStore(defaults: snapDefaults)
+        snapStore.recordDraftSnapshot("第一", windowID: 5, windowTitle: nil)
+        snapStore.recordDraftSnapshot("第一次", windowID: 5, windowTitle: nil)
+        snapStore.recordDraftSnapshot("第一次输入", windowID: 5, windowTitle: nil)
+        check("snapshot: store 连续三次快照只留一条滚动草稿",
+              snapStore.entries().count == 1 && snapStore.entries()[0].text == "第一次输入")
+        check("snapshot: 滚动草稿仍是 latestDraftEntry 兜底目标",
+              snapStore.latestDraftEntry()?.text == "第一次输入")
+        snapDefaults.removePersistentDomain(forName: snapSuite)
+
         // --- ↑↓ 翻阅计划（最新在前；↑ 变旧到最旧停住；↓ 变新走出回现场；空历史不消费） ---
         if case .moveTo(let index) = InputBubbleHistoryNavPlan.up(currentIndex: nil, entryCount: 3), index == 0 {
             check("navUp: 未翻阅 → 进入最新(0)", true)

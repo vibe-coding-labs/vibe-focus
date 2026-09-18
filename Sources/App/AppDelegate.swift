@@ -186,10 +186,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         // B196：草稿防抖落盘镜像进历史（草稿态）——强杀场景历史面板也有最近草稿可捞。
         // 只在 app 启动接线，Runner 的隔离 DraftStore 实例不受影响。
         // 窗标题从气泡当前目标补齐（镜像路径拿不到 AX 元素；目标不匹配时标题留空）。
+        // B209：走快照折叠——同窗线性输入链原位刷新一条滚动草稿，不再每个停顿
+        // 堆一条中间态快照刷屏历史面板与 ↑↓ 翻阅。
         InputBubbleDraftStore.shared.onFlushNonBlank = { text, windowID in
             let target = InputBubbleController.shared.target
             let title = target?.windowID == windowID ? target?.title : nil
-            InputBubbleHistoryStore.shared.record(text, windowID: windowID, windowTitle: title, status: .draft)
+            InputBubbleHistoryStore.shared.recordDraftSnapshot(text, windowID: windowID, windowTitle: title)
         }
         NotificationCenter.default.addObserver(
             self,
