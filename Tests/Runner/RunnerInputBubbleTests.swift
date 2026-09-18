@@ -205,31 +205,70 @@ extension RunnerHarness {
             check("moveToMain: 气泡占用 → skipBubbleActive", true)
         } else { check("moveToMain: 气泡占用 → skipBubbleActive", false) }
 
-        // --- B180/B184 跨到主屏自动弹出决策门 v2（基线表版：lastSeenOnMain 按 windowID 查表，nil=无基线） ---
+        // --- B180/B184 跨到主屏自动弹出决策门 v2（基线表版：lastSeenOnMain 按 windowID 查表，nil=无基线）---
+        // B211：签名加 arrivalMover——既有短路序断言传 .hookPull（证明「能到 summon 的前提」
+        // 下各短路仍先生效），summon/skip 分流断言见 B211 块。
         if case .skipNotEnabled = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: false, lastSeenOnMain: false, nowOnMain: true) {
+            moveToMainEnabled: false, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .hookPull) {
             check("arrival: 开关关 → skipNotEnabled", true)
         } else { check("arrival: 开关关 → skipNotEnabled", false) }
         if case .skipNoBaseline = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: nil, nowOnMain: true) {
+            moveToMainEnabled: true, lastSeenOnMain: nil, nowOnMain: true, arrivalMover: .hookPull) {
             check("arrival: 无基线 → skipNoBaseline", true)
         } else { check("arrival: 无基线 → skipNoBaseline", false) }
         if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: true) {
+            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: true, arrivalMover: .hookPull) {
             check("arrival: 已在主屏 → skipAlreadyOnMain", true)
         } else { check("arrival: 已在主屏 → skipAlreadyOnMain", false) }
         if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: false) {
+            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: false, arrivalMover: .hookPull) {
             check("arrival: 主屏移去别屏（反向，基线先短路）→ skipAlreadyOnMain", true)
         } else { check("arrival: 主屏移去别屏（反向，基线先短路）→ skipAlreadyOnMain", false) }
         if case .skipStillOffMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: false) {
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: false, arrivalMover: .hookPull) {
             check("arrival: 同窗仍在非主屏 → skipStillOffMain", true)
         } else { check("arrival: 同窗仍在非主屏 → skipStillOffMain", false) }
         if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true) {
-            check("arrival: 基线非主屏→主屏 → summon", true)
-        } else { check("arrival: 基线非主屏→主屏 → summon", false) }
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .hookPull) {
+            check("arrival: 基线非主屏→主屏 + hook 拉回 → summon", true)
+        } else { check("arrival: 基线非主屏→主屏 + hook 拉回 → summon", false) }
+
+        // --- B211 到达弹出按移动者归因分流：只有 hook 拉回（agent「我需要你」）可弹 ---
+        // 用户主诉 2026-09-19：⌃Q 每拉必弹（16 弹 2 用）。摆位/拖动是布局意图，不是输入意图。
+        if case .skipUserMoved = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .userAction) {
+            check("arrival B211: 跨越 + ⌃Q 摆位 → skipUserMoved（不弹）", true)
+        } else { check("arrival B211: 跨越 + ⌃Q 摆位 → skipUserMoved（不弹）", false) }
+        if case .skipExternalMove = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: nil) {
+            check("arrival B211: 跨越 + 无归因（外部 yabai/重排）→ skipExternalMove（不弹）", true)
+        } else { check("arrival B211: 跨越 + 无归因（外部 yabai/重排）→ skipExternalMove（不弹）", false) }
+        check("mover B211: claudeSessionEnd → hookPull", InputBubbleArrivalMover.map(.claudeSessionEnd) == .hookPull)
+        check("mover B211: manualHotkey → userAction", InputBubbleArrivalMover.map(.manualHotkey) == .userAction)
+        check("mover B211: userPromptSubmit（B126 已退役搬窗）保守 → userAction", InputBubbleArrivalMover.map(.userPromptSubmit) == .userAction)
+
+        // --- B211 归因账本：hook 拉回 10s 新鲜期内可弹，过期/覆盖/容量淘汰 ---
+        let ledger = MoveToMainAttributionLedger.shared
+        let ledgerNow = Date()
+        ledger.record(windowID: 911_001, mover: .hookPull, at: ledgerNow)
+        check("ledger B211: 新鲜期内读回 hookPull", ledger.recentMover(windowID: 911_001, now: ledgerNow.addingTimeInterval(5)) == .hookPull)
+        check("ledger B211: 无记录窗 → nil（外部移动不弹）", ledger.recentMover(windowID: 911_099, now: ledgerNow) == nil)
+        ledger.record(windowID: 911_002, mover: .hookPull, at: ledgerNow.addingTimeInterval(-11))
+        check("ledger B211: 超 10s 新鲜期 → nil", ledger.recentMover(windowID: 911_002, now: ledgerNow) == nil)
+        check("ledger B211: 新鲜期边界（恰好 10s）→ 仍可读", ledger.recentMover(windowID: 911_002, now: ledgerNow.addingTimeInterval(-1)) == .hookPull)
+        ledger.record(windowID: 911_003, mover: .userAction, at: ledgerNow)
+        check("ledger B211: ⌃Q 记账读回 userAction", ledger.recentMover(windowID: 911_003, now: ledgerNow) == .userAction)
+        ledger.record(windowID: 911_003, mover: .hookPull, at: ledgerNow.addingTimeInterval(1))
+        check("ledger B211: 同窗后继 hook 拉回覆盖 → 最新归因胜", ledger.recentMover(windowID: 911_003, now: ledgerNow.addingTimeInterval(1)) == .hookPull)
+        ledger.record(windowID: 911_004, mover: .hookPull, at: ledgerNow.addingTimeInterval(2))
+        ledger.record(windowID: 911_004, mover: .userAction, at: ledgerNow.addingTimeInterval(3))
+        check("ledger B211: 同窗用户移动后覆盖 → userAction（后到语义胜）", ledger.recentMover(windowID: 911_004, now: ledgerNow.addingTimeInterval(3)) == .userAction)
+        for idx in 0..<(MoveToMainAttributionLedger.capacity + 2) {
+            ledger.record(windowID: UInt32(912_000 + idx), mover: .hookPull, at: ledgerNow)
+        }
+        check("ledger B211: 容量 32 FIFO——最旧两条被淘汰", ledger.recentMover(windowID: 912_000, now: ledgerNow) == nil
+            && ledger.recentMover(windowID: 912_001, now: ledgerNow) == nil)
+        check("ledger B211: 容量 32 FIFO——最新条目仍在", ledger.recentMover(windowID: UInt32(912_000 + MoveToMainAttributionLedger.capacity + 1), now: ledgerNow) == .hookPull)
 
         // --- B184 气泡开着时到达窗的处置门（跟随模式改绑/自动隐藏不打扰/本窗跟随已处理） ---
         if case .keepCurrent = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(

@@ -315,6 +315,12 @@ extension WindowManager {
         case .alreadyOnMain:
             return true
         case .moved(let effectiveWindowID):
+            // B211：到达主屏归因记账——气泡 tick 到达检测只认 hook 拉回（agent 召唤），
+            // 用户 ⌃Q 摆位/外部移动不再误弹。本函数可能在 WindowWorkExecutor 后台线程
+            // 运行，账本自身带锁。alreadyOnMain 无跨越，不记账。
+            MoveToMainAttributionLedger.shared.record(
+                windowID: effectiveWindowID,
+                mover: InputBubbleArrivalMover.map(reason))
             log("[WindowManager] moveWindowToMainScreen finished", fields: [
                 "op": op,
                 "windowID": String(effectiveWindowID),

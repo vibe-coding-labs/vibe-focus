@@ -17,6 +17,8 @@ enum InputBubbleAutoShowGate {
         case skipNoBaseline        // B180：本窗首次观测，无前值，无从谈跨越
         case skipStillOffMain      // B180：同窗仍在非主屏（屏内移动/移去别的副屏）
         case skipAlreadyOnMain     // B180：同窗已在主屏（无新跨越，防 Esc 后重弹循环）
+        case skipUserMoved         // B211：用户手动移动（⌃Q 摆位/拖动）=布局意图，不弹
+        case skipExternalMove      // B211：外部来源移动（并行会话 yabai/显示器重排）与输入无关，不弹
     }
 
     static func decide(
@@ -42,20 +44,28 @@ enum InputBubbleAutoShowGate {
         return .summon
     }
 
-    /// B184：「同一终端窗从非主屏跨越到主屏 → 气泡自动出现」决策门 v2（摆位热键/鼠标拖动/
-    /// 会话结束拉回等一切移动方式统一覆盖；Stop hook 快路径另有 decideMoveToMainAutoShow）。
+    /// B184：「同一终端窗从非主屏跨越到主屏 → 气泡自动出现」决策门 v2；B211 收敛语义：
+    /// 只有 hook 拉回（agent「我需要你」）可弹——用户 ⌃Q 摆位/拖动是布局意图（2026-09-19
+    /// 生产日志实锤：16 次自动弹出 14 次紧跟用户 ⌃Q、仅 2 次真打字），外部移动与输入
+    /// 无关，两者一律静默落基线。Stop hook 快路径另有 decideMoveToMainAutoShow（本就是
+    /// hook 发起，语义天然正确）。
     /// 纯函数直测；基线=全窗口基线表按 windowID 查找（B184 升级：窗在非前台时被移动、
     /// 之后才聚焦的流程，首观测即有历史基线，照样触发——旧「同窗连续观测」版有流程缝）。
     /// - lastSeenOnMain == nil：本窗无历史基线，无从谈跨越。
+    /// - arrivalMover == nil：归因账本无新鲜记录 = 外部来源移动。
     static func decideMoveToMainArrival(
         moveToMainEnabled: Bool,
         lastSeenOnMain: Bool?,
-        nowOnMain: Bool
+        nowOnMain: Bool,
+        arrivalMover: InputBubbleArrivalMover?
     ) -> Outcome {
         guard moveToMainEnabled else { return .skipNotEnabled }
         guard let wasOnMain = lastSeenOnMain else { return .skipNoBaseline }
         guard !wasOnMain else { return .skipAlreadyOnMain }
         guard nowOnMain else { return .skipStillOffMain }
+        guard arrivalMover == .hookPull else {
+            return arrivalMover == nil ? .skipExternalMove : .skipUserMoved
+        }
         return .summon
     }
 
@@ -182,19 +192,11 @@ final class InputBubbleAutoShow {
                 currentOnMain[entry.windowID] = CoordinateKit.isOnMainScreen(bounds)
             }
         }
-        // B185 诊断探针（临时）：每拍 INFO 记录 top 窗/归属/基线，定位跨屏检测失明原因后移除。
         // top = 被扫窗的 z 序最前（CGWindowList 首位）；v1 的单窗观测变量已随 B185 全扫版退役
         //（此前恒 top=nil，2026-09-16 零警告门禁清账改为真值）。
+        // B211：B185 的临时 [PROBE] tick 日志（每秒一条 INFO、日均 8.6 万行洪水）随诊断
+        // 使命完结删除——真信号（summon/arrival suppressed）各有专属日志。
         let topWindowID = terminalWindows.first?.windowID
-        log("[InputBubble][PROBE] tick", fields: [
-            "front": front?.bundleIdentifier ?? "nil",
-            "frontIsTerminal": String(frontIsTerminal),
-            "top": topWindowID.map(String.init) ?? "nil",
-            "onMain": (topWindowID.flatMap { currentOnMain[$0] }).map { String($0) } ?? "nil",
-            "map": (topWindowID.flatMap { onMainBaselineByWindow[$0] }).map { String($0) } ?? "nil",
-            "scan": String(terminalWindows.count),
-            "phase": String(describing: controller.phase)
-        ])
         let windowChanged = topWindowID != nil && topWindowID != lastEvaluatedWindowID
         let hasLive = topWindowID.map { SessionWindowRegistry.shared.hasLiveSessionBinding(windowID: $0) } ?? false
 
@@ -220,24 +222,42 @@ final class InputBubbleAutoShow {
             lastEvaluatedWindowID = nil
         case .skipSameWindow, .skipNoLiveSession:
             if let top = topWindowID { lastEvaluatedWindowID = top }
-        case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipNotEnabled, .skipBubbleActive:
+        case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipNotEnabled, .skipBubbleActive,
+             .skipUserMoved, .skipExternalMove:
             break
         }
 
         // B185：跨屏检测 v3——扫描前台终端 app 的「全部」onscreen 常规窗，逐窗比对
         // 基线表旧值（读旧→判跨越→再落表，顺序不可换）。多窗多屏下 z 序最顶窗未必是
         // 用户刚移动的窗（真机探针实锤），单窗观测版有结构性盲区。
+        // B211：跨越是否成弹由归因账本裁决——只有 hook 拉回（10s 新鲜期内）可弹；
+        // 用户 ⌃Q/外部移动记一条 suppressed 后照常落基线。
         // 气泡开着时：跟随模式改绑到到达窗；自动隐藏模式维持旧行为不打扰。
         var arrivedEntry: CGWindowEntry?
+        var suppressedArrival: (windowID: UInt32, outcome: InputBubbleAutoShowGate.Outcome)?
         for entry in terminalWindows {
             guard let nowOnMain = currentOnMain[entry.windowID] else { continue }
-            if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            let arrivalOutcome = InputBubbleAutoShowGate.decideMoveToMainArrival(
                 moveToMainEnabled: InputBubblePreferences.autoShowOnMoveToMain,
                 lastSeenOnMain: onMainBaselineByWindow[entry.windowID],
-                nowOnMain: nowOnMain) {
+                nowOnMain: nowOnMain,
+                arrivalMover: MoveToMainAttributionLedger.shared.recentMover(windowID: entry.windowID))
+            if case .summon = arrivalOutcome {
                 arrivedEntry = entry
                 break
             }
+            switch arrivalOutcome {
+            case .skipUserMoved, .skipExternalMove:
+                if suppressedArrival == nil { suppressedArrival = (entry.windowID, arrivalOutcome) }
+            default:
+                break
+            }
+        }
+        if let suppressed = suppressedArrival, arrivedEntry == nil {
+            log("[InputBubble] move-to-main arrival suppressed", fields: [
+                "windowID": String(suppressed.windowID),
+                "outcome": String(describing: suppressed.outcome)
+            ])
         }
         if let arrived = arrivedEntry, let frontApp = front {
             if controller.isIdle {

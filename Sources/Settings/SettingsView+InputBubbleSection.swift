@@ -108,7 +108,7 @@ private struct InputBubbleSectionView: View {
 
             SettingsRow(
                 title: "移回主屏自动弹出",
-                detail: "窗口从其它屏幕移动到主屏时（摆位热键、鼠标拖动、会话结束自动拉回）气泡自动出现，省一次快捷键。"
+                detail: "仅当 Claude 会话被自动拉回主屏时（会话结束 hook 拉回）气泡自动出现。手动摆位（⌃Q、拖动）与外部移动不再弹出——拉窗查看不等于要输入，需要时按唤起快捷键。"
             ) {
                 Toggle("", isOn: $autoShowOnMoveToMain)
                     .labelsHidden()
