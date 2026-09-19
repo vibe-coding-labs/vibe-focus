@@ -283,6 +283,8 @@ final class FakeAuditor: RestoreAuditing {
         runPerfMonitorTests()
         runSpaceSwitchTests()
         runSpaceQueryYabaiTests()
+        runSpoolDrainLifecycleTests()
+        runVoiceLLMSummaryTests()
         runOverlaySignalTests()
         runStorageSweepTests()
         runHookInstallSweepTests()
@@ -391,6 +393,7 @@ final class FakeAuditor: RestoreAuditing {
         runMinimapLabelTests()
         runSoundGateSilentTests()
         runTitleEditorAXWriteTests()
+        runGridSnapshotRowTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
