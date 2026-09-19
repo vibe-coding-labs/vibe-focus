@@ -354,4 +354,39 @@ extension RunnerHarness {
               forwarder.range(of: "VF_LEARNED=\"${VF_SSHC%% *}\"")?.lowerBound ?? forwarder.startIndex
               > forwarder.range(of: "for VF_H in \"${VF_HOSTS[@]}\"; do")?.lowerBound ?? forwarder.endIndex)
     }
+    /// B217：RemoteSpoolDrainer.runProcess 进程执行器行为直测
+    /// （边收边蓄防管道死锁/超时强杀/启动失败三分支 + LockedDataAccumulator）。
+    func runSpoolProcessTests() {
+        // 正常退出：stdout/stderr 分蓄 + 退出码透传
+        let r1 = RemoteSpoolDrainer.runProcess(
+            executable: "/bin/sh", arguments: ["-c", "echo hello; echo err >&2; exit 3"], timeout: 5)
+        check("spoolProc: 退出码透传", r1?.exitCode == 3)
+        check("spoolProc: stdout 边收边蓄", r1?.stdout == "hello\n")
+        check("spoolProc: stderr 分通道蓄积", r1?.stderr == "err\n")
+
+        // 超管道缓冲的大输出（200KB ≫ 64KB 管道缓冲）不死锁不截断——
+        // readabilityHandler 边收边蓄的存在意义
+        let r2 = RemoteSpoolDrainer.runProcess(
+            executable: "/bin/sh", arguments: ["-c", "yes a | head -c 200000"], timeout: 10)
+        check("spoolProc: 200KB 大输出完整回收（防管道死锁）", r2?.stdout.count == 200000)
+
+        // 超时强杀 → nil（B172 mux 重置触发路径）
+        let t0 = Date()
+        let r3 = RemoteSpoolDrainer.runProcess(
+            executable: "/bin/sleep", arguments: ["5"], timeout: 0.5)
+        check("spoolProc: 超时强杀返回 nil", r3 == nil)
+        check("spoolProc: 超时按预算返回（~0.5s 而非 5s）",
+              Date().timeIntervalSince(t0) < 3)
+
+        // 可执行文件不存在 → 启动失败 nil（readabilityHandler 清理分支）
+        let r4 = RemoteSpoolDrainer.runProcess(
+            executable: "/nonexistent/vibefocus-test-binary", arguments: [], timeout: 5)
+        check("spoolProc: 启动失败返回 nil", r4 == nil)
+
+        // LockedDataAccumulator：跨线程蓄积器契约
+        let acc = LockedDataAccumulator()
+        acc.append(Data("ab".utf8))
+        acc.append(Data("cd".utf8))
+        check("spoolProc: 累积器拼接保序", acc.value == Data("abcd".utf8))
+    }
 }

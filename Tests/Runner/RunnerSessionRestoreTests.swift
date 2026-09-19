@@ -14,6 +14,7 @@ extension RunnerHarness {
         runSSHParserTests()
         runPaneClassifierTests()
         runPaneEnumerationTests()
+        runPaneEnumerationBuilderTests()
         runRemoteProbeTests()
         runCommandBuilderTests()
         runMigratorTests()
@@ -102,6 +103,69 @@ extension RunnerHarness {
     }
 
     // MARK: pane 枚举解析
+
+    /// B214 覆盖补强：PaneEnumeration 脚本构建器族 + Terminal.app tab 解析
+    ///（基线缺口：itermEnumerateSessions 文本/四个注入脚本构建器/parseTerminalTabTTYs）
+    private func runPaneEnumerationBuilderTests() {
+        // A. 枚举脚本构建：iTerm2 AppleScript 形状锁定（解析端与产出端同源演化的锚）
+        do {
+            let script = PaneEnumeration.itermEnumerateSessions()
+            check("paneBuilder A1: 枚举脚本含 iTerm2 应用定位与三层循环",
+                  script.contains(#"tell application id "com.googlecode.iterm2""#)
+                  && script.contains("repeat with w in windows")
+                  && script.contains("repeat with t in tabs of w")
+                  && script.contains("repeat with s in sessions of t"))
+            check("paneBuilder A2: 行协议七段齐备（winID|tab|sess|tty|bounds|name）",
+                  script.contains(#""|" & tabIdx & "|" & sessIdx & "|"#)
+                  && script.contains("tty of s")
+                  && script.contains("name of s"))
+        }
+
+        // B. 注入脚本构建器族
+        do {
+            let appendTab = PaneEnumeration.itermAppendTab(windowASID: "42", command: "echo hi")
+            check("paneBuilder B1: appendTab 定位窗+建 tab+写命令",
+                  appendTab.contains("tell window id 42")
+                  && appendTab.contains("create tab with default profile")
+                  && appendTab.contains(#"write text "echo hi""#))
+
+            let writeSession = PaneEnumeration.itermWriteToSession(
+                windowASID: "42", tabIndex: 1, sessionIndex: 2, command: "echo hi")
+            check("paneBuilder B2: writeSession 按 tab/session 序定位",
+                  writeSession.contains("tell session 2 of tab 1 of window id 42")
+                  && writeSession.contains(#"write text "echo hi""#))
+
+            let escaped = PaneEnumeration.itermAppendTab(windowASID: "7", command: "say \"ok\"")
+            check("paneBuilder B3: 命令经 appleScriptEscaped 转义引号",
+                  escaped.contains(#"write text "say \"ok\"""#))
+
+            let writeWindow = PaneEnumeration.itermWriteToWindow(windowASID: "9", command: "cd /tmp")
+            check("paneBuilder B4: 窗级注入委托 TerminalAutomationScript（命令与窗 id 在场）",
+                  writeWindow.contains("9") && writeWindow.contains("cd /tmp"))
+
+            let terminalWrite = PaneEnumeration.terminalWriteToWindow(windowCGID: 55, command: "ls -la")
+            check("paneBuilder B5: Terminal.app 注入含 CG 窗 id 与命令",
+                  terminalWrite.contains("55") && terminalWrite.contains("ls -la"))
+        }
+
+        // C. parseTerminalTabTTYs：聚合/防御全分支
+        do {
+            let out = PaneEnumeration.parseTerminalTabTTYs("""
+                12|/dev/ttys001
+                12|ttys002
+                abc|ttys003
+                |ttys004
+                30|
+                99|/dev/ttys003|extra
+                """)
+            check("paneBuilder C1: 同窗多 tab 有序聚合 + 缺 /dev/ 前缀补全",
+                  out[12] == ["/dev/ttys001", "/dev/ttys002"])
+            check("paneBuilder C2: 非法窗 id/空窗 id/空 tty 三类跳过",
+                  out[30] == nil && out.count == 2)
+            check("paneBuilder C3: tty 含 | 不撕列（首个 | 后整段保留）",
+                  out[99] == ["/dev/ttys003|extra"])
+        }
+    }
 
     private func runPaneEnumerationTests() {
         // iTerm2 行：ASwinID|tab|sess|tty|l,t,r,b|name
