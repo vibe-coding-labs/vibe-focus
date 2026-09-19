@@ -1,3 +1,19 @@
+// MARK: - 按键投递注入缝（B255）
+
+/// 键击投递抽象：CGEvent 构造+post 只此一处。测试注入 mock 记录序列不投递。
+protocol KeyEventPosting {
+    func post(keyCode: CGKeyCode, flags: CGEventFlags, keyDown: Bool)
+}
+
+/// 默认实现：真实 CGEvent HID 投递（生产路径）。
+struct CGKeyEventPoster: KeyEventPosting {
+    func post(keyCode: CGKeyCode, flags: CGEventFlags, keyDown: Bool) {
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: keyDown) else { return }
+        event.flags = flags
+        event.post(tap: .cghidEventTap)
+    }
+}
+
 import AppKit
 import Carbon
 
@@ -6,6 +22,7 @@ import Carbon
 // 注入门纯决策在 InputBubbleSubmitGate（RunnerInputBubbleTests 直测），本文件只做编排。
 
 extension InputBubbleController {
+
     /// 激活后等前台/窗口柄到位再注入（非阻塞轮询；超时宁可不注入）。
     func waitFrontmostAndInject(target: Target, text: String, mode: InputBubbleSubmitMode, elapsedMs: Int) {
         let frontmostMatches = NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid
@@ -173,11 +190,7 @@ extension InputBubbleController {
     // MARK: 键击投递（NativeSpaceBridge Escape 同款 .cghidEventTap 语义）
 
     func postKeyCombo(keyCode: CGKeyCode, flags: CGEventFlags) {
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true) else { return }
-        down.flags = flags
-        down.post(tap: .cghidEventTap)
-        guard let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else { return }
-        up.flags = flags
-        up.post(tap: .cghidEventTap)
+        keyEventPoster.post(keyCode: keyCode, flags: flags, keyDown: true)
+        keyEventPoster.post(keyCode: keyCode, flags: flags, keyDown: false)
     }
 }

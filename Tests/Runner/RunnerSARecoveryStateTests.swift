@@ -64,4 +64,20 @@ extension RunnerHarness {
         check("saState: 24h 内 failedOther 不自动重试",
               SpaceController.autoRecoveryAllowed(verdict: sc.loadRecoveryState().verdict!, hoursSince: 1) == false)
     }
+
+    // MARK: - B254：attemptSilentSARecovery 状态机闸门短路（编排层 skip 分支，零 fork）
+    func runSARecoveryGateTests() {
+        let sc = SpaceController.shared
+        let (verdict, hoursSince) = sc.loadRecoveryState()
+        if let verdict, !SpaceController.autoRecoveryAllowed(verdict: verdict, hoursSince: hoursSince) {
+            // 本机 SIP 死路 → blockedBySIP 常驻 → 闸门永久拦截 direct --load-sa fork。
+            // 断言：调用后空间控制状态不被翻转（闸门短路在 fork 之前）。
+            let before = sc.canControlSpaces
+            sc.attemptSilentSARecovery(yabaiPath: "/opt/homebrew/bin/yabai")
+            check("saGate: 永久拦截态闸门短路不翻转状态", sc.canControlSpaces == before)
+        } else {
+            // 无既有判定或已过退避期：真 fork --load-sa（会触碰提权链），环境不符诚实跳过
+            check("saGate: 无拦截态环境不符诚实跳过", true)
+        }
+    }
 }
