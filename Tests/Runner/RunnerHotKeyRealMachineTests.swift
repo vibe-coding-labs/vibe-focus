@@ -67,7 +67,12 @@ extension RunnerHarness {
         check("hotkeyE2E: monitors 成对移除清零",
               manager.globalMonitor == nil && manager.localMonitor == nil)
 
-        // ===== E. CGEventTap 创建/使能/移除（AX 已授权前提下）=====
+        // ===== E. CGEventTap 创建/使能/移除 =====
+        // B244：以真实 AX 探针置位（AXIsProcessTrustedWithOptions 与生产 checkAccessibility
+        // 同一调用）——accessibilityStatus 由 AX 掉授权轮询异步刷新，E2E 显式同步置位后
+        // 才能打穿 tap 创建机器。tap 创建即系统级生效，断言后立即移除。
+        let axTrusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
+        manager.accessibilityStatus = axTrusted
         let tapOK = manager.setupCGEventTap()
         if tapOK {
             check("hotkeyE2E: CGEventTap 创建成功（tap+runLoopSource 非空）",

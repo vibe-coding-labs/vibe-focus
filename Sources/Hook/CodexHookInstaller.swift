@@ -119,7 +119,8 @@ enum CodexHookPreferences {
 
     /// 安装 VibeFocus hook 到 Codex ~/.codex/hooks.json
     /// 复用 ClaudeHookPreferences 的 helper script 安装、配置文件写入与 hooks 字典生成
-    static func installHookToCodexSettings() -> (Bool, String) {
+    /// home 注入变体（B253）：默认真身路径（生产零变更），测试传临时 home。
+    static func installHookToCodexSettings(home: String = NSHomeDirectory()) -> (Bool, String) {
         // P-INST-283: Codex hooks.json 安装耗时（installHelperScript P-INST-88 + writeConfigFile P-INST-87 + 读/清理/合并/原子写 hooks.json；设置面板 Codex 安装按钮调用；与 installHookToClaudeSettings P-INST-78 对称）。
         #if PERF_INSTRUMENT
         let ihStart = Date()
@@ -132,18 +133,18 @@ enum CodexHookPreferences {
         // 确保已有 token（hook-config.json 需要）
         ClaudeHookPreferences.ensureTokenGenerated()
 
-        let path = codexConfigPath()
-        let dir = codexConfigDir(home: NSHomeDirectory())
+        let path = codexConfigPath(home: home)
+        let dir = codexConfigDir(home: home)
 
-        // 安装辅助脚本（与 Claude Code 共用 ~/.vibefocus/hook-forwarder.sh）
-        let (scriptOK, scriptMsg) = ClaudeHookPreferences.installHelperScript()
+        // 安装辅助脚本（与 Claude Code 共用 <home>/.vibefocus/hook-forwarder.sh）
+        let (scriptOK, scriptMsg) = ClaudeHookPreferences.installHelperScript(home: home)
         if !scriptOK {
             log("[CodexHookPreferences] helper script install failed: \(scriptMsg)", level: .error)
             return (false, scriptMsg)
         }
 
-        // 写入配置文件（端口和 Token，与 Claude Code 共用 ~/.vibefocus/hook-config.json）
-        ClaudeHookPreferences.writeConfigFile()
+        // 写入配置文件（端口和 Token，与 Claude Code 共用 <home>/.vibefocus/hook-config.json）
+        ClaudeHookPreferences.writeConfigFile(home: home)
 
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
