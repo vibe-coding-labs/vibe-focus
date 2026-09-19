@@ -194,3 +194,45 @@ extension RunnerHarness {
         check("lanDeep: 拉取失败分支渲染出图（错误文本行）", errRenderer.nsImage != nil)
     }
 }
+
+// MARK: - B259：ClaudeHookSection 横幅/状态分支 + LANSettingsView 远程绑定行渲染
+
+extension RunnerHarness {
+    func runSettingsSectionStateRenderTests() {
+        let view = SettingsView()
+
+        // ===== A. claudeHookSection：安装结果横幅双态渲染（hookInstallMessage）=====
+        do {
+            let ok = view
+            ok.hookInstallMessage = "已安装到 ~/.claude/settings.json"
+            ok.hookInstallSucceeded = true
+            let rOK = ImageRenderer(content: ok.claudeHookSection)
+            check("stateRender: 安装成功横幅渲染出图", rOK.nsImage != nil)
+
+            let fail = view
+            fail.hookInstallMessage = "安装辅助脚本失败"
+            fail.hookInstallSucceeded = false
+            let rFail = ImageRenderer(content: fail.claudeHookSection)
+            check("stateRender: 安装失败横幅渲染出图", rFail.nsImage != nil)
+        }
+
+        // ===== B. LANSettingsView：远程绑定行渲染（defaults 预置映射）=====
+        do {
+            let savedBindings = UserDefaults.standard.string(forKey: "claudeHookRemoteBindings")
+            defer {
+                if let savedBindings { UserDefaults.standard.set(savedBindings, forKey: "claudeHookRemoteBindings") }
+                else { UserDefaults.standard.removeObject(forKey: "claudeHookRemoteBindings") }
+            }
+            // B226 同款 defaults 形状：label → windowID JSON string 键存
+            UserDefaults.standard.set(
+                #"{"vf-lan-bind-label": 4242}"#,
+                forKey: "claudeHookRemoteBindings")
+            UserDefaults.standard.set(true, forKey: LANHookPreferences.lanModeKey)
+            defer { UserDefaults.standard.set(false, forKey: LANHookPreferences.lanModeKey) }
+
+            let view2 = LANSettingsView()
+            let renderer = ImageRenderer(content: view2.body)
+            check("lanBind: 远程绑定行全树渲染出图", renderer.nsImage != nil)
+        }
+    }
+}
