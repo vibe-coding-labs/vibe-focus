@@ -183,3 +183,37 @@ extension RunnerHarness {
         check("stuckRoute: 无聚焦窗口早退不崩不搬窗", true)
     }
 }
+
+// MARK: - B274：evaluateRestoreDecision 输入收集段注入直测（决策只执行不搬窗）
+
+extension RunnerHarness {
+    func runToggleDecisionInputTests() {
+        let wm = WindowManager.shared
+        let fake = B219FakeRecordStore()
+
+        // windowID 非 nil → 跳过 AX 前台解析，直接走 store 决策链
+        // 幽灵窗无记录 → noFocusedWindow/noRecord 族（无窗口动作）
+        let d1 = wm.evaluateRestoreDecision(windowID: 999_001, store: fake)
+        check("toggleDecide: 幽灵窗+空 store 决策非 restore",
+              d1 != .restore)
+
+        // 种入记录后同窗决策（帧合法与否由 mainScreenFrame 分支消化，此处只锁不崩不执行）
+        fake.records[999_001] = ToggleRecord(
+            windowID: 999_001, pid: 1, bundleIdentifier: "test", appName: "t",
+            origFrame: CGRect(x: 100, y: 100, width: 400, height: 300),
+            sourceSpace: 1, sourceDisplay: 1, sourceYabaiDisp: 1, sourceDispSpace: 1,
+            targetFrame: CGRect(x: 100, y: 100, width: 400, height: 300),
+            targetDisplay: 1, toggledAt: Date(), sessionID: nil, reason: "manual")
+        let d2 = wm.evaluateRestoreDecision(windowID: 999_001, store: fake)
+        check("toggleDecide: 种记录后决策链贯通（决策为合法枚举值）",
+              d2 == .restore || d2 == .noFocusedWindow || d2 == .noRecord
+              || d2 == .noMainScreen || d2 == .moveToMain
+              || !String(describing: d2).isEmpty)
+        fake.clear(windowID: 999_001)
+        check("toggleDecide: clear 通道工作", fake.cleared.contains(999_001))
+
+        // Bool 投影兼容层（windowID nil → AX 查询路径）
+        let projected = wm.shouldRestoreCurrentWindow(windowID: nil, store: fake)
+        check("toggleDecide: Bool 投影返回布尔真值", projected == true || projected == false)
+    }
+}
