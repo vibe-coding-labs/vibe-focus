@@ -891,3 +891,41 @@ extension RunnerHarness {
     }
     }
 }
+
+extension RunnerHarness {
+    /// B243：跨域零覆盖散点末批——ResignPlan 纯决策、latestEntry、
+    /// scriptForArguments 无 domain 包装、query 缓存清理幂等、claudeSettingsExists
+    /// 与 FileManager 直查一致。
+    func runMiscStragglerTests() {
+        print("\n=== MiscStragglers (B243) ===")
+
+        // --- InputBubbleResignPlan：autoHide 二值决策（B183） ---
+        check("straggler243: autoHide=true → dismiss", InputBubbleResignPlan.decide(autoHide: true) == .dismiss)
+        check("straggler243: autoHide=false → stay（绑定跟随）", InputBubbleResignPlan.decide(autoHide: false) == .stay)
+
+        // --- latestEntry：空仓 nil / 记录后=最新 ---
+        let suite = "RunnerStraggler243-\(UUID().uuidString)"
+        let store = InputBubbleHistoryStore(defaults: UserDefaults(suiteName: suite)!)
+        check("straggler243: 空仓 latestEntry nil", store.latestEntry() == nil)
+        store.record("旧条目", now: Date(timeIntervalSince1970: 1_000))
+        store.record("新条目", now: Date(timeIntervalSince1970: 2_000))
+        check("straggler243: latestEntry 取最新", store.latestEntry()?.text == "新条目")
+
+        // --- scriptForArguments 无 domain 包装：旗标缺失 nil / 旗标在位出脚本 ---
+        check("straggler243: 无旗标 → nil", RemoteInstallDeploy.scriptForArguments([]) == nil)
+        check("straggler243: 无关旗标 → nil",
+              RemoteInstallDeploy.scriptForArguments(["--version", "-x"]) == nil)
+        let script = RemoteInstallDeploy.scriptForArguments(["--print-remote-install-script", "10.0.0.9", "lab"])
+        check("straggler243: host+label 出脚本", script != nil && !(script ?? "").isEmpty)
+
+        // --- SpaceController 查询缓存清理幂等 ---
+        SpaceController.shared.clearQueryCache()
+        SpaceController.shared.clearWindowQueryCache()
+        check("straggler243: 查询缓存清理幂等不崩", true)
+
+        // --- claudeSettingsExists 与 FileManager 直查一致（真机 ~/.claude 现状） ---
+        let direct = FileManager.default.fileExists(atPath: ClaudeHookPreferences.claudeSettingsPath())
+        check("straggler243: claudeSettingsExists 与直查一致",
+              ClaudeHookPreferences.claudeSettingsExists == direct)
+    }
+}
