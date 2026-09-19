@@ -94,3 +94,28 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B250：yabai 路径发现链直测（private→internal 提缝，默认行为零变化）
+//
+// PATH/候选路径命中时 findViaUserShell/findViaBashWhich 两条 fallback 不可达；
+// 提缝后直测。两者都 fork 登录 shell（~1s，只读）。断言双世界诚实：
+// 有 yabai 的机器返回存在的路径，无 yabai 的环境返回 nil。
+
+extension RunnerHarness {
+    func runYabaiPathDiscoveryTests() {
+        // A. 用户 shell 发现链：env bash -l 'echo $SHELL' → $SHELL -l 'which yabai'
+        let viaShell = YabaiClient.findViaUserShell()
+        check("yabaiPath: 用户 shell 发现链 nil 或存在路径",
+              viaShell == nil || FileManager.default.fileExists(atPath: viaShell!))
+
+        // B. bash -l which 兜底链
+        let viaBash = YabaiClient.findViaBashWhich()
+        check("yabaiPath: bash which 兜底链 nil 或存在路径",
+              viaBash == nil || FileManager.default.fileExists(atPath: viaBash!))
+
+        // C. 双链一致性：同一台机器两条链要么都失败要么都指向存在的 yabai
+        // （路径可能不同——/opt/homebrew vs /usr/local，但 fileExists 语义一致）
+        check("yabaiPath: 双链成败一致",
+              (viaShell != nil) == (viaBash != nil))
+    }
+}

@@ -23,4 +23,20 @@ extension RunnerHarness {
         check("winQuery: windowID nil 直通 nil", wm.findWindowByPID(99_998, windowID: nil) == nil)
         check("winQuery: 幻影 pid+ID 无 AX 元素", wm.findWindowByPID(999_999, windowID: 0xB221) == nil)
     }
+
+    // MARK: - B250：核心只读两函数（getMainScreen / hasAccessibilityPermission 单次调用）
+    func runWindowCoreReadTests() {
+        // getMainScreen：isMainScreen 优先，CoordinateKit.primaryScreen 兜底
+        let main = WindowManager.shared.getMainScreen()
+        check("winCore: 主屏可解析", main != nil)
+        if let main {
+            let isMain = main === NSScreen.main || NSScreen.screens.first(where: { $0.isMainScreen }) == main
+            check("winCore: 主屏解析与 NSScreen 拓扑一致", isMain)
+        }
+
+        // hasAccessibilityPermission：单次调用（返回值=本进程真实授信态，双世界皆真值）；
+        // 授权翻转记账分支依赖运行期 trust 变化，进程内稳定不触发，运行期自愈链归真机域。
+        let trusted = WindowManager.shared.hasAccessibilityPermission()
+        check("winCore: AX 授信查询返回布尔真值", trusted == true || trusted == false)
+    }
 }

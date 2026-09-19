@@ -308,3 +308,12 @@ private func archivePreviousCrashFatalIfNeeded() {
 func updateCrashSnapshot(_ block: (UnsafeMutablePointer<CChar>, Int) -> Int) {
     CrashSnapshotBuffer.shared.update(block)
 }
+
+/// B250 测试读缝（默认零调用、零行为变化）：读 inactive 快照缓冲的内容与长度。
+/// 生产读通道只在 crashSignalHandler（raise 即退出）内，进程内不可达；
+/// 本缝让双缓冲翻转语义可被单测锁定。
+func crashSnapshotReadInactive() -> (text: String, len: Int) {
+    let (ptr, len) = CrashSnapshotBuffer.shared.readInactiveBuffer()
+    let text = len > 0 ? String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self)) : ""
+    return (text, len)
+}

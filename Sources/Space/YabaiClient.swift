@@ -76,7 +76,7 @@ enum YabaiClient {
         return nil
     }
 
-    private nonisolated static func findViaUserShell() -> String? {
+    nonisolated static func findViaUserShell() -> String? {
         // P-INST-183: 用户 shell 查找 yabai 路径耗时（2x 裸 Process fork：env bash -l -c 'echo $SHELL' + $SHELL -l -c 'which yabai' + FileManager.fileExists 校验；yabaiPath P-INST-178 缓存未命中 fallback，登录 shell 加载可阻塞）。
         #if PERF_INSTRUMENT
         let fusStart = Date()
@@ -116,7 +116,7 @@ enum YabaiClient {
         }
     }
 
-    private nonisolated static func findViaBashWhich() -> String? {
+    nonisolated static func findViaBashWhich() -> String? {
         // P-INST-184: bash which 查找 yabai 路径耗时（裸 Process fork /bin/bash -l -c 'which yabai' + FileManager.fileExists 校验；yabaiPath P-INST-178 末级 fallback，登录 shell 加载可阻塞）。
         #if PERF_INSTRUMENT
         let fbwStart = Date()
