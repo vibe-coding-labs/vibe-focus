@@ -95,7 +95,8 @@ extension ClaudeHookPreferences {
     }
 
     /// 移除辅助脚本和配置文件
-    static func removeHelperFiles() {
+    /// home 注入变体（B253 续）：默认真身路径（生产零变更），测试传临时 home。
+    static func removeHelperFiles(home: String = NSHomeDirectory()) {
         // P-INST-89: 辅助脚本与配置清理耗时（2x removeItem hook-forwarder.sh + hook-config.json；uninstallHookFromClaudeSettings P-INST-83 子阶段；卸载/重装时调用）。
         #if PERF_INSTRUMENT
         let rhStart = Date()
@@ -109,9 +110,13 @@ extension ClaudeHookPreferences {
             "scriptPath": helperScriptPath,
             "configPath": configFilePath
         ])
-        try? FileManager.default.removeItem(atPath: helperScriptPath)
-        try? FileManager.default.removeItem(atPath: configFilePath)
-        log("[ClaudeHookPreferences] helper files removed")
+        let scriptPath = (home as NSString).appendingPathComponent(".vibefocus/hook-forwarder.sh")
+        let configPath = (home as NSString).appendingPathComponent(".vibefocus/hook-config.json")
+        try? FileManager.default.removeItem(atPath: scriptPath)
+        try? FileManager.default.removeItem(atPath: configPath)
+        log("[ClaudeHookPreferences] helper files removed", fields: [
+            "scriptPath": scriptPath, "configPath": configPath
+        ])
     }
 
     // MARK: - Settings.json Integration
@@ -125,7 +130,8 @@ extension ClaudeHookPreferences {
     ///   （如刚关闭 triggerOnSessionEnd 需要摘除 SessionEnd hook）必须落盘——
     ///   否则开关切换后 3s 内的同步被吞，settings.json 残留已禁用的 hook 而 UI
     ///   显示成功（曾发生的静默不一致 bug）。
-    static func installHookToClaudeSettings() -> (Bool, String) {
+    /// home 注入变体（B253 续）：默认真身路径（生产零变更），测试传临时 home。
+    static func installHookToClaudeSettings(home: String = NSHomeDirectory()) -> (Bool, String) {
         // P-INST-78: claude settings 安装耗时（读 settings.json + JSONSerialization 解析 + cleanVibeFocusHooks + 编码 + atomic 写；含 3s 冷却防抖跳过；memory feedback_hook_forwarder_verification 关注的配置正确性路径；applyPreferences P-INST-77 子阶段）。
         #if PERF_INSTRUMENT
         let ihStart = Date()
@@ -136,26 +142,29 @@ extension ClaudeHookPreferences {
         }
         #endif
         ensureTokenGenerated()
-        let path = claudeSettingsPath()
-        let dir = claudeSettingsDir(home: NSHomeDirectory())
+        let path = claudeSettingsPath(home: home)
+        let dir = claudeSettingsDir(home: home)
 
         // 安装辅助脚本
-        let (scriptOK, scriptMsg) = installHelperScript()
+        let (scriptOK, scriptMsg) = installHelperScript(home: home)
         if !scriptOK {
             log("[ClaudeHookPreferences] helper script install failed: \(scriptMsg)", level: .error)
             return (false, scriptMsg)
         }
 
         // 写入配置文件（端口和 Token）
-        writeConfigFile()
+        writeConfigFile(home: home)
 
         let lastInstall = UserDefaults.standard.object(forKey: lastInstallAtKey) as? Date ?? .distantPast
         return installHooks(
             at: path,
             dir: dir,
-            scriptPath: helperScriptPath,
+            scriptPath: (home as NSString).appendingPathComponent(".vibefocus/hook-forwarder.sh"),
             targetURL: endpointURLString(),
-            generated: generateHooksDict(),
+            // B253：generated 的 command 内嵌 scriptPath——识别键与内容必须同源，
+            // 否则二次安装把首装条目误判为外部 hook 而追加重复。
+            generated: generateHooksDict(
+                scriptPath: (home as NSString).appendingPathComponent(".vibefocus/hook-forwarder.sh")),
             now: Date(),
             lastInstall: lastInstall,
             recordInstall: { UserDefaults.standard.set($0, forKey: lastInstallAtKey) }
