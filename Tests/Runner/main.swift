@@ -283,6 +283,7 @@ final class FakeAuditor: RestoreAuditing {
         runDoctorYabaiSweepTests()
         runDecisionPrefSweepTests()
         runRegistryGeomSweepTests()
+        runServerWidgetSweepTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()
