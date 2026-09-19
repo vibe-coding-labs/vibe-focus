@@ -223,6 +223,7 @@ final class FakeAuditor: RestoreAuditing {
         runConvergencePipelineTests()
         runTitleE2E()
         runTerminalGridUnitTests()
+        runGridTargetResolveInstanceTests()
         runShellRunnerTests()
         runRemoteDeployTests()
         runJournalAppendTests()
@@ -347,6 +348,7 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleAutoShowOrchestrationTests()
         runLLMSummaryFallbackTests()
         runBubbleHistoryPanelViewTests()
+        runReadOnlySweepTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
