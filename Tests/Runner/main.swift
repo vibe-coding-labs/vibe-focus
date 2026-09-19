@@ -374,6 +374,7 @@ final class FakeAuditor: RestoreAuditing {
         runSettingsViewSectionBodyTests()
         runSettingsRenderPilotTests()
         runSettingsWindowControllerTests()
+        runHookPayloadBuilderTests()
         runScreenMinimapViewTests()
         runSettingsTerminalGridTabRenderTests()
         runSettingsDGroupTests()
