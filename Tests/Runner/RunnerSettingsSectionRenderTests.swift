@@ -494,3 +494,17 @@ extension RunnerHarness {
         check("sessionLists: activeSessionList 渲染出图", r.nsImage != nil)
     }
 }
+
+// MARK: - B266：WorkspaceSection + SessionLists 渲染基线
+
+extension RunnerHarness {
+    func runWorkspaceAndSessionRenderTests() {
+        let view = SettingsView()
+
+        let rWS = ImageRenderer(content: view.workspaceSection)
+        check("render266: workspaceSection 渲染出图", rWS.nsImage != nil)
+
+        let rSL = ImageRenderer(content: view.activeSessionList)
+        check("render266: activeSessionList 渲染出图", rSL.nsImage != nil)
+    }
+}
