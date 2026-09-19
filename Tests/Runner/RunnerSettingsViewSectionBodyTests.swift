@@ -89,4 +89,56 @@ extension RunnerHarness {
             check("gridSection: 摘要含箭头标注", summary.hasPrefix("→ "))
         }
     }
+
+    // MARK: - B263：SoundProjectRules 行级求值（规则非空 ForEach + customSoundStatus 双分支）
+    //
+    // B229 只测了空规则态求值；本块经 SoundManager 公开 API 注入规则/自定义音频后
+    // 再求值，覆盖行级视图体与状态分支。偏好走 B84 家法快照-还原（UserDefaults 键）。
+    func runSoundRulesBodyTests() {
+        let view = SettingsView()
+        let sm = SoundManager.shared
+
+        // 还原走公开 API 往返（内存 + defaults didSet 同步落盘，无需裸键操作）
+        let savedCustomPath = sm.preferences.customSoundPath
+        let savedRuleCount = sm.preferences.projectRules.count
+        let savedRules = sm.preferences.projectRules
+        defer {
+            sm.updateCustomSoundPath(savedCustomPath)
+            while sm.preferences.projectRules.count > savedRuleCount {
+                sm.removeProjectRule(at: sm.preferences.projectRules.count - 1)
+            }
+            // 若初始态已有规则且名字被动过，按序还原名字
+            for (i, rule) in savedRules.enumerated() where i < sm.preferences.projectRules.count {
+                sm.setProjectRuleName(at: i, rule.projectName)
+            }
+        }
+
+        // A. customSoundStatus：真实存在的临时 wav → 非 missing 分支；再切到缺失路径 → missing 分支
+        let tmpWav = "/tmp/vibefocus-b263-\(UUID().uuidString).wav"
+        try? Data([0x52, 0x49, 0x46, 0x46]).write(to: URL(fileURLWithPath: tmpWav))
+        defer { try? FileManager.default.removeItem(atPath: tmpWav) }
+        sm.updateCustomSoundPath(tmpWav)
+        let okStatus = view.customSoundStatus
+        check("soundRules: 存在的自定义音频 → 非 missing", okStatus != .missing)
+        print("[SECTION-PROBE] E1 customAudioFileRows(ok)")
+        let _ = view.customAudioFileRows
+
+        sm.updateCustomSoundPath("/nonexistent/b263/missing.wav")
+        check("soundRules: 缺失音频 → missing 分支命中", view.customSoundStatus == .missing)
+        print("[SECTION-PROBE] E2 customAudioFileRows(missing)")
+        let _ = view.customAudioFileRows
+
+        // B. 规则注入后行级求值：add 两条 + 命名 + ForEach 行体/绑定 getter 执行
+        sm.updateCustomSoundPath(nil)
+        sm.addProjectRule()
+        sm.addProjectRule()
+        sm.setProjectRuleName(at: 0, "B263 项目甲")
+        sm.setProjectRuleName(at: 1, "B263 项目乙")
+        check("soundRules: 规则注入与命名回读",
+              sm.preferences.projectRules.count == 2
+              && sm.preferences.projectRules[0].projectName == "B263 项目甲")
+        print("[SECTION-PROBE] E3 projectRulesSection(2 rules)")
+        let _ = view.projectRulesSection
+        check("soundRules: 规则态 body 求值无异常", true)
+    }
 }

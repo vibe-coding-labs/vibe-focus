@@ -407,6 +407,7 @@ final class FakeAuditor: RestoreAuditing {
         runReadOnlySweepTests()
         runCaptureSeamTests()
         runSettingsViewSectionBodyTests()
+        runSoundRulesBodyTests()
         runGridSectionPanelTests()
         runSettingsRenderPilotTests()
         runSettingsWindowControllerTests()
