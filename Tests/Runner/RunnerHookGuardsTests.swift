@@ -63,5 +63,57 @@ extension RunnerHarness {
         let ssR = handler.handleSessionStart(payload: bogus)
         check("hook: SessionStart 无上下文 409",
               ssR.0 == 409 && ssR.1.code == "no_terminal_context" && ssR.1.ok == false)
+
+        // 4) SessionStart 本地通道：幻影 tty/ppid 匹配不到窗口 → 409
+        //    terminal_context_match_failed（setLastEventDescription 纯内存）
+        let localCtx = TerminalContext(
+            termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+            tty: "/dev/ttys997", ppid: "999997", claudeProjectDir: "/tmp/b226",
+            windowID: nil, machineLabel: nil
+        )
+        let localPayload = ClaudeHookPayload(
+            event: .sessionStart, sessionID: "b226-local", source: nil, timestamp: nil,
+            cwd: "/tmp/b226", model: nil, terminalCtx: localCtx,
+            lastAssistantMessage: nil, transcriptPath: nil, message: nil
+        )
+        let localR = handler.handleSessionStart(payload: localPayload)
+        check("hook: SessionStart 本地幻影上下文 match_failed 409",
+              localR.0 == 409 && localR.1.code == "terminal_context_match_failed")
+
+        // 5) SessionStart 远程通道：未映射 machine_label → 409 remote_binding_failed
+        //    （resolveRemoteBinding 读映射表，Runner 域为空 → 必失败，只读）
+        let remoteCtx = TerminalContext(
+            termSessionID: nil, itermSessionID: nil, kittyWindowID: nil, weztermPane: nil,
+            tty: "/dev/ttys996", ppid: "999996", claudeProjectDir: "/tmp/b226",
+            windowID: nil, machineLabel: "b226-unmapped-host"
+        )
+        let remotePayload = ClaudeHookPayload(
+            event: .sessionStart, sessionID: "b226-remote", source: "forwarder",
+            timestamp: nil, cwd: "/tmp/b226", model: nil, terminalCtx: remoteCtx,
+            lastAssistantMessage: nil, transcriptPath: nil, message: nil
+        )
+        let remoteR = handler.handleSessionStart(payload: remotePayload)
+        check("hook: SessionStart 远程未映射标签 remote_binding_failed 409",
+              remoteR.0 == 409 && remoteR.1.code == "remote_binding_failed")
+
+        // 6) resolveRemoteBinding 直测：未映射 label → nil（label_not_found 路）
+        check("hook: resolveRemoteBinding 未映射 nil",
+              handler.resolveRemoteBinding(label: "b226-nope", sessionID: "s") == nil)
+
+        // 7) resolveRemoteBinding：映射到幻影 CG 窗口 → 解析落空 nil
+        //    （remoteBindings 写 Runner 自有 defaults 域，JSON string 键存，defer 还原）
+        let savedBindings = UserDefaults.standard.data(forKey: "claudeHookRemoteBindings")
+        defer {
+            if let saved = savedBindings {
+                UserDefaults.standard.set(saved, forKey: "claudeHookRemoteBindings")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "claudeHookRemoteBindings")
+            }
+        }
+        let fakeMap = ["b226-phantom-host": UInt32(0xB226)]
+        UserDefaults.standard.set(try! JSONEncoder().encode(fakeMap),
+                                  forKey: "claudeHookRemoteBindings")
+        check("hook: resolveRemoteBinding 幻影窗口 nil",
+              handler.resolveRemoteBinding(label: "b226-phantom-host", sessionID: "s") == nil)
     }
 }
