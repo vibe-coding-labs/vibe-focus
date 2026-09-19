@@ -90,6 +90,31 @@
 本轮演练记录（2026-09-20）：六通道 solo 均绿（SIZE/FLOATSETTLE/AXWRITE/BUBBLE_PANEL/
 HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收口按逐通道执行。
 
+## 对照刷新记录（最新实测 vs 口径）
+
+| 轮次 | 日期 | 全口径行 | Sources 纯净口径 | Runner 断言 | 备注 |
+|---|---|---|---|---|---|
+| B263 轮 | 2026-09-20 | 77.24%（66708 行） | **70.01%**（36933 行，missed 11114） | 3410/3410 | 插桩构建 llvm-cov 实测 |
+
+**低覆盖文件归属核对**（B263 轮，missed≥100 行者全部归位）：
+
+| 文件 | missed | 归属 |
+|---|---|---|
+| HotKeyManager+Monitors/CarbonHotKey/EventTap | 665 | ✅ 口径②：HotKey E2E 通道（B244 建，B255 复跑绿） |
+| SettingsView+LayoutSection / SessionLists | 618 | ⬜ C6 渲染树绑定 + 生产 DB 禁写（台账 C6/C7） |
+| WindowManager+AXWrite/MoveWindow/PostMove/Restore/Toggle+Routes/Layout/Toggle | ~1100 | ✅ 口径②：AXWrite E2E（B253）+ SIZE E2E 既有通道 |
+| AppDelegate.swift / +Menu | ~300 | ⬜ C1 生命周期胶水 + 菜单构建已测（B249，+Menu 59%） |
+| TerminalGridController(+Automation/SpaceDelivery) | ~540 | ✅ 口径②：GRID_SPACE/GRID_TARGET/GRID E2E 通道 |
+| InputBubbleController(+Submission) | ~450 | ✅ 口径②：气泡面板 E2E（B255）+ 空态守卫已测（B258 并行） |
+| HookEventHandler(+WindowMove/Execute) | ~390 | ⬜ C7 生产状态禁写（B242 裁决留白；守卫分支已测） |
+| SpaceController+SARecoveryAdmin/Recovery | ~265 | ⬜ C3 系统授权（提权弹框）+ 状态机已测（B225/B254） |
+| TitleEditorService(+Channels) | ~290 | ⬜ C2 真实模态（NSAlert/NSAppleScript）+ TTY/AX 已测（B218/B243） |
+| SettingsWindowController | ~107 | ⬜ C2 show() 真窗排序留白 |
+| WindowManager.swift 残量 | ~60 | ⬜ C3（notifyAccessibility beep+开系统设置）/部分已测 |
+| CrashSignalHandler/ContextRecorder 残量 | ~90 | ⬜ C5 物理不可达（handler raise 即退出）/双缓冲已测（B251） |
+
+> 上表 missed 行数为 B263 轮 llvm-cov 实测近似值；每行归属对应本台账 C1~C7 之一或口径② E2E 通道。新增豁免必须逐条入账。
+
 ## 签字
 
 - [x] 口径②E2E 通道全部建成（AXWrite/气泡面板/HotKey/SessionRestore 真恢复均已登记并真机验证）
