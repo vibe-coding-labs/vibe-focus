@@ -910,7 +910,7 @@ extension RunnerHarness {
 
         do {
             // --- db 不可用库：父目录缺失 → sqlite3_open 失败 → db=nil，全 API 走守卫分支不崩 ---
-            let dir = "/tmp/vf-b216-nodb-\(UUID().uuidString)"
+            let dir = "/tmp/vf-b228-nodb-\(UUID().uuidString)"
             let store = WindowStateStore(dbPath: dir + "/missing/sub.db")
             check("bindings228: 坏路径 db 为 nil", store.db == nil)
             let now = Date()
@@ -932,6 +932,9 @@ extension RunnerHarness {
             check("bindings228: 坏库 prune 返回 0",
                   store.pruneExpiredWindowStates(activeRetention: 3600, completedRetention: 3600) == 0)
         }
+    }
+}
+
 // MARK: - B228：CGWindowEntry 解析边缘 + 单窗查询真窗往返
 
 extension RunnerHarness {
