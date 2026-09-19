@@ -262,6 +262,11 @@ final class FakeAuditor: RestoreAuditing {
         runDockBadgeTests()
         runVoicePrefsPersistenceTests()
         runBubbleClipboardIOTests()
+        runDiagnosticsTests()
+        runScreenPositionTests()
+        runLoginItemRefreshTests()
+        runTitleEditorChannelTests()
+        runVoiceQueueTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

@@ -54,21 +54,16 @@ extension RunnerHarness {
         print("\n=== VoicePrefsPersistence (B214) ===")
         let key = VoiceAnnouncementManager.preferencesKey
 
-        // 1) 无记录 → .default（偏好非 Equatable，用重编码字节对比）
-        func encoded(_ p: VoiceAnnouncementPreferences) -> Data {
-            try! JSONEncoder().encode(p)
-        }
+        // 1) 无记录 → .default（结构体已补 Equatable 合成；JSONEncoder 键序不稳定，
+        //    字节对比逐轮 flaky——B214 首轮全绿纯属运气，此注释为教训存档）
         UserDefaults.standard.removeObject(forKey: key)
-        print("DBG1:", String(data: encoded(VoiceAnnouncementManager.loadPreferences()), encoding: .utf8) ?? "?"); print("DBG2:", String(data: encoded(.default), encoding: .utf8) ?? "?");
         check("voicePrefs: 无记录回落 default",
-              encoded(VoiceAnnouncementManager.loadPreferences())
-              == encoded(.default))
+              VoiceAnnouncementManager.loadPreferences() == .default)
 
         // 2) 损坏数据 → .default（不崩溃不回写）
         UserDefaults.standard.set(Data("not-json-at-all".utf8), forKey: key)
         check("voicePrefs: 损坏数据回落 default",
-              encoded(VoiceAnnouncementManager.loadPreferences())
-              == encoded(.default))
+              VoiceAnnouncementManager.loadPreferences() == .default)
 
         // 3) 合法 JSON → 原样解出
         var custom = VoiceAnnouncementPreferences.default
@@ -76,17 +71,83 @@ extension RunnerHarness {
         custom.templateText = "{project_name} B214"
         custom.volume = 0.5
         custom.llmModel = "test-model"
-        UserDefaults.standard.set(encoded(custom), forKey: key)
-        let loaded = VoiceAnnouncementManager.loadPreferences()
-        check("voicePrefs: 合法 JSON 原样解出", encoded(loaded) == encoded(custom))
+        UserDefaults.standard.set(try! JSONEncoder().encode(custom), forKey: key)
+        check("voicePrefs: 合法 JSON 原样解出",
+              VoiceAnnouncementManager.loadPreferences() == custom)
 
         // 4) savePreferences 回读闭环：shared 当前偏好编码写回 → load 读回一致
         let before = VoiceAnnouncementManager.shared.preferences
         VoiceAnnouncementManager.shared.savePreferences()
         check("voicePrefs: save→load 回读一致",
-              encoded(VoiceAnnouncementManager.loadPreferences()) == encoded(before))
+              VoiceAnnouncementManager.loadPreferences() == before)
 
         // 现场还原：键移除（本进程域，勿留测试数据）
         UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    // MARK: - VoiceAnnouncementManager+Queue（有界队列编排）
+    // 出声安全：全部用例把 isAnnouncing 钉在 true 或保持队列为空——playNextFromQueue
+    // 的两道 guard 保证永远不会真的调 speak/playAudioFile（测试进程不发声）。
+
+    func runVoiceQueueTests() {
+        print("\n=== VoiceQueue (B215) ===")
+        let vam = VoiceAnnouncementManager.shared
+
+        // 出声闸：在播态期间队列推进一律短路
+        vam.isAnnouncing = true
+        vam.pendingAnnouncements = []
+        vam.playNextFromQueue()
+        check("voiceQueue: 空队列+在播 推进 no-op",
+              vam.pendingAnnouncements.isEmpty && vam.isAnnouncing)
+
+        // 有界入队：5 条进容量 3 → 丢最旧留最新；期间不出声（在播闸短路推进）
+        for i in 1...5 { vam.enqueueAnnouncement(.text("B215-\(i)"), sessionID: "s") }
+        check("voiceQueue: 容量 3 丢最旧",
+              vam.pendingAnnouncements == [.text("B215-3"), .text("B215-4"), .text("B215-5")])
+        check("voiceQueue: 在播期间入队不出声", vam.isAnnouncing)
+
+        // 音频条目入队
+        vam.pendingAnnouncements = []
+        vam.enqueueAnnouncement(.audioFile(path: "/tmp/b215/sound.wav"), sessionID: "s")
+        check("voiceQueue: 音频条目入队",
+              vam.pendingAnnouncements == [.audioFile(path: "/tmp/b215/sound.wav")])
+        // 出声闸补丁：清空队列——matched sender 完成回调会复位 isAnnouncing 并推进队列，
+        // 队列非空将真的调 speak/playAudioFile（后者文件缺失还会 fallback TTS 出声）
+        vam.pendingAnnouncements = []
+
+        // TTS 完成回调：mismatched sender → no-op（状态不动）
+        let synth = NSSpeechSynthesizer()
+        vam.handleSpeechDidFinish(sender: synth, finished: true)
+        check("voiceQueue: 非在播 synth 回调 no-op", vam.isAnnouncing == true)
+
+        // matched sender：复位在播态 + 推进（队列空 → no-op 不出声）
+        vam.activeSynthesizer = synth
+        vam.handleSpeechDidFinish(sender: synth, finished: false)
+        check("voiceQueue: TTS 打断复位 isAnnouncing", vam.isAnnouncing == false)
+        check("voiceQueue: 复位后清空 synth 引用", vam.activeSynthesizer == nil)
+
+        // 音频完成回调：mismatched（currentSound 为 nil 不可能相等）→ no-op
+        guard let snd = NSSound(named: "Basso") else {
+            check("voiceQueue: 系统音 Basso 可加载（环境前提）", false)
+            return
+        }
+        vam.isAnnouncing = true
+        vam.handleSoundDidFinish(sender: snd, finished: true)
+        check("voiceQueue: 非在播 sound 回调 no-op", vam.isAnnouncing == true)
+
+        // matched：复位 + 推进（队列空 no-op）
+        vam.currentSound = snd
+        vam.handleSoundDidFinish(sender: snd, finished: true)
+        check("voiceQueue: 音频完成复位", vam.isAnnouncing == false && vam.currentSound == nil)
+
+        // logDescription 纯函数：文本截前 30 字、路径取末段
+        check("voiceQueue: text 摘要含文本",
+              QueuedAnnouncement.text("你好B215").logDescription.contains("你好B215"))
+        check("voiceQueue: audio 摘要取末段",
+              QueuedAnnouncement.audioFile(path: "/a/b/c.wav").logDescription == "audio(c.wav)")
+
+        // 现场还原
+        vam.isAnnouncing = false
+        vam.pendingAnnouncements = []
     }
 }
