@@ -377,6 +377,7 @@ final class FakeAuditor: RestoreAuditing {
         runHookGuardTests()
         runCrashSignalTests()
         runSARecoveryStateTests()
+        runSARecoveryGateTests()
         runSessionSnapshotDerivedTests()
         runCapturableWindowTests()
         runBundleIDMappingTests()
