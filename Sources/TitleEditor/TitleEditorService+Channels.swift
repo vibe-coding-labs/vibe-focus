@@ -23,6 +23,29 @@ extension TitleEditorService {
     ///   5584），current window 在弹框后会被焦点切换污染（用户实测「设置名字」落空）。
     ///   targetTTY 为 nil 时回退 front window 旧语义（capture 失败的保守路径，日志可见）。
     /// - Automation 权限被拒（error -1743）时弹系统设置引导（showAutomationPermissionAlert）。
+// MARK: - AppleScript 执行器注入缝（B251）
+
+/// AppleScript 执行抽象：测试注入 mock 返回预设结果/错误，消除对 iTerm2/Terminal
+/// 的真实 Automation 授权弹窗风险；生产用 NSAppleScriptExecutor。
+protocol AppleScriptExecuting {
+    /// 执行脚本，返回 (stringValue, nil) 或 (nil, errorNumber)。
+    func execute(source: String) -> (stringValue: String?, errorNumber: Int?)
+}
+
+final class NSAppleScriptExecutor: AppleScriptExecuting {
+    func execute(source: String) -> (stringValue: String?, errorNumber: Int?) {
+        let appleScript = NSAppleScript(source: source)
+        var error: NSDictionary?
+        let result = appleScript?.executeAndReturnError(&error)
+        if let error {
+            return (nil, error[NSAppleScript.errorNumber] as? Int ?? -1)
+        }
+        return (result?.stringValue, nil)
+    }
+}
+
+    static var scriptExecutor: AppleScriptExecuting = NSAppleScriptExecutor()
+
     func applyViaAppleScript(_ title: String, bundleID: String, targetTTY: String? = nil) -> Bool {
         // P-INST-48: AppleScript title 写入耗时（NSAppleScript fork，可阻塞 100-500ms；Terminal 还有 diagnostic readback 二次 fork；applyTitle P-INST-40 总耗时无法区分哪一路，此埋点归因 AppleScript 路）。
         let appleScriptStart = Date()
@@ -108,20 +131,20 @@ extension TitleEditorService {
     /// - 仅 editTitle 弹框前调用——此刻终端仍在前台持焦，`current window` 语义与用户
     ///   所见一致；弹框后再取即被 VibeFocus 污染。
     /// - 失败返回 nil（调用方回退 front window 旧语义，日志可见）。
-    static func captureCurrentSessionTTY() -> String? {
+    static func captureCurrentSessionTTY(
+        executor: AppleScriptExecuting = NSAppleScriptExecutor()
+    ) -> String? {
         let script = "tell application \"iTerm2\" to get tty of current session of current window"
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        let result = appleScript?.executeAndReturnError(&error)
-        if let error {
+        let execution = executor.execute(source: script)
+        if let errorNumber = execution.errorNumber {
             log(
                 "[TitleEditorService] captureCurrentSessionTTY: FAILED",
                 level: .warn,
-                fields: ["errorNum": String(error[NSAppleScript.errorNumber] as? Int ?? -1)]
+                fields: ["errorNum": String(errorNumber)]
             )
             return nil
         }
-        guard let tty = result?.stringValue, !tty.isEmpty else { return nil }
+        guard let tty = execution.stringValue, !tty.isEmpty else { return nil }
         log("[TitleEditorService] captureCurrentSessionTTY", fields: ["tty": tty])
         return tty
     }
@@ -134,20 +157,20 @@ extension TitleEditorService {
     /// - **不要改回 AppleScript window id 定位**：它与 CGWindowNumber 不同源
     ///   （真机实测 AppleScript 5576 vs CG 5584），且只在窗口关闭前后漂移，无交叉校验价值。
     /// - 失败返回 nil（调用方回退 front window 旧语义，日志可见）。
-    static func captureTerminalFrontTabTTY() -> String? {
+    static func captureTerminalFrontTabTTY(
+        executor: AppleScriptExecuting = NSAppleScriptExecutor()
+    ) -> String? {
         let script = "tell application \"Terminal\" to get tty of selected tab of front window"
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        let result = appleScript?.executeAndReturnError(&error)
-        if let error {
+        let execution = executor.execute(source: script)
+        if let errorNumber = execution.errorNumber {
             log(
                 "[TitleEditorService] captureTerminalFrontTabTTY: FAILED",
                 level: .warn,
-                fields: ["errorNum": String(error[NSAppleScript.errorNumber] as? Int ?? -1)]
+                fields: ["errorNum": String(errorNumber)]
             )
             return nil
         }
-        guard let tty = result?.stringValue, !tty.isEmpty else {
+        guard let tty = execution.stringValue, !tty.isEmpty else {
             log("[TitleEditorService] captureTerminalFrontTabTTY: empty tty", level: .warn)
             return nil
         }
