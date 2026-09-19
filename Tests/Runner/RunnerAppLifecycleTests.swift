@@ -150,4 +150,25 @@ extension RunnerHarness {
         vam.isAnnouncing = false
         vam.pendingAnnouncements = []
     }
+
+    // MARK: - AppDelegate+Instance（单实例锁 / 既有实例发现）
+
+    func runInstanceGuardTests() {
+        print("\n=== InstanceGuard (B220) ===")
+        let ad = AppDelegate()
+
+        // findExistingInstance：Runner 无 bundle id → 枚举里不可能有同 id 别的实例
+        check("instance: 无 bundle 环境无既有实例", ad.findExistingInstance() == nil)
+
+        // installedVersion：Runner 自身无 bundle URL → nil 守卫路
+        check("instance: 无 bundle app 版本 nil",
+              ad.installedVersion(for: NSRunningApplication.current) == nil)
+
+        // 排他锁：/tmp/VibeFocus.lock——生产 app 在跑则它持锁（首取 false=真实互斥观察）；
+        // 生产不在跑则首取成功、二取必败。两种世界观察都自洽。
+        let first = ad.acquireExclusiveLock()
+        let second = ad.acquireExclusiveLock()
+        check("instance: 锁互斥成立（首取成功则二取必败，或首取已被外部持有）",
+              (first && !second) || (!first && !second))
+    }
 }
