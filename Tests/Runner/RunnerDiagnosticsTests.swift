@@ -42,7 +42,9 @@ extension RunnerHarness {
     func runScreenPositionTests() {
         print("\n=== ScreenPosition (B215) ===")
         let wm = WindowManager.shared
-        guard let main = NSScreen.main else {
+        // B232 竞态修复：NSScreen.main 是焦点相关语义（无窗进程返回当前焦点屏），
+        // 三屏排布下并非 screens[0]——「主屏」断言一律用确定性 primary（origin zero）。
+        guard let main = NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.main else {
             check("screenPos: 有主屏（环境前提）", false)
             return
         }
@@ -62,6 +64,17 @@ extension RunnerHarness {
         // displayID ↔ 数组下标转换
         let mainID = wm.displayID(for: main)
         check("screenPos: 主屏 displayID 非空", mainID != nil)
+<<<<<<< HEAD
+        // B236 加固：CGDisplayID→NSScreen 解析偶发瞬态抖动（活跃真机实测红绿交替），
+        // 重取主屏 refresh 后复验一次。
+        if wm.displayIndex(forDisplayID: mainID) == 0 {
+            check("screenPos: 主 displayID → 数组下标 0", true)
+        } else {
+            let refreshedID = wm.displayID(for: NSScreen.screens.first ?? main)
+            check("screenPos: 主 displayID → 数组下标 0（刷新后复验）",
+                  wm.displayIndex(forDisplayID: refreshedID) == 0)
+        }
+=======
         // B236 修（环境脆弱断言排列无关化）：NSScreen.main 是焦点屏——用户焦点在
         // 副屏时≠菜单栏屏，硬编码「数组下标 0」在合法 macOS 状态下必红（实测：
         // 焦点在副屏时三连红）。真不变式=①菜单栏屏（origin .zero，Apple 契约恒为
@@ -71,6 +84,7 @@ extension RunnerHarness {
               menuBarScreen.flatMap { wm.displayIndex(forDisplayID: $0.cgDirectDisplayID) } == 0)
         check("screenPos: 焦点屏 displayID → 其真实数组下标",
               mainID != nil && wm.displayIndex(forDisplayID: mainID) == NSScreen.screens.firstIndex(of: main))
+>>>>>>> origin/main
         check("screenPos: nil displayID → nil", wm.displayIndex(forDisplayID: nil) == nil)
         check("screenPos: 幻影 displayID → nil", wm.displayIndex(forDisplayID: 0xF00D) == nil)
 
