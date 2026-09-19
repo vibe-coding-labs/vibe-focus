@@ -6,6 +6,10 @@
 // CLI 裸二进制无 bundle id，UserDefaults.standard 读不到装机应用的偏好域——
 // 端口/token 经 CFPreferences 直读 AppIdentity.bundleID 域（单一事实源），以显式
 // 参数传给生成器（不改写 CLI 自己的偏好域，零副作用）。
+// B247：域未配置时的端口兜底从动态 listenPort（读 standard 域）改为 defaultPort
+// 常量——未配置场景两者结果恒同（listenPort 无配置即返回 defaultPort），但常量
+// 兜底不再读 standard，根除并发 Runner 跨进程 cfprefs 污染导致的 remoteDeploy
+// 测试偶发红（B228/B244 两度实锤，复跑绿）。行为保持变更。
 
 import Foundation
 
@@ -36,7 +40,7 @@ public enum RemoteInstallDeploy {
         let port = CFPreferencesCopyAppValue("claudeHookPort" as CFString, domain as CFString) as? Int
         return ClaudeHookPreferences.generateRemoteInstallScript(
             host: host,
-            port: port ?? ClaudeHookPreferences.listenPort,
+            port: port ?? ClaudeHookPreferences.defaultPort,
             token: token ?? "",
             labelOverride: positional(2),
             extraHosts: extraHosts
