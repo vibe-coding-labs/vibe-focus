@@ -139,8 +139,38 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 
 ### 可提缝未清（A 态清单）
 
-- 小块（missed<50）99 个文件：合计 ≈3600 行，逐文件归类于后续批次推进时滚动落账（多数为既有已测文件的零星边支，按 B239「选靶先查符号对照」法逐个判定）。
-- **A 态当前清单 = 空**：≥50 行大块已全部归入 B/C 两态；<50 行小块待滚动盘点，出现新的可提缝块即转 A 态认领。
+- 小块（missed<50）100 个文件：合计 ≈3600 行，**B271 已逐一归类**，分三组落账如下。
+
+#### A 态·可提缝未清具名清单（下一批起按序认领，≈450 行）
+
+| 文件 (missed) | 提缝方向 |
+|---|---|
+| WindowManager+Finding (49) | CGWindowList 窗口匹配链，注入化直测 |
+| SoundManager (45) | resolveSound 降级链残支/静音时段边界 |
+| ScreenIndexPreferences (40) | C7 禁写纪律例外——迁移分支可经 Runner 域 defaults 注入（B227 先例）后直测 |
+| ClaudeHookServer (25) | 随机端口+token 注入的守卫分支（B231/B267 教训已吸收） |
+| WindowManager+Toggle+Decision (28) | 决策表残支纯函数直测 |
+| VoiceAnnouncementManager+RestoreOutcome (27) | 恢复结局→播报文案映射纯逻辑 |
+| YabaiClient (28) | 候选路径扫描边界（缓存命中/全 miss） |
+| SpaceController (27) | refresh 内部状态迁移（B261 基础上补残支） |
+| WindowStateStore+Database (26) | 临时库 schema 迁移/错误分支 |
+| TargetResolve (23) / TTYWriter (23) / SessionActivityTracker (23) / Toggle+Restore+Stages (20) / Support+Diagnostics (20) | 残支零星提缝（每文件 ≤1 批内顺带） |
+
+#### B 态·E2E 通道覆盖（≈900 行，25 文件）
+
+InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreController(18)/Planner(6)/Store(2)/PaneClassifier(1)/RemoteSessionProbe(1)/SSHCommandParser(2, 真恢复通道) · OverlayWindow(5)/+Refresh(18)/+SpaceQuery(18)/SpaceSnapshot(3, overlay 真窗域) · WindowManager+AXRead(8)/+ScreenPosition(4)/+TerminalContext+Helpers(4)/+Toggle+FocusFallback(19, pickFallback 已测+AX 边支) · Space/CoordinateKit+Screen(7)/+Context(21)/+Move(32, toggled=AXWrite/SIZE 通道)/NativeSpaceBridge(18) · Toggle/ToggleEngine(6) · Hook/HookEventHandler+Remote(1)/+Notification(1)/SessionWindowRegistry 三件(21)/SessionPanelLogic(2) · TerminalGrid/ClaudeSessionLocator(6)/ScreenLayoutMapper(1)/TerminalAutomationScript(1)/Store(3)/SelectionResolver(1)/UsageTracker(6) · SettingsView+TitleEditorSection(2)/+HotKeySection(6) · App/TranscriptTail(4)/VoiceManager+Persistence(3)/+Queue(4) · Support/AuditLogger(3)/AXSelfHeal(2)/CGWindowEntry(2)/ExitJournal(4)/FrameConvergence(4)/FrameWriteExecutor(2)/MoveToMainPipeline(5)/ShellRunner(9)/TerminalRegistry(2)/YabaiEnvironmentProbe(2)/Doctor+InstallInventory(7)/BuildCapabilities(1)/CrashRuntimeSnapshot(1) · Layout/LayoutHotKeyTable(2)/WindowLayoutManagerProbe(1) · Hook/HookScriptGenerator(4)/RemoteInstallDeploy(2)/RemoteInstallScriptBuilder(1)/LANHookPreferences(1)
+
+#### C 态·豁免（≈2250 行，36 文件）
+
+| 类 | 文件 (missed) |
+|---|---|
+| C2 模态 | SettingsView+SoundSection(46)/+TerminalGridSnapshots(48 残) |
+| C4 通知 | UserNotificationPoster(34, UN 授权域) |
+| C5 物理不可达 | BacktraceSampler(15)/AppDelegate+Sigterm(14, 信号体触发即退) |
+| C6 渲染树 | SettingsComponents(18)/+Audio(35)/+Navigation(15)/+Shortcuts(14)/DesignSystem(1)/GridSnapshotWidgets(8)/SettingsView+OverlaySection(32)/+SoundAntiDisturb(23) |
+| C7 生产禁写/信号 | ScreenIndexPreferences(40)/HookInstaller(14)/CodexHookInstaller(13)/ClaudeHookPreferences(4)/ClaudeHookServer+Request(6)/SpaceController.swift(27, refresh 内部 fork 编排) |
+
+> 注：SpaceController.swift(27) 原判 A，B271 复核其残支=refreshAvailability 后台 fork 编排内部行（无单测可达入口），改判 C7；SoundManager(45) 中 resolveSound 已由并行 B262 批测过，残支=播放队列出声段边缘——维持 A（提缝方向=静音时段/节流边界纯逻辑）。
 
 ## 签字
 
