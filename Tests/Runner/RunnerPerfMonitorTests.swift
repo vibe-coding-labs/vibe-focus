@@ -186,3 +186,85 @@ extension RunnerHarness {
         }
     }
 }
+
+extension RunnerHarness {
+    /// B229：崩溃报告 IPS 解析通道直测——首行 meta + JSON payload 双段格式、
+    /// 单行/坏 JSON/非字典守卫（诊断日志副作用无害）。
+    func runCrashIPSParserTests() {
+        print("\n=== CrashIPSParser (B229) ===")
+        let payload = #"{"occurrence":{"captureTime":"2026-09-19"},"procName":"VibeFocus","faultingThread":0}"#
+        let ips = "Meta\n" + payload
+        let ok = CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: ips)
+        check("ips: 首行 meta 后 JSON 解出字段",
+              (ok?["procName"] as? String) == "VibeFocus" && (ok?["faultingThread"] as? Int) == 0)
+        check("ips: 单行无 payload → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "only-meta-line") == nil)
+        check("ips: 坏 JSON → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "Meta\n{not-json") == nil)
+        check("ips: JSON 非字典 → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "Meta\n[1,2,3]") == nil)
+        check("ips: 空串 → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "") == nil)
+    }
+}
+
+extension RunnerHarness {
+    /// B230：崩溃取证/诊断通道注入式补测——captureTail URL 注入双分支（截尾语义 +
+    /// 源缺失跳过）、sampleMainThread 冒烟、logDiagnostics/心跳注册冒烟（副作用=日志）。
+    func runCrashForensicsIOTests() {
+        print("\n=== CrashForensicsIO (B230) ===")
+        let dir = "/tmp/vf-b230-forensics-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        // --- captureTail：10 行源截尾 3 行；多余空行保留语义（omittingEmpty=false） ---
+        let source = URL(fileURLWithPath: dir + "/app.log")
+        let body = (1...10).map { "line-\($0)" }.joined(separator: "\n")
+        try? body.data(using: .utf8)!.write(to: source)
+        let output = URL(fileURLWithPath: dir + "/tail.txt")
+        CrashContextRecorder.shared.captureTail(
+            sourceURL: source, outputURL: output, lineLimit: 3, context: "b218", label: "app.log")
+        let tail = try? String(contentsOf: output, encoding: .utf8)
+        check("forensics: captureTail 截尾 3 行保序",
+              tail == "line-8\nline-9\nline-10")
+        let outputAll = URL(fileURLWithPath: dir + "/tail-all.txt")
+        CrashContextRecorder.shared.captureTail(
+            sourceURL: source, outputURL: outputAll, lineLimit: 100, context: "b218", label: "app.log")
+        check("forensics: lineLimit 超行数全量保留",
+              (try? String(contentsOf: outputAll, encoding: .utf8)) == body)
+
+        // --- 源缺失：跳过分支（不产出输出文件、不崩） ---
+        let missing = URL(fileURLWithPath: dir + "/missing.log")
+        let outputSkip = URL(fileURLWithPath: dir + "/tail-skip.txt")
+        CrashContextRecorder.shared.captureTail(
+            sourceURL: missing, outputURL: outputSkip, lineLimit: 3, context: "b218", label: "missing.log")
+        check("forensics: 源缺失跳过且无输出文件", !FileManager.default.fileExists(atPath: outputSkip.path))
+
+        // --- logDiagnostics：冒烟（fork codesign 采集，副作用=日志） ---
+        logDiagnostics("runner-b218")
+        check("forensics: logDiagnostics 冒烟不崩", true)
+    }
+}
+
+extension RunnerHarness {
+    /// B231：诊断面补测——BacktraceSampler.symbolize 未命中回落 hex、DoctorPaths.live
+    /// 路径契约、VibeFocusDoctor.report 冒烟。
+    func runDiagnosticsSmallTests() {
+        print("\n=== DiagnosticsSmall (B231) ===")
+        check("diag: symbolize 空表 → 空数组", BacktraceSampler.symbolize([]) == [])
+        check("diag: symbolize 野地址回落 0x hex",
+              BacktraceSampler.symbolize([0x12345678]) == ["0x12345678"])
+
+        let paths = DoctorPaths.live()
+        check("diag: DoctorPaths.live 日志域路径契约",
+              paths.logDir == NSHomeDirectory() + "/Library/Logs/VibeFocus"
+              && paths.appLogPath == paths.logDir + "/vibefocus.log"
+              && paths.keepaliveLogPath == "/tmp/vibefocus-keepalive.log"
+              && paths.diagnosticReportsDir == NSHomeDirectory() + "/Library/Logs/DiagnosticReports")
+        check("diag: DoctorPaths.live 临时快照路径在 tmp",
+              paths.tmpFatalPath.hasPrefix("/tmp/") && paths.tmpSnapshotPath.hasPrefix("/tmp/"))
+
+        let report = VibeFocusDoctor.report()
+        check("diag: doctor report 冒烟非空", !report.isEmpty)
+    }
+}

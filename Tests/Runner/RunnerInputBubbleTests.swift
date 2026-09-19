@@ -1126,6 +1126,109 @@ extension RunnerHarness {
     }
 }
 
+extension RunnerHarness {
+    /// B223：偏好读写全链直测——此前只测纯 clamp 函数，getter/setter 的
+    /// UserDefaults 落账分支（三值默认门/写读一致/通知广播/解码失败回落）零覆盖。
+    /// Runner 进程 UserDefaults.standard 是独立域（无 bundle id），逐项清理不外泄。
+    func runBubblePreferencesIOTests() {
+        print("\n=== BubblePreferencesIO (B223) ===")
+        let d = UserDefaults.standard
+
+        // --- 布尔偏好族：未设置默认 + 写读双向 + 清理复位 ---
+        // isEnabled 默认 true；submitOnEnter 默认 false（B161）；autoShowOnFocus 默认 true（B160）；
+        // autoShowOnMoveToMain 默认 true（B212 后语义=hook 拉回弹出）；autoRestoreOnSubmit 默认 true（B176）；
+        // autoHide 默认 false（B183 绑定跟随模式）。
+        let boolPrefs: [(key: String, get: () -> Bool, set: (Bool) -> Void, def: Bool)] = [
+            ("inputBubbleEnabled", { InputBubblePreferences.isEnabled }, { InputBubblePreferences.isEnabled = $0 }, true),
+            ("inputBubbleSubmitOnEnter", { InputBubblePreferences.submitOnEnter }, { InputBubblePreferences.submitOnEnter = $0 }, false),
+            ("inputBubbleAutoShowOnFocus", { InputBubblePreferences.autoShowOnFocus }, { InputBubblePreferences.autoShowOnFocus = $0 }, true),
+            ("inputBubbleAutoShowOnMoveToMain", { InputBubblePreferences.autoShowOnMoveToMain }, { InputBubblePreferences.autoShowOnMoveToMain = $0 }, true),
+            ("inputBubbleAutoRestoreOnSubmit", { InputBubblePreferences.autoRestoreOnSubmit }, { InputBubblePreferences.autoRestoreOnSubmit = $0 }, true),
+            ("inputBubbleAutoHide", { InputBubblePreferences.autoHide }, { InputBubblePreferences.autoHide = $0 }, false),
+        ]
+        for pref in boolPrefs {
+            d.removeObject(forKey: pref.key)
+            check("prefsIO: \(pref.key) 未设置默认 \(pref.def)", pref.get() == pref.def)
+            pref.set(!pref.def)
+            check("prefsIO: \(pref.key) 写 \(pref.def ? "false" : "true") 读 \(pref.def ? "false" : "true")", pref.get() == !pref.def)
+            d.removeObject(forKey: pref.key)
+            check("prefsIO: \(pref.key) 清除后回默认", pref.get() == pref.def)
+        }
+
+        // --- defaultPrefix：未设置空串；尾随空格原样保留（B161 契约） ---
+        d.removeObject(forKey: "inputBubbleDefaultPrefix")
+        check("prefsIO: defaultPrefix 未设置空串", InputBubblePreferences.defaultPrefix == "")
+        InputBubblePreferences.defaultPrefix = "/goal "
+        check("prefsIO: defaultPrefix 尾随空格保真", InputBubblePreferences.defaultPrefix == "/goal ")
+        d.removeObject(forKey: "inputBubbleDefaultPrefix")
+
+        // --- hotKey：未设置默认配置；写读往返；手写坏 JSON 回落默认（不崩） ---
+        d.removeObject(forKey: "inputBubbleHotKeyConfiguration")
+        check("prefsIO: hotKey 未设置回落默认",
+              InputBubblePreferences.hotKey == InputBubbleHotKeyPlan.defaultConfig)
+        let custom = HotKeyConfiguration(keyCode: 0x07, modifiers: UInt32(controlKey))
+        InputBubblePreferences.hotKey = custom
+        check("prefsIO: hotKey 写读往返", InputBubblePreferences.hotKey == custom)
+        d.set(Data("not-json".utf8), forKey: "inputBubbleHotKeyConfiguration")
+        check("prefsIO: hotKey 坏 JSON 回落默认",
+              InputBubblePreferences.hotKey == InputBubbleHotKeyPlan.defaultConfig)
+        d.removeObject(forKey: "inputBubbleHotKeyConfiguration")
+
+        // --- historyLimit setter→getter：setter 不钳制、getter 兜底钳制（域 50~10000） ---
+        d.removeObject(forKey: "inputBubbleHistoryLimit")
+        InputBubblePreferences.historyLimit = 3000
+        check("prefsIO: historyLimit 合法值写读", InputBubblePreferences.historyLimit == 3000)
+        InputBubblePreferences.historyLimit = 1
+        check("prefsIO: historyLimit 存 1 读 50（getter 下钳）", InputBubblePreferences.historyLimit == 50)
+        InputBubblePreferences.historyLimit = 99999
+        check("prefsIO: historyLimit 存 99999 读 10000（getter 上钳）", InputBubblePreferences.historyLimit == 10000)
+        d.removeObject(forKey: "inputBubbleHistoryLimit")
+        check("prefsIO: historyLimit 清除回默认 1000", InputBubblePreferences.historyLimit == InputBubblePreferences.historyLimitDefault)
+
+        // --- userPlacedOrigin：nil 哨兵 + 写读往返 + 坏串回落 nil ---
+        d.removeObject(forKey: "inputBubbleUserFrame")
+        check("prefsIO: userPlacedOrigin 未拖过为 nil", InputBubblePreferences.userPlacedOrigin == nil)
+        InputBubblePreferences.userPlacedOrigin = CGPoint(x: 111, y: 222)
+        check("prefsIO: userPlacedOrigin 写读往返",
+              InputBubblePreferences.userPlacedOrigin == CGPoint(x: 111, y: 222))
+        d.set("garbage-frame", forKey: "inputBubbleUserFrame")
+        check("prefsIO: userPlacedOrigin 坏串回落 nil", InputBubblePreferences.userPlacedOrigin == nil)
+        InputBubblePreferences.userPlacedOrigin = nil
+        check("prefsIO: userPlacedOrigin 置 nil 清键", d.object(forKey: "inputBubbleUserFrame") == nil)
+
+        // --- 尺寸写穿：clamp 落账 + 变化广播/同值静默（B175 单源通知契约） ---
+        d.removeObject(forKey: "inputBubbleWidth")
+        d.removeObject(forKey: "inputBubbleHeight")
+        check("prefsIO: bubbleWidth 未设置默认 480", InputBubblePreferences.bubbleWidth == 480)
+        check("prefsIO: bubbleHeight 未设置默认 150", InputBubblePreferences.bubbleHeight == 150)
+        final class CountBox: @unchecked Sendable { var count = 0 }  // 通知同步派发于同线程，计数无竞态
+        let box = CountBox()
+        let sizeToken = NotificationCenter.default.addObserver(
+            forName: InputBubblePreferences.sizeDidChangeNotification, object: nil, queue: nil
+        ) { _ in box.count += 1 }
+        InputBubblePreferences.bubbleWidth = 500
+        check("prefsIO: bubbleWidth 写 500 读 500 + 广播 1 次",
+              InputBubblePreferences.bubbleWidth == 500 && box.count == 1)
+        InputBubblePreferences.bubbleWidth = 500
+        check("prefsIO: bubbleWidth 同值写不广播", box.count == 1)
+        InputBubblePreferences.bubbleWidth = 9999
+        check("prefsIO: bubbleWidth 越界写钳 720 + 广播",
+              InputBubblePreferences.bubbleWidth == 720 && box.count == 2)
+        InputBubblePreferences.bubbleWidth = 333
+        check("prefsIO: bubbleWidth 步进取整 340 + 广播",
+              InputBubblePreferences.bubbleWidth == 340 && box.count == 3)
+        InputBubblePreferences.bubbleHeight = 250
+        check("prefsIO: bubbleHeight 写 250 读 250 + 广播",
+              InputBubblePreferences.bubbleHeight == 250 && box.count == 4)
+        InputBubblePreferences.bubbleHeight = 9999
+        check("prefsIO: bubbleHeight 越界写钳 300 + 广播",
+              InputBubblePreferences.bubbleHeight == 300 && box.count == 5)
+        NotificationCenter.default.removeObserver(sizeToken)
+        d.removeObject(forKey: "inputBubbleWidth")
+        d.removeObject(forKey: "inputBubbleHeight")
+    }
+}
+
 // MARK: - B214：剪贴板快照写入与按决策恢复（NSPasteboard IO 面）
 
 extension RunnerHarness {

@@ -29,17 +29,22 @@ extension RunnerHarness {
         let savedOnStop = ClaudeHookPreferences.triggerOnStop
         let savedOnSessionEnd = ClaudeHookPreferences.triggerOnSessionEnd
         let savedAutoRestore = ClaudeHookPreferences.autoRestoreOnPromptSubmit
+        // B227 补钉 notifyOnNotification：B196 起 Notification 注册与否由它决定，
+        // 漏钉导致 defaults 域残留 0 时本断言跨运行偶发红（15:21 实测）。
+        let savedNotify = ClaudeHookPreferences.notifyOnNotification
         ClaudeHookPreferences.listenPort = 39277
         ClaudeHookPreferences.authToken = "test-token-b84"
         ClaudeHookPreferences.triggerOnStop = true
         ClaudeHookPreferences.triggerOnSessionEnd = false
         ClaudeHookPreferences.autoRestoreOnPromptSubmit = true
+        ClaudeHookPreferences.notifyOnNotification = true
         defer {
             ClaudeHookPreferences.listenPort = savedPort
             ClaudeHookPreferences.authToken = savedToken
             ClaudeHookPreferences.triggerOnStop = savedOnStop
             ClaudeHookPreferences.triggerOnSessionEnd = savedOnSessionEnd
             ClaudeHookPreferences.autoRestoreOnPromptSubmit = savedAutoRestore
+            ClaudeHookPreferences.notifyOnNotification = savedNotify
         }
 
         // ===== machineLabel 派生 =====

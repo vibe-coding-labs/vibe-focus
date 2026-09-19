@@ -566,3 +566,28 @@ extension RunnerHarness {
     }
     }
 }
+
+extension RunnerHarness {
+    /// B229：日志/文案描述 getter 直测——QueuedAnnouncement.logDescription 双分支、
+    /// CustomSoundStatus.uiDescription 三态（设置页 detail 文案防漂移）。
+    func runAnnouncementDescriptionTests() {
+        print("\n=== AnnouncementDescriptions (B229) ===")
+        check("announceDesc: text 条目摘要截前 30 字",
+              QueuedAnnouncement.text(String(repeating: "x", count: 50)).logDescription
+                  == "text(" + String(repeating: "x", count: 30) + ")")
+        check("announceDesc: audioFile 条目只取路径末段",
+              QueuedAnnouncement.audioFile(path: "/tmp/sounds/done.aiff").logDescription == "audio(done.aiff)")
+        check("announceDesc: 根路径无末段回落 ?",
+              QueuedAnnouncement.audioFile(path: "/").logDescription == "audio(?)")
+        check("soundDesc: notSet 文案", CustomSoundStatus.notSet.uiDescription == "未选择文件")
+        check("soundDesc: valid 文案", CustomSoundStatus.valid.uiDescription == "已选择")
+        check("soundDesc: missing 文案含降级交代",
+              CustomSoundStatus.missing.uiDescription.contains("文件不存在")
+              && CustomSoundStatus.missing.uiDescription.contains("降级为系统默认"))
+        check("soundDesc: evaluate 未配置 → notSet",
+              CustomSoundStatus.evaluate(path: nil) == .notSet
+              && CustomSoundStatus.evaluate(path: "") == .notSet)
+        check("soundDesc: evaluate 不存在路径 → missing",
+              CustomSoundStatus.evaluate(path: "/tmp/vf-b217-nonexistent-\(UUID().uuidString).aiff") == .missing)
+    }
+}

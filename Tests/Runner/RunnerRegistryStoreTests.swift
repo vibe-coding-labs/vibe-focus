@@ -865,3 +865,126 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B228：WindowStateStore+Bindings 查询/删除/计数全分支（临时库 + db-nil 不可用库）
+
+extension RunnerHarness {
+    func runBindingsStoreCoverageTests() {
+        do {
+            let dir = "/tmp/vf-b228-bindings-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let store = WindowStateStore(dbPath: dir + "/bindings.db")
+            let now = Date()
+            func state(_ wid: UInt32, session: String) -> WindowState {
+                WindowState(
+                    windowID: wid, pid: Int32(100 + wid), tty: nil, axWindowNumber: nil, appName: "T",
+                    bundleIdentifier: nil, title: "t\(wid)", termSessionID: nil, itermSessionID: nil,
+                    sessionID: session, bindingType: .local, isCompleted: false,
+                    createdAt: now, updatedAt: now
+                )
+            }
+            store.saveWindowState(state(1, session: "sess-1"))
+            store.saveWindowState(state(2, session: "sess-2"))
+
+            // --- 查询三通道：by windowID / bySession / 命中与未命中 ---
+            let byWID = store.findWindowStateByWindowID(1)
+            check("bindings228: findWindowStateByWindowID 命中回读",
+                  byWID?.windowID == 1 && byWID?.sessionID == "sess-1")
+            check("bindings228: findWindowStateByWindowID 未命中 nil",
+                  store.findWindowStateByWindowID(999) == nil)
+            check("bindings228: findWindowStateBySession 命中",
+                  store.findWindowStateBySession(sessionID: "sess-2")?.windowID == 2)
+            check("bindings228: findWindowStateBySession 未命中 nil",
+                  store.findWindowStateBySession(sessionID: "nope") == nil)
+
+            // --- 计数 + 单删 + 全删 ---
+            check("bindings228: windowStatesCount 计 2", store.windowStatesCount == 2)
+            store.deleteWindowState(windowID: 1)
+            check("bindings228: deleteWindowState 后计数 1 且查询 nil",
+                  store.windowStatesCount == 1 && store.findWindowStateByWindowID(1) == nil)
+            store.deleteAllWindowsStates()
+            check("bindings228: deleteAllWindowsStates 清零",
+                  store.windowStatesCount == 0 && store.loadAllWindowStates().isEmpty)
+        }
+
+        do {
+            // --- db 不可用库：父目录缺失 → sqlite3_open 失败 → db=nil，全 API 走守卫分支不崩 ---
+            let dir = "/tmp/vf-b228-nodb-\(UUID().uuidString)"
+            let store = WindowStateStore(dbPath: dir + "/missing/sub.db")
+            check("bindings228: 坏路径 db 为 nil", store.db == nil)
+            let now = Date()
+            let ws = WindowState(
+                windowID: 1, pid: 100, tty: nil, axWindowNumber: nil, appName: "T",
+                bundleIdentifier: nil, title: "t", termSessionID: nil, itermSessionID: nil,
+                sessionID: "s", bindingType: .local, isCompleted: false,
+                createdAt: now, updatedAt: now
+            )
+            store.saveWindowState(ws)
+            check("bindings228: 坏库 save 静默不崩", true)
+            check("bindings228: 坏库三查询全 nil",
+                  store.findWindowState(windowID: 1) == nil
+                  && store.findWindowStateBySession(sessionID: "s") == nil
+                  && store.findWindowStateByWindowID(1) == nil)
+            check("bindings228: 坏库计数 0 / 全载空", store.windowStatesCount == 0 && store.loadAllWindowStates().isEmpty)
+            check("bindings228: 坏库删除与清理幂等",
+              { store.deleteWindowState(windowID: 1); store.deleteAllWindowsStates(); return true }() && true)
+            check("bindings228: 坏库 prune 返回 0",
+                  store.pruneExpiredWindowStates(activeRetention: 3600, completedRetention: 3600) == 0)
+        }
+    }
+}
+
+// MARK: - B228：CGWindowEntry 解析边缘 + 单窗查询真窗往返
+
+extension RunnerHarness {
+    func runCGWindowEntryEdgeTests() {
+        // init 守卫：缺 windowID / 缺 ownerPID → nil
+        check("cgEntry: 缺 windowID → nil",
+              CGWindowEntry(from: [kCGWindowOwnerPID as String: Int32(5)]) == nil)
+        check("cgEntry: 缺 ownerPID → nil",
+              CGWindowEntry(from: [kCGWindowNumber as String: UInt32(9)]) == nil)
+
+        // 全字段解析（layer/name/onScreen/bounds 四元组）
+        let full = CGWindowEntry(from: [
+            kCGWindowNumber as String: UInt32(3),
+            kCGWindowOwnerPID as String: Int32(7),
+            kCGWindowOwnerName as String: "Owner",
+            kCGWindowLayer as String: 25,
+            kCGWindowName as String: "Title",
+            kCGWindowIsOnscreen as String: false,
+            kCGWindowBounds as String: ["X": CGFloat(1), "Y": CGFloat(2), "Width": CGFloat(30), "Height": CGFloat(40)],
+        ])
+        check("cgEntry: 全字段解析",
+              full?.windowID == 3 && full?.ownerPID == 7 && full?.ownerName == "Owner"
+              && full?.layer == 25 && full?.name == "Title" && full?.isOnScreen == false
+              && full?.bounds == CGRect(x: 1, y: 2, width: 30, height: 40))
+
+        // 缺省默认：layer 0 / onScreen true / name nil / bounds nil
+        let minimal = CGWindowEntry(from: [kCGWindowNumber as String: UInt32(3), kCGWindowOwnerPID as String: Int32(7)])
+        check("cgEntry: 缺省默认值", minimal?.layer == 0 && minimal?.isOnScreen == true
+              && minimal?.name == nil && minimal?.bounds == nil)
+
+        // name 键兜底（kCGWindowName 缺席时取 name）
+        let nameFallback = CGWindowEntry(from: [
+            kCGWindowNumber as String: UInt32(3), kCGWindowOwnerPID as String: Int32(7), "name": "Fallback",
+        ])
+        check("cgEntry: name 键兜底", nameFallback?.name == "Fallback")
+
+        // bounds 部分键：缺失分量取 0
+        let partial = CGWindowEntry(from: [
+            kCGWindowNumber as String: UInt32(3), kCGWindowOwnerPID as String: Int32(7),
+            kCGWindowBounds as String: ["X": CGFloat(5)],
+        ])
+        check("cgEntry: bounds 部分键缺失分量取 0", partial?.bounds == CGRect(x: 5, y: 0, width: 0, height: 0))
+
+        // 单窗查询真窗往返：全量列表里有 bounds 的真实窗口 → cgWindowBounds 与全量一致
+        // （覆盖 optionIncludingWindow 命中循环体；GUI 会话恒有窗口，环境无关）
+        if let sample = cgWindowListAll().first(where: { ($0.bounds?.width ?? 0) > 0 }) {
+            check("cgBounds: 单窗查询与全量列表 frame 一致",
+                  cgWindowBounds(for: sample.windowID) == sample.bounds)
+        }
+        check("cgBounds: 不存在的窗口 → nil", cgWindowBounds(for: 0xFFFF_FFF0) == nil)
+
+    }
+}

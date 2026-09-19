@@ -17,8 +17,8 @@ extension RunnerHarness {
     // 断言：最终 frame 尺寸/位置与目标一致（±40 量化容差）。结束清理窗口。
     if ProcessInfo.processInfo.environment["VIBEFOCUS_SIZE_E2E"] == "1" {
         print("\n=== 跨屏移动尺寸保真真机 E2E ===")
-        SpaceController.shared.refreshAvailability(force: true)
-        check("SizeE2E: yabai 可用", SpaceController.shared.isEnabled)
+        // B228：B180 探测后台化后同步断言竞态恒 false——泵 RunLoop 等结果落地
+        check("SizeE2E: yabai 可用", waitForSpaceAvailability())
 
         func yabaiWindowIDs() -> Set<UInt32> {
             guard let out = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "query", "--windows"], timeout: 30),
