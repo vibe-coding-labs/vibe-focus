@@ -108,7 +108,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func renderWindowToPNG(window: NSWindow, path: String) {
+    func renderWindowToPNG(window: NSWindow, path: String) {
         guard let content = window.contentView else {
             log("[Snapshot] no contentView, skip", level: .warn)
             return
