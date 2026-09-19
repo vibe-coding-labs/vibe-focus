@@ -328,6 +328,7 @@ final class FakeAuditor: RestoreAuditing {
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runSessionActivityPruneParseTests()
+        runSessionActivityPersistTests()
         runAuditLoggerCoverageTests()
         runPrefModelsCoverageTests()
         runAppVersionTests()

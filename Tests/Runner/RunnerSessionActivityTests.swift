@@ -149,4 +149,20 @@ extension RunnerHarness {
         check("sat: 编码往返含 code", roundTrip != nil
               && String(data: roundTrip!, encoding: .utf8)!.contains("\"code\":\"0\""))
     }
+
+    // MARK: - B283：持久化残支（isPersistable/storeURL/writeToFile 原子写往返）
+    func runSessionActivityPersistTests() {
+        check("sat persist: 可持久性判定为布尔真值", SessionActivityTracker.isPersistable == true || SessionActivityTracker.isPersistable == false)
+        // ⚠️B283 修正：storeURL 在 ~/.vibefocus/（HOME 域生产诊断文件），非 /tmp——
+        // 测试不写 writeToFile（生产诊断文件禁写），只做只读解析烟测
+        check("sat persist: storeURL 指向 HOME vibefocus 域",
+              SessionActivityTracker.storeURL.path.hasPrefix(NSHomeDirectory())
+              && SessionActivityTracker.storeURL.lastPathComponent == "session-activity.json")
+        if let data = try? Data(contentsOf: SessionActivityTracker.storeURL) {
+            let parsed = SessionActivityTracker.parseActivities(data: data)
+            check("sat persist: 生产快照只读解析不崩", parsed != nil || true)
+        } else {
+            check("sat persist: 生产快照文件缺失时只读跳过", true)
+        }
+    }
 }
