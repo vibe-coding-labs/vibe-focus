@@ -42,7 +42,9 @@ extension RunnerHarness {
     func runScreenPositionTests() {
         print("\n=== ScreenPosition (B215) ===")
         let wm = WindowManager.shared
-        guard let main = NSScreen.main else {
+        // B232 竞态修复：NSScreen.main 是焦点相关语义（无窗进程返回当前焦点屏），
+        // 三屏排布下并非 screens[0]——「主屏」断言一律用确定性 primary（origin zero）。
+        guard let main = NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.main else {
             check("screenPos: 有主屏（环境前提）", false)
             return
         }
