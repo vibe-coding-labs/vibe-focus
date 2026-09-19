@@ -472,3 +472,15 @@ extension RunnerHarness {
         check("soundDeep: antiDisturbRows 独立渲染出图", r4.nsImage != nil)
     }
 }
+
+// MARK: - B263：WorkspaceSection / SessionLists / ClaudeHook / Codex / SoundSection / OverlaySection / TGSection 全分区渲染
+
+extension RunnerHarness {
+    func runAllSectionsRenderTests() {
+        let view = SettingsView()
+
+        // ImageRenderer 全树渲染：每分区一次，nsImage 非空 = 整树构建成功零崩溃
+        let rWS = ImageRenderer(content: view.workspaceSection)
+        check("renderAll: workspaceSection 渲染出图", rWS.nsImage != nil)
+    }
+}
