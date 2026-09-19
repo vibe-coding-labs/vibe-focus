@@ -62,8 +62,8 @@ extension RunnerHarness {
                 arguments: ["-m", "window", "\(wid)", "--close"],
                 operation: "axwrite-e2e.cleanup", operationID: "axwrite-e2e")
             var gone = !yabaiWindowIDs().contains(wid)
-            for _ in 0..<6 where !gone {
-                Thread.sleep(forTimeInterval: 1.0)
+            for _ in 0..<12 where !gone {
+                Thread.sleep(forTimeInterval: 1.5)
                 gone = !yabaiWindowIDs().contains(wid)
                 if !gone {
                     _ = SpaceController.shared.runYabai(
@@ -91,7 +91,7 @@ extension RunnerHarness {
         let idsBefore = yabaiWindowIDs()
         _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
             "tell application id \"com.googlecode.iterm2\" to create window with default profile"], timeout: 30)
-        Thread.sleep(forTimeInterval: 1.0)
+        Thread.sleep(forTimeInterval: 1.5)
         let created = yabaiWindowIDs().subtracting(idsBefore)
         guard created.count == 1, let wid = created.first else {
             check("AXWriteE2E: 创建 iTerm2 测试窗口", false)
