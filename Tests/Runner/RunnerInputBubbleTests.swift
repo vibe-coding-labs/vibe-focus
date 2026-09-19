@@ -1131,7 +1131,7 @@ extension RunnerHarness {
     /// UserDefaults 落账分支（三值默认门/写读一致/通知广播/解码失败回落）零覆盖。
     /// Runner 进程 UserDefaults.standard 是独立域（无 bundle id），逐项清理不外泄。
     func runBubblePreferencesIOTests() {
-        print("\n=== BubblePreferencesIO (B214) ===")
+        print("\n=== BubblePreferencesIO (B221) ===")
         let d = UserDefaults.standard
 
         // --- 布尔偏好族：未设置默认 + 写读双向 + 清理复位 ---
@@ -1226,5 +1226,73 @@ extension RunnerHarness {
         NotificationCenter.default.removeObserver(sizeToken)
         d.removeObject(forKey: "inputBubbleWidth")
         d.removeObject(forKey: "inputBubbleHeight")
+    }
+}
+
+// MARK: - B214：剪贴板快照写入与按决策恢复（NSPasteboard IO 面）
+
+extension RunnerHarness {
+    /// 用户剪贴板保护：测试开始先手工快照当前剪贴板，defer 无条件还原——
+    /// 中途断言失败也不丢用户数据。断言载荷全程用 B214 专属字符串。
+    func runBubbleClipboardIOTests() {
+        print("\n=== BubbleClipboardIO (B214) ===")
+        let controller = InputBubbleController.shared
+        let pb = NSPasteboard.general
+
+        struct RawItem { let pairs: [(NSPasteboard.PasteboardType, Data)] }
+        var userSnapshot: [RawItem] = []
+        if let items = pb.pasteboardItems {
+            for item in items.prefix(5) {
+                var pairs: [(NSPasteboard.PasteboardType, Data)] = []
+                for t in item.types.prefix(10) where !t.rawValue.hasPrefix("dyn.") {
+                    if let d = item.data(forType: t) { pairs.append((t, d)) }
+                }
+                if !pairs.isEmpty { userSnapshot.append(RawItem(pairs: pairs)) }
+            }
+        }
+        func restoreUserClipboard() {
+            pb.clearContents()
+            for raw in userSnapshot {
+                let item = NSPasteboardItem()
+                for (t, d) in raw.pairs { item.setData(d, forType: t) }
+                pb.writeObjects([item])
+            }
+        }
+        defer { restoreUserClipboard() }
+
+        // 状态复位（shared 单例，防其它域遗留态）
+        controller.clipboardItems = []
+        controller.clipboardPostWriteCount = -1
+
+        // 1) guard 路：从未写入（-1）→ restore 无操作
+        controller.restoreClipboardIfSafe()
+        check("clip: 从未写入时 restore 无操作不崩溃", true)
+
+        // 2) saveClipboardThenWrite：当前内容入快照、新文本上剪贴板
+        pb.clearContents()
+        pb.setString("B214-original", forType: .string)
+        controller.saveClipboardThenWrite("B214-replacement")
+        check("clip: 写入后剪贴板为新文本", pb.string(forType: .string) == "B214-replacement")
+        check("clip: 快照持有原文本一项", controller.clipboardItems.count == 1)
+        check("clip: postWriteCount 记录写入时 changeCount",
+              controller.clipboardPostWriteCount == pb.changeCount)
+
+        // 3) 期间无外部改动 → 快照回写
+        controller.restoreClipboardIfSafe()
+        check("clip: 无改动恢复原文本", pb.string(forType: .string) == "B214-original")
+        check("clip: 恢复后计数复位 -1", controller.clipboardPostWriteCount == -1)
+        check("clip: 恢复后快照清空", controller.clipboardItems.isEmpty)
+
+        // 4) 期间外部改动 → skip 恢复（保留用户新内容）
+        pb.clearContents()
+        pb.setString("B214-original-2", forType: .string)
+        controller.saveClipboardThenWrite("B214-replacement-2")
+        pb.clearContents()
+        pb.setString("user-typed", forType: .string)
+        controller.restoreClipboardIfSafe()
+        check("clip: 外部改动后放弃恢复（保留用户新内容）",
+              pb.string(forType: .string) == "user-typed")
+        check("clip: skip 后快照清空", controller.clipboardItems.isEmpty)
+        check("clip: skip 后计数复位 -1", controller.clipboardPostWriteCount == -1)
     }
 }

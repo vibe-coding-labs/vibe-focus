@@ -871,7 +871,7 @@ extension RunnerHarness {
 extension RunnerHarness {
     func runBindingsStoreCoverageTests() {
         do {
-            let dir = "/tmp/vf-b216-bindings-\(UUID().uuidString)"
+            let dir = "/tmp/vf-b223-bindings-\(UUID().uuidString)"
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(atPath: dir) }
             let store = WindowStateStore(dbPath: dir + "/bindings.db")

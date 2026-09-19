@@ -1623,7 +1623,7 @@ extension RunnerHarness {
     /// B222：终端身份注册表直测——联合集合、双通道身份判定（appName/bundleID）、
     /// isTerminalPID 守卫链（PID≤0 / launchd）、findTerminalPID 真实 ps 走查收敛。
     func runTerminalRegistryIdentityTests() {
-        print("\n=== TerminalRegistryIdentity (B215) ===")
+        print("\n=== TerminalRegistryIdentity (B222) ===")
 
         // --- 联合集合：终端∪IDE 双域并入 ---
         check("registry: 联合 bundleIDs 含终端与 IDE 代表",
@@ -1674,7 +1674,7 @@ extension RunnerHarness {
     /// B224：LANHookPreferences.parseLegacyBindings 直测——旧格式 UserDefaults dictionary
     /// （Int/UInt32 混态）→ 绑定映射；非数值垃圾跳过（B83 测试缝，此前零直测）。
     func runLANLegacyBindingsTests() {
-        print("\n=== LANLegacyBindings (B217) ===")
+        print("\n=== LANLegacyBindings (B224) ===")
         let parsed = LANHookPreferences.parseLegacyBindings(from: [
             "alpha": 11,
             "beta": UInt32(22),
@@ -1692,7 +1692,7 @@ extension RunnerHarness {
     /// B226：handleSessionStart 无上下文分流直测——route noContext → 409 诚实拒绑，
     /// 只动内存态 lastEventDescription（不触碰 windows 表，B193 纪律）。
     func runSessionStartNoContextTests() {
-        print("\n=== SessionStartNoContext (B219) ===")
+        print("\n=== SessionStartNoContext (B226) ===")
         let payload = ClaudeHookPayload(
             event: .sessionStart, sessionID: "s-noc ctx", source: nil, timestamp: nil,
             cwd: nil, model: nil, terminalCtx: nil,
