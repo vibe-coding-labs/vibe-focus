@@ -32,6 +32,8 @@ final class InputBubbleController: NSObject {
 
     var panel: InputBubblePanel?
     var textView: NSTextView?
+    /// 键击投递注入缝（B255）：默认真实 CGEvent HID 投递，测试注入 mock 记录序列。
+    var keyEventPoster: KeyEventPosting = CGKeyEventPoster()
 
     /// 设置窗可见性暂存（B133：气泡与设置窗都是本 app key 候选，同屏竞争时设置窗
     /// 作为 main window 会抢走 key 使气泡收不到键盘——TitleEditor 同款解法：
