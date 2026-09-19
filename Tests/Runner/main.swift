@@ -253,6 +253,7 @@ final class FakeAuditor: RestoreAuditing {
         runSettingsSectionDeepRender2Tests()
         runLANViewDeepRenderTests()
         runSettingsSectionStateRenderTests()
+        runSettingsSectionDeepRender3Tests()
         runHookModelsTests()
         runSpaceIndexTests()
         runSpaceContextTests()
