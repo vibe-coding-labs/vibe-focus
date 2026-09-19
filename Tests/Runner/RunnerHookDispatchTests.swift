@@ -59,6 +59,9 @@ extension RunnerHarness {
                   rUPS.statusCode == 200 && rUPS.code == "no_binding_skip" && rUPS.handled == false)
 
             // ===== .notification / .permissionRequest 分发 case：开关关 → notification_disabled =====
+            // B239：cfprefs 跨进程竞态（并行套件共享 defaults 域）会在设置与驱动之间
+            // 翻转值——驱动前经偏好 setter 重钉一次。
+            ClaudeHookPreferences.notifyOnNotification = false
             let rNotify = driveHook("{\"event\":\"Notification\",\"session_id\":\"b218-ntf\",\"message\":\"waiting\"}", peer: nil)
             check("hookDispatch: Notification 开关关 → notification_disabled 不计数 handled",
                   rNotify.statusCode == 200 && rNotify.code == "notification_disabled" && rNotify.handled == false)
