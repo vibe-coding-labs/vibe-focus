@@ -64,7 +64,14 @@ extension RunnerHarness {
 
     private func runUPSDisabledGate() {
         let saved = ClaudeHookPreferences.autoRestoreOnPromptSubmit
-        defer { ClaudeHookPreferences.autoRestoreOnPromptSubmit = saved }
+        // B242 加固：cfprefs 写回是异步的——defer 还原后必须回读自校验，
+        // 否则后续测试（hookDispatch 等）会读到旧值（实测红绿交替根因）
+        defer {
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = saved
+            for _ in 0..<5 where ClaudeHookPreferences.autoRestoreOnPromptSubmit != saved {
+                ClaudeHookPreferences.autoRestoreOnPromptSubmit = saved
+            }
+        }
         ClaudeHookPreferences.autoRestoreOnPromptSubmit = false
 
         let payload = ClaudeHookPayload(
