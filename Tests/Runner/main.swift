@@ -277,6 +277,7 @@ final class FakeAuditor: RestoreAuditing {
         runVoiceAnnouncementTests()
         runHookPrefsSweepTests()
         runSpoolProcessTests()
+        runHookDispatchTests()
         runLANSettingsViewTests()
     // MARK: 汇总
 
