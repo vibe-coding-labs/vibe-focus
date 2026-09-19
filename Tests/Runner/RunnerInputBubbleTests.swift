@@ -1021,4 +1021,175 @@ extension RunnerHarness {
         check("hint: ⌘Y 提示进底栏文案（提交模式）", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("⌘Y 历史面板"))
         check("hint: ⌘Y 提示进底栏文案（默认模式）", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("⌘Y 历史面板"))
     }
+
+    /// B214：InputBubblePreferences 全偏好存取分支直测（此前 40% 函数覆盖——
+    /// getter 缺省回落/setter 落库/尺寸广播/热键解码回落/用户摆位编解码全链未测）。
+    /// Runner 二进制的 UserDefaults.standard 是自身独立域，与生产 app 隔离；用后清理。
+    func runBubblePreferencesBranchTests() {
+        func clearAll() {
+            for key in ["inputBubbleEnabled", "inputBubbleWidth", "inputBubbleHeight",
+                        "inputBubbleSubmitOnEnter", "inputBubbleAutoShowOnFocus",
+                        "inputBubbleDefaultPrefix", "inputBubbleHotKeyConfiguration",
+                        "inputBubbleAutoShowOnMoveToMain", "inputBubbleAutoRestoreOnSubmit",
+                        "inputBubbleAutoHide", "inputBubbleUserFrame"] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        clearAll()
+        defer { clearAll() }
+
+        // ===== 布尔偏好三态：未设置回落默认 / set 落库 / get 回读 =====
+        check("prefs: isEnabled 未设置 → true（B129 默认开）", InputBubblePreferences.isEnabled == true)
+        InputBubblePreferences.isEnabled = false
+        check("prefs: isEnabled set false → 回读 false", InputBubblePreferences.isEnabled == false)
+        check("prefs: submitOnEnter 未设置 → false（B161 Enter 换行默认）",
+              InputBubblePreferences.submitOnEnter == false)
+        InputBubblePreferences.submitOnEnter = true
+        check("prefs: submitOnEnter set true → 回读 true", InputBubblePreferences.submitOnEnter == true)
+        check("prefs: autoShowOnFocus 未设置 → true（B160 默认开）",
+              InputBubblePreferences.autoShowOnFocus == true)
+        InputBubblePreferences.autoShowOnFocus = false
+        check("prefs: autoShowOnFocus set false → 回读 false", InputBubblePreferences.autoShowOnFocus == false)
+        check("prefs: autoShowOnMoveToMain 未设置 → true（B162 默认开）",
+              InputBubblePreferences.autoShowOnMoveToMain == true)
+        InputBubblePreferences.autoShowOnMoveToMain = false
+        check("prefs: autoShowOnMoveToMain set false → 回读 false",
+              InputBubblePreferences.autoShowOnMoveToMain == false)
+        check("prefs: autoRestoreOnSubmit 未设置 → true（B176 默认开）",
+              InputBubblePreferences.autoRestoreOnSubmit == true)
+        InputBubblePreferences.autoRestoreOnSubmit = false
+        check("prefs: autoRestoreOnSubmit set false → 回读 false",
+              InputBubblePreferences.autoRestoreOnSubmit == false)
+        check("prefs: autoHide 未设置 → false（B183 跟随模式默认）",
+              InputBubblePreferences.autoHide == false)
+        InputBubblePreferences.autoHide = true
+        check("prefs: autoHide set true → 回读 true", InputBubblePreferences.autoHide == true)
+
+        // ===== defaultPrefix：缺省空串 + 原样保留尾随空格 =====
+        check("prefs: defaultPrefix 未设置 → 空串", InputBubblePreferences.defaultPrefix == "")
+        InputBubblePreferences.defaultPrefix = "  /goal  "
+        check("prefs: defaultPrefix 尾随空格原样保留",
+              InputBubblePreferences.defaultPrefix == "  /goal  ")
+
+        // ===== 热键：未设置回落 defaultConfig / 坏数据回落 / 合法往返 =====
+        check("prefs: hotKey 未设置 → defaultConfig",
+              InputBubblePreferences.hotKey == InputBubbleHotKeyPlan.defaultConfig)
+        UserDefaults.standard.set(Data([0xFF, 0x00]), forKey: "inputBubbleHotKeyConfiguration")
+        check("prefs: hotKey 坏 JSON → defaultConfig（手写 defaults 不致崩）",
+              InputBubblePreferences.hotKey == InputBubbleHotKeyPlan.defaultConfig)
+        let custom = HotKeyConfiguration(keyCode: 7, modifiers: UInt32(controlKey))
+        InputBubblePreferences.hotKey = custom
+        check("prefs: hotKey 合法 JSON 往返", InputBubblePreferences.hotKey == custom)
+
+        // ===== 尺寸：set 归一落库 + 变化广播 / 同值不广播（NoteProbe 家法） =====
+        final class SizeProbe: NSObject {
+            var count = 0
+            @objc func hit(_ note: Notification) { count += 1 }
+        }
+        let sizeProbe = SizeProbe()
+        NotificationCenter.default.addObserver(
+            sizeProbe, selector: #selector(SizeProbe.hit(_:)),
+            name: InputBubblePreferences.sizeDidChangeNotification, object: nil
+        )
+        defer { NotificationCenter.default.removeObserver(sizeProbe) }
+
+        check("prefs: bubbleWidth 未设置 → 默认 480", InputBubblePreferences.bubbleWidth == 480)
+        InputBubblePreferences.bubbleWidth = 300          // 低于下界 → 钳 320，广播
+        check("prefs: bubbleWidth 300 → 钳 320", InputBubblePreferences.bubbleWidth == 320)
+        InputBubblePreferences.bubbleWidth = 10000        // 超上界 → 钳 720
+        check("prefs: bubbleWidth 10000 → 钳 720", InputBubblePreferences.bubbleWidth == 720)
+        InputBubblePreferences.bubbleWidth = 505          // 步长 20 取整 → 500
+        check("prefs: bubbleWidth 505 → 步进取整 500", InputBubblePreferences.bubbleWidth == 500)
+        InputBubblePreferences.bubbleWidth = 500          // 首次落 500：变化 → 广播一次
+        check("prefs: bubbleWidth 变化广播（拖拽落账/滑杆联动数据源）", sizeProbe.count >= 1)
+        let beforeSame = sizeProbe.count
+        InputBubblePreferences.bubbleWidth = 500          // 同值写 → 不广播（联动回路收敛）
+        check("prefs: bubbleWidth 同值写不广播", sizeProbe.count == beforeSame)
+
+        check("prefs: bubbleHeight 未设置 → 默认 150", InputBubblePreferences.bubbleHeight == 150)
+        InputBubblePreferences.bubbleHeight = 40          // 低于下界 → 钳 100
+        check("prefs: bubbleHeight 40 → 钳 100", InputBubblePreferences.bubbleHeight == 100)
+        InputBubblePreferences.bubbleHeight = 99999       // 超上界 → 钳 300
+        check("prefs: bubbleHeight 99999 → 钳 300", InputBubblePreferences.bubbleHeight == 300)
+        InputBubblePreferences.bubbleHeight = 0           // 0 = 未设置语义 → 默认 150
+        check("prefs: bubbleHeight 0 → 默认 150", InputBubblePreferences.bubbleHeight == 150)
+        InputBubblePreferences.bubbleHeight = 155         // 步长 10 → 160
+        check("prefs: bubbleHeight 155 → 步进取整 160", InputBubblePreferences.bubbleHeight == 160)
+
+        // ===== userPlacedOrigin：nil 默认 / set 编码往返 / nil 写清除 =====
+        check("prefs: userPlacedOrigin 未拖过 → nil", InputBubblePreferences.userPlacedOrigin == nil)
+        InputBubblePreferences.userPlacedOrigin = CGPoint(x: 1234.5, y: -678.0)
+        check("prefs: userPlacedOrigin 编码往返（含负 y 副屏区）",
+              InputBubblePreferences.userPlacedOrigin == CGPoint(x: 1234.5, y: -678.0))
+        InputBubblePreferences.userPlacedOrigin = nil
+        check("prefs: userPlacedOrigin 写 nil → 清除", InputBubblePreferences.userPlacedOrigin == nil)
+    }
+}
+
+// MARK: - B214：剪贴板快照写入与按决策恢复（NSPasteboard IO 面）
+
+extension RunnerHarness {
+    /// 用户剪贴板保护：测试开始先手工快照当前剪贴板，defer 无条件还原——
+    /// 中途断言失败也不丢用户数据。断言载荷全程用 B214 专属字符串。
+    func runBubbleClipboardIOTests() {
+        print("\n=== BubbleClipboardIO (B214) ===")
+        let controller = InputBubbleController.shared
+        let pb = NSPasteboard.general
+
+        struct RawItem { let pairs: [(NSPasteboard.PasteboardType, Data)] }
+        var userSnapshot: [RawItem] = []
+        if let items = pb.pasteboardItems {
+            for item in items.prefix(5) {
+                var pairs: [(NSPasteboard.PasteboardType, Data)] = []
+                for t in item.types.prefix(10) where !t.rawValue.hasPrefix("dyn.") {
+                    if let d = item.data(forType: t) { pairs.append((t, d)) }
+                }
+                if !pairs.isEmpty { userSnapshot.append(RawItem(pairs: pairs)) }
+            }
+        }
+        func restoreUserClipboard() {
+            pb.clearContents()
+            for raw in userSnapshot {
+                let item = NSPasteboardItem()
+                for (t, d) in raw.pairs { item.setData(d, forType: t) }
+                pb.writeObjects([item])
+            }
+        }
+        defer { restoreUserClipboard() }
+
+        // 状态复位（shared 单例，防其它域遗留态）
+        controller.clipboardItems = []
+        controller.clipboardPostWriteCount = -1
+
+        // 1) guard 路：从未写入（-1）→ restore 无操作
+        controller.restoreClipboardIfSafe()
+        check("clip: 从未写入时 restore 无操作不崩溃", true)
+
+        // 2) saveClipboardThenWrite：当前内容入快照、新文本上剪贴板
+        pb.clearContents()
+        pb.setString("B214-original", forType: .string)
+        controller.saveClipboardThenWrite("B214-replacement")
+        check("clip: 写入后剪贴板为新文本", pb.string(forType: .string) == "B214-replacement")
+        check("clip: 快照持有原文本一项", controller.clipboardItems.count == 1)
+        check("clip: postWriteCount 记录写入时 changeCount",
+              controller.clipboardPostWriteCount == pb.changeCount)
+
+        // 3) 期间无外部改动 → 快照回写
+        controller.restoreClipboardIfSafe()
+        check("clip: 无改动恢复原文本", pb.string(forType: .string) == "B214-original")
+        check("clip: 恢复后计数复位 -1", controller.clipboardPostWriteCount == -1)
+        check("clip: 恢复后快照清空", controller.clipboardItems.isEmpty)
+
+        // 4) 期间外部改动 → skip 恢复（保留用户新内容）
+        pb.clearContents()
+        pb.setString("B214-original-2", forType: .string)
+        controller.saveClipboardThenWrite("B214-replacement-2")
+        pb.clearContents()
+        pb.setString("user-typed", forType: .string)
+        controller.restoreClipboardIfSafe()
+        check("clip: 外部改动后放弃恢复（保留用户新内容）",
+              pb.string(forType: .string) == "user-typed")
+        check("clip: skip 后快照清空", controller.clipboardItems.isEmpty)
+        check("clip: skip 后计数复位 -1", controller.clipboardPostWriteCount == -1)
+    }
 }

@@ -51,7 +51,7 @@ let package = Package(
         // + llvm-profdata/llvm-cov 产出真实数字（scripts/coverage_test_runner.sh）。
         .executableTarget(
             name: "VibeFocusTestRunner",
-            dependencies: ["VibeFocusKit"],
+            dependencies: ["VibeFocusKit", "Csqlite3"],
             path: "Tests/Runner",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
