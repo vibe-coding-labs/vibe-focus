@@ -64,6 +64,7 @@ extension RunnerHarness {
         // displayID ↔ 数组下标转换
         let mainID = wm.displayID(for: main)
         check("screenPos: 主屏 displayID 非空", mainID != nil)
+
         // B236 修（环境脆弱断言排列无关化）：NSScreen.main 是焦点屏——用户焦点在
         // 副屏时≠菜单栏屏，硬编码「数组下标 0」在合法 macOS 状态下必红（实测：
         // 焦点在副屏时三连红）。真不变式=①菜单栏屏（origin .zero，Apple 契约恒为
@@ -73,6 +74,7 @@ extension RunnerHarness {
               menuBarScreen.flatMap { wm.displayIndex(forDisplayID: $0.cgDirectDisplayID) } == 0)
         check("screenPos: 焦点屏 displayID → 其真实数组下标",
               mainID != nil && wm.displayIndex(forDisplayID: mainID) == NSScreen.screens.firstIndex(of: main))
+
         check("screenPos: nil displayID → nil", wm.displayIndex(forDisplayID: nil) == nil)
         check("screenPos: 幻影 displayID → nil", wm.displayIndex(forDisplayID: 0xF00D) == nil)
 
