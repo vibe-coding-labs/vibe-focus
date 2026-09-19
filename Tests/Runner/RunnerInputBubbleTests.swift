@@ -1492,3 +1492,58 @@ extension RunnerHarness {
         store.clear()
     }
 }
+
+extension RunnerHarness {
+    /// B237：草稿终末 flush（SIGTERM 收尾路径）状态机直测——
+    /// 守卫四件套（phase/textView/target/文本≠基线）+ 命中路径草稿落账+flushPending+
+    /// 历史快照折叠记账；shared 仓（Runner 独立域）前后 clear() 自清理。
+    func runBubbleDraftFlushTests() {
+        print("\n=== BubbleDraftFlush (B237) ===")
+        let controller = InputBubbleController.shared
+        let store = InputBubbleHistoryStore.shared
+        let draftShared = InputBubbleDraftStore.shared
+        defer { draftShared.clear(for: 777_002) }
+
+        controller.phase = .open
+        let (panel, textView) = controller.builtPanel()
+        defer {
+            panel.orderOut(nil)
+            controller.panel = nil
+            controller.textView = nil
+            controller.panelBuiltFor = nil
+            controller.phase = .idle
+            controller.target = nil
+            store.clear()
+        }
+        store.clear()
+        draftShared.clear(for: 777_002)  // 跨进程持久残留清场（defaults 落盘跨 Runner 生命周期）
+        controller.target = InputBubbleController.Target(
+            pid: ProcessInfo.processInfo.processIdentifier, bundleID: nil,
+            windowID: 777_002, title: "flush-t")
+        controller.textView = textView
+
+        // --- 守卫分支：文本 == lastRestoredBaseText → 不落账 ---
+        textView.string = "未改动文本"
+        controller.lastRestoredBaseText = "未改动文本"
+        controller.flushDraftForTermination()
+        check("draftFlush: 文本未变 → 不写草稿不记快照",
+              draftShared.draft(for: 777_002) == nil && store.entries().isEmpty)
+
+        // --- 命中分支：文本改动 → 草稿落账 + pending flush + 历史快照折叠 ---
+        textView.string = " terminating 时未提交的话"
+        controller.lastRestoredBaseText = "未改动文本"
+        controller.flushDraftForTermination()
+        check("draftFlush: 终末草稿落账且 pending 已冲刷",
+              draftShared.draft(for: 777_002) == " terminating 时未提交的话")
+        let snap = store.entries()
+        check("draftFlush: 历史滚动草稿快照已记账",
+              snap.contains(where: { $0.text == " terminating 时未提交的话" }) && snap.count == 1)
+        controller.lastRestoredBaseText = " terminating 时未提交的话"
+
+        // --- 幂等：同文本二次 flush 不再重复记账（B209 折叠） ---
+        controller.flushDraftForTermination()
+        check("draftFlush: 同文本二次 flush 幂等",
+              store.entries().count == 1 && draftShared.draft(for: 777_002) == " terminating 时未提交的话")
+        store.clear()
+    }
+}
