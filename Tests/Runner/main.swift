@@ -286,6 +286,7 @@ final class FakeAuditor: RestoreAuditing {
         runRegistryGeomSweepTests()
         runServerWidgetSweepTests()
         runDrawGuardSweepTests()
+        runBubbleMouseNavSweepTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()
