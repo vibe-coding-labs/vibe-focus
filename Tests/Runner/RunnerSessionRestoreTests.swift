@@ -850,3 +850,192 @@ extension RunnerHarness {
         check("srExec: notes 为空数组不变", SessionRestoreExecutor.groupByTargetSpace([item(3, 4, index: 9)]).groups["3:4"]?.first?.notes.isEmpty == true)
     }
 }
+
+// MARK: - B237：SessionRestoreController 决策层补口（resolvePane 矩阵/auto-restore 守卫/
+// restoreLayout 路由/runAppleScript/探针目标去重提纯）
+
+extension RunnerHarness {
+    func runSessionRestoreControllerTests() {
+        // 异步桥接：MainActor 类的 async 方法经 Task + 主 RunLoop 泵收回（B154 铁律同源）
+        func awaitMainActor<T: Sendable>(_ work: @escaping @Sendable () async -> T) -> T {
+            let box = SRResultBox<T>()
+            let sem = DispatchSemaphore(value: 0)
+            Task { @MainActor in
+                let v = await work()
+                box.value = v
+                sem.signal()
+            }
+            while sem.wait(timeout: .now() + 0.05) != .success {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+            return box.value!
+        }
+
+        // A. resolvePane 矩阵（nonisolated async；未覆盖的降级分支逐条锁定）
+        do {
+            @Sendable func cls(_ kind: SessionPaneSnapshot.Kind, pid: Int32? = nil, sshCommand: String? = nil, sshTarget: String? = nil) -> PaneClassifier.Classification {
+                PaneClassifier.Classification(kind: kind, pid: pid, sshCommand: sshCommand, sshTarget: sshTarget)
+            }
+            let resolve = { @Sendable (c: PaneClassifier.Classification, hookSID: String?, hookCWD: String?, title: String?, probes: [String: [RemoteSessionEntry]]) async in
+                await SessionRestoreController.resolvePane(
+                    classification: c, hookSessionID: hookSID, hookCWD: hookCWD,
+                    paneTitle: title, probeResults: probes)
+            }
+
+            // localClaude：Hook 绑定命中 → 绑定 session/cwd 直用
+            let hookHit = awaitMainActor { @Sendable in
+                await resolve(cls(.localClaude, pid: 42), "hook-sid", "/hook-cwd", "t1", [:])
+            }
+            check("srCtl: localClaude Hook 命中 → 绑定优先", hookHit.kind == .localClaude && hookHit.sessionID == "hook-sid" && hookHit.cwd == "/hook-cwd")
+            // localClaude：无 Hook 且 pid nil → shell
+            let noPID = awaitMainActor { @Sendable in
+                await resolve(cls(.localClaude), nil, "/hc", nil, [:])
+            }
+            check("srCtl: localClaude 无 pid → shell(hookCWD)", noPID.kind == .shell && noPID.cwd == "/hc")
+            // localClaude：真实 pid 但 lsof 读不到（高概率空 pid）→ shell 无 cwd
+            let deadPID = awaitMainActor { @Sendable in
+                await resolve(cls(.localClaude, pid: 9_999_999), nil, nil, nil, [:])
+            }
+            check("srCtl: localClaude lsof 失败 → shell", deadPID.kind == .shell && deadPID.cwd == nil)
+
+            // localClaude：真实短命 bash 子进程 → lsof cwd 命中、projects 目录不存在 → shell+cwd
+            do {
+                let fm = FileManager.default
+                let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-cwdprobe-\(UUID().uuidString)")
+                try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                defer { try? fm.removeItem(atPath: dir) }
+                let stub = Process()
+                stub.executableURL = URL(fileURLWithPath: "/bin/bash")
+                stub.arguments = ["-c", "while :; do sleep 1; done"]
+                stub.currentDirectoryPath = dir
+                stub.standardOutput = FileHandle.nullDevice
+                stub.standardError = FileHandle.nullDevice
+                try? stub.run()
+                let stubPID = Int32(stub.processIdentifier)
+                defer {
+                    if stub.isRunning { stub.terminate() }
+                    stub.waitUntilExit()
+                }
+                check("srCtl: 前置——lsof 子进程 cwd 探针存活", stubPID > 0 && stub.isRunning)
+                let liveCwd = awaitMainActor { @Sendable in
+                    await resolve(cls(.localClaude, pid: stubPID), nil, nil, nil, [:])
+                }
+                check("srCtl: localClaude cwd 命中但无 projects 目录 → shell+cwd",
+                      liveCwd.kind == .shell && liveCwd.sessionID == nil
+                      && (liveCwd.cwd?.contains("vf-cwdprobe-") == true))
+            }
+
+            // remoteSSH：目的地解析不出 → 原样回放命令行
+            let noTarget = awaitMainActor { @Sendable in
+                await resolve(cls(.remoteSSH, sshCommand: "ssh -o X u@h"), nil, nil, nil, [:])
+            }
+            check("srCtl: remoteSSH 无 target → 原样回放 sshCommand",
+                  noTarget.kind == .remoteSSH && noTarget.sshCommand == "ssh -o X u@h" && noTarget.sshTarget == nil)
+            // remoteSSH：Hook 绑定的远程会话 → cwd/session 取绑定，探针空=未探活
+            let hookRemote = awaitMainActor { @Sendable in
+                await resolve(cls(.remoteSSH, sshCommand: "ssh u@h", sshTarget: "u@h"), "rsid", "/rc", nil, [:])
+            }
+            check("srCtl: remoteSSH Hook 绑定 → session/cwd 取绑定",
+                  hookRemote.kind == .remoteSSH && hookRemote.sessionID == "rsid" && hookRemote.cwd == "/rc"
+                  && hookRemote.wasRemoteSessionLive == false && hookRemote.sshTarget == "u@h")
+            // remoteSSH：探针匹配（cwd 转义目录命中）→ 命中条目 session/cwd + 探活
+            let escaped = ClaudeSessionLocator.escapedProjectDir(forCWD: "/remote/proj")
+            let matched = awaitMainActor { @Sendable in
+                await resolve(cls(.remoteSSH, sshCommand: "ssh -p 2200 u@h", sshTarget: "u@h"), nil, "/remote/proj", nil,
+                              ["u@h@2200": [RemoteSessionEntry(projectDir: escaped, sessionID: "remote-sid", cwd: "/remote/proj")]])
+            }
+            check("srCtl: remoteSSH 探针匹配 → sessionID/cwd 取命中+探活",
+                  matched.sessionID == "remote-sid" && matched.cwd == "/remote/proj" && matched.wasRemoteSessionLive == true)
+            // remoteSSH：探针不匹配 → cwd 保留、如实未探活
+            let unmatched = awaitMainActor { @Sendable in
+                await resolve(cls(.remoteSSH, sshCommand: "ssh u@h", sshTarget: "u@h"), nil, "/rc2", nil,
+                              ["u@h@": [RemoteSessionEntry(projectDir: "-other", sessionID: "s", cwd: nil)]])
+            }
+            check("srCtl: remoteSSH 探针未匹配 → cwd 保留，探针在=如实探活",
+                  unmatched.sessionID == nil && unmatched.cwd == "/rc2" && unmatched.wasRemoteSessionLive == true)
+            // shell：无 hookCWD 且 pid 无 cwd → shell 无 cwd
+            let shellPlain = awaitMainActor { @Sendable in
+                await resolve(cls(.shell, pid: 9_999_999), nil, nil, nil, [:])
+            }
+            check("srCtl: shell 全缺 → shell 无 cwd", shellPlain.kind == .shell && shellPlain.cwd == nil)
+        }
+
+        // B. 探针目标去重提纯（键 = target@port；保持首现序；缺失 target 跳过）
+        do {
+            @Sendable func c(_ kind: SessionPaneSnapshot.Kind, cmd: String?, target: String?) -> PaneClassifier.Classification {
+                PaneClassifier.Classification(kind: kind, pid: nil, sshCommand: cmd, sshTarget: target)
+            }
+            let deduped = SessionRestoreController.dedupeRemoteTargets([
+                c(.remoteSSH, cmd: "ssh u@h", target: "u@h"),
+                c(.remoteSSH, cmd: "ssh u@h", target: "u@h"),
+                c(.remoteSSH, cmd: "ssh -p 2200 u@h", target: "u@h"),
+                c(.shell, cmd: nil, target: nil),
+                c(.remoteSSH, cmd: "ssh v@w", target: "v@w"),
+            ])
+            check("srCtl: 探针去重 target@port 键且首现序",
+                  deduped.map(\.target) == ["u@h", "u@h", "v@w"] && deduped[1].port == "2200")
+            check("srCtl: 探针去重跳过无 target 分类",
+                  SessionRestoreController.dedupeRemoteTargets([c(.remoteSSH, cmd: "ssh x", target: nil)]).isEmpty)
+        }
+
+        // C. runAutoRestoreIfEnabled 守卫链（临时库实例，零触生产快照；绝不触发 executor）
+        do {
+            let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-srctl-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let store = SessionRestoreStore(store: WindowStateStore(dbPath: dir + "/t.db"))
+            let controller = SessionRestoreController(store: store)
+            let savedEnabled = TerminalGridPreferences.autoRestoreEnabled
+            defer { TerminalGridPreferences.autoRestoreEnabled = savedEnabled }
+
+            // 开关关：直接返回，不置「已跑」旗标
+            TerminalGridPreferences.autoRestoreEnabled = false
+            controller.hasRunAutoRestoreThisLaunch = false
+            controller.runAutoRestoreIfEnabled()
+            check("srCtl: 开关关 → 不跑不置旗标", !controller.hasRunAutoRestoreThisLaunch)
+
+            // 开关开 + 库空 → 置旗标防循环，无可恢复快照安全返回
+            TerminalGridPreferences.autoRestoreEnabled = true
+            controller.runAutoRestoreIfEnabled()
+            check("srCtl: 开关开+空库 → 置已跑旗标（防循环）", controller.hasRunAutoRestoreThisLaunch)
+
+            // 已跑过：二次调用短路
+            controller.runAutoRestoreIfEnabled()
+            check("srCtl: 已跑过 → 二次调用短路", controller.hasRunAutoRestoreThisLaunch)
+        }
+
+        // D. restoreLayout 路由：缺快照报错文案 / byID 命中空快照走 executor 全空计划
+        do {
+            let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-srctl2-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let store = SessionRestoreStore(store: WindowStateStore(dbPath: dir + "/t.db"))
+            let controller = SessionRestoreController(store: store)
+
+            let missing = awaitMainActor { @Sendable in await controller.restoreLayout() }
+            check("srCtl: 无快照 → 诚实报错文案", !missing.ok && missing.message.contains("没有可恢复的布局快照"))
+
+            store.upsert(SessionRestoreSnapshot(id: "empty-1", name: "空", windows: [], launchCommand: nil))
+            let hit = awaitMainActor { @Sendable in await controller.restoreLayout(snapshotID: "empty-1") }
+            check("srCtl: 空快照命中 → executor 空计划如实交代", hit.ok && hit.message.contains("快照没有可恢复的窗口"))
+            let byMiss = awaitMainActor { @Sendable in await controller.restoreLayout(snapshotID: "nope") }
+            check("srCtl: byID 未命中 → 同诚实报错", !byMiss.ok)
+        }
+
+        // E. runAppleScript：成功透传 stdout / 失败 nil
+        do {
+            let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-srctl3-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let controller = SessionRestoreController(store: SessionRestoreStore(store: WindowStateStore(dbPath: dir + "/t.db")))
+            let ok = awaitMainActor { @Sendable in await controller.runAppleScript("return \"vf-ok\"") }
+            check("srCtl: runAppleScript 成功透传 stdout", ok?.contains("vf-ok") == true)
+            let bad = awaitMainActor { @Sendable in await controller.runAppleScript("this is not applescript") }
+            check("srCtl: runAppleScript 失败 → nil", bad == nil)
+        }
+    }
+}
+
+
+// B237：异步桥接结果盒（Box 不能嵌套在泛型函数内，提文件作用域）
+final class SRResultBox<T>: @unchecked Sendable { var value: T? }
