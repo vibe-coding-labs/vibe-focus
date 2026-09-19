@@ -416,6 +416,15 @@ final class RemoteSpoolDrainer: ObservableObject {
             errPipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }
+        // B272 修复（高负载实测竞态）：退出信号可能先于管道 EOF 到达，立即清 handler
+        // 会丢最后一块数据（stderr "err\n" 偶发丢失）。排空等待：handler 读到 EOF 自动
+        // 置 nil，最多再等 500ms 兜底。
+        let drainDeadline = Date().addingTimeInterval(0.5)
+        while Date() < drainDeadline,
+              outPipe.fileHandleForReading.readabilityHandler != nil
+              || errPipe.fileHandleForReading.readabilityHandler != nil {
+            usleep(5_000)
+        }
         outPipe.fileHandleForReading.readabilityHandler = nil
         errPipe.fileHandleForReading.readabilityHandler = nil
 
