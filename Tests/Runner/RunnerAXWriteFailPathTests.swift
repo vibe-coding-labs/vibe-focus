@@ -36,9 +36,9 @@ extension RunnerHarness {
         let wm = WindowManager.shared
         // Runner（无 bundle/无 AX 授权）：frontmostApplication nil 或 focusedWindow
         // AX 查询失败 → 降级链返 nil。两态均合法（依运行环境）。
+        // 命中分支断言只锁 windowID 非零——title 依赖目标窗口实况（可为空串）。
         if let identity = wm.captureFocusedWindowIdentity() {
-            check("captureFocused: 命中时 windowID/title 结构完整",
-                  identity.windowID != 0 && (identity.title ?? "").isEmpty == false)
+            check("captureFocused: 命中时 windowID 非零", identity.windowID != 0)
         } else {
             check("captureFocused: 无前台/无 AX 授权环境合法 nil", true)
         }
