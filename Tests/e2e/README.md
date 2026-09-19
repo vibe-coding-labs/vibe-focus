@@ -20,6 +20,26 @@
 > extension，如 GRID_TARGET→RunnerGridTargetE2ETests.swift）；新增 E2E = 新建域
 > 文件 + 在 `RunnerHarness.runAllTests()` 按序登记，main.swift 只放 harness。
 
+## 覆盖计数随 E2E 模式（B244 度量方案）
+
+env-gated E2E 的代码在默认（无环境变量）覆盖率报告中恒 0%——它只在 E2E 模式下执行。
+要产出含 E2E 通道的覆盖率数字：
+
+```bash
+swift build --product VibeFocusTestRunner --scratch-path .build-coverage \
+  -Xswiftc -profile-generate -Xswiftc -profile-coverage-mapping
+LLVM_PROFILE_FILE="$PWD/.build-coverage/runner.profraw" VIBEFOCUS_HOTKEY_E2E=1 \
+  .build-coverage/debug/VibeFocusTestRunner
+llvm_profdata merge -sparse .build-coverage/runner.profraw -o .build-coverage/hk.profdata
+llvm-cov report .build-coverage/debug/VibeFocusTestRunner \
+  -instr-profile=.build-coverage/hk.profdata "$PWD/Sources"
+```
+
+实测（2026-09-19，ad-hoc 插桩构建无 TCC）：HotKeyManager+CarbonHotKey 0%→53.31%、
++Monitors 0%→37.59%、+EventTap 0%→23.43%（tapCreate 需 AX 走降级分支也被覆盖）；
+证书签名（有 AX）跑 tap 机器线上限更高。真机验证与覆盖率度量分离的原则不变——
+本数字是「E2E 通道已执行」的度量，不替代 3212 全绿的真机验收。
+
 ## 标准跑法
 
 ```bash

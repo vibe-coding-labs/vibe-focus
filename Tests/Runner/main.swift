@@ -406,8 +406,10 @@ final class FakeAuditor: RestoreAuditing {
         runSoundGateSilentTests()
         runTitleEditorAXWriteTests()
         runSoundResolveAndCrashStateTests()
+        runFindingMakeIdentityTests()
         runAudioEngineProtocolTests()
         runGridSnapshotRowTests()
+        runPerfWatchdogTests()   // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

@@ -86,10 +86,16 @@ extension SessionWindowRegistry {
     /// B160：窗口是否有活跃（未结束）会话绑定——输入气泡聚焦自动弹出的闸门。
     /// 绑定随 hook（SessionStart/UPS）写入、随会话结束置 completed，天然反映「这窗在跑 Claude」。
     /// 内存未命中回落 DB（findWindowStateByWindowID）：app 重启后增量绑定不丢、外部写库即时生效。
-    /// B247：DB 未命中/命中但已 completed 进负缓存（TTL 内不重复触 DB）——生产 tick
+    /// B247：DB 未命中/命中但无活跃绑定进负缓存（TTL 内不重复触 DB）——生产 tick
     /// 每秒对无绑定窗打一次主线程 SQLite 已实测崩过进程（2026-09-19 SIGSEGV）。TTL
     /// 只作用于「查无活跃绑定」的结论：外部新写/翻活的绑定最迟 TTL+1 拍生效（生产
     /// 绑定走 hook 进内存不受影响）；正命中（活跃）不缓存，completed 翻转下次查询可见。
+    /// B250：「活跃绑定」必须 sessionID ≠ nil——windows 表同存 toggle 落账行
+    /// （saveToggleRecord 兜底 INSERT：session_id=NULL、is_completed=0，任何被 ⌃Q 过
+    /// 的窗都有），只看 isCompleted 会把这类行误判成活跃会话=绑定门恒真（B212 的
+    /// 「userAction 挂会话才弹」自失效，无会话窗每次拉回都误弹=B211 主诉借尸还魂；
+    /// 真机 E2E 12:00 实锤：UPS 绑定失败仍 summon，吃到的正是上一拍的 toggle 假行）。
+    /// 内存路径同理：init 的 loadAllWindowStates 也把 toggle-only 行装进 windowStates。
     /// - Parameters:
     ///   - missCacheTTL: 未命中缓存有效期（测试注入小值做边界）。
     func hasLiveSessionBinding(
@@ -98,7 +104,7 @@ extension SessionWindowRegistry {
         missCacheTTL: TimeInterval = 5.0
     ) -> Bool {
         if let state = windowStates[windowID] {
-            return !state.isCompleted
+            return state.sessionID != nil && !state.isCompleted
         }
         if let lastMiss = bindingLookupMissCache[windowID],
            now.timeIntervalSince(lastMiss) < missCacheTTL {
@@ -108,7 +114,7 @@ extension SessionWindowRegistry {
             recordBindingLookupMiss(windowID: windowID, at: now)
             return false
         }
-        if state.isCompleted {
+        if state.sessionID == nil || state.isCompleted {
             recordBindingLookupMiss(windowID: windowID, at: now)
             return false
         }
@@ -130,15 +136,17 @@ extension SessionWindowRegistry {
     }
 
     var activeBindingsForUI: [WindowState] {
+        // B250：sessionID ≠ nil 过滤——内存表混有 toggle 落账行（session_id=NULL、
+        // is_completed=0），不过滤会在设置页会话面板以「活跃会话」幽灵行出现。
         windowStates.values
-            .filter { !$0.isCompleted }
+            .filter { $0.sessionID != nil && !$0.isCompleted }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
     var recentCompletedBindings: [WindowState] {
         let now = Date()
         return windowStates.values
-            .filter { $0.isCompleted && $0.updatedAt.addingTimeInterval(30 * 60) > now }
+            .filter { $0.sessionID != nil && $0.isCompleted && $0.updatedAt.addingTimeInterval(30 * 60) > now }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 }
