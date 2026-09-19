@@ -248,6 +248,7 @@ final class FakeAuditor: RestoreAuditing {
         runWindowMoveExecuteTests()
         runHookInstallHomeTests()
         runHookClaudeSettingsHomeTests()
+        runSettingsSectionRenderTests()
         runHookModelsTests()
         runSpaceIndexTests()
         runSpaceContextTests()
