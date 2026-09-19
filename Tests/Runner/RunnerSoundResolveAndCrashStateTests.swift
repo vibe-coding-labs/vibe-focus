@@ -93,4 +93,24 @@ extension RunnerHarness {
         // 还原内存态（生产 app 内存态权威，磁盘瞬态由其下次持久化覆写）。
         recorder.state = savedState
     }
+
+    // MARK: - B273：SoundPreferencesModels 钳制纯逻辑（updateMinPlayInterval/updateQuietHours/clampedUserPort）
+    func runSoundPrefsClampTests() {
+        var prefs = SoundPreferences.default
+        prefs.updateMinPlayInterval(-7)
+        check("soundPrefs: 负节流钳为 0", prefs.minPlayIntervalSeconds == 0)
+        prefs.updateMinPlayInterval(9)
+        check("soundPrefs: 正常节流透传", prefs.minPlayIntervalSeconds == 9)
+        prefs.updateQuietHours(enabled: true, startHour: -5, endHour: 30)
+        check("soundPrefs: 静音时段小时钳 0~23",
+              prefs.quietHoursEnabled == true && prefs.quietStartHour == 0 && prefs.quietEndHour == 23)
+        check("soundPrefs: clampedUserPort 0 → 默认",
+              SoundPreferences.clampedUserPort(0, defaultValue: 39277) == 39277)
+        check("soundPrefs: clampedUserPort 下界钳 1024",
+              SoundPreferences.clampedUserPort(-100, defaultValue: 39277) == 1024)
+        check("soundPrefs: clampedUserPort 上界钳 65535",
+              SoundPreferences.clampedUserPort(99999, defaultValue: 39277) == 65535)
+        check("soundPrefs: 合法端口透传",
+              SoundPreferences.clampedUserPort(8080, defaultValue: 39277) == 8080)
+    }
 }

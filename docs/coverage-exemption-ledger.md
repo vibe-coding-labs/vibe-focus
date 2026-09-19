@@ -146,8 +146,8 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 | 文件 (missed) | 提缝方向 |
 |---|---|
 | WindowManager+Finding (49) | CGWindowList 窗口匹配链，注入化直测 |
-| SoundManager (45) | resolveSound 降级链残支/静音时段边界 |
-| ScreenIndexPreferences (40) | C7 禁写纪律例外——迁移分支可经 Runner 域 defaults 注入（B227 先例）后直测 |
+| ~~SoundManager (45)~~ | ✅ B273 已清（钳制纯逻辑+API 往返还原） |
+| ~~ScreenIndexPreferences (40)~~ | ✅ B273 已清（savesLegacyUpgrade=false 注入，legacy 迁移/垃圾数据直测，零落库） |
 | ClaudeHookServer (25) | 随机端口+token 注入的守卫分支（B231/B267 教训已吸收） |
 | WindowManager+Toggle+Decision (28) | 决策表残支纯函数直测 |
 | VoiceAnnouncementManager+RestoreOutcome (27) | 恢复结局→播报文案映射纯逻辑 |
