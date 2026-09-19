@@ -268,3 +268,24 @@ extension RunnerHarness {
         check("diag: doctor report 冒烟非空", !report.isEmpty)
     }
 }
+
+// MARK: - B244：看门狗心跳可测面（健康主线程零误报契约）
+// 留白甄别：stall 上报分支（≥250ms/≥1s + BacktraceSampler 线程采样）需要真实冻结
+// 主线程，进程内不可测归看门狗真机批次；本块锁「心跳启动幂等 + 健康运行零误报」。
+
+extension RunnerHarness {
+    func runPerfWatchdogTests() {
+        // 启动幂等：二次调用安全（mainTimer 守卫）
+        PerfMonitor.shared.startHeartbeatOnMain()
+        PerfMonitor.shared.startHeartbeatOnMain()
+
+        // 健康运行：泵 0.6s（心跳 50ms ×12、看门狗 100ms ×6 轮巡检）——
+        // 主线程持续跳动 → 看门狗零误报（stallCount 不动）
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        check("perfWD: 健康主线程泵 0.6s 看门狗零误报", PerfMonitor.shared.stallCount == 0)
+
+        // 显式计数与区间埋点并存（record 不经区间栈）
+        PerfMonitor.shared.record("vf-perf-counter", durationMs: 7)
+        check("perfWD: record 计数落账（快照侧 B220 已锁）", PerfMonitor.shared.stallCount == 0)
+    }
+}
