@@ -224,6 +224,7 @@ final class FakeAuditor: RestoreAuditing {
         runTitleE2E()
         runTerminalGridUnitTests()
         runGridTargetResolveInstanceTests()
+        runBubblePanelGeometryTests()
         runShellRunnerTests()
         runRemoteDeployTests()
         runJournalAppendTests()
