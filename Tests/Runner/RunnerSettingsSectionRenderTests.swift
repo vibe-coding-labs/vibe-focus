@@ -442,3 +442,33 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B265：SoundSection 偏好矩阵深层行（soundType 非 none / custom / projectRules）
+
+extension RunnerHarness {
+    func runSoundSectionDeepRenderTests() {
+        let sound = SoundManager.shared
+        let savedType = sound.preferences.soundType
+        defer { sound.updateSoundType(savedType) }
+
+        // 1. soundType = .builtinDing（非 .none）→ 触发 antiDisturbRows+PreviewPlaybackButton
+        sound.updateSoundType(.builtinDing)
+        let view1 = SettingsView()
+        let r1 = ImageRenderer(content: view1.soundSection)
+        check("soundDeep: builtinDing → 全行渲染出图", r1.nsImage != nil)
+
+        // 2. soundType = .custom → + customAudioFileRows
+        sound.updateSoundType(.custom)
+        let view2 = SettingsView()
+        let r2 = ImageRenderer(content: view2.soundSection)
+        check("soundDeep: custom → 自定义音频文件行渲染出图", r2.nsImage != nil)
+
+        // 3. projectRulesSection 独立渲染
+        let r3 = ImageRenderer(content: view2.projectRulesSection)
+        check("soundDeep: projectRulesSection 渲染出图", r3.nsImage != nil)
+
+        // 4. antiDisturbRows 独立渲染
+        let r4 = ImageRenderer(content: view2.antiDisturbRows)
+        check("soundDeep: antiDisturbRows 独立渲染出图", r4.nsImage != nil)
+    }
+}
