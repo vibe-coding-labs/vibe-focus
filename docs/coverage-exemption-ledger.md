@@ -79,6 +79,17 @@
 | **AXWrite 编排层** | `VIBEFOCUS_AXWRITE_E2E=1` | ✅ **B253 新建，真机绿**（B252 号被并行线占用） |
 | SessionRestore 真恢复域 | 待建 | ⬜（restore 链已有真机人工闭环，待 env 门控自动化） |
 
+## ⚠️ 收口运维纪律（B259 联跑实测教训，2026-09-20）
+
+**发布前全量 E2E 必须逐通道单独跑（一次一个环境变量），严禁多通道联跑。**
+联跑实测翻车：AXWrite 清场超时 + SessionRestore 前置建窗失败共 9 例红——窗口创建/关闭
+竞速 + iTerm2 终止确认框堆积（跑着交互 shell 的窗，close 会挂起等确认）。逐通道跑
+（各自 solo）同日全部绿。残留清理配方（确认框堆积时）：yabai 盘点定位 → AppleScript
+枚举窗 tty → kill 会话前台进程 → System Events 点 sheet「OK」→ 循环至盘点归零。
+
+本轮演练记录（2026-09-20）：六通道 solo 均绿（SIZE/FLOATSETTLE/AXWRITE/BUBBLE_PANEL/
+HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收口按逐通道执行。
+
 ## 签字
 
 - [x] 口径②E2E 通道全部建成（AXWrite/气泡面板/HotKey/SessionRestore 真恢复均已登记并真机验证）
