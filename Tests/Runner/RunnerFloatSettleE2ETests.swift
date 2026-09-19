@@ -17,8 +17,8 @@ extension RunnerHarness {
     //          常见路径零浪费的实机证据）。
     if ProcessInfo.processInfo.environment["VIBEFOCUS_FLOATSETTLE_E2E"] == "1" {
         print("\n=== FloatSettle 序列原语真机 E2E ===")
-        SpaceController.shared.refreshAvailability(force: true)
-        check("FloatSettleE2E: yabai 可用", SpaceController.shared.isEnabled)
+        // B228：B180 探测后台化后同步断言竞态恒 false——泵 RunLoop 等结果落地
+        check("FloatSettleE2E: yabai 可用", waitForSpaceAvailability())
 
         func yabaiWindowIDsFS() -> Set<UInt32> {
             guard let out = ShellRunner.run(executable: "/opt/homebrew/bin/yabai", arguments: ["-m", "query", "--windows"], timeout: 30),

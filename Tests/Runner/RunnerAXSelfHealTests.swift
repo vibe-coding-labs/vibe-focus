@@ -100,3 +100,29 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B229：spawnRelaunchWatcher 真实派生（产物脚本语义已锁，此处锁 spawn 契约与零残留）
+
+extension RunnerHarness {
+    func runWatcherSpawnTests() {
+        // 夹具：短命 bash（0.4s 自然死亡）→ 看护等死轮询立刻通过 → 3s 退让 → open 一个
+        // **不存在**的 bundle 路径（open CLI 对缺失路径仅 stderr 报错退出，零窗口零副作用）。
+        // 看护全程 ~3.6s 后自然退出——测试尾段用 pgrep 验证零残留（进程清理纪律）。
+        let stub = Process()
+        stub.executableURL = URL(fileURLWithPath: "/bin/bash")
+        stub.arguments = ["-c", "sleep 0.4"]
+        try? stub.run()
+        let stubPID = Int32(stub.processIdentifier)
+        stub.waitUntilExit()
+        check("watcherSpawn: 前置——夹具已死亡", stubPID > 0 && !stub.isRunning)
+
+        let spawned = AXSelfHeal.spawnRelaunchWatcher(pid: stubPID, bundlePath: "/nonexistent-vf-selfheal-\(stubPID).app")
+        check("watcherSpawn: detached 看护派生成功（返回 true）", spawned)
+
+        // 等看护走完「等死→退让→open 失败」全程（0.2 轮询 + 3 退让 + 余量）
+        Thread.sleep(forTimeInterval: 4.2)
+        let residue = ShellRunner.run(executable: "/usr/bin/pgrep", arguments: ["-f", "kill -0 \(stubPID)"])
+        check("watcherSpawn: 看护执行完自然退出零残留（open 缺失路径无副作用）",
+              residue?.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+}
