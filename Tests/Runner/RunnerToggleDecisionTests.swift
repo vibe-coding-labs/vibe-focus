@@ -220,6 +220,34 @@ extension RunnerHarness {
     }
 }
 
+// MARK: - B234：stuck 解堵目标屏选择（提纯自 moveStuckWindowToSecondaryScreen 的谓词）
+
+extension RunnerHarness {
+    func runStuckRoutingTests() {
+        func space(_ display: Int?, _ visible: Bool) -> YabaiSpaceInfo {
+            YabaiSpaceInfo(id: display, index: 1, display: display, isVisible: visible)
+        }
+        // nil/空 spaces → nil（回退 NSScreen 兜底）
+        check("stuckRoute: spaces nil → nil", ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: 1, spaces: nil) == nil)
+        check("stuckRoute: spaces 空 → nil", ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: 1, spaces: []) == nil)
+        // 全部同屏 → nil（单屏机不解堵）
+        check("stuckRoute: 全部同屏 → nil",
+              ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: 1, spaces: [space(1, true), space(1, true)]) == nil)
+        // 异屏但无可见 space → nil（不可见 space 不能当投递目标）
+        check("stuckRoute: 异屏但不可见 → nil",
+              ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: 1, spaces: [space(2, false)]) == nil)
+        // 异屏且可见 → 命中该 display
+        check("stuckRoute: 异屏可见 → 命中",
+              ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: 1, spaces: [space(2, true)]) == 2)
+        // 多候选按 yabai 枚举序取首个
+        check("stuckRoute: 多候选取枚举首序",
+              ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: 1, spaces: [space(1, false), space(3, true), space(2, true)]) == 3)
+        // currentDisplay nil（查询失败）：任何非 nil display 都异于 nil → 首个可见命中
+        check("stuckRoute: currentDisplay nil → 首个可见屏",
+              ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: nil, spaces: [space(2, true)]) == 2)
+    }
+}
+
 extension RunnerHarness {
     /// B232：move-to-main 决策层的终端身份判定 wrapper 直测（委托 TerminalRegistry 单一事实源）。
     func runMoveToMainIdentityWrapperTests() {
