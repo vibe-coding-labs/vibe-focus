@@ -267,4 +267,17 @@ extension RunnerHarness {
         let report = VibeFocusDoctor.report()
         check("diag: doctor report 冒烟非空", !report.isEmpty)
     }
+
+    // MARK: - B249：漏网纯函数（shellCounterName / shouldWarnMainFork）
+    func runPerfPureTailTests() {
+        check("perf: shellCounterName 主线程带 main 段",
+              PerfMonitorLogic.shellCounterName(executable: "/bin/zsh", isMainThread: true) == "shell.main.zsh")
+        check("perf: shellCounterName 后台线程无 main 段",
+              PerfMonitorLogic.shellCounterName(executable: "bash", isMainThread: false) == "shell.bash")
+        check("perf: 主线程达阈值告警", PerfMonitorLogic.shouldWarnMainFork(isMainThread: true, durationMs: 100))
+        check("perf: 主线程未达阈值不告警", !PerfMonitorLogic.shouldWarnMainFork(isMainThread: true, durationMs: 99.9))
+        check("perf: 后台线程再慢也不告警", !PerfMonitorLogic.shouldWarnMainFork(isMainThread: false, durationMs: 9_999))
+        check("perf: 自定义阈值生效",
+              !PerfMonitorLogic.shouldWarnMainFork(isMainThread: true, durationMs: 100, thresholdMs: 200))
+    }
 }
