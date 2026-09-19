@@ -256,6 +256,7 @@ final class FakeAuditor: RestoreAuditing {
         runPerfMonitorTests()
         runStorageSweepTests()
         runHookInstallSweepTests()
+        runDoctorYabaiSweepTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()
