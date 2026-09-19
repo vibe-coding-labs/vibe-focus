@@ -865,3 +865,56 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B228：CGWindowEntry 解析边缘 + 单窗查询真窗往返
+
+extension RunnerHarness {
+    func runCGWindowEntryEdgeTests() {
+        // init 守卫：缺 windowID / 缺 ownerPID → nil
+        check("cgEntry: 缺 windowID → nil",
+              CGWindowEntry(from: [kCGWindowOwnerPID as String: Int32(5)]) == nil)
+        check("cgEntry: 缺 ownerPID → nil",
+              CGWindowEntry(from: [kCGWindowNumber as String: UInt32(9)]) == nil)
+
+        // 全字段解析（layer/name/onScreen/bounds 四元组）
+        let full = CGWindowEntry(from: [
+            kCGWindowNumber as String: UInt32(3),
+            kCGWindowOwnerPID as String: Int32(7),
+            kCGWindowOwnerName as String: "Owner",
+            kCGWindowLayer as String: 25,
+            kCGWindowName as String: "Title",
+            kCGWindowIsOnscreen as String: false,
+            kCGWindowBounds as String: ["X": CGFloat(1), "Y": CGFloat(2), "Width": CGFloat(30), "Height": CGFloat(40)],
+        ])
+        check("cgEntry: 全字段解析",
+              full?.windowID == 3 && full?.ownerPID == 7 && full?.ownerName == "Owner"
+              && full?.layer == 25 && full?.name == "Title" && full?.isOnScreen == false
+              && full?.bounds == CGRect(x: 1, y: 2, width: 30, height: 40))
+
+        // 缺省默认：layer 0 / onScreen true / name nil / bounds nil
+        let minimal = CGWindowEntry(from: [kCGWindowNumber as String: UInt32(3), kCGWindowOwnerPID as String: Int32(7)])
+        check("cgEntry: 缺省默认值", minimal?.layer == 0 && minimal?.isOnScreen == true
+              && minimal?.name == nil && minimal?.bounds == nil)
+
+        // name 键兜底（kCGWindowName 缺席时取 name）
+        let nameFallback = CGWindowEntry(from: [
+            kCGWindowNumber as String: UInt32(3), kCGWindowOwnerPID as String: Int32(7), "name": "Fallback",
+        ])
+        check("cgEntry: name 键兜底", nameFallback?.name == "Fallback")
+
+        // bounds 部分键：缺失分量取 0
+        let partial = CGWindowEntry(from: [
+            kCGWindowNumber as String: UInt32(3), kCGWindowOwnerPID as String: Int32(7),
+            kCGWindowBounds as String: ["X": CGFloat(5)],
+        ])
+        check("cgEntry: bounds 部分键缺失分量取 0", partial?.bounds == CGRect(x: 5, y: 0, width: 0, height: 0))
+
+        // 单窗查询真窗往返：全量列表里有 bounds 的真实窗口 → cgWindowBounds 与全量一致
+        // （覆盖 optionIncludingWindow 命中循环体；GUI 会话恒有窗口，环境无关）
+        if let sample = cgWindowListAll().first(where: { ($0.bounds?.width ?? 0) > 0 }) {
+            check("cgBounds: 单窗查询与全量列表 frame 一致",
+                  cgWindowBounds(for: sample.windowID) == sample.bounds)
+        }
+        check("cgBounds: 不存在的窗口 → nil", cgWindowBounds(for: 0xFFFF_FFF0) == nil)
+    }
+}

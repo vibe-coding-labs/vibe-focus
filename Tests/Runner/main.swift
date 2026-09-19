@@ -198,6 +198,20 @@ final class FakeAuditor: RestoreAuditing {
             isMinimizedRaw: minimized, hasFocusRaw: hasFocus
         )
     }
+
+    /// B228：等 B180 异步 availability 探测落地。探测 fork 在 utility 线程、结果经
+    /// MainActor.run 回主线程——E2E 同步上下文占着主线程，必须泵 RunLoop 才收得到
+    /// （B154 短片泵铁律同源）。返回最终 isEnabled。
+    func waitForSpaceAvailability(timeout: TimeInterval = 15) -> Bool {
+        SpaceController.shared.refreshAvailability(force: true)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if SpaceController.shared.isEnabled { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        return SpaceController.shared.isEnabled
+    }
+
     func runAllTests() {
         runRestoreOrchestrationTests()
         runLayoutGridTests()
@@ -212,6 +226,7 @@ final class FakeAuditor: RestoreAuditing {
         runShellRunnerTests()
         runRemoteDeployTests()
         runJournalAppendTests()
+        runJournalProductionPathTests()
         runLocatorParseEdgeTests()
         runRecordExitTests()
         runJournalB145Tests()
@@ -222,8 +237,10 @@ final class FakeAuditor: RestoreAuditing {
         runTerminalDialectTests()
         runSoundVoiceHookTests()
         runRegistryStoreTests()
+        runCGWindowEntryEdgeTests()
         runRegistryPurgeTests()
         runHookWalkTests()
+        runRegistryFindPIDTests()
         runHookModelsTests()
         runSpaceIndexTests()
         runSpaceContextTests()
@@ -233,6 +250,7 @@ final class FakeAuditor: RestoreAuditing {
         runYabaiModelTests()
         runPruneExpiryTests()
         runSessionRestoreTests()
+        runSessionRestoreCoverageTopUps()
         runSessionRestoreE2E()
         runUsageTableTests()
         runPureSweepA()
@@ -242,6 +260,7 @@ final class FakeAuditor: RestoreAuditing {
         runHotKeyEventMatchTests()
         runToggleDecisionTests()
         runAXSelfHealTests()
+        runWatcherSpawnTests()
         runRemoteInstallTests()
         runForwarderBehaviorTests()
         runSpoolDrainTests()
@@ -254,6 +273,7 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleHistorySearchTests()
         runBubbleHistoryPanelKeyTests()
         runPerfMonitorTests()
+        runAuditLoggerTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
