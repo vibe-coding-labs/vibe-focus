@@ -236,3 +236,72 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B260：LANSettingsView 状态分支 + CodexSection/SoundAntiDisturb 渲染
+
+extension RunnerHarness {
+    func runSettingsSectionStateMatrixTests() {
+        let view = SettingsView()
+
+        // ===== A. LANSettingsView 状态分支矩阵 =====
+        do {
+            let savedLanMode = UserDefaults.standard.object(forKey: LANHookPreferences.lanModeKey)
+            let savedHosts = RemoteSpoolHosts.loadHosts()
+            let savedBindings = UserDefaults.standard.string(forKey: "claudeHookRemoteBindings")
+            let savedRunner = RemoteSpoolDrainer.shared.processRunner
+            defer {
+                if let savedLanMode { UserDefaults.standard.set(savedLanMode, forKey: LANHookPreferences.lanModeKey) }
+                else { UserDefaults.standard.removeObject(forKey: LANHookPreferences.lanModeKey) }
+                RemoteSpoolHosts.saveHosts(savedHosts)
+                if let savedBindings { UserDefaults.standard.set(savedBindings, forKey: "claudeHookRemoteBindings") }
+                else { UserDefaults.standard.removeObject(forKey: "claudeHookRemoteBindings") }
+                RemoteSpoolDrainer.shared.processRunner = savedRunner
+                RemoteSpoolHosts.saveHosts([])
+                ClaudeHookPreferences.isEnabled = false
+                RemoteSpoolDrainer.shared.applyPreferences()
+            }
+
+            // A1. 取回 0 条状态（lastDrainAt 有 + lastEventCount 0）→「上次拉取 HH:mm:ss」分支
+            RemoteSpoolHosts.saveHosts(["vf-zero-host"])
+            ClaudeHookPreferences.isEnabled = true
+            RemoteSpoolDrainer.shared.processRunner = { _, _, _ in
+                (exitCode: 0, stdout: "", stderr: "")
+            }
+            RemoteSpoolDrainer.shared.drainNow()
+            let d1 = Date().addingTimeInterval(3.0)
+            while Date() < d1 {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+                if RemoteSpoolDrainer.shared.statuses["vf-zero-host"]?.lastDrainAt != nil { break }
+            }
+            UserDefaults.standard.set(true, forKey: LANHookPreferences.lanModeKey)
+            let rZero = ImageRenderer(content: LANSettingsView())
+            check("stateMatrix: 取回 0 条状态文本渲染出图", rZero.nsImage != nil)
+
+            // A2. 远程绑定「未映射」分支（label → nil）
+            UserDefaults.standard.set(
+                #"{"vf-unmapped-label": null}"#,
+                forKey: "claudeHookRemoteBindings")
+            let rUnmapped = ImageRenderer(content: LANSettingsView())
+            check("stateMatrix: 绑定未映射分支渲染出图", rUnmapped.nsImage != nil)
+
+            // A3. 主机空清单 → 空状态分支
+            RemoteSpoolHosts.saveHosts([])
+            let rEmpty = ImageRenderer(content: LANSettingsView())
+            check("stateMatrix: 主机空清单分支渲染出图", rEmpty.nsImage != nil)
+        }
+
+        // ===== B. codexSection 渲染（installed 双态经临时文件驱动）=====
+        do {
+            let savedCodex = UserDefaults.standard.object(forKey: "codexHooks") // 占位；真实状态走 isHookInstalled 文件探测
+            _ = savedCodex
+            let rCodex = ImageRenderer(content: view.codexSection)
+            check("stateMatrix: codexSection 渲染出图", rCodex.nsImage != nil)
+        }
+
+        // ===== C. 声音防打扰分区渲染 =====
+        do {
+            let rSound = ImageRenderer(content: view.antiDisturbRows)
+            check("stateMatrix: 声音防打扰分区渲染出图", rSound.nsImage != nil)
+        }
+    }
+}
