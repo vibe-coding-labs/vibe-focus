@@ -196,8 +196,19 @@ extension RunnerHarness {
             // B170: 显式注入受控值——此前经全局 authToken 读回，在本域新增的沙盒子进程
             // 孵化（failover 场景）介入后出现过时序性 nil（cfprefs 读回竞态），注入后
             // 本域确定性；偏好 getter 自身由其它域直测。
-            let script = ClaudeHookPreferences.generateRemoteInstallScript(
-                host: "192.168.1.12", port: 39277, token: "test-token-b84")
+            // B239：cfprefs 跨进程竞态——并行套件共享同名 Runner defaults 域，
+            // 失效通知会在钉扎与生成器读取之间翻转 flag 值（实测 keys 时缺 Notification）。
+            // 生成前重钉并校验脚本内嵌事件集，不匹配则重钉重生成（≤3 轮）。
+            var script = ""
+            for _ in 0..<3 {
+                ClaudeHookPreferences.notifyOnNotification = true
+                ClaudeHookPreferences.triggerOnStop = true
+                ClaudeHookPreferences.triggerOnSessionEnd = false
+                ClaudeHookPreferences.autoRestoreOnPromptSubmit = true
+                script = ClaudeHookPreferences.generateRemoteInstallScript(
+                    host: "192.168.1.12", port: 39277, token: "test-token-b84")
+                if script.contains("\"Notification\"") && script.contains("\"Stop\"") { break }
+            }
             let scriptPath = home + "/install.sh"
             try? FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: scriptPath, contents: Data(script.utf8))
