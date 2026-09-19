@@ -22,7 +22,8 @@ extension RunnerHarness {
             handled = r.response.handled
             sem.signal()
         }
-        let deadline = Date().addingTimeInterval(10)
+        // 30s 死线：覆盖率插桩构建慢数倍且并行会话抢 CPU 时 10s 曾误报超时（B225 收官轮实测 flake）
+        let deadline = Date().addingTimeInterval(30)
         while Date() < deadline {
             if sem.wait(timeout: .now() + 0.05) == .success { break }
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))
