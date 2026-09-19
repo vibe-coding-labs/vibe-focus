@@ -86,3 +86,19 @@ extension RunnerHarness {
               toSession.contains("tell session 3 of tab 2 of window id 9 to write text \"cd /tmp\""))
     }
 }
+
+extension RunnerHarness {
+    /// B219：itermEnumerateSessions 构建器结构关键位（winID|tab|sess|tty|bounds|name 行格式）。
+    func runItermEnumerateSessionsScriptTests() {
+        print("\n=== ItermEnumerateSessions (B219) ===")
+        let script = PaneEnumeration.itermEnumerateSessions()
+        check("itermEnum: 指名 iTerm2 + 三层 repeat（windows/tabs/sessions）",
+              script.contains("com.googlecode.iterm2")
+              && script.contains("repeat with w in windows")
+              && script.contains("repeat with t in tabs of w")
+              && script.contains("repeat with s in sessions of t"))
+        check("itermEnum: 行格式五字段管道（id|tab|sess|tty|bounds|name）",
+              script.contains("\"|\" & tabIdx & \"|\" & sessIdx & \"|\" & (tty of s as string)")
+              && script.contains("(name of s as string) & linefeed"))
+    }
+}

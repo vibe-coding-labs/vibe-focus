@@ -1687,3 +1687,22 @@ extension RunnerHarness {
               LANHookPreferences.parseLegacyBindings(from: [:]).isEmpty)
     }
 }
+
+extension RunnerHarness {
+    /// B219：handleSessionStart 无上下文分流直测——route noContext → 409 诚实拒绑，
+    /// 只动内存态 lastEventDescription（不触碰 windows 表，B193 纪律）。
+    func runSessionStartNoContextTests() {
+        print("\n=== SessionStartNoContext (B219) ===")
+        let payload = ClaudeHookPayload(
+            event: .sessionStart, sessionID: "s-noc ctx", source: nil, timestamp: nil,
+            cwd: nil, model: nil, terminalCtx: nil,
+            lastAssistantMessage: nil, transcriptPath: nil, message: nil)
+        let (status, response) = HookEventHandler.shared.handleSessionStart(payload: payload)
+        check("hookSS: 无上下文 → 409 no_terminal_context",
+              status == 409 && response.code == "no_terminal_context")
+        check("hookSS: 响应诚实标记未处理且回显 sessionID",
+              !response.handled && response.sessionID == "s-noc ctx")
+        check("hookSS: lastEventDescription 记账失败原因",
+              SessionWindowRegistry.shared.lastEventDescription.contains("无终端上下文"))
+    }
+}

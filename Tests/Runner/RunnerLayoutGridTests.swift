@@ -462,3 +462,16 @@ extension RunnerHarness {
         check("layoutPrefs: snapGap 清除回 0", LayoutPreferences.snapGap == 0)
     }
 }
+
+extension RunnerHarness {
+    /// B219：WindowLayoutManagerProbe.probe 直测——候选清单非空 + running/summary 不变式。
+    func runLayoutManagerProbeTests() {
+        print("\n=== LayoutManagerProbe (B219) ===")
+        let profile = WindowLayoutManagerProbe.probe()
+        check("probe: 候选清单非空（静态目录驱动）", !profile.candidates.isEmpty)
+        check("probe: conflictSummary 与 hasRunningConflict 一致",
+              profile.conflictSummary == nil ? !profile.hasRunningConflict : profile.hasRunningConflict)
+        check("probe: running 冲突是候选子集",
+              profile.runningConflicts.allSatisfy { c in profile.candidates.contains(where: { $0.name == c.name }) })
+    }
+}

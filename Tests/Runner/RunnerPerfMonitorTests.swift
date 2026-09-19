@@ -250,3 +250,26 @@ extension RunnerHarness {
         check("forensics: logDiagnostics 冒烟不崩", true)
     }
 }
+
+extension RunnerHarness {
+    /// B219：诊断面补测——BacktraceSampler.symbolize 未命中回落 hex、DoctorPaths.live
+    /// 路径契约、VibeFocusDoctor.report 冒烟。
+    func runDiagnosticsSmallTests() {
+        print("\n=== DiagnosticsSmall (B219) ===")
+        check("diag: symbolize 空表 → 空数组", BacktraceSampler.symbolize([]) == [])
+        check("diag: symbolize 野地址回落 0x hex",
+              BacktraceSampler.symbolize([0x12345678]) == ["0x12345678"])
+
+        let paths = DoctorPaths.live()
+        check("diag: DoctorPaths.live 日志域路径契约",
+              paths.logDir == NSHomeDirectory() + "/Library/Logs/VibeFocus"
+              && paths.appLogPath == paths.logDir + "/vibefocus.log"
+              && paths.keepaliveLogPath == "/tmp/vibefocus-keepalive.log"
+              && paths.diagnosticReportsDir == NSHomeDirectory() + "/Library/Logs/DiagnosticReports")
+        check("diag: DoctorPaths.live 临时快照路径在 tmp",
+              paths.tmpFatalPath.hasPrefix("/tmp/") && paths.tmpSnapshotPath.hasPrefix("/tmp/"))
+
+        let report = VibeFocusDoctor.report()
+        check("diag: doctor report 冒烟非空", !report.isEmpty)
+    }
+}
