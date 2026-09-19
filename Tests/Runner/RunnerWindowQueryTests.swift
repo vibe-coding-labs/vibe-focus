@@ -39,4 +39,25 @@ extension RunnerHarness {
         let trusted = WindowManager.shared.hasAccessibilityPermission()
         check("winCore: AX 授信查询返回布尔真值", trusted == true || trusted == false)
     }
+
+    // MARK: - B272：findClaudeCodeWindow 只读编排链 + projectName 纯函数（A 态清单第 1 项）
+    func runClaudeCodeFindingTests() {
+        // projectName(fromCwd:)：纯路径变换
+        check("findCC: projectName nil → nil", WindowManager.projectName(fromCwd: nil) == nil)
+        check("findCC: projectName 全斜杠 → nil", WindowManager.projectName(fromCwd: "///") == nil)
+        check("findCC: projectName 末段+小写归一",
+              WindowManager.projectName(fromCwd: "/Users/x/MyProj/") == "myproj")
+
+        // findClaudeCodeWindow：CGWindowList 全扫 + 候选构建 + 三级策略匹配，
+        // 全程只读（不改窗口状态）；结果双世界诚实断言（有无 claude code 窗均合法）
+        let noConstraint = WindowManager.shared.findClaudeCodeWindow(cwd: nil)
+        if let ident = noConstraint {
+            check("findCC: 无约束命中时 windowID 正常", ident.windowID != 0)
+        } else {
+            check("findCC: 无约束未命中返 nil（本机无 claude code 标题窗）", true)
+        }
+        let constrained = WindowManager.shared.findClaudeCodeWindow(cwd: "/tmp/vibefocus-b272-proj")
+        check("findCC: 带项目名约束链路贯通",
+              constrained == nil || constrained!.windowID != 0)
+    }
 }

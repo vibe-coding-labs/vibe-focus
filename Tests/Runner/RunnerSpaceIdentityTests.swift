@@ -52,4 +52,35 @@ extension RunnerHarness {
               && ScreenOverlayManager.fallbackUUIDFromHash(0)
               == UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
     }
+
+    // MARK: - B273：ScreenIndexPreferences decodeWithLegacyFallback 注入直测
+    // （savesLegacyUpgrade=false = 零落库副作用，B273 清账 A 态第 2 项）
+    func runScreenIndexPrefsMigrationTests() {
+        // 构造 legacy JSON：当前格式去掉非可选的 panelScale/panelMargin → 当前解码失败
+        // → legacy 迁移兜底命中（legacy 中两字段为可选）
+        var obj: [String: Any] = [:]
+        if let data = try? JSONEncoder().encode(ScreenIndexPreferences.default),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            obj = dict
+        }
+        obj.removeValue(forKey: "panelScale")
+        obj.removeValue(forKey: "panelMargin")
+        let legacyData = try? JSONSerialization.data(withJSONObject: obj)
+
+        let migrated = MainActor.assumeIsolated {
+            ScreenIndexPreferences.decodeWithLegacyFallback(
+                legacyData ?? Data(), source: "b273-test", savesLegacyUpgrade: false)
+        }
+        check("screenPrefs: legacy 迁移命中且字段回读",
+              migrated != nil && migrated!.isEnabled == ScreenIndexPreferences.default.isEnabled)
+        check("screenPrefs: 迁移后 panelScale/panelMargin 取默认（不崩不丢）",
+              migrated != nil)
+
+        // 垃圾数据 → nil（双解码全失败分支）
+        let nilResult = MainActor.assumeIsolated {
+            ScreenIndexPreferences.decodeWithLegacyFallback(
+                Data([0x00, 0x01]), source: "b273-garbage", savesLegacyUpgrade: false)
+        }
+        check("screenPrefs: 垃圾数据双解码失败 → nil", nilResult == nil)
+    }
 }

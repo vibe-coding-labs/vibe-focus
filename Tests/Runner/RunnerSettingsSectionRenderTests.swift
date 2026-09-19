@@ -305,3 +305,50 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B261：codexSection hookEnabled 双态 + 声音防打扰安静时段深层行
+
+extension RunnerHarness {
+    func runSettingsSectionDeepRender3Tests() {
+        let view = SettingsView()
+        let sound = SoundManager.shared
+
+        // ===== A. codexSection：hookEnabled 双态（InfoBanner 警告分支 vs 全行分支）=====
+        do {
+            let savedHookEnabled = ClaudeHookPreferences.isEnabled
+            defer { ClaudeHookPreferences.isEnabled = savedHookEnabled }
+
+            // 关态：hookEnabled=false → 「Hook 服务未开启」警告横幅分支
+            ClaudeHookPreferences.isEnabled = false
+            let off = view
+            off.hookEnabled = false
+            let rOff = ImageRenderer(content: off.codexSection)
+            check("deep3: codexSection 关态警告横幅渲染出图", rOff.nsImage != nil)
+
+            // 开态：按钮可用的全行分支 + 安装结果横幅（成功文案）
+            ClaudeHookPreferences.isEnabled = true
+            let on = view
+            on.hookEnabled = true
+            on.codexInstallMessage = "已安装到 Codex。hooks 有变更时需在 Codex TUI 执行 /hooks 重新信任"
+            on.codexInstallSucceeded = true
+            let rOn = ImageRenderer(content: on.codexSection)
+            check("deep3: codexSection 开态+安装结果横幅渲染出图", rOn.nsImage != nil)
+        }
+
+        // ===== B. 声音防打扰安静时段深层行（quietHoursEnabled 开 → 起/止小时 Picker）=====
+        do {
+            // updateQuietHours 转发通道（preferences private(set)，B238 家法）
+            sound.updateQuietHours(enabled: true, startHour: 22, endHour: 8)
+            let rQuiet = ImageRenderer(content: view.antiDisturbRows)
+            check("deep3: 安静时段开 → 起/止 Picker 深层行渲染出图", rQuiet.nsImage != nil)
+
+            // 端值：0-24 全天钳制语义渲染
+            sound.updateQuietHours(enabled: true, startHour: 0, endHour: 24)
+            let rFull = ImageRenderer(content: view.antiDisturbRows)
+            check("deep3: 安静时段 0-24 端值渲染出图", rFull.nsImage != nil)
+
+            // 还原关闭
+            sound.updateQuietHours(enabled: false, startHour: 22, endHour: 8)
+        }
+    }
+}

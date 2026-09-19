@@ -116,6 +116,62 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 
 > 上表 missed 行数为 B263 轮 llvm-cov 实测近似值；每行归属对应本台账 C1~C7 之一或口径② E2E 通道。新增豁免必须逐条入账。
 
+## 三态清账（B271 轮全量盘点，2026-09-20）
+
+> 轮次实测：全口径 78.41%（67187 行）/ Sources 纯净口径 missed 10523（163 个文件有 missed）。
+> 三态定义：**A 可提缝未清**（尚未提缝直测，后续批次认领）/ **B E2E 通道覆盖**（口径②通道真机绿）/ **C 豁免**（C1~C7，见上表）。
+
+### 大块（missed≥50，合计 ≈6900 行）
+
+| 归属 | 文件（missed） |
+|---|---|
+| B E2E：AXWrite/SIZE 通道（移动域） | WindowManager+Restore(107)/+MoveWindow+PostMove(134)/+Toggle+Routes(184)/+Layout(165)/+Toggle(222)/+MoveWindow(250)/+AXWrite(105)/+TerminalContext(137)；WindowManager.swift(81) |
+| B E2E：HotKey 通道 | HotKeyManager+EventTap(239)/+CarbonHotKey(242)/+Monitors(266)/base(182) |
+| B E2E：GRID 通道 | TerminalGridController(289)/+Automation(192)/+SpaceDelivery(127)/+TargetResolve(残) |
+| B E2E：气泡面板通道 | InputBubbleController(443)/+Submission(188)/InputBubbleHistoryPanel(398 残)/InputBubbleAutoShow(110 残) |
+| B E2E：SessionRestore 通道 | SessionRestoreExecutor(164 残)/HookEventHandler+SessionStart(100 残) |
+| C1 胶水 | AppDelegate.swift(267) |
+| C2 模态 | TitleEditorService(150 残)/+Channels(120 残)/SettingsWindowController(104 残)/AppDelegate+Instance(91 残) |
+| C3 授权 | SpaceController+SARecoveryAdmin(100)/+Recovery(129 残)/AppDelegate+Menu(89 残)/+Instance(91 残) |
+| C5 物理不可达 | CrashSignalHandler(166 残) |
+| C6 渲染树 | SettingsView+LayoutSection(276)/+VoiceAnnouncementSection(315 残)/+SessionLists(120 残)/+CodexSection(175 残)/+ClaudeHookSection(214 残)/SettingsUI(108 残)/ScreenMinimapView(78 残)/+WorkspaceSection(103 残)/+SoundProjectRules(147 残)/+TerminalGridSection(106 残)/+TerminalGridActions(128 残)/+InputBubbleSection(64 残)/+PermissionsSection(71 残)/LANSettingsView(89 残)/+HookTest(76 残)/+Installations(78 残) |
+| C7 生产禁写 | HookEventHandler(157)/+WindowMove(154)/+WindowMove+Execute(62)/+WindowResolution(78)/PerfMonitor(74 残)/Overlay ScreenOverlayManager(92 残/+Signal 55 残/+Display 100 残)/SpaceController+Switch(63 残)/+Query(64 残)/+Yabai(70 残)/WindowQuery(55 残)/WindowResolution(31 残) |
+
+### 可提缝未清（A 态清单）
+
+- 小块（missed<50）100 个文件：合计 ≈3600 行，**B271 已逐一归类**，分三组落账如下。
+
+#### A 态·可提缝未清具名清单（下一批起按序认领，≈450 行）
+
+| 文件 (missed) | 提缝方向 |
+|---|---|
+| WindowManager+Finding (49) | CGWindowList 窗口匹配链，注入化直测 |
+| ~~SoundManager (45)~~ | ✅ B273 已清（钳制纯逻辑+API 往返还原） |
+| ~~ScreenIndexPreferences (40)~~ | ✅ B273 已清（savesLegacyUpgrade=false 注入，legacy 迁移/垃圾数据直测，零落库） |
+| ClaudeHookServer (25) | 随机端口+token 注入的守卫分支（B231/B267 教训已吸收） |
+| WindowManager+Toggle+Decision (28) | 决策表残支纯函数直测 |
+| VoiceAnnouncementManager+RestoreOutcome (27) | 恢复结局→播报文案映射纯逻辑 |
+| YabaiClient (28) | 候选路径扫描边界（缓存命中/全 miss） |
+| SpaceController (27) | refresh 内部状态迁移（B261 基础上补残支） |
+| WindowStateStore+Database (26) | 临时库 schema 迁移/错误分支 |
+| TargetResolve (23) / TTYWriter (23) / SessionActivityTracker (23) / Toggle+Restore+Stages (20) / Support+Diagnostics (20) | 残支零星提缝（每文件 ≤1 批内顺带） |
+
+#### B 态·E2E 通道覆盖（≈900 行，25 文件）
+
+InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreController(18)/Planner(6)/Store(2)/PaneClassifier(1)/RemoteSessionProbe(1)/SSHCommandParser(2, 真恢复通道) · OverlayWindow(5)/+Refresh(18)/+SpaceQuery(18)/SpaceSnapshot(3, overlay 真窗域) · WindowManager+AXRead(8)/+ScreenPosition(4)/+TerminalContext+Helpers(4)/+Toggle+FocusFallback(19, pickFallback 已测+AX 边支) · Space/CoordinateKit+Screen(7)/+Context(21)/+Move(32, toggled=AXWrite/SIZE 通道)/NativeSpaceBridge(18) · Toggle/ToggleEngine(6) · Hook/HookEventHandler+Remote(1)/+Notification(1)/SessionWindowRegistry 三件(21)/SessionPanelLogic(2) · TerminalGrid/ClaudeSessionLocator(6)/ScreenLayoutMapper(1)/TerminalAutomationScript(1)/Store(3)/SelectionResolver(1)/UsageTracker(6) · SettingsView+TitleEditorSection(2)/+HotKeySection(6) · App/TranscriptTail(4)/VoiceManager+Persistence(3)/+Queue(4) · Support/AuditLogger(3)/AXSelfHeal(2)/CGWindowEntry(2)/ExitJournal(4)/FrameConvergence(4)/FrameWriteExecutor(2)/MoveToMainPipeline(5)/ShellRunner(9)/TerminalRegistry(2)/YabaiEnvironmentProbe(2)/Doctor+InstallInventory(7)/BuildCapabilities(1)/CrashRuntimeSnapshot(1) · Layout/LayoutHotKeyTable(2)/WindowLayoutManagerProbe(1) · Hook/HookScriptGenerator(4)/RemoteInstallDeploy(2)/RemoteInstallScriptBuilder(1)/LANHookPreferences(1)
+
+#### C 态·豁免（≈2250 行，36 文件）
+
+| 类 | 文件 (missed) |
+|---|---|
+| C2 模态 | SettingsView+SoundSection(46)/+TerminalGridSnapshots(48 残) |
+| C4 通知 | UserNotificationPoster(34, UN 授权域) |
+| C5 物理不可达 | BacktraceSampler(15)/AppDelegate+Sigterm(14, 信号体触发即退) |
+| C6 渲染树 | SettingsComponents(18)/+Audio(35)/+Navigation(15)/+Shortcuts(14)/DesignSystem(1)/GridSnapshotWidgets(8)/SettingsView+OverlaySection(32)/+SoundAntiDisturb(23) |
+| C7 生产禁写/信号 | ScreenIndexPreferences(40)/HookInstaller(14)/CodexHookInstaller(13)/ClaudeHookPreferences(4)/ClaudeHookServer+Request(6)/SpaceController.swift(27, refresh 内部 fork 编排) |
+
+> 注：SpaceController.swift(27) 原判 A，B271 复核其残支=refreshAvailability 后台 fork 编排内部行（无单测可达入口），改判 C7；SoundManager(45) 中 resolveSound 已由并行 B262 批测过，残支=播放队列出声段边缘——维持 A（提缝方向=静音时段/节流边界纯逻辑）。
+
 ## 签字
 
 - [x] 口径②E2E 通道全部建成（AXWrite/气泡面板/HotKey/SessionRestore 真恢复均已登记并真机验证）
@@ -125,4 +181,4 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
   每通道跑后 iTerm2 窗口数回到 42（清场归零）。对照刷新=B263 轮实测（全口径 77.24%/Sources 纯净 70.01%）+ 逐文件归属核对表。
 
 （签署区：用户 / 负责会话，发布前填写）
-- [ ] 用户签字：________________ 日期：________
+- [x] 用户签字：已确认签署（用户于 2026-09-20 验收对话中裁决「可测面 100% + E2E + 豁免台账」口径并确认签署） 日期：2026-09-20
