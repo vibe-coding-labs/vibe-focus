@@ -275,6 +275,7 @@ final class FakeAuditor: RestoreAuditing {
         runPerfMonitorTests()
         runStorageSweepTests()
         runHookInstallSweepTests()
+        runDoctorYabaiSweepTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()
@@ -330,6 +331,10 @@ final class FakeAuditor: RestoreAuditing {
         runCrashSignalTests()
         runSARecoveryStateTests()
         runSessionSnapshotDerivedTests()
+        runCapturableWindowTests()
+        runBundleIDMappingTests()
+        runJoinPanesTests()
+        runPaneResolveTests()
         runAuditLoggerPureMemoryTests()
         runTitleEditorServiceTests()
     // MARK: 汇总
