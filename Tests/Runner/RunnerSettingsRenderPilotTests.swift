@@ -38,7 +38,7 @@ extension RunnerHarness {
     /// （此前留白原因）；onAppear→refreshGridMinimap 只读（yabai 查询+屏读取）。
     func runSettingsTerminalGridTabRenderTests() {
         print("\n=== SettingsTerminalGridTabRender (B239) ===")
-        var gridTab = SettingsView()
+        let gridTab = SettingsView()
         gridTab.selectedTab = .orchestration
         let host = NSHostingView(rootView: gridTab.environmentObject(HotKeyManager.shared))
         host.frame = NSRect(x: 0, y: 0, width: 680, height: 940)
@@ -51,7 +51,7 @@ extension RunnerHarness {
         // --- 全 tab 扫尾：@StateObject 在安装期已全部实例化（B238 审计），
         //     逐 tab 渲染只新增各 section body 的构建期求值 ---
         for tab in SettingsTab.allCases {
-            var tabView = SettingsView()
+            let tabView = SettingsView()
             tabView.selectedTab = tab
             let tabHost = NSHostingView(rootView: tabView.environmentObject(HotKeyManager.shared))
             tabHost.frame = NSRect(x: 0, y: 0, width: 680, height: 940)
