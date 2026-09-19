@@ -1,4 +1,5 @@
 import CoreGraphics
+import AppKit
 import Foundation
 @testable import VibeFocusKit
 
@@ -125,6 +126,56 @@ extension RunnerHarness {
             defaults.set(Data("not-json".utf8), forKey: DisplayWorkArea.defaultsKey)
             check("store: 缓存坏数据 → zero 兜底不抛错",
                   DisplayWorkArea.learnedInsets(displayID: 1, defaults: defaults) == .zero)
+        }
+    }
+}
+
+extension RunnerHarness {
+    /// B215：CoordinateKit+Screen 的 NSScreen 查询半区直测——矩形主屏判定包装、
+    /// 数组索引、yabai 索引互逆、isMainScreen。双屏条件分支用环境守卫（<2 屏跳过强断言）。
+    func runCoordinateScreenQueryTests() {
+        print("\n=== CoordinateScreenQuery (B215) ===")
+        let screens = NSScreen.screens
+        check("coordScreen: 真机至少一块屏", !screens.isEmpty)
+        guard let first = screens.first else { return }
+
+        // --- isMainScreen：origin==.zero 判主屏 ---
+        check("coordScreen: origin zero 屏 isMainScreen", first.isMainScreen == (first.frame.origin == .zero))
+
+        // --- screenArrayIndex：首屏索引 0（同实例恒可查） ---
+        check("coordScreen: screenArrayIndex 首屏 0", CoordinateKit.screenArrayIndex(for: first) == 0)
+
+        // --- cgDisplayID：真机屏必能取到 displayID；nsScreen(forCGDisplayID:) 互逆 ---
+        if let displayID = first.cgDirectDisplayID {
+            check("coordScreen: displayID 互逆查回同屏",
+                  CoordinateKit.nsScreen(forCGDisplayID: displayID) == nil ? false : true
+                  && CoordinateKit.nsScreen(forCGDisplayID: displayID)?.cgDirectDisplayID == displayID)
+        } else {
+            check("coordScreen: 真机屏缺 NSScreenNumber（异常环境）", false)
+        }
+
+        // --- isOnMainScreen(rect:) 包装：主屏 frame 自身必在主屏；远离点矩形不在 ---
+        if let mainFrame = CoordinateKit.mainScreenQuartzFrame {
+            check("coordScreen: 主屏 frame 自判定 onMain", CoordinateKit.isOnMainScreen(mainFrame))
+            let offRect = CGRect(x: mainFrame.maxX + 10_000, y: mainFrame.maxY + 10_000, width: 10, height: 10)
+            check("coordScreen: 远离矩形不在主屏", !CoordinateKit.isOnMainScreen(offRect))
+        } else {
+            check("coordScreen: 无主屏帧（异常环境）", false)
+        }
+
+        // --- yabai 索引互逆：主屏↔1；副屏条件分支（≥2 屏环境才强断言） ---
+        check("coordScreen: 主屏 yabai 索引 1", CoordinateKit.yabaiDisplayIndex(for: first) == 1)
+        check("coordScreen: yabaiIndex 1 回查主屏",
+              CoordinateKit.nsScreen(forYabaiDisplayIndex: 1)?.frame.origin == .zero)
+        check("coordScreen: yabaiIndex 越界 nil",
+              CoordinateKit.nsScreen(forYabaiDisplayIndex: screens.count + 1) == nil)
+        check("coordScreen: yabaiIndex 0 非法 nil", CoordinateKit.nsScreen(forYabaiDisplayIndex: 0) == nil)
+        if screens.count >= 2 {
+            let secondary = screens.first { !$0.isMainScreen }!
+            let idx = CoordinateKit.yabaiDisplayIndex(for: secondary)
+            check("coordScreen: 副屏 yabai 索引 ≥2", (idx ?? 0) >= 2)
+            check("coordScreen: 副屏索引回查互逆",
+                  CoordinateKit.nsScreen(forYabaiDisplayIndex: idx ?? -1)?.cgDirectDisplayID == secondary.cgDirectDisplayID)
         }
     }
 }

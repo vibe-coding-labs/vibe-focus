@@ -1618,3 +1618,54 @@ struct ClaudeHookPipelineInstallProbe {
         ClaudeHookPreferences.installHelperScript(content: content, to: path)
     }
 }
+
+extension RunnerHarness {
+    /// B215：终端身份注册表直测——联合集合、双通道身份判定（appName/bundleID）、
+    /// isTerminalPID 守卫链（PID≤0 / launchd）、findTerminalPID 真实 ps 走查收敛。
+    func runTerminalRegistryIdentityTests() {
+        print("\n=== TerminalRegistryIdentity (B215) ===")
+
+        // --- 联合集合：终端∪IDE 双域并入 ---
+        check("registry: 联合 bundleIDs 含终端与 IDE 代表",
+              TerminalRegistry.allTerminalAndIDEBundleIDs.contains("com.apple.Terminal")
+              && TerminalRegistry.allTerminalAndIDEBundleIDs.contains("com.googlecode.iterm2")
+              && TerminalRegistry.allTerminalAndIDEBundleIDs.contains("com.microsoft.VSCode")
+              && TerminalRegistry.allTerminalAndIDEBundleIDs.count
+                  == TerminalRegistry.terminalBundleIDs.count + TerminalRegistry.ideBundleIDs.count)
+        check("registry: 联合 appNames 含终端与 IDE 代表",
+              TerminalRegistry.allTerminalAndIDEAppNames.contains("Terminal")
+              && TerminalRegistry.allTerminalAndIDEAppNames.contains("iTerm2")
+              && TerminalRegistry.allTerminalAndIDEAppNames.contains("Cursor")
+              && TerminalRegistry.allTerminalAndIDEAppNames.count
+                  == TerminalRegistry.terminalAppNames.count + TerminalRegistry.ideAppNames.count)
+
+        // --- isTerminalOrIDEApp：appName 命中 / IDE 名命中 / bundleID 命中 / 双 nil false / 未知 false ---
+        check("registry: isTerminalOrIDEApp 终端名命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: "iTerm2", bundleIdentifier: nil))
+        check("registry: isTerminalOrIDEApp IDE 名命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: "Cursor", bundleIdentifier: nil))
+        check("registry: isTerminalOrIDEApp 终端 bundleID 命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: nil, bundleIdentifier: "com.apple.Terminal"))
+        check("registry: isTerminalOrIDEApp IDE bundleID 命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: nil, bundleIdentifier: "com.microsoft.VSCode"))
+        check("registry: isTerminalOrIDEApp 双 nil false",
+              !TerminalRegistry.isTerminalOrIDEApp(appName: nil, bundleIdentifier: nil))
+        check("registry: isTerminalOrIDEApp 未知身份 false",
+              !TerminalRegistry.isTerminalOrIDEApp(appName: "Safari", bundleIdentifier: "com.apple.Safari"))
+
+        // --- isTerminalBundleID：命中/不命中 ---
+        check("registry: isTerminalBundleID iterm2 命中",
+              TerminalRegistry.isTerminalBundleID("com.googlecode.iterm2"))
+        check("registry: isTerminalBundleID VSCode 不属终端域",
+              !TerminalRegistry.isTerminalBundleID("com.microsoft.VSCode"))
+
+        // --- isTerminalPID 守卫链：PID≤0 直接 false；PID 1（launchd）走完 comm 查询仍 false ---
+        check("registry: isTerminalPID(0) 守卫 false", !TerminalRegistry.isTerminalPID(0))
+        check("registry: isTerminalPID(-1) 守卫 false", !TerminalRegistry.isTerminalPID(-1))
+        check("registry: isTerminalPID(1)=launchd false", !TerminalRegistry.isTerminalPID(1))
+
+        // --- findTerminalPID：launchd 起步上溯即断（ppid 0 不继续）→ nil；深度记账 1 ---
+        check("registry: findTerminalPID(from launchd) nil",
+              TerminalRegistry.findTerminalPID(from: 1) == nil)
+    }
+}

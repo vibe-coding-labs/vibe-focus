@@ -501,3 +501,68 @@ extension RunnerHarness {
               && !SessionRestoreController.isCapturableYabaiWindow(window(pid: nil), bundleIDOf: iterm))
     }
 }
+
+extension RunnerHarness {
+    /// B215：快照模型纯计算属性直测——frame setter、三计数属性、迁移器
+    /// shell-with-tty 分支此前零覆盖（E2E 有消费但默认 Runner 不跑 E2E 模式）。
+    func runSessionRestoreModelCountsTests() {
+        print("\n=== SessionRestoreModelCounts (B215) ===")
+
+        // --- frame setter：get/set 往返四分量保真 ---
+        var win = SessionWindowSnapshot(
+            appBundleID: "com.apple.Terminal",
+            frame: CGRect(x: 1, y: 2, width: 3, height: 4),
+            displayID: 1,
+            panes: []
+        )
+        win.frame = CGRect(x: 10, y: 20, width: 300, height: 200)
+        check("modelCounts: frame setter 四分量落账",
+              win.x == 10 && win.y == 20 && win.width == 300 && win.height == 200)
+        check("modelCounts: frame getter 重建一致",
+              win.frame == CGRect(x: 10, y: 20, width: 300, height: 200))
+
+        // --- 三计数属性：去重/nil 不计/空表语义 ---
+        func pane(_ sessionID: String?) -> SessionPaneSnapshot {
+            SessionPaneSnapshot(kind: .localClaude, sessionID: sessionID)
+        }
+        let snap = SessionRestoreSnapshot(
+            name: "counts",
+            windows: [
+                SessionWindowSnapshot(appBundleID: "a", frame: .zero, displayID: 1, yabaiSpace: 2, panes: [pane("s1"), pane("s2"), pane(nil)]),
+                SessionWindowSnapshot(appBundleID: "a", frame: .zero, displayID: 1, yabaiSpace: 2, panes: [pane("s3")]),
+                SessionWindowSnapshot(appBundleID: "a", frame: .zero, displayID: 7, yabaiSpace: nil, panes: [pane("s4"), pane("s5")]),
+            ],
+            launchCommand: nil
+        )
+        check("modelCounts: sessionPaneCount 只数带会话 pane", snap.sessionPaneCount == 5)
+        check("modelCounts: spaceCount 去重且 nil space 不计", snap.spaceCount == 1)
+        check("modelCounts: displayCount 去重两屏", snap.displayCount == 2)
+        let empty = SessionRestoreSnapshot(name: "empty", windows: [], launchCommand: nil)
+        check("modelCounts: 空快照三计数全 0",
+              empty.sessionPaneCount == 0 && empty.spaceCount == 0 && empty.displayCount == 0)
+
+        // --- 迁移器 shell-with-tty 分支：无 sessionID 有 tty → shell pane 带 tty；
+        //     双无 → 裸 shell pane（此前只测过 localClaude 分支） ---
+        let legacy = TerminalGridSnapshot(
+            id: "legacy-shell", name: "legacy-shell", appBundleID: "com.apple.Terminal",
+            displayID: 1, displayYabaiIndex: 1, rows: 1, cols: 2,
+            cells: [
+                TerminalGridCellSnapshot(index: 0, x: 0, y: 0, width: 100, height: 50,
+                                         ttyPath: "/dev/ttys004", sessionID: nil, cwd: "/tmp", title: nil),
+                TerminalGridCellSnapshot(index: 1, x: 100, y: 0, width: 100, height: 50,
+                                         ttyPath: nil, sessionID: nil, cwd: "/var", title: nil),
+            ],
+            launchCommand: nil, capturedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let migrated = SessionSnapshotMigrator.migrateLegacy(legacy)
+        check("modelCounts: 迁移 shell-with-tty 分支 tty/kind/cwd 保真",
+              migrated.windows[0].panes[0].kind == .shell
+              && migrated.windows[0].panes[0].tty == "/dev/ttys004"
+              && migrated.windows[0].panes[0].cwd == "/tmp"
+              && migrated.windows[0].panes[0].sessionID == nil)
+        check("modelCounts: 迁移双无分支裸 shell pane",
+              migrated.windows[1].panes[0].kind == .shell
+              && migrated.windows[1].panes[0].tty == nil
+              && migrated.windows[1].panes[0].cwd == "/var")
+    }
+}
