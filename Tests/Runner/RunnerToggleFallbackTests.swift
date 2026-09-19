@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices.HIServices
 import Foundation
 @testable import VibeFocusKit
 
@@ -162,5 +163,23 @@ extension RunnerHarness {
             InputBubbleAutoShow.shared.seedBaselines()
             check("autoShow: 基线播种只读扫描不抛不炸", true)
         }
+    }
+}
+
+// MARK: - B248：stuck 路由 no-focused-window 早退（AX 未授信环境确定性覆盖）
+
+extension RunnerHarness {
+    func runStuckRouteEarlyExitTests() {
+        // moveStuckWindowToSecondaryScreen 在 AX 能解析出真实聚焦窗口时会真搬窗；
+        // Runner CLI 无 AX 授权（与 B243 not_settable 实证同源），AXIsProcessTrusted
+        // 门控保证本断言只在「必走 no-focused-window 早退」的环境下执行——环境异常时
+        // 诚实跳过，绝不在可能搬真窗的形态下运行。
+        guard AXIsProcessTrusted() == false else {
+            check("stuckRoute: AX 已授信环境不符，诚实跳过", true)
+            return
+        }
+        WindowManager.shared.moveStuckWindowToSecondaryScreen(
+            operationID: "b248-stuck-early-exit", triggerSource: "runner-test")
+        check("stuckRoute: 无聚焦窗口早退不崩不搬窗", true)
     }
 }

@@ -14,6 +14,7 @@
 | `VIBEFOCUS_GRID_TARGET_E2E=1` | 网格目标屏编排 | 双屏、iTerm2/Terminal |
 | `VIBEFOCUS_GRID_E2E=1` | Terminal 网格全流程（真实建窗 + claude 会话） | 主屏有带存活 claude 会话的终端窗口 |
 | `VIBEFOCUS_TITLE_E2E=1` | 终端标题定向改名（Ctrl+T 链路）：tty 寻址命中自建会话、写入生效、双端自关清理 | iTerm2、Terminal、yabai |
+| `VIBEFOCUS_HOTKEY_E2E=1` | HotKey 三件套真机验证：Carbon 注册全家族（primary/Ctrl+T/气泡/摆位表）+注销、CGEventTap 创建/使能/移除、Fallback monitors 成对安装移除、handleFallbackEvent 合成非匹配键只读路由。⚠️注册即系统级生效，同方法内立即全量注销（暴露窗 <100ms）；持久留白=handleHotKeyEvent 真实 EventRef 路由归生产观察 | 证书签名 runner、本机 AX 授权 |
 
 > B56 起 E2E 用例代码分布在 `Tests/Runner/Runner*E2E*.swift`（`RunnerHarness` 的
 > extension，如 GRID_TARGET→RunnerGridTargetE2ETests.swift）；新增 E2E = 新建域

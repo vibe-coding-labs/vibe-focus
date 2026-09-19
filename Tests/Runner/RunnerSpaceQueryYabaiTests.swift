@@ -67,3 +67,30 @@ extension RunnerHarness {
               sc.exactNSScreen(forYabaiDisplayIndex: 9999) == nil)
     }
 }
+
+// MARK: - B248：setWindowFloat 编排层 skip 路径（knownWindowInfo 注入，零 yabai fork）
+
+extension RunnerHarness {
+    func runSpaceFloatSkipTests() {
+        let sc = SpaceController.shared
+        // knownWindowInfo 注入后 @autoclosure 不求值 → 全程零 yabai 调用；
+        // enabled/disabled 两世界结果同为 skipNoOp，断言在两种环境都成立。
+        let floatingInfo = YabaiWindowInfo(id: 1, pid: 1, app: "Terminal", title: "t", space: 1, display: 1,
+                                           frame: nil, isFloatingRaw: true, hasAXReferenceRaw: true)
+        check("floatSkip: 已 float 注入短路 skipNoOp",
+              sc.setWindowFloat(1, operationID: "b248-floatskip", knownWindowInfo: floatingInfo) == .skippedNoOp)
+        let unmanagedInfo = YabaiWindowInfo(id: 1, pid: 1, app: "Terminal", title: "t", space: 1, display: 1,
+                                            frame: nil, isFloatingRaw: false, hasAXReferenceRaw: false)
+        check("floatSkip: 无 AX 引用注入 skipNoOp",
+              sc.setWindowFloat(1, operationID: "b248-floatskip", knownWindowInfo: unmanagedInfo) == .skippedNoOp)
+        if sc.isEnabled {
+            // enabled 世界：幽灵窗 id 走真实 queryWindow 只读查询（yabai 无此窗返 nil）→ query_nil 跳过
+            check("floatSkip: enabled 态幽灵窗 query_nil skipNoOp",
+                  sc.setWindowFloat(999_999, operationID: "b248-floatskip", knownWindowInfo: nil) == .skippedNoOp)
+        } else {
+            // disabled 世界：决策序最先短路，连查询 fork 都不发起
+            check("floatSkip: disabled 态幽灵窗 skipNoOp",
+                  sc.setWindowFloat(999_999, operationID: "b248-floatskip", knownWindowInfo: nil) == .skippedNoOp)
+        }
+    }
+}
