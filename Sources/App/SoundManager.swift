@@ -5,8 +5,25 @@ import Foundation
 // MARK: - Sound Manager
 
 /// Manages completion sound effects for window focus operations.
-@MainActor
-final class SoundManager: ObservableObject {
+
+// MARK: - 播放引擎注入缝（B249）
+
+/// 音频播放口抽象：play/stop 只此一处触碰音频设备。测试注入 mock 记录调用，零发声。
+@MainActor protocol SoundPlaying {
+    func play(_ sound: NSSound, volume: Float)
+    func stop(_ sound: NSSound)
+}
+
+/// 默认实现：真实 NSSound 播放（生产路径）。
+@MainActor final class AppSoundPlayer: SoundPlaying {
+    func play(_ sound: NSSound, volume: Float) {
+        sound.volume = volume
+        sound.play()
+    }
+    func stop(_ sound: NSSound) { sound.stop() }
+}
+
+@MainActor final class SoundManager: ObservableObject, @unchecked Sendable {
     static let shared = SoundManager()
 
     private static let preferencesKey = "soundPreferences"
@@ -32,6 +49,9 @@ final class SoundManager: ObservableObject {
     /// 上一次完成音实际发声时间（节流判据，轮次 1）。仅由 playCompletionSound 写；
     /// 试听（preview）是用户显式行为，不经过门控、不写此时间。
     private var lastCompletionPlayedAt: Date?
+
+    /// 播放引擎注入缝（B249）：默认真实播放，测试注入 mock 零发声。
+    var soundPlayer: SoundPlaying = AppSoundPlayer()
 
     private init() {
         self.preferences = Self.loadPreferences()
@@ -182,7 +202,7 @@ final class SoundManager: ObservableObject {
         }
         playbackStopWorkItem?.cancel()
         playbackStopWorkItem = nil
-        currentSound?.stop()
+        if let currentSound { soundPlayer.stop(currentSound) }
         currentSound = nil
     }
 
@@ -207,15 +227,14 @@ final class SoundManager: ObservableObject {
     ) {
         stopPlayback()
 
-        sound.volume = volume
-        sound.play()
+        soundPlayer.play(sound, volume: volume)
         currentSound = sound
 
         log(logMessage, fields: logFields)
 
         let stopWork = DispatchWorkItem { [weak self] in
             guard let self, self.currentSound === sound else { return }
-            sound.stop()
+            self.soundPlayer.stop(sound)
             self.currentSound = nil
         }
         playbackStopWorkItem = stopWork
