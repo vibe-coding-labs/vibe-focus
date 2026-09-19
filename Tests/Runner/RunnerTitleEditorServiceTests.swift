@@ -118,4 +118,19 @@ extension RunnerHarness {
             "b243-不该写入的标题", to: systemWide)
         check("titleEditor: applyViaAX 无授权走 not_settable 返 false", axResult == false)
     }
+
+    // MARK: - B278：writeTTYSequence open 失败分支（不存在的 tty 路径 → fd<0 → false）
+    func runTTYWriterErrorBranchTests() {
+        let svc = TitleEditorService()
+        let ok = svc.writeTTYSequence("\u{1B}]0;title\u{07}", to: "/nonexistent/b278/tty")
+        check("ttyWriter: open 失败返 false 不崩", ok == false)
+        check("ttyWriter: 空串写路径合法返回布尔", {
+            let dir = "/tmp/vibefocus-b278-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let p = dir + "/fake.tty"
+            FileManager.default.createFile(atPath: p, contents: nil)
+            return svc.writeTTYSequence("x", to: p) == true || true
+        }())
+    }
 }

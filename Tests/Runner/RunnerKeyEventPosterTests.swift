@@ -74,3 +74,19 @@ extension RunnerHarness {
               hk.layoutTable.bindings.isEmpty || !hk.layoutTable.bindings.isEmpty)
     }
 }
+
+// MARK: - B272 追加：历史面板/回填的空态守卫（气泡未打开时不触真弹窗）
+
+extension RunnerHarness {
+    func runBubbleHistoryPanelGuardTests() {
+        let controller = InputBubbleController.shared
+        // showHistoryPanel：panel 为 nil → guard 早退（不触真弹窗）。
+        controller.showHistoryPanel()
+        // toggleHistoryPanel：空态 → false（未消费）。
+        check("bubblePanel: toggleHistoryPanel 空态 false",
+              controller.toggleHistoryPanel() == false)
+        // fillFromHistory：空态 guard 早退不崩。
+        controller.fillFromHistory("b272 回填文本")
+        check("bubblePanel: fillFromHistory 空态早退不崩", true)
+    }
+}
