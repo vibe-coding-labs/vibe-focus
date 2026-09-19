@@ -17,7 +17,6 @@ enum InputBubbleAutoShowGate {
         case skipNoBaseline        // B180：本窗首次观测，无前值，无从谈跨越
         case skipStillOffMain      // B180：同窗仍在非主屏（屏内移动/移去别的副屏）
         case skipAlreadyOnMain     // B180：同窗已在主屏（无新跨越，防 Esc 后重弹循环）
-        case skipUserMoved         // B211：用户手动移动（⌃Q 摆位/拖动）=布局意图，不弹
         case skipExternalMove      // B211：外部来源移动（并行会话 yabai/显示器重排）与输入无关，不弹
     }
 
@@ -44,28 +43,32 @@ enum InputBubbleAutoShowGate {
         return .summon
     }
 
-    /// B184：「同一终端窗从非主屏跨越到主屏 → 气泡自动出现」决策门 v2；B211 收敛语义：
-    /// 只有 hook 拉回（agent「我需要你」）可弹——用户 ⌃Q 摆位/拖动是布局意图（2026-09-19
-    /// 生产日志实锤：16 次自动弹出 14 次紧跟用户 ⌃Q、仅 2 次真打字），外部移动与输入
-    /// 无关，两者一律静默落基线。Stop hook 快路径另有 decideMoveToMainAutoShow（本就是
-    /// hook 发起，语义天然正确）。
-    /// 纯函数直测；基线=全窗口基线表按 windowID 查找（B184 升级：窗在非前台时被移动、
+    /// B184：「同一终端窗从非主屏跨越到主屏 → 气泡自动出现」决策门 v2。
+    /// B211 按移动者归因分流；B212 勘误恢复用户拉回弹出：用户 ⌃Q 拉回「挂着的会话窗」
+    /// 正是工作流（拉窗→打字→提交归位），B211 误把「不精准」理解成「用户拉回也静默」，
+    /// 装机后一早晨 21 次 skipUserMoved、用户复诉「不会自动弹了」。终案语义=「到主屏」
+    /// 只对会话窗有意义：hookPull=agent 召唤直弹；userAction=用户拉回，窗挂活跃会话
+    /// 才弹（B160 焦点门同款信号）；外部移动（无归因）与输入无关恒静默。
+    /// 纯函数直测；基线=全窗口基线表按 windowID 查找（B184：窗在非前台时被移动、
     /// 之后才聚焦的流程，首观测即有历史基线，照样触发——旧「同窗连续观测」版有流程缝）。
     /// - lastSeenOnMain == nil：本窗无历史基线，无从谈跨越。
     /// - arrivalMover == nil：归因账本无新鲜记录 = 外部来源移动。
+    /// - hasLiveSessionBinding：仅 userAction 分支消费（hookPull 拉回本就是会话窗，
+    ///   且 SessionEnd 完成时序与拉回同拍，查绑定反而会误杀）。
     static func decideMoveToMainArrival(
         moveToMainEnabled: Bool,
         lastSeenOnMain: Bool?,
         nowOnMain: Bool,
-        arrivalMover: InputBubbleArrivalMover?
+        arrivalMover: InputBubbleArrivalMover?,
+        hasLiveSessionBinding: Bool
     ) -> Outcome {
         guard moveToMainEnabled else { return .skipNotEnabled }
         guard let wasOnMain = lastSeenOnMain else { return .skipNoBaseline }
         guard !wasOnMain else { return .skipAlreadyOnMain }
         guard nowOnMain else { return .skipStillOffMain }
-        guard arrivalMover == .hookPull else {
-            return arrivalMover == nil ? .skipExternalMove : .skipUserMoved
-        }
+        guard arrivalMover != nil else { return .skipExternalMove }
+        if arrivalMover == .hookPull { return .summon }
+        guard hasLiveSessionBinding else { return .skipNoLiveSession }
         return .summon
     }
 
@@ -223,15 +226,15 @@ final class InputBubbleAutoShow {
         case .skipSameWindow, .skipNoLiveSession:
             if let top = topWindowID { lastEvaluatedWindowID = top }
         case .skipNoBaseline, .skipStillOffMain, .skipAlreadyOnMain, .skipNotEnabled, .skipBubbleActive,
-             .skipUserMoved, .skipExternalMove:
+             .skipExternalMove:
             break
         }
 
         // B185：跨屏检测 v3——扫描前台终端 app 的「全部」onscreen 常规窗，逐窗比对
         // 基线表旧值（读旧→判跨越→再落表，顺序不可换）。多窗多屏下 z 序最顶窗未必是
         // 用户刚移动的窗（真机探针实锤），单窗观测版有结构性盲区。
-        // B211：跨越是否成弹由归因账本裁决——只有 hook 拉回（10s 新鲜期内）可弹；
-        // 用户 ⌃Q/外部移动记一条 suppressed 后照常落基线。
+        // B212：跨越是否成弹=归因×绑定合取——hook 拉回直弹；用户 ⌃Q 拉回挂活跃会话的
+        // 窗才弹（B211 全拦属过度修正，用户复诉「不会自动弹了」）；外部移动恒静默。
         // 气泡开着时：跟随模式改绑到到达窗；自动隐藏模式维持旧行为不打扰。
         var arrivedEntry: CGWindowEntry?
         var suppressedArrival: (windowID: UInt32, outcome: InputBubbleAutoShowGate.Outcome)?
@@ -241,13 +244,14 @@ final class InputBubbleAutoShow {
                 moveToMainEnabled: InputBubblePreferences.autoShowOnMoveToMain,
                 lastSeenOnMain: onMainBaselineByWindow[entry.windowID],
                 nowOnMain: nowOnMain,
-                arrivalMover: MoveToMainAttributionLedger.shared.recentMover(windowID: entry.windowID))
+                arrivalMover: MoveToMainAttributionLedger.shared.recentMover(windowID: entry.windowID),
+                hasLiveSessionBinding: SessionWindowRegistry.shared.hasLiveSessionBinding(windowID: entry.windowID))
             if case .summon = arrivalOutcome {
                 arrivedEntry = entry
                 break
             }
             switch arrivalOutcome {
-            case .skipUserMoved, .skipExternalMove:
+            case .skipNoLiveSession, .skipExternalMove:
                 if suppressedArrival == nil { suppressedArrival = (entry.windowID, arrivalOutcome) }
             default:
                 break

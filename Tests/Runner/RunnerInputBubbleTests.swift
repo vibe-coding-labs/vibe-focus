@@ -206,43 +206,53 @@ extension RunnerHarness {
         } else { check("moveToMain: 气泡占用 → skipBubbleActive", false) }
 
         // --- B180/B184 跨到主屏自动弹出决策门 v2（基线表版：lastSeenOnMain 按 windowID 查表，nil=无基线）---
-        // B211：签名加 arrivalMover——既有短路序断言传 .hookPull（证明「能到 summon 的前提」
-        // 下各短路仍先生效），summon/skip 分流断言见 B211 块。
+        // B211 加 arrivalMover、B212 加 hasLiveSessionBinding——既有短路序断言传 .hookPull+true
+        //（证明「能到 summon 的前提」下各短路仍先生效），summon/skip 分流断言见 B212 块。
         if case .skipNotEnabled = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: false, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .hookPull) {
+            moveToMainEnabled: false, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .hookPull, hasLiveSessionBinding: true) {
             check("arrival: 开关关 → skipNotEnabled", true)
         } else { check("arrival: 开关关 → skipNotEnabled", false) }
         if case .skipNoBaseline = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: nil, nowOnMain: true, arrivalMover: .hookPull) {
+            moveToMainEnabled: true, lastSeenOnMain: nil, nowOnMain: true, arrivalMover: .hookPull, hasLiveSessionBinding: true) {
             check("arrival: 无基线 → skipNoBaseline", true)
         } else { check("arrival: 无基线 → skipNoBaseline", false) }
         if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: true, arrivalMover: .hookPull) {
+            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: true, arrivalMover: .hookPull, hasLiveSessionBinding: true) {
             check("arrival: 已在主屏 → skipAlreadyOnMain", true)
         } else { check("arrival: 已在主屏 → skipAlreadyOnMain", false) }
         if case .skipAlreadyOnMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: false, arrivalMover: .hookPull) {
+            moveToMainEnabled: true, lastSeenOnMain: true, nowOnMain: false, arrivalMover: .hookPull, hasLiveSessionBinding: true) {
             check("arrival: 主屏移去别屏（反向，基线先短路）→ skipAlreadyOnMain", true)
         } else { check("arrival: 主屏移去别屏（反向，基线先短路）→ skipAlreadyOnMain", false) }
         if case .skipStillOffMain = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: false, arrivalMover: .hookPull) {
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: false, arrivalMover: .hookPull, hasLiveSessionBinding: true) {
             check("arrival: 同窗仍在非主屏 → skipStillOffMain", true)
         } else { check("arrival: 同窗仍在非主屏 → skipStillOffMain", false) }
         if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .hookPull) {
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .hookPull, hasLiveSessionBinding: true) {
             check("arrival: 基线非主屏→主屏 + hook 拉回 → summon", true)
         } else { check("arrival: 基线非主屏→主屏 + hook 拉回 → summon", false) }
 
-        // --- B211 到达弹出按移动者归因分流：只有 hook 拉回（agent「我需要你」）可弹 ---
-        // 用户主诉 2026-09-19：⌃Q 每拉必弹（16 弹 2 用）。摆位/拖动是布局意图，不是输入意图。
-        if case .skipUserMoved = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .userAction) {
-            check("arrival B211: 跨越 + ⌃Q 摆位 → skipUserMoved（不弹）", true)
-        } else { check("arrival B211: 跨越 + ⌃Q 摆位 → skipUserMoved（不弹）", false) }
+        // --- B212 到达弹出语义终案：归因×绑定合取 ---
+        // B211 全拦用户拉回属过度修正（装机后一早晨 21 次 skipUserMoved，用户复诉「不会
+        // 自动弹了」）。终案：⌃Q 拉回挂活跃会话的窗 → 弹（用户工作流）；无绑定的窗
+        //（E2E 测试窗/普通终端）与外部移动 → 静默（B211 主诉的噪音类）。
+        if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .userAction, hasLiveSessionBinding: true) {
+            check("arrival B212: 跨越 + ⌃Q 拉回 + 挂活跃会话 → summon（恢复弹出）", true)
+        } else { check("arrival B212: 跨越 + ⌃Q 拉回 + 挂活跃会话 → summon（恢复弹出）", false) }
+        if case .skipNoLiveSession = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .userAction, hasLiveSessionBinding: false) {
+            check("arrival B212: 跨越 + ⌃Q 拉回 + 无绑定（E2E 测试窗/普通终端）→ skipNoLiveSession（静默）", true)
+        } else { check("arrival B212: 跨越 + ⌃Q 拉回 + 无绑定（E2E 测试窗/普通终端）→ skipNoLiveSession（静默）", false) }
         if case .skipExternalMove = InputBubbleAutoShowGate.decideMoveToMainArrival(
-            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: nil) {
-            check("arrival B211: 跨越 + 无归因（外部 yabai/重排）→ skipExternalMove（不弹）", true)
-        } else { check("arrival B211: 跨越 + 无归因（外部 yabai/重排）→ skipExternalMove（不弹）", false) }
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: nil, hasLiveSessionBinding: true) {
+            check("arrival B212: 跨越 + 无归因（外部 yabai/重排）→ skipExternalMove（绑定也救不回，恒静默）", true)
+        } else { check("arrival B212: 跨越 + 无归因（外部 yabai/重排）→ skipExternalMove（绑定也救不回，恒静默）", false) }
+        if case .summon = InputBubbleAutoShowGate.decideMoveToMainArrival(
+            moveToMainEnabled: true, lastSeenOnMain: false, nowOnMain: true, arrivalMover: .hookPull, hasLiveSessionBinding: false) {
+            check("arrival B212: hook 拉回不查绑定（SessionEnd 完成与拉回同拍）→ summon", true)
+        } else { check("arrival B212: hook 拉回不查绑定（SessionEnd 完成与拉回同拍）→ summon", false) }
         check("mover B211: claudeSessionEnd → hookPull", InputBubbleArrivalMover.map(.claudeSessionEnd) == .hookPull)
         check("mover B211: manualHotkey → userAction", InputBubbleArrivalMover.map(.manualHotkey) == .userAction)
         check("mover B211: userPromptSubmit（B126 已退役搬窗）保守 → userAction", InputBubbleArrivalMover.map(.userPromptSubmit) == .userAction)

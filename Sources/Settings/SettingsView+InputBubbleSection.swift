@@ -108,7 +108,7 @@ private struct InputBubbleSectionView: View {
 
             SettingsRow(
                 title: "移回主屏自动弹出",
-                detail: "仅当 Claude 会话被自动拉回主屏时（会话结束 hook 拉回）气泡自动出现。手动摆位（⌃Q、拖动）与外部移动不再弹出——拉窗查看不等于要输入，需要时按唤起快捷键。"
+                detail: "终端窗从其它屏幕跨到主屏时，若窗口挂着活跃 Claude 会话（⌃Q 拉回或会话结束自动拉回）气泡自动出现。无会话的普通终端窗与外部来源的移动不弹。"
             ) {
                 Toggle("", isOn: $autoShowOnMoveToMain)
                     .labelsHidden()
