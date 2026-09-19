@@ -630,3 +630,43 @@ extension RunnerHarness {
               && migrated.windows[1].panes[0].cwd == "/var")
     }
 }
+
+// MARK: - B227：SessionRestoreSnapshot 派生量与 frame 存取（纯值模型）
+
+extension RunnerHarness {
+    func runSessionSnapshotDerivedTests() {
+        print("\n=== SessionSnapshotDerived (B227) ===")
+
+        // frame get/set 往返（Quartz 全局坐标，存散字段）
+        var win = SessionWindowSnapshot(
+            appBundleID: "com.apple.Terminal",
+            frame: CGRect(x: 10, y: 20, width: 800, height: 500),
+            displayID: 1,
+            yabaiDisplay: 1,
+            yabaiSpace: 3,
+            panes: [SessionPaneSnapshot(kind: .shell, cwd: "/a")])
+        win.frame = CGRect(x: -5, y: 600, width: 640, height: 400)
+        check("derived: frame set 散字段同步",
+              win.x == -5 && win.y == 600 && win.width == 640 && win.height == 400)
+        check("derived: frame get 重组 CGRect",
+              win.frame == CGRect(x: -5, y: 600, width: 640, height: 400))
+
+        // 会话 pane 计数：仅 sessionID 非 nil 的 pane 计入
+        let claudeWin = SessionWindowSnapshot(
+            appBundleID: "com.googlecode.iterm2",
+            frame: CGRect(x: 0, y: 0, width: 500, height: 300),
+            displayID: 1,
+            panes: [
+                SessionPaneSnapshot(kind: .localClaude, sessionID: "s1", cwd: "/a"),
+                SessionPaneSnapshot(kind: .shell, cwd: "/b"),
+                SessionPaneSnapshot(kind: .remoteSSH, sessionID: "s2", sshTarget: "cc@host"),
+            ])
+        let snap = SessionRestoreSnapshot(
+            id: "b227", name: "派生量", windows: [win, claudeWin],
+            launchCommand: nil, capturedAt: Date())
+        check("derived: sessionPaneCount 只数有会话 pane", snap.sessionPaneCount == 2)
+        // space 去重（nil 不计）：win space 3、claudeWin space nil
+        check("derived: spaceCount nil 不计", snap.spaceCount == 1)
+        check("derived: displayCount 去重", snap.displayCount == 1)
+    }
+}
