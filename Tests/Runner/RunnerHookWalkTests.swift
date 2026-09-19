@@ -1860,3 +1860,39 @@ extension RunnerHarness {
 
     }
 }
+
+// MARK: - B252：Stop 拉窗执行半区——幻影窗失败路（moved=true 成功半区归真机 E2E）
+
+extension RunnerHarness {
+    func runWindowMoveExecuteTests() {
+        // 幻影窗身份：yabai/AX 查询必然落空 → move 失败半区（409 window_move_failed，
+        // registry touch 对无绑定 session 是 no-op——B226 先例），零触碰真实窗口。
+        let payload = try! JSONDecoder().decode(
+            ClaudeHookPayload.self,
+            from: Data(#"{"event":"Stop","session_id":"vf-b245-phantom"}"#.utf8))
+        let identity = WindowIdentity(
+            windowID: 0x0BAD, pid: 9_999_999, bundleIdentifier: nil,
+            appName: "Phantom", windowNumber: nil, title: "vf-phantom")
+
+        final class Box: @unchecked Sendable { var value: (statusCode: Int, response: VibeFocusKit.ClaudeHookResponse)? }
+        let box = Box()
+        let sem = DispatchSemaphore(value: 0)
+        Task {
+            let r = await HookEventHandler.shared.moveWindowToMainScreenAndRespond(
+                identity: identity, payload: payload, triggerName: "Stop", source: "vf-e2e")
+            box.value = r
+            sem.signal()
+        }
+        let deadline = Date().addingTimeInterval(15.0)
+        while sem.wait(timeout: .now() + 0.05) != .success {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            if Date() >= deadline { break }
+        }
+        check("wmExec: 幻影窗移动失败 → 409 window_move_failed",
+              box.value?.statusCode == 409
+              && box.value?.response.code == "window_move_failed"
+              && box.value?.response.handled == false)
+        check("wmExec: 失败路 touch 无绑定 session 为 no-op（描述不被污染）",
+              SessionWindowRegistry.shared.binding(for: "vf-b245-phantom") == nil)
+    }
+}
