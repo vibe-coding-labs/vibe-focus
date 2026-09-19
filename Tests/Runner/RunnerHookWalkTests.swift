@@ -1896,3 +1896,53 @@ extension RunnerHarness {
               SessionWindowRegistry.shared.binding(for: "vf-b245-phantom") == nil)
     }
 }
+
+// MARK: - B253：安装家族 home 注入回环（临时 home 零触 ~/.vibefocus 与 ~/.codex）
+
+extension RunnerHarness {
+    func runHookInstallHomeTests() {
+        let home = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-homin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let fm = FileManager.default
+
+        // A. installHelperScript(home:)：脚本落 <home>/.vibefocus 且 0755
+        let (scriptOK, _) = ClaudeHookPreferences.installHelperScript(home: home)
+        let scriptPath = (home as NSString).appendingPathComponent(".vibefocus/hook-forwarder.sh")
+        check("hookHome: 脚本落临时 home 且可执行",
+              scriptOK && fm.isExecutableFile(atPath: scriptPath))
+
+        // B. writeConfigFile(home:)：hook-config.json 含 port+token（真身路径零触碰）
+        let savedToken = ClaudeHookPreferences.authToken
+        defer { ClaudeHookPreferences.authToken = savedToken }
+        ClaudeHookPreferences.authToken = "vf-home-token"
+        ClaudeHookPreferences.writeConfigFile(home: home)
+        let configPath = (home as NSString).appendingPathComponent(".vibefocus/hook-config.json")
+        let config = (try? JSONSerialization.jsonObject(with: fm.contents(atPath: configPath) ?? Data())) as? [String: Any]
+        check("hookHome: hook-config.json 落临时 home 且含 port+token",
+              config?["token"] as? String == "vf-home-token"
+              && (config?["port"] as? Int) == ClaudeHookPreferences.listenPort)
+        check("hookHome: 真身配置文件零触碰",
+              fm.fileExists(atPath: ClaudeHookPreferences.configFilePath) == false
+              || (try? JSONSerialization.jsonObject(with: fm.contents(atPath: ClaudeHookPreferences.configFilePath) ?? Data())) as? [String: Any] != nil)
+
+        // C. installHookToCodexSettings(home:) 全链：hooks.json 落临时 home 含四事件
+        ClaudeHookPreferences.authToken = "vf-home-token"
+        let (installOK, installMsg) = CodexHookPreferences.installHookToCodexSettings(home: home)
+        let codexPath = CodexHookPreferences.codexConfigPath(home: home)
+        let hooksDoc = (try? JSONSerialization.jsonObject(with: fm.contents(atPath: codexPath) ?? Data())) as? [String: Any]
+        let hookEvents = (hooksDoc?["hookEvents"] as? String) ?? ((hooksDoc?["hooks"] as? [String: Any]).map { $0.keys.sorted().joined(separator: ",") }) ?? ""
+        check("hookHome: Codex 安装成功且文案含 /hooks 重新信任提示",
+              installOK && installMsg.contains("/hooks"))
+        check("hookHome: hooks.json 含 Stop/SessionStart 注册",
+              installOK && hookEvents.contains("Stop") && hookEvents.contains("SessionStart"))
+
+        // D. uninstall 回环：VibeFocus 条目摘除、文件保留
+        let (uninstallOK, _) = CodexHookPreferences.uninstallHookFromCodexSettings(
+            at: codexPath,
+            scriptPath: scriptPath,
+            targetURL: ClaudeHookPreferences.endpointURLString())
+        let afterDoc = (try? JSONSerialization.jsonObject(with: fm.contents(atPath: codexPath) ?? Data())) as? [String: Any]
+        check("hookHome: 卸载摘除 VibeFocus 条目且文件保留",
+              uninstallOK && afterDoc != nil)
+    }
+}

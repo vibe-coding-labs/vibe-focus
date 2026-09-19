@@ -15,7 +15,9 @@ public final class HotKeyManager: ObservableObject {
     @Published private(set) var layoutTable: LayoutHotKeyTable
     @Published var shortcutStatusMessage = "当前快捷键已生效"
     @Published var shortcutStatusIsError = false
-    @Published private(set) var accessibilityStatus = false
+    /// B244：set 放开为 internal——HotKey 真机 E2E 以真实 AXIsProcessTrustedWithOptions
+    /// 探针置位后才能打穿 setupCGEventTap 创建机器（生产零变更：仍由 refresh 写入）。
+    @Published var accessibilityStatus = false
 
     var accessibilityGranted: Bool {
         accessibilityStatus

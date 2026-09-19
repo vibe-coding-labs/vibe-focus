@@ -22,7 +22,8 @@ extension ClaudeHookPreferences {
         return try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
     }
 
-    static func writeConfigFile() {
+    /// home 注入变体（B253）：默认真身路径（生产零变更），测试传临时 home。
+    static func writeConfigFile(home: String = NSHomeDirectory()) {
         // P-INST-87: hook 辅助脚本配置写入耗时（createDirectory + JSONSerialization.data + data.write(.atomic) 写 hook-config.json；applyPreferences P-INST-77 / installHookToClaudeSettings P-INST-78 子阶段；token/port 同步）。
         #if PERF_INSTRUMENT
         let wcStart = Date()
@@ -36,7 +37,8 @@ extension ClaudeHookPreferences {
             "dir": helperScriptDir,
             "path": configFilePath
         ])
-        let dir = helperScriptDir
+        let dir = (home as NSString).appendingPathComponent(".vibefocus")
+        let configPath = (dir as NSString).appendingPathComponent("hook-config.json")
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         // B170: 本机配置不再写 host——本机脚本恒直连 127.0.0.1（服务端 bind 0.0.0.0），
         // 不随 LAN IP 漂移失效；LAN IP 只属于远程机配置（远程安装脚本/复制配置通道）。
@@ -48,13 +50,13 @@ extension ClaudeHookPreferences {
             log("ClaudeHookPreferences.writeConfigFile() failed to serialize config", level: .debug)
             return
         }
-        try? data.write(to: URL(fileURLWithPath: configFilePath), options: .atomic)
-        log("ClaudeHookPreferences.writeConfigFile() completed", level: .debug, fields: ["lanMode": String(LANHookPreferences.lanMode)])
+        try? data.write(to: URL(fileURLWithPath: configPath), options: .atomic)
+        log("ClaudeHookPreferences.writeConfigFile() completed", level: .debug, fields: ["lanMode": String(LANHookPreferences.lanMode), "configPath": configPath])
     }
 
     /// 安装辅助脚本到 ~/.vibefocus/hook-forwarder.sh
     @discardableResult
-    static func installHelperScript() -> (Bool, String) {
+    static func installHelperScript(home: String = NSHomeDirectory()) -> (Bool, String) {
         // P-INST-88: 辅助脚本安装耗时（createDirectory + data.write(.atomic) 写 hook-forwarder.sh + setAttributes posixPermissions 0o755；applyPreferences P-INST-77 / installHookToClaudeSettings P-INST-78 子阶段；memory feedback_hook_forwarder_verification 关注的脚本写入正确性路径）。
         #if PERF_INSTRUMENT
         let ihsStart = Date()
@@ -65,7 +67,9 @@ extension ClaudeHookPreferences {
         }
         #endif
         log("ClaudeHookPreferences.installHelperScript() entered", level: .debug)
-        return installHelperScript(content: generateHelperScriptContent(), to: helperScriptPath)
+        return installHelperScript(
+            content: generateHelperScriptContent(),
+            to: (home as NSString).appendingPathComponent(".vibefocus/hook-forwarder.sh"))
     }
 
     /// 路径注入变体（B144）：测试以临时文件直测安装语义（0755/原子写/幂等覆盖），
