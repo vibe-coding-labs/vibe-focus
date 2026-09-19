@@ -361,6 +361,7 @@ final class FakeAuditor: RestoreAuditing {
         runScriptExecutorTests()
         runAppDelegateInstanceTests()
         runHotKeyTriggerGuardTests()
+        runInstallationsFailPathTests()
         runCaptureFocusedWindowTests()
         runAppleScriptDirectedTests()
         runBubbleButtonCursorTests()
