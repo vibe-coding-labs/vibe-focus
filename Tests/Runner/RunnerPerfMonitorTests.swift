@@ -188,10 +188,10 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B224：崩溃报告 IPS 解析通道直测——首行 meta + JSON payload 双段格式、
+    /// B229：崩溃报告 IPS 解析通道直测——首行 meta + JSON payload 双段格式、
     /// 单行/坏 JSON/非字典守卫（诊断日志副作用无害）。
     func runCrashIPSParserTests() {
-        print("\n=== CrashIPSParser (B224) ===")
+        print("\n=== CrashIPSParser (B229) ===")
         let payload = #"{"occurrence":{"captureTime":"2026-09-19"},"procName":"VibeFocus","faultingThread":0}"#
         let ips = "Meta\n" + payload
         let ok = CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: ips)
@@ -209,11 +209,11 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B225：崩溃取证/诊断通道注入式补测——captureTail URL 注入双分支（截尾语义 +
+    /// B230：崩溃取证/诊断通道注入式补测——captureTail URL 注入双分支（截尾语义 +
     /// 源缺失跳过）、sampleMainThread 冒烟、logDiagnostics/心跳注册冒烟（副作用=日志）。
     func runCrashForensicsIOTests() {
-        print("\n=== CrashForensicsIO (B225) ===")
-        let dir = "/tmp/vf-b225-forensics-\(UUID().uuidString)"
+        print("\n=== CrashForensicsIO (B230) ===")
+        let dir = "/tmp/vf-b230-forensics-\(UUID().uuidString)"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: dir) }
 
@@ -247,10 +247,10 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B226：诊断面补测——BacktraceSampler.symbolize 未命中回落 hex、DoctorPaths.live
+    /// B231：诊断面补测——BacktraceSampler.symbolize 未命中回落 hex、DoctorPaths.live
     /// 路径契约、VibeFocusDoctor.report 冒烟。
     func runDiagnosticsSmallTests() {
-        print("\n=== DiagnosticsSmall (B226) ===")
+        print("\n=== DiagnosticsSmall (B231) ===")
         check("diag: symbolize 空表 → 空数组", BacktraceSampler.symbolize([]) == [])
         check("diag: symbolize 野地址回落 0x hex",
               BacktraceSampler.symbolize([0x12345678]) == ["0x12345678"])

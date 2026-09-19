@@ -1127,11 +1127,11 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B221：偏好读写全链直测——此前只测纯 clamp 函数，getter/setter 的
+    /// B223：偏好读写全链直测——此前只测纯 clamp 函数，getter/setter 的
     /// UserDefaults 落账分支（三值默认门/写读一致/通知广播/解码失败回落）零覆盖。
     /// Runner 进程 UserDefaults.standard 是独立域（无 bundle id），逐项清理不外泄。
     func runBubblePreferencesIOTests() {
-        print("\n=== BubblePreferencesIO (B221) ===")
+        print("\n=== BubblePreferencesIO (B223) ===")
         let d = UserDefaults.standard
 
         // --- 布尔偏好族：未设置默认 + 写读双向 + 清理复位 ---

@@ -866,12 +866,12 @@ extension RunnerHarness {
     }
 }
 
-// MARK: - B223：WindowStateStore+Bindings 查询/删除/计数全分支（临时库 + db-nil 不可用库）
+// MARK: - B228：WindowStateStore+Bindings 查询/删除/计数全分支（临时库 + db-nil 不可用库）
 
 extension RunnerHarness {
     func runBindingsStoreCoverageTests() {
         do {
-            let dir = "/tmp/vf-b223-bindings-\(UUID().uuidString)"
+            let dir = "/tmp/vf-b228-bindings-\(UUID().uuidString)"
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(atPath: dir) }
             let store = WindowStateStore(dbPath: dir + "/bindings.db")
@@ -889,22 +889,22 @@ extension RunnerHarness {
 
             // --- 查询三通道：by windowID / bySession / 命中与未命中 ---
             let byWID = store.findWindowStateByWindowID(1)
-            check("bindings223: findWindowStateByWindowID 命中回读",
+            check("bindings228: findWindowStateByWindowID 命中回读",
                   byWID?.windowID == 1 && byWID?.sessionID == "sess-1")
-            check("bindings223: findWindowStateByWindowID 未命中 nil",
+            check("bindings228: findWindowStateByWindowID 未命中 nil",
                   store.findWindowStateByWindowID(999) == nil)
-            check("bindings223: findWindowStateBySession 命中",
+            check("bindings228: findWindowStateBySession 命中",
                   store.findWindowStateBySession(sessionID: "sess-2")?.windowID == 2)
-            check("bindings223: findWindowStateBySession 未命中 nil",
+            check("bindings228: findWindowStateBySession 未命中 nil",
                   store.findWindowStateBySession(sessionID: "nope") == nil)
 
             // --- 计数 + 单删 + 全删 ---
-            check("bindings223: windowStatesCount 计 2", store.windowStatesCount == 2)
+            check("bindings228: windowStatesCount 计 2", store.windowStatesCount == 2)
             store.deleteWindowState(windowID: 1)
-            check("bindings223: deleteWindowState 后计数 1 且查询 nil",
+            check("bindings228: deleteWindowState 后计数 1 且查询 nil",
                   store.windowStatesCount == 1 && store.findWindowStateByWindowID(1) == nil)
             store.deleteAllWindowsStates()
-            check("bindings223: deleteAllWindowsStates 清零",
+            check("bindings228: deleteAllWindowsStates 清零",
                   store.windowStatesCount == 0 && store.loadAllWindowStates().isEmpty)
         }
 
@@ -912,7 +912,7 @@ extension RunnerHarness {
             // --- db 不可用库：父目录缺失 → sqlite3_open 失败 → db=nil，全 API 走守卫分支不崩 ---
             let dir = "/tmp/vf-b216-nodb-\(UUID().uuidString)"
             let store = WindowStateStore(dbPath: dir + "/missing/sub.db")
-            check("bindings223: 坏路径 db 为 nil", store.db == nil)
+            check("bindings228: 坏路径 db 为 nil", store.db == nil)
             let now = Date()
             let ws = WindowState(
                 windowID: 1, pid: 100, tty: nil, axWindowNumber: nil, appName: "T",
@@ -921,15 +921,15 @@ extension RunnerHarness {
                 createdAt: now, updatedAt: now
             )
             store.saveWindowState(ws)
-            check("bindings223: 坏库 save 静默不崩", true)
-            check("bindings223: 坏库三查询全 nil",
+            check("bindings228: 坏库 save 静默不崩", true)
+            check("bindings228: 坏库三查询全 nil",
                   store.findWindowState(windowID: 1) == nil
                   && store.findWindowStateBySession(sessionID: "s") == nil
                   && store.findWindowStateByWindowID(1) == nil)
-            check("bindings223: 坏库计数 0 / 全载空", store.windowStatesCount == 0 && store.loadAllWindowStates().isEmpty)
-            check("bindings223: 坏库删除与清理幂等",
+            check("bindings228: 坏库计数 0 / 全载空", store.windowStatesCount == 0 && store.loadAllWindowStates().isEmpty)
+            check("bindings228: 坏库删除与清理幂等",
               { store.deleteWindowState(windowID: 1); store.deleteAllWindowsStates(); return true }() && true)
-            check("bindings223: 坏库 prune 返回 0",
+            check("bindings228: 坏库 prune 返回 0",
                   store.pruneExpiredWindowStates(activeRetention: 3600, completedRetention: 3600) == 0)
         }
     }

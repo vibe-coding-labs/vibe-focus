@@ -568,10 +568,10 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B224：日志/文案描述 getter 直测——QueuedAnnouncement.logDescription 双分支、
+    /// B229：日志/文案描述 getter 直测——QueuedAnnouncement.logDescription 双分支、
     /// CustomSoundStatus.uiDescription 三态（设置页 detail 文案防漂移）。
     func runAnnouncementDescriptionTests() {
-        print("\n=== AnnouncementDescriptions (B224) ===")
+        print("\n=== AnnouncementDescriptions (B229) ===")
         check("announceDesc: text 条目摘要截前 30 字",
               QueuedAnnouncement.text(String(repeating: "x", count: 50)).logDescription
                   == "text(" + String(repeating: "x", count: 30) + ")")

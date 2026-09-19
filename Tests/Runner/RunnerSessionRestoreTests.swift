@@ -567,10 +567,10 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B222：快照模型纯计算属性直测——frame setter、三计数属性、迁移器
+    /// B224：快照模型纯计算属性直测——frame setter、三计数属性、迁移器
     /// shell-with-tty 分支此前零覆盖（E2E 有消费但默认 Runner 不跑 E2E 模式）。
     func runSessionRestoreModelCountsTests() {
-        print("\n=== SessionRestoreModelCounts (B222) ===")
+        print("\n=== SessionRestoreModelCounts (B224) ===")
 
         // --- frame setter：get/set 往返四分量保真 ---
         var win = SessionWindowSnapshot(

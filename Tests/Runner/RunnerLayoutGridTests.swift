@@ -422,10 +422,10 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B221：LayoutPreferences 读写直测——getter 三分支（未设置默认/枚举回落/数值钳制）
+    /// B223：LayoutPreferences 读写直测——getter 三分支（未设置默认/枚举回落/数值钳制）
     /// 此前只有 snapGap 的零星读，setter 与 coexistenceChoice 非法值回落零覆盖。
     func runLayoutPreferencesTests() {
-        print("\n=== LayoutPreferences (B221) ===")
+        print("\n=== LayoutPreferences (B223) ===")
         let d = UserDefaults.standard
 
         // --- isEnabled：未设置默认 true；写 false/true 读一致；清除复位 ---
@@ -464,9 +464,9 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B226：WindowLayoutManagerProbe.probe 直测——候选清单非空 + running/summary 不变式。
+    /// B231：WindowLayoutManagerProbe.probe 直测——候选清单非空 + running/summary 不变式。
     func runLayoutManagerProbeTests() {
-        print("\n=== LayoutManagerProbe (B226) ===")
+        print("\n=== LayoutManagerProbe (B231) ===")
         let profile = WindowLayoutManagerProbe.probe()
         check("probe: 候选清单非空（静态目录驱动）", !profile.candidates.isEmpty)
         check("probe: conflictSummary 与 hasRunningConflict 一致",
