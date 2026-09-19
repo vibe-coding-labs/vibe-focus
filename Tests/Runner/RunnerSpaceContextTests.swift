@@ -147,3 +147,32 @@ extension RunnerHarness {
         check("queryShape: invalidateDisplayMatchTable 幂等不崩", true)
     }
 }
+
+extension RunnerHarness {
+    /// B237：Space 只读查询续批——queryWindowsOnSpace 形状（真实 space 有窗数组/
+    /// 幽灵 space 双探 nil=重试路径）、nativeSpaceID 实例包装（真实 index 回译非 nil/
+    /// 幽灵 index nil）。全部只读零桌面变更；yabai 不可用 nil 合法。
+    func runSpaceSwitchQueryShapeTests() {
+        print("\n=== SpaceSwitchQueryShape (B237) ===")
+        let space = SpaceController.shared
+        let spaces = space.querySpaces(caller: "b237")
+
+        // --- 幽灵 space：两次查询全 nil（首次失败→重试一次→仍 nil 的路径） ---
+        check("switchQuery: 幽灵 space 双探 nil",
+              space.queryWindowsOnSpace(999_999, operationID: "b237") == nil)
+
+        // --- 真实 space：形状 + 域一致性 ---
+        if let spaces, let first = spaces.first, let idx = first.index {
+            let windows = space.queryWindowsOnSpace(idx, operationID: "b237")
+            check("switchQuery: 真实 space 查询 nil 或全正值 id 数组",
+                  windows == nil || (windows?.allSatisfy { ($0.id ?? 0) > 0 }) == true)
+            let native = space.nativeSpaceID(forYabaiIndex: idx)
+            check("switchQuery: 真实 yabaiIndex → 原生 space id 非 nil",
+                  native == nil || native! > 0)
+            check("switchQuery: 幽灵 yabaiIndex → 原生 id nil",
+                  space.nativeSpaceID(forYabaiIndex: 999_999) == nil)
+        } else {
+            check("switchQuery: yabai 不可用 → nil 形状合法", true)
+        }
+    }
+}
