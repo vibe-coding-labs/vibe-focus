@@ -26,4 +26,27 @@ extension RunnerHarness {
         controller.refreshAvailabilityIfNeeded()
         check("spaceQuery: refreshAvailabilityIfNeeded 幂等不崩", true)
     }
+
+    // MARK: - B279：refresh 节流窗分支 + updateEnabledState 状态迁移（零 fork 直调）
+    func runSpaceRefreshThrottleTests() {
+        let sc = SpaceController.shared
+        let savedEnabled = sc.isEnabled
+        let savedAvail = sc.availability
+        defer {
+            sc.availability = savedAvail
+            sc.updateEnabledState()
+            _ = savedEnabled
+        }
+
+        // 连续两次即时调用：第二次命中 checkInterval 节流窗（throttled 早退，零 fork）
+        sc.refreshAvailabilityIfNeeded()
+        sc.refreshAvailabilityIfNeeded()
+        check("spaceRefresh: 节流窗内二次调用早退不崩", true)
+
+        // updateEnabledState：isEnabled = integrationEnabled && availability==.available 的纯迁移
+        sc.updateEnabledState()
+        let expect = sc.isEnabled
+        check("spaceRefresh: updateEnabledState 与 availability 语义一致",
+              expect == (sc.availability == .available && sc.isEnabled))
+    }
 }

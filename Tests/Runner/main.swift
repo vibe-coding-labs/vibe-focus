@@ -301,6 +301,7 @@ final class FakeAuditor: RestoreAuditing {
         runMenuBarTests()
         runSpaceSwitchTests()
         runSpaceQueryYabaiTests()
+        runSpaceRefreshThrottleTests()
         runSpaceFloatSkipTests()
         runYabaiPathDiscoveryTests()
         runSpoolDrainLifecycleTests()
