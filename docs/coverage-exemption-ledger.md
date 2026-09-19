@@ -148,8 +148,8 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 | WindowManager+Finding (49) | CGWindowList 窗口匹配链，注入化直测 |
 | ~~SoundManager (45)~~ | ✅ B273 已清（钳制纯逻辑+API 往返还原） |
 | ~~ScreenIndexPreferences (40)~~ | ✅ B273 已清（savesLegacyUpgrade=false 注入，legacy 迁移/垃圾数据直测，零落库） |
-| ClaudeHookServer (25) | 随机端口+token 注入的守卫分支（B231/B267 教训已吸收） |
-| WindowManager+Toggle+Decision (28) | 决策表残支纯函数直测 |
+| ~~ClaudeHookServer (25)~~ | ✅ B274 已清（端口守卫低/高双分支直测） |
+| ~~WindowManager+Toggle+Decision (28)~~ | ✅ B274 已清（evaluateRestoreDecision 输入收集段注入直测） |
 | VoiceAnnouncementManager+RestoreOutcome (27) | 恢复结局→播报文案映射纯逻辑 |
 | YabaiClient (28) | 候选路径扫描边界（缓存命中/全 miss） |
 | SpaceController (27) | refresh 内部状态迁移（B261 基础上补残支） |

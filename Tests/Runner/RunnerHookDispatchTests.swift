@@ -88,4 +88,18 @@ extension RunnerHarness {
                   RemoteSpoolHosts.loadHosts().isEmpty)
         }
     }
+
+    // MARK: - B274：startIfNeeded 端口守卫分支（低/高非法端口，token 注入 nil，零监听）
+    func runHookServerPortGuardTests() {
+        let server = ClaudeHookServer.shared
+        server.stop()
+        server.startIfNeeded(port: 80, token: nil)
+        check("hookPort: 低端口 80 守卫拒绝", server.isRunning == false
+              && server.lastErrorMessage?.contains("Invalid port") == true)
+        server.startIfNeeded(port: 70000, token: nil)
+        check("hookPort: 高端口 70000 守卫拒绝", server.isRunning == false
+              && server.lastErrorMessage?.contains("Invalid port") == true)
+        server.stop()
+        check("hookPort: 守卫后 server 保持停止", server.isRunning == false)
+    }
 }
