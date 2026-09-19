@@ -26,7 +26,7 @@ enum VoiceAnnouncementMode: String, CaseIterable, Codable {
 }
 
 /// 持久化的语音播报偏好，通过 UserDefaults 存储（JSON 编码）
-struct VoiceAnnouncementPreferences: Codable {
+struct VoiceAnnouncementPreferences: Codable, Equatable {
     var mode: VoiceAnnouncementMode
     /// 固定文案模板，支持 {project_name} / {model} / {cwd} / {session_id} 变量插值
     var templateText: String
