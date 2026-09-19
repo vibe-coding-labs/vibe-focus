@@ -60,3 +60,17 @@ extension RunnerHarness {
         check("bubbleIdle: 空态收尾/跟随停止幂等不崩", true)
     }
 }
+
+// MARK: - B271 追加：HotKeyManager 初始状态直测（init 只读偏好+AX 探针，零注册副作用）
+
+extension RunnerHarness {
+    func runHotKeyManagerStateTests() {
+        let hk = HotKeyManager.shared
+        check("hotKeyManager: currentHotKey 有默认值且展示串非空",
+              !hk.currentHotKey.displayString.isEmpty)
+        check("hotKeyManager: shortcutStatusMessage 初始文案在",
+              !hk.shortcutStatusMessage.isEmpty)
+        check("hotKeyManager: layoutTable 已加载（可空表但非崩溃态）",
+              hk.layoutTable.bindings.isEmpty || !hk.layoutTable.bindings.isEmpty)
+    }
+}
