@@ -353,6 +353,7 @@ final class FakeAuditor: RestoreAuditing {
         runAppleScriptDirectedTests()
         runBubbleButtonCursorTests()
         runSelectionRefreshTests()
+        runHotKeyManagerStateTests()
         runToggleEngineStoreTests()
         runBubblePreferencesBranchTests()
         runBindingVerifierTests()
