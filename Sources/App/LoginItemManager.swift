@@ -27,38 +27,34 @@ final class LoginItemManager: ObservableObject {
         log("LoginItemManager.refresh() entered", level: .debug)
         let status = SMAppService.mainApp.status
         log("LoginItemManager.refresh() SMAppService status", level: .debug, fields: ["rawStatus": String(describing: status)])
-        switch status {
-        case .enabled:
-            isEnabled = true
-            requiresApproval = false
-            statusTitle = "已启用"
-            statusDetail = "登录后会自动启动。"
-        case .notRegistered:
-            isEnabled = false
-            requiresApproval = false
-            statusTitle = "未启用"
-            statusDetail = "不会在登录后自动启动。"
-        case .requiresApproval:
-            isEnabled = false
-            requiresApproval = true
-            statusTitle = "待确认"
-            statusDetail = "需要在系统设置中确认。"
-        case .notFound:
-            isEnabled = false
-            requiresApproval = false
-            statusTitle = "不可用"
-            statusDetail = "未能识别为登录项。请使用 ./run.sh 安装为 .app bundle。"
-        @unknown default:
-            isEnabled = false
-            requiresApproval = false
-            statusTitle = "未知"
-            statusDetail = "系统返回未知状态。"
-        }
+        let presentation = Self.loginItemPresentation(for: status)
+        isEnabled = presentation.isEnabled
+        requiresApproval = presentation.requiresApproval
+        statusTitle = presentation.title
+        statusDetail = presentation.detail
 
         // 清理指向 .build/ 目录的旧裸二进制 login items（只执行一次）
         if !didCleanupStaleItems {
             cleanupStaleLoginItems()
             didCleanupStaleItems = true
+        }
+    }
+
+    /// SMAppService 登录项状态 → UI 展示四元组（纯函数，refresh 状态机回填语义）。
+    static func loginItemPresentation(
+        for status: SMAppService.Status
+    ) -> (isEnabled: Bool, requiresApproval: Bool, title: String, detail: String) {
+        switch status {
+        case .enabled:
+            return (true, false, "已启用", "登录后会自动启动。")
+        case .notRegistered:
+            return (false, false, "未启用", "不会在登录后自动启动。")
+        case .requiresApproval:
+            return (false, true, "待确认", "需要在系统设置中确认。")
+        case .notFound:
+            return (false, false, "不可用", "未能识别为登录项。请使用 ./run.sh 安装为 .app bundle。")
+        @unknown default:
+            return (false, false, "未知", "系统返回未知状态。")
         }
     }
 
