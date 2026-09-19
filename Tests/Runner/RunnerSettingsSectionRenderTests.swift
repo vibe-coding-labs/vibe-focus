@@ -100,3 +100,40 @@ extension RunnerHarness {
         check("renderDeep: 字号/透明度/缩放/边距端值渲染", renderOK)
     }
 }
+
+// MARK: - B257：TerminalGridSection / ClaudeHookSection ImageRenderer 全树渲染
+
+extension RunnerHarness {
+    func runSettingsSectionDeepRender2Tests() {
+        let view = SettingsView()
+
+        // ===== A. TerminalGridSection 全段 + 子面板逐一渲染 =====
+        // （GridTargetCode.parse / gridMinimapScreens 真实屏幕数据源；按钮闭包不触发=
+        //  安装/捕获/恢复等真机动作留白不变）
+        do {
+            let whole = ImageRenderer(content: view.terminalGridSection)
+            check("renderTG: 全段渲染出图", whole.nsImage != nil)
+
+            let minimap = ImageRenderer(content: view.gridMinimapPanel)
+            check("renderTG: minimap 面板渲染出图", minimap.nsImage != nil)
+
+            let session = ImageRenderer(content: view.terminalSessionCard)
+            check("renderTG: 会话卡片渲染出图", session.nsImage != nil)
+        }
+
+        // ===== B. claudeHookSection ImageRenderer 全树渲染 =====
+        // （isHookInstalled 读真身 ~/.claude/settings.json——本机已安装=已安装分支；
+        //  未安装分支随真机卸载态。按钮闭包（一键安装/卸载/测试）留白。）
+        do {
+            var on = view
+            on.hookEnabled = true
+            let r1 = ImageRenderer(content: on.claudeHookSection)
+            check("renderClaude2: hookEnabled=true 全树渲染出图", r1.nsImage != nil)
+
+            var off = view
+            off.hookEnabled = false
+            let r2 = ImageRenderer(content: off.claudeHookSection)
+            check("renderClaude2: hookEnabled=false 全树渲染出图", r2.nsImage != nil)
+        }
+    }
+}
