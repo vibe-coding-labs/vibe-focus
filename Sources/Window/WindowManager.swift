@@ -39,7 +39,8 @@ final class WindowManager: @unchecked Sendable {
 
     /// Get the main screen (the one with the menu bar).
     ///
-    /// Tries `NSScreen.screens.first { isMainScreen }` first, falls back to `NSScreen.main`.
+    /// Tries `NSScreen.screens.first { isMainScreen }` first, falls back to CoordinateKit.primaryScreen
+    /// （B234 审计：主屏语义禁用 NSScreen.main 兜底——那是焦点屏，多屏焦点漂移）。
     /// Can block if WindowServer is busy during screen reconfiguration.
     ///
     /// - Returns: The main NSScreen, or nil if unavailable
@@ -52,7 +53,7 @@ final class WindowManager: @unchecked Sendable {
             if durMs >= 30 { log("[WindowManager] getMainScreen slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
         #endif
-        return NSScreen.screens.first { $0.isMainScreen } ?? NSScreen.main
+        return NSScreen.screens.first { $0.isMainScreen } ?? CoordinateKit.primaryScreen
     }
 
     /// 运行期 AX 授权翻转监控（2026-09-06：并行会话安装实验毒化 TCC 行，move_to_main

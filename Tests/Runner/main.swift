@@ -326,6 +326,7 @@ final class FakeAuditor: RestoreAuditing {
         runFocusResolutionTests()
         runGeneratorDoctorTailTests()
         runDoctorReportTailTests()
+        runPrimaryScreenAuditTests()
         runLANSettingsViewTests()
         runBacktraceSamplerTests()
         runOverlaySpaceQueryTests()
