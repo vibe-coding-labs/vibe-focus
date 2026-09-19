@@ -283,6 +283,8 @@ final class FakeAuditor: RestoreAuditing {
         runPerfMonitorTests()
         runSpaceSwitchTests()
         runSpaceQueryYabaiTests()
+        runSpoolDrainLifecycleTests()
+        runVoiceLLMSummaryTests()
         runOverlaySignalTests()
         runStorageSweepTests()
         runHookInstallSweepTests()
