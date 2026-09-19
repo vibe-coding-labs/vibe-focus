@@ -75,9 +75,10 @@ extension TerminalGridController {
     }
 
     func primaryScreen() -> NSScreen? {
+        // B234 审计：去掉 NSScreen.main 中间兜底（焦点屏≠主屏），CGMainDisplayID
+        // 首选 + CoordinateKit.primaryScreen（origin .zero 契约）兜底。
         NSScreen.screens.first { CoordinateKit.cgDisplayID(for: $0) == CGMainDisplayID() }
-            ?? NSScreen.main
-            ?? NSScreen.screens.first
+            ?? CoordinateKit.primaryScreen
     }
 
     private func focusedWindowScreen() -> NSScreen? {
