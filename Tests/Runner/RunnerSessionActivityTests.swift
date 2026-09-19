@@ -113,4 +113,40 @@ extension RunnerHarness {
             check("sessAct D6: loadPersisted 只读调用安全", true)
         }
     }
+
+    // MARK: - B278：prune 年龄/容量淘汰 + parseActivities 坏条目跳过残支
+    func runSessionActivityPruneParseTests() {
+        let tracker = SessionActivityTracker.shared
+        tracker.resetForTesting()
+        defer { tracker.resetForTesting() }
+
+        tracker.record(sessionID: "old", event: .userPromptSubmit, code: nil, at: Date().addingTimeInterval(-3600))
+        tracker.record(sessionID: "new", event: .stop, code: nil, at: Date())
+        tracker.prune(now: Date(), maxAge: 60, maxSessions: 100)
+        check("sat: 超龄条目被淘汰", tracker.activity(for: "old") == nil)
+        check("sat: 新鲜条目保留", tracker.activity(for: "new") != nil)
+
+        tracker.resetForTesting()
+        tracker.record(sessionID: "a", event: .stop, code: nil, at: Date().addingTimeInterval(-30))
+        tracker.record(sessionID: "b", event: .stop, code: nil, at: Date().addingTimeInterval(-20))
+        tracker.record(sessionID: "c", event: .stop, code: nil, at: Date())
+        tracker.prune(now: Date(), maxAge: 3600, maxSessions: 2)
+        check("sat: 容量淘汰最老者", tracker.activity(for: "a") == nil
+              && tracker.activity(for: "b") != nil && tracker.activity(for: "c") != nil)
+
+        let payload = """
+        {"version":1,"sessions":{
+          "good":{"event":"Stop","at":"2026-09-20T00:00:00Z","code":"0"},
+          "badEvent":{"event":"Nope","at":"2026-09-20T00:00:00Z"},
+          "badDate":{"event":"stop","at":"not-a-date"},
+          "noEvent":{"at":"2026-09-20T00:00:00Z"}
+        }}
+        """.data(using: .utf8)!
+        let parsed = SessionActivityTracker.parseActivities(data: payload)
+        check("sat: 解析只留合法条目", parsed?.count == 1 && parsed?["good"] != nil)
+        check("sat: 合法条目 code 可选回读", parsed?["good"]?.lastCode == "0")
+        let roundTrip = SessionActivityTracker.encodeActivities(activities: parsed ?? [:])
+        check("sat: 编码往返含 code", roundTrip != nil
+              && String(data: roundTrip!, encoding: .utf8)!.contains("\"code\":\"0\""))
+    }
 }
