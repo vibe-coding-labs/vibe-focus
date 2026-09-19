@@ -73,3 +73,15 @@ Toggle/restore 决策（B219）等——多线合流持续推高全景。
 2. C 档豁免面：每项有明确「为什么不能在 CLI 测」+ 对应真机验证通道；
 3. 已知债务：并发 Runner 跨进程 UserDefaults 污染（remoteInstall/hookDispatch/screenPos 偶发红，
    复跑即绿）——建议冲刺收敛后统一补全 domain/defaults 注入隔离。
+
+## 可测面清零确认（B246，2026-09-19）
+
+对全部 Sources 做「0 覆盖函数」扫描（llvm-cov show 行级 func 过滤，排除 C1~C7 已归因文件）后确认：
+剩余 0% 函数全部属于以下三类，不存在「可直测但未测」的漏网函数——
+1. 真实窗口/会话操作（SpaceController+Move/Focus、WindowManager+Restore、SessionRestoreExecutor.deliver、
+   TerminalGridController+Automation、InputBubbleController 弹窗依赖方法）→ C7，真机 E2E 通道；
+2. 系统交互（YabaiClient fork 系、SpaceController+Recovery/SARecoveryAdmin 的 osascript/admin、
+   Overlay 显示、WindowManager+AXRead/notifyAccessibilityPermissionRequired）→ C3/C5；
+3. private 渲染辅助（SessionLists.refreshGeo/rowView/statusTint 等）→ C6。
+SettingsView 各 section 的 func 级已清零（refreshSelectionInfo/runGridTask 归 C7/C2）。
+可测面推满达成。后续增量策略：新增代码按五通道同步补测；并行线 window/bubble 主攻段并入后按本清单归因。
