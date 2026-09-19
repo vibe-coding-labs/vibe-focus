@@ -356,6 +356,7 @@ final class FakeAuditor: RestoreAuditing {
         runLLMSummaryFallbackTests()
         runBubbleHistoryPanelViewTests()
         runReadOnlySweepTests()
+        runCaptureSeamTests()
         runSettingsViewSectionBodyTests()
     // MARK: 汇总
 
