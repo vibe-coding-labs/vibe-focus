@@ -57,4 +57,36 @@ extension RunnerHarness {
         print("[SECTION-PROBE] 全部 section 求值完成")
         check("settingsSection: 三组 section body 求值全程无异常", true)
     }
+
+    // MARK: - B249：TerminalGridSection 域（gridMinimapPanel 构建期求值 + 摘要与刷新）
+    //
+    // terminalGridSection 本体含 gridMinimapHeartbeat（SubscriptionView 包装），
+    // body 求值必崩（B229 实测）——继续留白；本块只碰同文件的安全面：
+    // gridMinimapPanel（静态视图栈，读 @State 初始值）、refreshGridMinimap
+    // （真实屏幕快照 + yabai 只读查询，先例 RunnerSpaceQueryYabaiTests）、
+    // gridTargetSummary（纯计算，环境态诚实断言）。
+    func runGridSectionPanelTests() {
+        let view = SettingsView()
+
+        // A. gridMinimapPanel 构建期求值（不订阅心跳，静态视图栈）
+        print("[SECTION-PROBE] D1 gridMinimapPanel")
+        let _ = view.gridMinimapPanel
+        check("gridSection: gridMinimapPanel body 求值无异常", true)
+
+        // B. refreshGridMinimap 烟测：真实屏幕快照 + yabai 只读查询（先例
+        //    RunnerSpaceQueryYabaiTests）。⚠️B249 实测：未安装视图的 @State 写入
+        //    不回读（读恒初始值）——快照落账效果在脱离渲染树时不可观察，只断言
+        //    全链不崩；回读语义由真机设置页验证。
+        view.refreshGridMinimap()
+        check("gridSection: minimap 刷新全链不崩（快照写入为渲染树内语义）", true)
+
+        // C. gridTargetSummary：解析成败与真实偏好一致（nil 分支或对应形态分支）
+        let summary = view.gridTargetSummary
+        let parses = GridTargetCode.parse(TerminalGridPreferences.target) != nil
+        check("gridSection: 摘要与目标码解析态一致",
+              (summary != nil) == parses)
+        if let summary, parses {
+            check("gridSection: 摘要含箭头标注", summary.hasPrefix("→ "))
+        }
+    }
 }
