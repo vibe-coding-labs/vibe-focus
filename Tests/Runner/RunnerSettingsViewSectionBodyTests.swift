@@ -141,4 +141,37 @@ extension RunnerHarness {
         let _ = view.projectRulesSection
         check("soundRules: 规则态 body 求值无异常", true)
     }
+
+    // MARK: - B269：WorkspaceSection 条件分支注入求值（availability 可写 @Published）
+    //
+    // B229 只测了真实态求值；本块经 @Published availability 注入 .notInstalled /
+    // .available 双态，覆盖安装引导分支（brew 指引 CodeBlock/按钮行）与已装态分支。
+    // 快照-还原，只动 Runner 进程内 SpaceController 实例（生产 app 独立进程不受影响）。
+    func runWorkspaceSectionBranchTests() {
+        let view = SettingsView()
+        let sc = SpaceController.shared
+        let savedAvailability = sc.availability
+        let savedEnabled = sc.isEnabled
+        defer {
+            sc.availability = savedAvailability
+            sc.isEnabled = savedEnabled
+        }
+
+        sc.availability = .notInstalled
+        print("[SECTION-PROBE] F1 workspaceSection(notInstalled)")
+        let _ = view.workspaceSection
+        check("workspace: 未安装态安装引导分支求值无异常", true)
+
+        sc.availability = .available
+        sc.isEnabled = true
+        print("[SECTION-PROBE] F2 workspaceSection(available)")
+        let _ = view.workspaceSection
+        check("workspace: 已装态分支求值无异常", true)
+
+        // refreshInstallations 烟测：后台只读扫描（findAppBundlePaths）+ 主线程回填
+        view.refreshInstallations()
+        Thread.sleep(forTimeInterval: 0.5)
+        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        check("workspace: 安装扫描全链不崩", true)
+    }
 }
