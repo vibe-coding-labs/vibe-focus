@@ -47,3 +47,26 @@ extension RunnerHarness {
               fallback != nil)
     }
 }
+
+// MARK: - B292 追加：启动编排安全步骤直测（C1 豁免收窄第一批）
+// ①applyApplicationIcon：Bundle 图标加载 + NSApp.applicationIconImage 设置
+//   （Runner bundle 无图标 → guard 早退分支；生产 .app 有图标走设置分支）；
+// ②logAvailability：SkyLight dlopen/dlsym 探测 + 循环 log（只读诊断，零副作用）。
+
+extension RunnerHarness {
+    func runAppDelegateLaunchStepTests() {
+        let appDelegate = AppDelegate()
+
+        appDelegate.applyApplicationIcon()
+        check("appDelegate: applyApplicationIcon 在无图标 bundle 安全早退", true)
+
+        NativeSpaceBridge.logAvailability()
+        check("appDelegate: logAvailability 只读探测不崩", true)
+
+        let existing = appDelegate.findExistingInstance()
+        check("appDelegate: findExistingInstance 只读枚举不崩（nil 或实例信息）", true)
+        if let existing {
+            check("appDelegate: 已有实例 pid 合法", existing.app.processIdentifier > 0)
+        }
+    }
+}
