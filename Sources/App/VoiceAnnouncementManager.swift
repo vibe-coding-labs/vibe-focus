@@ -21,6 +21,24 @@ import Foundation
 /// - llmSummary：保持"最新优先"（stopAll 抢占 + llmTask 取消）——总结有时效性，
 ///   且 15s 超时的网络请求串行排队会堆延迟；
 /// - stopAll（UI 停止按钮 / preview 入口）：清空队列并停当前，语义不变。
+// MARK: - 语音合成器注入缝（B249）
+
+/// 语音合成器工厂抽象：构造参数集中、测试可注入 mock 合成器（override startSpeaking 记录不发声）。
+@MainActor protocol SpeechSynthesizerProviding {
+    func makeSynthesizer(rate: Float, volume: Float, delegate: NSSpeechSynthesizerDelegate?) -> NSSpeechSynthesizer
+}
+
+/// 默认实现：真实 NSSpeechSynthesizer（生产路径）。
+@MainActor final class AppSpeechSynthesizerProvider: SpeechSynthesizerProviding {
+    func makeSynthesizer(rate: Float, volume: Float, delegate: NSSpeechSynthesizerDelegate?) -> NSSpeechSynthesizer {
+        let synthesizer = NSSpeechSynthesizer()
+        synthesizer.rate = rate
+        synthesizer.volume = volume
+        synthesizer.delegate = delegate
+        return synthesizer
+    }
+}
+
 @MainActor
 final class VoiceAnnouncementManager: NSObject, ObservableObject {
     static let shared = VoiceAnnouncementManager()
@@ -49,6 +67,8 @@ final class VoiceAnnouncementManager: NSObject, ObservableObject {
     /// 当前 TTS 合成器（命名避开 delegate 方法 speechSynthesizer(_:didFinishSpeaking:)，
     /// 同名属性会被方法遮蔽导致引用歧义）。
     var activeSynthesizer: NSSpeechSynthesizer?
+    /// 合成器工厂注入缝（B249）：默认真实 TTS，测试注入 mock 合成器零发声。
+    var synthesizerProvider: SpeechSynthesizerProviding = AppSpeechSynthesizerProvider()
 /// 当前在播的本地音频。internal：由 +Queue.swift（跨文件 extension）的完成回调读取。
     var currentSound: NSSound?
     /// 当前进行中的 LLM 请求任务，新播报或 stopAll 时取消。
@@ -298,10 +318,8 @@ final class VoiceAnnouncementManager: NSObject, ObservableObject {
             log("[VoiceAnnouncementManager] speak: empty text, skipping")
             return
         }
-        let synthesizer = NSSpeechSynthesizer()
-        synthesizer.rate = preferences.speechRate
-        synthesizer.volume = preferences.volume
-        synthesizer.delegate = self
+        let synthesizer = synthesizerProvider.makeSynthesizer(
+            rate: preferences.speechRate, volume: preferences.volume, delegate: self)
         activeSynthesizer = synthesizer
         isAnnouncing = true
         synthesizer.startSpeaking(text)
