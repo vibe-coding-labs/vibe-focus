@@ -484,3 +484,13 @@ extension RunnerHarness {
         check("renderAll: workspaceSection 渲染出图", rWS.nsImage != nil)
     }
 }
+
+// MARK: - B265：SettingsUI/SessionLists 渲染
+
+extension RunnerHarness {
+    func runSessionListsRenderTests() {
+        let view = SettingsView()
+        let r = ImageRenderer(content: view.activeSessionList)
+        check("sessionLists: activeSessionList 渲染出图", r.nsImage != nil)
+    }
+}
