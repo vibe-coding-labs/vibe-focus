@@ -2087,7 +2087,7 @@ extension RunnerHarness {
         UserDefaults.standard.removeObject(forKey: ClaudeHookPreferences.lastInstallAtKey)
 
         // A. 安装全链：settings.json 合并 hooks + 脚本/配置落临时 home
-        let (installOK, installMsg) = ClaudeHookPreferences.installHookToClaudeSettings(home: home)
+        let (installOK, _) = ClaudeHookPreferences.installHookToClaudeSettings(home: home)
         let settingsPath = ClaudeHookPreferences.claudeSettingsPath(home: home)
         let settings = (try? JSONSerialization.jsonObject(with: fm.contents(atPath: settingsPath) ?? Data())) as? [String: Any]
         let hooks = settings?["hooks"] as? [String: Any]
