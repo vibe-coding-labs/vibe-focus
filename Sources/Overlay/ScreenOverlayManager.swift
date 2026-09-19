@@ -103,7 +103,15 @@ final class ScreenOverlayManager: ObservableObject {
         }
     }
 
-    private init() {
+    private convenience init() {
+        self.init(startTimerAutomatically: true)
+    }
+
+    /// B239 测试构造缝：startTimerAutomatically=false 时不启动 2s 刷新 Timer、
+    /// 不注册屏幕变化 observer 与 yabai/挂起信号——Runner 可安全构造实例驱动
+    /// async 查询族（SpaceQuery 层不访问 UI 状态）。生产 shared 走默认 true，
+    /// 行为零变化。
+    init(startTimerAutomatically: Bool) {
         self.preferences = ScreenIndexPreferences.load()
         // init() 只读不写：持久化完全由 didSet → save() 在用户实际修改时驱动。
         // 历史上这里曾有启动期 save()（无条件 → guarded backfill），在 SQLite 瞬时
@@ -114,6 +122,7 @@ final class ScreenOverlayManager: ObservableObject {
         if crashLoopSuppressed {
             log("[ScreenOverlayManager] CRASH LOOP detected (fatal signal within 60s), overlay window creation suppressed for this launch", level: .error)
         }
+        guard startTimerAutomatically else { return }
         setupSignalHandler()
         registerYabaiSignals()
         // 屏幕配置变化（显示器插拔/重排）主动响应。此前 handleScreenChange 是死代码
