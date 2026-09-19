@@ -70,28 +70,7 @@ final class LoginItemManager: ObservableObject {
             ])
         }
         #endif
-        let script = """
-        tell application "System Events"
-            set theItems to every login item
-            set toDelete to {}
-            repeat with anItem in theItems
-                set itemPath to path of anItem
-                if itemPath is missing value then
-                    set itemName to name of anItem
-                    if itemName contains "VibeFocus" or itemName contains "vibe-focus" then
-                        set end of toDelete to anItem
-                    end if
-                else if itemPath contains ".build/" and (itemPath contains "VibeFocus" or itemPath contains "vibe-focus") then
-                    set end of toDelete to anItem
-                end if
-            end repeat
-            set deletedCount to count of toDelete
-            repeat with anItem in toDelete
-                delete anItem
-            end repeat
-            return deletedCount as text
-        end tell
-        """
+        let script = Self.staleLoginItemsCleanupScript()
         guard let appleScript = NSAppleScript(source: script) else { return }
         // 2026-09-06：NSAppleScript 移出主线程。execute 会在主线程泵嵌套
         // RunLoop（WNEInternal），期间派发队列上排队的 MainActor 任务被重入执行，
@@ -123,6 +102,34 @@ final class LoginItemManager: ObservableObject {
                 )
             }
         }
+    }
+
+    /// 陈旧 login item 清理脚本（纯函数，B264 提取）：System Events 遍历登录项，
+    /// 删除「无路径且名字含 VibeFocus/vibe-focus」或「路径含 .build/ 且名字匹配」的条目，
+    /// 返回删除计数文本。测试锁定清理语义。
+    static func staleLoginItemsCleanupScript() -> String {
+        return """
+        tell application "System Events"
+            set theItems to every login item
+            set toDelete to {}
+            repeat with anItem in theItems
+                set itemPath to path of anItem
+                if itemPath is missing value then
+                    set itemName to name of anItem
+                    if itemName contains "VibeFocus" or itemName contains "vibe-focus" then
+                        set end of toDelete to anItem
+                    end if
+                else if itemPath contains ".build/" and (itemPath contains "VibeFocus" or itemPath contains "vibe-focus") then
+                    set end of toDelete to anItem
+                end if
+            end repeat
+            set deletedCount to count of toDelete
+            repeat with anItem in toDelete
+                delete anItem
+            end repeat
+            return deletedCount as text
+        end tell
+        """
     }
 
     func setEnabled(_ enabled: Bool) {

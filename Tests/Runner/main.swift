@@ -339,6 +339,7 @@ final class FakeAuditor: RestoreAuditing {
         runSpaceQueryReadOnlyTests()
         runTargetResolveTests()
         runHookTestAndAXReadTests()
+        runLoginItemCleanupTests()
         runAXWriteFailPathTests()
         runToggleEngineStoreTests()
         runBubblePreferencesBranchTests()
