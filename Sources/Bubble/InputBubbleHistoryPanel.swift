@@ -588,6 +588,12 @@ final class InputBubbleHistoryPanelController: NSObject {
     // MARK: 定位（锚气泡：先右后左，双轴夹进所在屏可视区）
 
     private func origin(anchorFrame: CGRect, panelSize: NSSize, visibleFrame: CGRect) -> NSPoint {
+        Self.panelOrigin(anchorFrame: anchorFrame, panelSize: panelSize, visibleFrame: visibleFrame)
+    }
+
+    /// 面板定位决策（纯函数，B242 提纯 Runner 直测）：X 先贴气泡右侧 8pt，右侧放不下
+    /// 改左侧，再放不下夹进可视区；Y 贴气泡顶沿对齐后双轴夹进可视区（上下各留 8pt）。
+    static func panelOrigin(anchorFrame: CGRect, panelSize: NSSize, visibleFrame: CGRect) -> NSPoint {
         let rightX = anchorFrame.maxX + 8
         let leftX = anchorFrame.minX - 8 - panelSize.width
         let x = rightX + panelSize.width <= visibleFrame.maxX
