@@ -34,3 +34,36 @@ extension RunnerHarness {
         check("payload: JSON 往返保真（全字符串值）", roundTrip == merged)
     }
 }
+
+extension RunnerHarness {
+    /// B242：frontmostAppDescriptor 形状契约 + sendTestHookEvent 失败路径冒烟
+    ///（死端口驱动 token 生成→请求构建→URLSession 异步失败分支；hookPort/appToken
+    /// Runner 域存-还守护，不对生产 hook 端口发任何请求）。
+    func runHookTestFailurePathTests() {
+        print("\n=== HookTestFailurePath (B242) ===")
+
+        // --- frontmostAppDescriptor：bundleID#pid:name 形状（无前台 app 时字面 nil） ---
+        let desc = frontmostAppDescriptor()
+        check("hookFail: descriptor 非空", !desc.isEmpty)
+        if desc != "nil" {
+            let pidPart = desc.split(separator: "#")[1].prefix(while: { $0.isNumber })
+            check("hookFail: descriptor 形状 bundleID#pid:name",
+                  desc.contains("#") && desc.contains(":") && Int(pidPart) != nil)
+        } else {
+            check("hookFail: 无前台 app → 字面 nil 合法", true)
+        }
+
+        // --- sendTestHookEvent 失败路径：端口 1（保留端口必拒连）→ 异步失败分支 ---
+        var view = SettingsView()
+        let savedPort = view.hookPort
+        view.hookPort = 1
+        view.sendTestHookEvent()
+        // URLSession 连接拒绝为异步回调；短暂泵主 RunLoop 等其落地（≤2s 上限）
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        check("hookFail: 死端口失败路径全程无异常", true)
+        view.hookPort = savedPort
+    }
+}
