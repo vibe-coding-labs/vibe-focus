@@ -12,9 +12,13 @@ import ApplicationServices
 final class ToggleEngine: ToggleRecordStore, @unchecked Sendable {
 
     static let shared = ToggleEngine()
-    private init() {}
 
-    private var store: WindowStateStore { WindowStateStore.shared }
+    /// 测试注入缝：Runner 单测定向隔离 DB（生产恒走 WindowStateStore.shared，B214）。
+    private let storeOverride: WindowStateStore?
+    private var store: WindowStateStore { storeOverride ?? WindowStateStore.shared }
+
+    private init() { storeOverride = nil }
+    init(store: WindowStateStore) { storeOverride = store }
 
     var displayCount: Int {
         // P-INST-267: 显示器数量计算属性（NSScreen.screens.count 读 + max(...,1) 保证 ≥1；toggle 入口判断单屏/多屏调用，NSScreen.screens 可能阻塞 WindowServer；slow-op ≥30ms warn）。

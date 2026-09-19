@@ -254,7 +254,14 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleHistorySearchTests()
         runBubbleHistoryPanelKeyTests()
         runPerfMonitorTests()
+        runToggleEngineStoreTests()
+        runBubblePreferencesBranchTests()
+        runBindingVerifierTests()
         runSettingsDesignSystemTests()
+        runSessionRestoreStoreIOTests()
+        runAuditLoggerTests()
+        runCrashContextTests()
+        runVoiceAnnouncementTests()
         runLANSettingsViewTests()
     // MARK: 汇总
 
