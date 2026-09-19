@@ -243,6 +243,19 @@ extension WindowManager {
             "sessionID": sessionID ?? "nil"
         ])
 
+        // B247：归因记账提前到入口——B211 把记账放在管线收尾（.moved 分支），但窗口
+        // 落主屏的 CG 可见性发生在管线中途（move 原语落地后还有 settle/收敛轮询/回读
+        /// 数百 ms），气泡 tick（1s 节拍）会先看到跨越；此时账本还没写 → nil 归因 →
+        // skipExternalMove 静默吞掉用户拉回。真机实锤 2026-09-19 19:07 toggle-00000160：
+        // 移动成功，tick 在收尾前 ~180ms 观测到跨越被吞。入口先记账（先于任何可被
+        // tick 观测的位置变化），收尾 effectiveWindowID 的记账保留（覆盖 resolveWindow
+        // 换 ID 的形态，同 mover 重写最新胜）。移动失败的残留记录无跨越可消费、10s
+        // 过期，唯一影响是失败后 10s 内同窗外部移动被归我们——罕见且无害（该窗本来
+        // 就是用户刚试图拉回的会话窗）。
+        MoveToMainAttributionLedger.shared.record(
+            windowID: identity.windowID,
+            mover: InputBubbleArrivalMover.map(reason))
+
         // B147/B148 离屏救援前置：绑定窗在不可见 space 时（AX 对离屏窗位置读写 -25205，
         // 真机实测），先聚焦带动把该窗所在 space 切到前台，等上屏后管线才能 resolve/move。
         rescueOffScreenWindowIfNeeded(windowID: identity.windowID, op: op)
