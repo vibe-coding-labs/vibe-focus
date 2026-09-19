@@ -759,6 +759,31 @@ extension RunnerHarness {
                   reg.bindingLookupMissCache.count == 64
                   && reg.bindingLookupMissCache[400] == nil
                   && reg.bindingLookupMissCache[469] != nil)
+
+            // ⑥ B250：toggle 落账假行（saveToggleRecord 兜底 INSERT 形态：session_id=NULL、
+            // is_completed=0，任何被 ⌃Q 过的窗都有一行）不得算「挂活跃会话」——旧判据
+            // 只看 isCompleted 时绑定门恒真（B212「userAction 挂会话才弹」自失效；真机
+            // E2E 2026-09-19 12:00 实锤：UPS 绑定失败仍 summon=吃到上一拍 toggle 假行）。
+            solo.saveWindowState(WindowState(
+                windowID: 304, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "toggle-only",
+                termSessionID: nil, itermSessionID: nil, sessionID: nil,
+                bindingType: .local, isCompleted: false, createdAt: t0, updatedAt: t0))
+            check("swrMiss: DB toggle 假行（sessionID=NULL）不算活跃绑定且进负缓存",
+                  reg.hasLiveSessionBinding(windowID: 304, now: t0.addingTimeInterval(20), missCacheTTL: 5) == false
+                  && reg.bindingLookupMissCache[304] == t0.addingTimeInterval(20))
+
+            // ⑦ 内存路径同口径：init 的 loadAllWindowStates 也装载 toggle-only 行
+            reg.windowStates[305] = WindowState(
+                windowID: 305, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "mem-toggle-only",
+                termSessionID: nil, itermSessionID: nil, sessionID: nil,
+                bindingType: .local, isCompleted: false, createdAt: t0, updatedAt: t0)
+            check("swrMiss: 内存 toggle-only 行不算活跃绑定",
+                  reg.hasLiveSessionBinding(windowID: 305, now: t0.addingTimeInterval(21), missCacheTTL: 5) == false)
+            check("swrMiss: 会话面板过滤 toggle 幽灵行（activeBindingsForUI 收 sessionID≠nil）",
+                  reg.activeBindingsForUI.contains { $0.windowID == 305 } == false
+                  && reg.activeBindingsForUI.contains { $0.windowID == 303 })
         }
 
         // pruneExpiredBindings 内存+DB 双层清理（B111：保留期 24h 活跃/4h 完成，removed>0 才触发内存过滤）

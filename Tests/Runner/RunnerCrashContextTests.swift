@@ -339,4 +339,23 @@ extension RunnerHarness {
                   inst.latestCrashReportURL()?.lastPathComponent == "VibeFocus-new.ips")
         }
     }
+
+    // MARK: - B250：capturePreviousCrashFatalDate 只读路径（fatal 文件生产进程独占写，测试只读）
+    func runCrashFatalCaptureTests() {
+        let inst = CrashContextRecorder.shared
+        let saved = inst.previousCrashFatalAt
+        defer { inst.previousCrashFatalAt = saved }
+
+        let fatalPath = diagnosticFatalLogPath()
+        let attrs = try? FileManager.default.attributesOfItem(atPath: fatalPath)
+        let size = attrs?[.size] as? Int ?? 0
+        inst.capturePreviousCrashFatalDate()
+        if size > 0, let mtime = attrs?[.modificationDate] as? Date {
+            check("crashFatal: 有致命记录时捕获 mtime",
+                  inst.previousCrashFatalAt == mtime)
+        } else {
+            check("crashFatal: 无致命记录时保持不变",
+                  inst.previousCrashFatalAt == saved)
+        }
+    }
 }
