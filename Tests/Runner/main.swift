@@ -354,6 +354,7 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleButtonCursorTests()
         runSelectionRefreshTests()
         runHotKeyManagerStateTests()
+        runBubbleHistoryPanelGuardTests()
         runToggleEngineStoreTests()
         runBubblePreferencesBranchTests()
         runBindingVerifierTests()
