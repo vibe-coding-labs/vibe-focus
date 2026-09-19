@@ -246,6 +246,7 @@ final class FakeAuditor: RestoreAuditing {
         runHookModelsTests()
         runSpaceIndexTests()
         runSpaceContextTests()
+        runSpaceQueryShapeTests()
         runYabaiUtilsTests()
         runCoordinateTypesTests()
         runSpaceIdentityTests()
@@ -356,6 +357,7 @@ final class FakeAuditor: RestoreAuditing {
         runLLMSummaryFallbackTests()
         runBubbleHistoryPanelViewTests()
         runReadOnlySweepTests()
+        runCaptureSeamTests()
         runSettingsViewSectionBodyTests()
     // MARK: 汇总
 
