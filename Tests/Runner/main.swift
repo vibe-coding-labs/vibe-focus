@@ -281,6 +281,7 @@ final class FakeAuditor: RestoreAuditing {
         runVoiceAnnouncementTests()
         runHookPrefsSweepTests()
         runSpoolProcessTests()
+        runHookDispatchTests()
         runLANSettingsViewTests()
         runBacktraceSamplerTests()
         runOverlaySpaceQueryTests()
