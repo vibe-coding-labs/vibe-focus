@@ -152,9 +152,18 @@ enum RemoteSpoolHosts {
 
 // MARK: - Mac 侧拉取器（定时 ssh exec 逐主机读 spool 回灌事件管线）
 
+/// ssh 执行注入缝（B232）：默认真身 runProcess；Runner 测试注入假 runner
+/// 零 fork 直驱 drain 生命周期（仓库 `runner:` 默认参数家法，与 ClaudeSessionLocator 同款）。
+typealias SpoolProcessRunner = @Sendable (String, [String], TimeInterval) -> (exitCode: Int32, stdout: String, stderr: String)?
+
 @MainActor
 final class RemoteSpoolDrainer: ObservableObject {
     static let shared = RemoteSpoolDrainer()
+
+    /// 进程执行缝：生产恒用默认真身；仅测试注入。
+    var processRunner: SpoolProcessRunner = { executable, arguments, timeout in
+        RemoteSpoolDrainer.runProcess(executable: executable, arguments: arguments, timeout: timeout)
+    }
 
     struct HostStatus: Equatable {
         var lastDrainAt: Date?
@@ -176,10 +185,11 @@ final class RemoteSpoolDrainer: ObservableObject {
     static let maxReplaysPerTick = 4
 
     private var timer: Timer?
-    private var inFlight: Set<String> = []
+    /// B232 internal 化（测试观测/复位；行为不变）
+    var inFlight: Set<String> = []
     /// 已从远程 spool 取走、但超出本 tick 预算待回灌的事件（内存缓冲；app 退出即失，
-    /// 与回灌中途崩溃的既有风险同级）。
-    private var pendingReplay: [String] = []
+    /// 与回灌中途崩溃的既有风险同级）。B232 internal 化（测试观测/复位；行为不变）。
+    var pendingReplay: [String] = []
 
     /// 与 hook 服务同生命周期：启用且有注册主机才轮询；主机清单变化无需重启
     /// （tick 每轮现读注册表），仅启停边界需重调用。
@@ -231,7 +241,7 @@ final class RemoteSpoolDrainer: ObservableObject {
 
     /// 积压回灌（与 finishDrain 同管线同 token 门；事件已离开远程 spool，只能
     /// 内存顺延不能丢弃）。
-    private func replayDeferred(_ lines: [String]) async {
+    func replayDeferred(_ lines: [String]) async {
         guard ClaudeHookPreferences.isEnabled else {
             log("[RemoteSpoolDrainer] deferred events dropped (hook disabled)", level: .warn, fields: [
                 "count": String(lines.count)
@@ -254,7 +264,7 @@ final class RemoteSpoolDrainer: ObservableObject {
         }
     }
 
-    private func startDrain(host: String) {
+    func startDrain(host: String) {
         inFlight.insert(host)
         let command = RemoteSpoolDrainLogic.drainCommand(
             stalenessMinutes: Self.stalenessMinutes,
@@ -263,15 +273,17 @@ final class RemoteSpoolDrainer: ObservableObject {
         let arguments = RemoteSpoolDrainLogic.sshArguments(target: host, command: command)
         let timeout = Self.drainTimeout
         log("[RemoteSpoolDrainer] drain start", level: .debug, fields: ["host": host])
+        // B232：主线程先捕获注入缝闭包值再下放后台（后台闭包不读 MainActor 隔离属性）
+        let runner = processRunner
         DispatchQueue.global(qos: .utility).async {
-            let result = Self.runProcess(executable: "/usr/bin/ssh", arguments: arguments, timeout: timeout)
+            let result = runner("/usr/bin/ssh", arguments, timeout)
             if result == nil {
                 // B172: 超时=连接疑似半开（VPN 撤销/切换常见）。强制重置共享
                 // ControlMaster，防后续 exec 挂死等 TCP keepalive（~45s）。
-                _ = Self.runProcess(
-                    executable: "/usr/bin/ssh",
-                    arguments: RemoteSpoolDrainLogic.muxResetArguments(target: host),
-                    timeout: 8.0
+                _ = runner(
+                    "/usr/bin/ssh",
+                    RemoteSpoolDrainLogic.muxResetArguments(target: host),
+                    8.0
                 )
             }
             Task { @MainActor [weak self] in
@@ -280,7 +292,7 @@ final class RemoteSpoolDrainer: ObservableObject {
         }
     }
 
-    private func finishDrain(host: String, result: (exitCode: Int32, stdout: String, stderr: String)?) async {
+    func finishDrain(host: String, result: (exitCode: Int32, stdout: String, stderr: String)?) async {
         inFlight.remove(host)
         var status = statuses[host] ?? HostStatus()
         defer { statuses[host] = status }

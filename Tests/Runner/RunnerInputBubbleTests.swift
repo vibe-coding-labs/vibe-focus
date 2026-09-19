@@ -1296,3 +1296,98 @@ extension RunnerHarness {
         check("clip: skip 后计数复位 -1", controller.clipboardPostWriteCount == -1)
     }
 }
+
+extension RunnerHarness {
+    /// B234：气泡面板几何与 resize 拖拽状态机直测（真面板 builtPanel 缝，B178 家法）——
+    /// begin/apply/finish 三态机（起点记录/左上角固定实时尺寸/量化落账+清起点）、
+    /// phase 与起点双守卫 no-op、anchorOrigin 锚进屏可视区、containingScreenVisibleFrame、
+    /// restoredOrigin 无记忆回落锚点/有记忆界内直返。偏好与控制器状态全程存-还+orderOut 清场。
+    func runBubblePanelGeometryTests() {
+        print("\n=== BubblePanelGeometry (B234) ===")
+        let controller = InputBubbleController.shared
+        let d = UserDefaults.standard
+        let keys = ["inputBubbleWidth", "inputBubbleHeight", "inputBubbleUserFrame"]
+        let saved = keys.map { ($0, d.object(forKey: $0)) }
+        defer {
+            for (key, value) in saved {
+                if let value { d.set(value, forKey: key) } else { d.removeObject(forKey: key) }
+            }
+        }
+        d.removeObject(forKey: "inputBubbleUserFrame")
+
+        guard let mainScreen = NSScreen.screens.first(where: { $0.isMainScreen }) else {
+            check("panelGeo: 真机存在主屏（异常环境跳过）", false)
+            return
+        }
+        controller.phase = .open
+        let (panel, _) = controller.builtPanel()
+        defer {
+            panel.orderOut(nil)
+            controller.panel = nil
+            controller.textView = nil
+            controller.panelBuiltFor = nil
+            controller.phase = .idle
+            controller.resizeDragStart = nil
+        }
+
+        // --- resize 拖拽三态机：begin 记起点 → apply 左上角固定实时尺寸 → finish 量化落账 ---
+        controller.beginResizeDrag()
+        check("panelGeo: begin 记录拖拽起点（原 origin/size）",
+              controller.resizeDragStart != nil
+              && controller.resizeDragStart?.size == panel.frame.size)
+        let startOrigin = panel.frame.origin
+        let startWidth = panel.frame.width
+        let startHeight = panel.frame.height
+        controller.applyResizeDrag(dx: 60, dy: -40)  // 把手右下，向下拖 dy 负=增高
+        let topUnchanged = abs((panel.frame.origin.y + panel.frame.height) - (startOrigin.y + startHeight)) < 0.5
+        check("panelGeo: apply 变宽变高且左上角（顶边）钉住",
+              panel.frame.width > startWidth && panel.frame.height > startHeight
+              && panel.frame.origin.x == startOrigin.x && topUnchanged)
+        controller.finishResizeDrag()
+        check("panelGeo: finish 量化落账与面板同步",
+              controller.resizeDragStart == nil
+              && InputBubblePreferences.bubbleWidth == panel.frame.width
+              && InputBubblePreferences.bubbleHeight == panel.frame.height)
+        let settledWidth = panel.frame.width
+
+        // --- 守卫链：无起点 apply/finish no-op；phase 非 open 同样 no-op ---
+        controller.applyResizeDrag(dx: 30, dy: 30)
+        controller.finishResizeDrag()
+        check("panelGeo: 无起点 apply/finish no-op", panel.frame.width == settledWidth)
+        controller.beginResizeDrag()
+        controller.phase = .idle
+        let idleWidth = panel.frame.width
+        controller.applyResizeDrag(dx: 50, dy: 0)
+        check("panelGeo: phase 非 open apply no-op", panel.frame.width == idleWidth)
+        controller.phase = .open
+
+        // --- containingScreenVisibleFrame：屏 AppKit frame → 该屏 visibleFrame ---
+        check("panelGeo: 包含屏可视帧解析",
+              controller.containingScreenVisibleFrame(for: mainScreen.frame) == mainScreen.visibleFrame)
+
+        // --- anchorOrigin：目标窗（主屏 Quartz）锚点落进主屏可视区 ---
+        let mainQuartz = CGRect(
+            x: mainScreen.frame.minX,
+            y: CoordinateKit.mainScreenHeight - mainScreen.frame.maxY,
+            width: mainScreen.frame.width, height: mainScreen.frame.height)
+        let anchor = controller.anchorOrigin(targetCGFrame: mainQuartz)
+        let anchorBubble = CGRect(origin: anchor, size: controller.bubbleSize)
+        check("panelGeo: 锚点气泡整体夹进主屏可视区",
+              insetNSRect(mainScreen.visibleFrame, -2).contains(anchorBubble))
+
+        // --- restoredOrigin：无记忆回落锚点；有记忆界内直返记忆 ---
+        check("panelGeo: 从未拖动 restoredOrigin=锚点",
+              controller.restoredOrigin(targetCGFrame: mainQuartz) == anchor)
+        let remembered = NSPoint(x: mainScreen.visibleFrame.minX + 30, y: mainScreen.visibleFrame.minY + 30)
+        InputBubblePreferences.userPlacedOrigin = remembered
+        check("panelGeo: 界内记忆原样返回",
+              controller.restoredOrigin(targetCGFrame: mainQuartz) == remembered)
+        // 屏外记忆被夹回可视区
+        InputBubblePreferences.userPlacedOrigin = NSPoint(x: mainScreen.visibleFrame.maxX + 9999, y: mainScreen.visibleFrame.minY)
+        let clamped = controller.restoredOrigin(targetCGFrame: mainQuartz)
+        check("panelGeo: 屏外记忆夹回可视区",
+              insetNSRect(mainScreen.visibleFrame, -2).contains(clamped))
+    }
+
+    private func insetNSRect(_ r: NSRect, _ by: CGFloat) -> NSRect { r.insetBy(dx: by, dy: by) }
+}
