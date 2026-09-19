@@ -241,6 +241,7 @@ final class FakeAuditor: RestoreAuditing {
         runTerminalDialectTests()
         runSoundVoiceHookTests()
         runRegistryStoreTests()
+        runStorePreferenceKVTests()
         runCGWindowEntryEdgeTests()
         runRegistryPurgeTests()
         runHookWalkTests()

@@ -108,7 +108,7 @@ final class NSAppleScriptExecutor: AppleScriptExecuting {
         if bundleID == "com.apple.Terminal" {
             let diagScript = Self.makeTerminalDiagnosticScript(targetTTY: targetTTY)
             // B269：诊断 readback 统一走 scriptExecutor（与主执行同一注入缝，测试可 mock）。
-            let (diagString, diagErrCode) = TitleEditorService.scriptExecutor.execute(source: diagScript)
+            let (diagString, _) = TitleEditorService.scriptExecutor.execute(source: diagScript)
             if let desc = diagString {
                 let parts = desc.components(separatedBy: "|")
                 log(

@@ -154,7 +154,7 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 | ~~YabaiClient (28)~~ | ✅ B276 复核改判：fallback 链已测（B271），残支=cache/candidates 段执行顺序依赖（先到测试先填充静态缓存，无法稳定认领）→ C7 顺序依赖豁免 |
 | SpaceController (27) | refresh 内部状态迁移（B261 基础上补残支） |
 | WindowStateStore+Database (26) | 临时库 schema 迁移/错误分支 |
-| TargetResolve (23) / TTYWriter (23) / SessionActivityTracker (23) / Toggle+Restore+Stages (20) / Support+Diagnostics (20) | 残支零星提缝（每文件 ≤1 批内顺带） |
+| ~~TargetResolve (23)~~ | ✅ B277 复核改判：selectionPreview 静态缝已测（B106/HookWalk），残支=AX/E2E 域 | TTYWriter (23) / SessionActivityTracker (23) / Toggle+Restore+Stages (20) / Support+Diagnostics (20) 残支零星提缝 |
 
 #### B 态·E2E 通道覆盖（≈900 行，25 文件）
 
