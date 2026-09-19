@@ -5,8 +5,14 @@
 // Toggle 绑定族。偏好双态经 Runner 自有 defaults/内存 save-restore 驱动；真机交互
 // （按钮动作：安装/卸载/打开设置等）维持留白归口。
 
+import AppKit
+import Carbon
+import CoreFoundation
 import SwiftUI
 @testable import VibeFocusKit
+
+/// 合成 CGEventTapProxy（OpaquePointer 非可选，测试用虚拟值——handleCGEvent 不读 proxy）
+private let dummyProxy = unsafeBitCast(UnsafeRawPointer(bitPattern: 0xDEAD)!, to: CGEventTapProxy.self)
 
 extension RunnerHarness {
     func runSettingsSectionRenderTests() {
@@ -361,5 +367,78 @@ extension RunnerHarness {
         // gridSnapshots @State 默认空 → savedLayoutsCard 走空态文案分支
         let renderer = ImageRenderer(content: view.savedLayoutsCard)
         check("tgEmpty: savedLayoutsCard 空态渲染出图", renderer.nsImage != nil)
+    }
+}
+
+// MARK: - B264：HotKeyManager 离线纯路由直测（合成 CGEvent/NSEvent 零键击注入）
+
+extension RunnerHarness {
+    func runHotKeyOfflineRouteTests() {
+        let manager = HotKeyManager.shared
+
+        // ===== A. handleCGEvent 合成 keyDown 非匹配键 → passThrough =====
+        // keyCode 120（F 键）+ 零修饰：不匹配任何已注册路由，pass-through 返回原事件
+        do {
+            let src = CGEventSource(stateID: .hidSystemState)
+            let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 120, keyDown: true)
+            keyDown?.setIntegerValueField(.keyboardEventAutorepeat, value: 0)
+            guard let ev = keyDown else {
+                check("hotkeyOffline: 合成 CGEvent 构造（前置）", false)
+                return
+            }
+            let result = manager.handleCGEvent(proxy: dummyProxy, type: .keyDown, event: ev)
+            check("hotkeyOffline: 非匹配 keyDown → 放行返回原事件", result != nil)
+
+            // 连发（autorepeat）→ 同样放行
+            ev.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+            let repeatResult = manager.handleCGEvent(proxy: dummyProxy, type: .keyDown, event: ev)
+            check("hotkeyOffline: 连发 keyDown → 放行", repeatResult != nil)
+
+            // 非 keyDown 类型（flagsChanged）→ 放行
+            let flagsResult = manager.handleCGEvent(proxy: dummyProxy, type: .flagsChanged, event: ev)
+            check("hotkeyOffline: flagsChanged → 放行", flagsResult != nil)
+
+            // tapDisabledByTimeout → 走 reenable 分支（eventTap=nil → 回退 monitors+记录）
+            let disabledResult = manager.handleCGEvent(proxy: dummyProxy, type: .tapDisabledByTimeout, event: ev)
+            check("hotkeyOffline: tapDisabledByTimeout → 放行且 reenable 分支执行",
+                  disabledResult != nil)
+            // reenable 的 eventTap=nil 回退安装了 monitors——立即清理
+            manager.removeFallbackMonitors()
+        }
+
+        // ===== B. handleFallbackEvent 合成 NSEvent 路由 =====
+        do {
+            // 非匹配键 → ignore → false
+            let stray = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: 120)
+            check("hotkeyOffline: fallback 非匹配 → false",
+                  stray.map { !manager.handleFallbackEvent($0, source: "vf-offline") } ?? true)
+
+            // 连发 → false
+            let repeatEv = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: true, keyCode: 120)
+            check("hotkeyOffline: fallback 连发 → false",
+                  repeatEv.map { !manager.handleFallbackEvent($0, source: "vf-offline") } ?? true)
+        }
+
+        // ===== C. CodexSection 横幅双态渲染 =====
+        do {
+            let view = SettingsView()
+            var ok = view
+            ok.codexInstallMessage = "已安装到 Codex"
+            ok.codexInstallSucceeded = true
+            let rOK = ImageRenderer(content: ok.codexSection)
+            check("hotkeyOffline: codex 安装成功横幅渲染", rOK.nsImage != nil)
+
+            var fail = view
+            fail.codexInstallMessage = "安装失败"
+            fail.codexInstallSucceeded = false
+            let rFail = ImageRenderer(content: fail.codexSection)
+            check("hotkeyOffline: codex 安装失败横幅渲染", rFail.nsImage != nil)
+        }
     }
 }
