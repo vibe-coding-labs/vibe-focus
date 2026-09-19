@@ -54,7 +54,7 @@ extension RunnerHarness {
         }
 
         // --- sendTestHookEvent 失败路径：端口 1（保留端口必拒连）→ 异步失败分支 ---
-        var view = SettingsView()
+        let view = SettingsView()
         let savedPort = view.hookPort
         view.hookPort = 1
         view.sendTestHookEvent()
