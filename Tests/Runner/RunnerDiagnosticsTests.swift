@@ -62,7 +62,16 @@ extension RunnerHarness {
         // displayID ↔ 数组下标转换
         let mainID = wm.displayID(for: main)
         check("screenPos: 主屏 displayID 非空", mainID != nil)
-        check("screenPos: 主 displayID → 数组下标 0", wm.displayIndex(forDisplayID: mainID) == 0)
+        // 注：不硬编码下标 0——NSScreen.screens 首位仅「通常」是菜单栏屏，
+        // 焦点屏切换/显示器重排时顺序可变（B233 收官测量轮实测 flake）。
+        // 改为与 CoordinateKit 直查自洽（displayID→screen→index 全链仍被驱动）
+        if let mainID {
+            let expected = CoordinateKit.screenArrayIndex(for: main)
+            check("screenPos: 主 displayID ↔ 数组下标自洽",
+                  wm.displayIndex(forDisplayID: mainID) == expected)
+        } else {
+            check("screenPos: 主 displayID ↔ 数组下标自洽", false)
+        }
         check("screenPos: nil displayID → nil", wm.displayIndex(forDisplayID: nil) == nil)
         check("screenPos: 幻影 displayID → nil", wm.displayIndex(forDisplayID: 0xF00D) == nil)
 
