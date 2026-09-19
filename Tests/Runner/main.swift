@@ -294,6 +294,7 @@ final class FakeAuditor: RestoreAuditing {
         runRemoteResolvedSweepTests()
         runOverlayQuerySweepTests()
         runSignalNavTailTests()
+        runRestoreGuardSweepTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()

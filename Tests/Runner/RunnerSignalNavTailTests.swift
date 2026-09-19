@@ -22,8 +22,9 @@ extension RunnerHarness {
 
         // B. 品牌图标：加载兜底 + 徽章离屏渲染（Runner 无 icns → SF Symbol 兜底分支）
         do {
-            let icon = bundledAppIconImage()
-            check("brand B1: bundledAppIconImage 只读调用安全（nil 或图像皆合法）", true)
+            let icon: NSImage? = bundledAppIconImage()
+            check("brand B1: bundledAppIconImage 只读调用安全（nil 或图像皆合法）",
+                  icon == nil || icon!.size.width > 0)
             let badge = AppLogoBadge(size: 40)
             let rendered = ImageRenderer(content: badge.frame(width: 48, height: 48))
             rendered.scale = 1
