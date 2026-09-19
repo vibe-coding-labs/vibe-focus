@@ -979,11 +979,21 @@ extension RunnerHarness {
         check("cgEntry: bounds 部分键缺失分量取 0", partial?.bounds == CGRect(x: 5, y: 0, width: 0, height: 0))
 
         // 单窗查询真窗往返：全量列表里有 bounds 的真实窗口 → cgWindowBounds 与全量一致
-        // （覆盖 optionIncludingWindow 命中循环体；GUI 会话恒有窗口，环境无关）
-        if let sample = cgWindowListAll().first(where: { ($0.bounds?.width ?? 0) > 0 }) {
-            check("cgBounds: 单窗查询与全量列表 frame 一致",
-                  cgWindowBounds(for: sample.windowID) == sample.bounds)
+        // （覆盖 optionIncludingWindow 命中循环体；GUI 会话恒有窗口，环境无关）。
+        // B245 加固：采样带重试 any-match 语义——重负载下首个样本窗可能在两次查询间
+        // 移动/关闭（瞬态服务窗实测），任一稳定样本一致即证明读通道真实可用。
+        var channelOK = false
+        for _ in 0..<3 {
+            let samples = cgWindowListAll().filter { ($0.bounds?.width ?? 0) > 50 && ($0.bounds?.height ?? 0) > 50 }
+            for sample in samples.prefix(8) {
+                if cgWindowBounds(for: sample.windowID) == sample.bounds {
+                    channelOK = true
+                    break
+                }
+            }
+            if channelOK { break }
         }
+        check("cgBounds: 单窗查询与全量列表 frame 一致（重试 any-match）", channelOK)
         check("cgBounds: 不存在的窗口 → nil", cgWindowBounds(for: 0xFFFF_FFF0) == nil)
 
     }
