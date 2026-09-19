@@ -325,7 +325,7 @@ final class FakeAuditor: RestoreAuditing {
         runScreenPositionTests()
         runLoginItemRefreshTests()
         runTitleEditorChannelTests()
-        runVoiceQueueTests()
+        runVoiceQueueAdvanceTests()
         runToggleEngineStoreTests()
         runBubblePreferencesBranchTests()
         runBindingVerifierTests()
