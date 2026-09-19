@@ -41,6 +41,16 @@ extension RunnerHarness {
         // AX 通道：幻影 pid 的 AX 元素 kAXTitleAttribute 不可设置 → not_settable false
         let bogus = AXUIElementCreateApplication(999_999)
         check("channel: 幻影 AX 元素拒写",
-              svc.applyViaAX("B215", to: bogus) == false)
+              svc.applyViaAX("B220", to: bogus) == false)
+
+        // autoSetTitle 编排：幻影 AX 元素 + 幻影 pid + 非终端 bundle——
+        // windowHandle nil 跳过用户改名检查、项目名派生、applyTitle 三通道
+        // （AX 拒写/AppleScript guard 跳过/TTY 解析落空）全走失败路，零真实副作用
+        svc.autoSetTitle(cwd: nil, pid: 99_998,
+                         bundleID: "com.b220.notaterminal", window: bogus)
+        check("title: autoSetTitle 空 cwd（Claude 兜底）全通道落空不崩溃", true)
+        svc.autoSetTitle(cwd: "/tmp/b220-demo-project", pid: 99_998,
+                         bundleID: "com.b220.notaterminal", window: bogus)
+        check("title: autoSetTitle 常规 cwd 项目名派生不崩溃", true)
     }
 }
