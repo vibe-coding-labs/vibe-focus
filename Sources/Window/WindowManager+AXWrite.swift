@@ -115,7 +115,7 @@ extension WindowManager {
     /// readback 中确认生效（可能被 WindowServer clamp，move_to_main 反转 Phase 后应罕见）。
     /// 历史"restore 单次模式不 readback"已随 restore 改走 moveWindowToFrameViaYabai 直写
     /// 而失去消费者（apply 唯一调用方传 maxAttempts=3），分支删除。
-    private func writeSizeWithReadback(
+    func writeSizeWithReadback(
         targetFrame: CGRect,
         window: AXUIElement,
         attempts: Int,
@@ -212,7 +212,7 @@ extension WindowManager {
     /// position write — 单次 AXUIElementSetAttributeValue(kAXPositionAttribute)。
     /// AX write 异步返回（不等待 WindowServer 实际移动），不跨屏阻塞。
     @discardableResult
-    private func writePosition(
+    func writePosition(
         targetFrame: CGRect,
         window: AXUIElement,
         op: String,
