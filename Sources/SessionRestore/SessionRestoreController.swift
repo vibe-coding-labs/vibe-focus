@@ -20,16 +20,39 @@ final class SessionRestoreController {
         self.store = store
     }
 
+    // MARK: B233 捕获注入缝（仿 B232 SpoolProcessRunner 家法：默认真身，仅测试注入）
+
+    /// capture 阶段全部外部 IO 的可替换闭包集。生产恒用默认值零行为变更；
+    /// Runner 测试注入夹具依赖即可零 fork/零 AppleEvents 直驱整条编排。
+    struct CaptureDependencies {
+        /// yabai 全量窗口查询
+        var queryAllWindows: () -> [YabaiWindowInfo]? = { SpaceController.shared.queryAllWindows() }
+        /// pid → bundle id（NSRunningApplication）
+        var bundleIDOf: (pid_t) -> String? = { pid in NSRunningApplication(processIdentifier: pid)?.bundleIdentifier }
+        /// AppleScript 枚举（iTerm2 sessions / Terminal tty 表）
+        var appleScript: (String) async -> String? = { await SessionRestoreController.runAppleScriptText($0) }
+        /// 单 tty 进程分类（ps）
+        var classifyTTY: (String) -> PaneClassifier.Classification = { SessionRestoreController.classifyTTY($0) }
+        /// 远程探针 fan-out（ssh）
+        var probeRemoteTargets: ([(target: String, port: String?)]) async -> [String: [RemoteSessionEntry]] = {
+            await SessionRestoreController.probeRemoteTargets($0)
+        }
+    }
+
+    /// internal：@testable 注入点；生产代码只读默认值
+    var captureDependencies = CaptureDependencies()
+
     // MARK: 捕获
 
     func captureCurrentLayout(name: String? = nil) async -> OperationResult {
         let op = makeOperationID(prefix: "session-capture")
+        let deps = captureDependencies
 
         // 1. yabai 全量窗口（捕获的存在前提：yabai 不可用 = 无法跨屏跨 Space 采集）
-        guard let allWindows = SpaceController.shared.queryAllWindows() else {
+        guard let allWindows = deps.queryAllWindows() else {
             return OperationResult(ok: false, message: "yabai 不可用，无法采集跨工作区窗口（会话恢复依赖 yabai）")
         }
-        let terminalWindows = allWindows.filter { Self.isCapturableYabaiWindow($0, bundleIDOf: bundleIdentifier(ofPID:)) }
+        let terminalWindows = allWindows.filter { Self.isCapturableYabaiWindow($0, bundleIDOf: deps.bundleIDOf) }
         guard !terminalWindows.isEmpty else {
             return OperationResult(ok: false, message: "没有发现可编排的终端窗口（支持 Terminal.app / iTerm2）")
         }
@@ -41,7 +64,7 @@ final class SessionRestoreController {
         }
         // 不支持自动化方言的其它终端（Warp 等）：看到了但要如实交代没捕
         let unsupportedCount = allWindows.filter { entry in
-            guard let pid = entry.pid, let bundleID = bundleIdentifier(ofPID: pid_t(pid)) else { return false }
+            guard let pid = entry.pid, let bundleID = deps.bundleIDOf(pid_t(pid)) else { return false }
             return TerminalRegistry.isTerminalBundleID(bundleID)
                 && !TerminalAutomationScript.automationBundleIDs.contains(bundleID)
         }.count
@@ -51,12 +74,12 @@ final class SessionRestoreController {
         let hasAppleTerminal = terminalWindows.contains { $0.app == "Terminal" }
         var itermEntries: [ITermSessionEntry] = []
         if hasIterm {
-            itermEntries = await runAppleScript(PaneEnumeration.itermEnumerateSessions())
+            itermEntries = await deps.appleScript(PaneEnumeration.itermEnumerateSessions())
                 .map { PaneEnumeration.parseITermSessions($0) } ?? []
         }
         var terminalTTYs: [UInt32: [String]] = [:]
         if hasAppleTerminal {
-            terminalTTYs = await runAppleScript(TerminalAutomationScript.terminalEnumerateWindowTTYs())
+            terminalTTYs = await deps.appleScript(TerminalAutomationScript.terminalEnumerateWindowTTYs())
                 .map { PaneEnumeration.parseTerminalTabTTYs($0) } ?? [:]
         }
 
@@ -74,7 +97,7 @@ final class SessionRestoreController {
         }
         var classifications: [String: PaneClassifier.Classification] = [:]
         for tty in ttys where classifications[tty] == nil {
-            classifications[tty] = Self.classifyTTY(tty)
+            classifications[tty] = deps.classifyTTY(tty)
         }
         let hookStates: [UInt32: WindowState] = skeletons.reduce(into: [:]) { dict, skeleton in
             dict[skeleton.cgWindowID] = WindowStateStore.shared.findWindowState(windowID: skeleton.cgWindowID)
@@ -90,7 +113,7 @@ final class SessionRestoreController {
                 remoteTargets.append((target, port))
             }
         }
-        let probeResults = await Self.probeRemoteTargets(remoteTargets)
+        let probeResults = await deps.probeRemoteTargets(remoteTargets)
 
         // 6. 组装快照
         var windows: [SessionWindowSnapshot] = []
@@ -390,6 +413,11 @@ final class SessionRestoreController {
     // MARK: 辅助 IO
 
     func runAppleScript(_ script: String) async -> String? {
+        await Self.runAppleScriptText(script)
+    }
+
+    /// B233：AppleScript 执行真身提 static（CaptureDependencies 默认闭包可引用；行为不变）
+    nonisolated static func runAppleScriptText(_ script: String) async -> String? {
         let result = await Task.detached(priority: .userInitiated) {
             ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script], timeout: 30)
         }.value
