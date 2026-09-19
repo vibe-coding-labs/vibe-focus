@@ -247,6 +247,7 @@ final class FakeAuditor: RestoreAuditing {
         runSpaceIndexTests()
         runSpaceContextTests()
         runSpaceQueryShapeTests()
+        runSpaceSwitchQueryShapeTests()
         runYabaiUtilsTests()
         runCoordinateTypesTests()
         runSpaceIdentityTests()
@@ -288,6 +289,7 @@ final class FakeAuditor: RestoreAuditing {
         runRegistryGeomSweepTests()
         runServerWidgetSweepTests()
         runDrawGuardSweepTests()
+        runBubbleMouseNavSweepTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()
@@ -330,6 +332,7 @@ final class FakeAuditor: RestoreAuditing {
         runInstanceGuardTests()
         runBubblePreferencesIOTests()
         runBubbleFollowNavTests()
+        runBubbleDraftFlushTests()
         runLayoutPreferencesTests()
         runSessionRestoreModelCountsTests()
         runTerminalRegistryIdentityTests()
@@ -366,6 +369,7 @@ final class FakeAuditor: RestoreAuditing {
         runCaptureSeamTests()
         runSettingsViewSectionBodyTests()
         runSettingsDGroupTests()
+        runLLMRequestTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
