@@ -31,3 +31,32 @@ extension RunnerHarness {
         check("renderPilot: 二次 relayout 幂等收敛", host.subviews.count > 0)
     }
 }
+
+extension RunnerHarness {
+    /// B239 续：terminalGrid tab 离屏渲染——detached @State 直接赋值 selectedTab 切页，
+    /// 验证 SubscriptionView（gridMinimapHeartbeat onReceive）在真渲染树内不再 fatal
+    /// （此前留白原因）；onAppear→refreshGridMinimap 只读（yabai 查询+屏读取）。
+    func runSettingsTerminalGridTabRenderTests() {
+        print("\n=== SettingsTerminalGridTabRender (B239) ===")
+        var gridTab = SettingsView()
+        gridTab.selectedTab = .orchestration
+        let host = NSHostingView(rootView: gridTab.environmentObject(HotKeyManager.shared))
+        host.frame = NSRect(x: 0, y: 0, width: 680, height: 940)
+        host.layoutSubtreeIfNeeded()
+        check("renderPilot: terminalGrid tab 离屏渲染无 SubscriptionView fatal", true)
+        check("renderPilot: terminalGrid tab 渲染非退化", host.subviews.count > 0)
+        host.layoutSubtreeIfNeeded()
+        check("renderPilot: terminalGrid tab 二次 relayout 收敛", host.subviews.count > 0)
+
+        // --- 全 tab 扫尾：@StateObject 在安装期已全部实例化（B238 审计），
+        //     逐 tab 渲染只新增各 section body 的构建期求值 ---
+        for tab in SettingsTab.allCases {
+            var tabView = SettingsView()
+            tabView.selectedTab = tab
+            let tabHost = NSHostingView(rootView: tabView.environmentObject(HotKeyManager.shared))
+            tabHost.frame = NSRect(x: 0, y: 0, width: 680, height: 940)
+            tabHost.layoutSubtreeIfNeeded()
+            check("renderPilot: \(tab.rawValue) tab 渲染无异常", tabHost.subviews.count > 0)
+        }
+    }
+}
