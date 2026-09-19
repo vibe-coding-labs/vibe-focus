@@ -308,6 +308,7 @@ final class FakeAuditor: RestoreAuditing {
         runToggleFallbackTests()
         runTerminalContextMatchTests()
         runDiagnosticsSamplerTests()
+        runAutomationGuardTests()
         runLANSettingsViewTests()
         runBacktraceSamplerTests()
         runOverlaySpaceQueryTests()
@@ -342,6 +343,8 @@ final class FakeAuditor: RestoreAuditing {
         runLocatorSeamTests()
         runHookTestPureTests()
         runCrashIOReadTests()
+        runBubbleAutoShowOrchestrationTests()
+        runLLMSummaryFallbackTests()
         runBubbleHistoryPanelViewTests()
     // MARK: 汇总
 
