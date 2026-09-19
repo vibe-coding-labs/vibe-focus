@@ -86,12 +86,47 @@ extension SessionWindowRegistry {
     /// B160：窗口是否有活跃（未结束）会话绑定——输入气泡聚焦自动弹出的闸门。
     /// 绑定随 hook（SessionStart/UPS）写入、随会话结束置 completed，天然反映「这窗在跑 Claude」。
     /// 内存未命中回落 DB（findWindowStateByWindowID）：app 重启后增量绑定不丢、外部写库即时生效。
-    func hasLiveSessionBinding(windowID: UInt32) -> Bool {
+    /// B247：DB 未命中/命中但已 completed 进负缓存（TTL 内不重复触 DB）——生产 tick
+    /// 每秒对无绑定窗打一次主线程 SQLite 已实测崩过进程（2026-09-19 SIGSEGV）。TTL
+    /// 只作用于「查无活跃绑定」的结论：外部新写/翻活的绑定最迟 TTL+1 拍生效（生产
+    /// 绑定走 hook 进内存不受影响）；正命中（活跃）不缓存，completed 翻转下次查询可见。
+    /// - Parameters:
+    ///   - missCacheTTL: 未命中缓存有效期（测试注入小值做边界）。
+    func hasLiveSessionBinding(
+        windowID: UInt32,
+        now: Date = Date(),
+        missCacheTTL: TimeInterval = 5.0
+    ) -> Bool {
         if let state = windowStates[windowID] {
             return !state.isCompleted
         }
-        guard let state = store.findWindowStateByWindowID(windowID) else { return false }
-        return !state.isCompleted
+        if let lastMiss = bindingLookupMissCache[windowID],
+           now.timeIntervalSince(lastMiss) < missCacheTTL {
+            return false
+        }
+        guard let state = store.findWindowStateByWindowID(windowID) else {
+            recordBindingLookupMiss(windowID: windowID, at: now)
+            return false
+        }
+        if state.isCompleted {
+            recordBindingLookupMiss(windowID: windowID, at: now)
+            return false
+        }
+        bindingLookupMissCache.removeValue(forKey: windowID)
+        bindingLookupMissOrder.removeAll { $0 == windowID }
+        return true
+    }
+
+    /// B247：落负缓存（容量 64 FIFO 淘汰，与 B184 基线表同款守恒模式）。
+    private func recordBindingLookupMiss(windowID: UInt32, at: Date) {
+        if bindingLookupMissCache[windowID] == nil {
+            bindingLookupMissOrder.append(windowID)
+            while bindingLookupMissOrder.count > 64 {
+                let evict = bindingLookupMissOrder.removeFirst()
+                bindingLookupMissCache.removeValue(forKey: evict)
+            }
+        }
+        bindingLookupMissCache[windowID] = at
     }
 
     var activeBindingsForUI: [WindowState] {

@@ -29,6 +29,15 @@ final class SessionWindowRegistry: ObservableObject {
     private let completedRetention: TimeInterval = 4 * 60 * 60
     private let activeRetention: TimeInterval = 24 * 60 * 60
 
+    /// B247：绑定查询 DB 未命中负缓存（windowID → 最近一次 DB 查无「活跃绑定」的时间）。
+    /// 无绑定的前台窗（大多数普通终端窗）让 auto-show tick（1s 节拍）每秒都落到
+    /// DB fallback——主线程同步 SQLite 常态每秒一查既是卡顿源也是崩溃面
+    /// （2026-09-19 19:05 生产 SIGSEGV 恰碎在此路径 sqlite3VdbeMemGrow）。
+    /// TTL 内不再触 DB；DB 正命中不缓存（外部写库即时生效的 B161 契约不回退）。
+    /// 容量 64 FIFO，防长会话无界增长。仅 @MainActor 读写（tick 与 hook 均主线程），无需加锁。
+    var bindingLookupMissCache: [UInt32: Date] = [:]
+    var bindingLookupMissOrder: [UInt32] = []
+
     /// 持久层（依赖注入点，B32）：生产走 `.shared`（env 可重定向 DB 路径），
     /// 测试注入临时 `WindowStateStore(dbPath:)` 实现无环境门控的直测。
     let store: WindowStateStore
