@@ -29,10 +29,19 @@ struct ScreenMinimapView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let layout = ScreenLayoutMapper.map(screens: screens, viewSize: geo.size)
+            minimapContent(in: geo.size)
+        }
+        .frame(height: height)
+    }
+
+    /// GeometryReader 内容（B239 提纯出可直调方法：几何布局 + 单屏/Space 胶囊构建，
+    /// 行为与原闭包逐字一致——size 由渲染期 GeometryProxy 或测试合成值提供）。
+    @ViewBuilder
+    func minimapContent(in size: CGSize) -> some View {
+            let layout = ScreenLayoutMapper.map(screens: screens, viewSize: size)
             // 内容整体在容器内居中（真实布局 union 常偏一侧）
-            let centeringX = (geo.size.width - layout.contentRect.width) / 2 - layout.contentRect.minX
-            let centeringY = (geo.size.height - layout.contentRect.height) / 2 - layout.contentRect.minY
+            let centeringX = (size.width - layout.contentRect.width) / 2 - layout.contentRect.minX
+            let centeringY = (size.height - layout.contentRect.height) / 2 - layout.contentRect.minY
 
             ZStack(alignment: .topLeading) {
                 DotGridPattern()
@@ -50,9 +59,7 @@ struct ScreenMinimapView: View {
                 }
             }
             .offset(x: centeringX, y: centeringY)
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-        }
-        .frame(height: height)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
     // MARK: 单块屏
