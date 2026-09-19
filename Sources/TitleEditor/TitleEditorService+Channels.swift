@@ -69,13 +69,14 @@ final class NSAppleScriptExecutor: AppleScriptExecuting {
             fields: ["bundleID": bundleID, "title": truncateForLog(title, limit: 60)]
         )
 
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        let result = appleScript?.executeAndReturnError(&error)
+        // B269：主执行统一走 scriptExecutor 注入缝（与诊断 readback 同源）——
+        // 行为保持（NSAppleScriptExecutor 内部即原 NSAppleScript 构造+执行），
+        // 测试经注入 mock 零授权弹窗零真实控制。
+        let execution = Self.scriptExecutor.execute(source: script)
 
         // 定向路径：只有 "matched" 算命中（哨兵判定见 +ScriptDecision.swift 的回归史注释）。
         if targetTTY != nil {
-            let verdict = result?.stringValue
+            let verdict = execution.stringValue
             if !Self.isMatchedVerdict(verdict) {
                 scriptOutcome = "tty_session_not_found"
                 log(
@@ -87,16 +88,14 @@ final class NSAppleScriptExecutor: AppleScriptExecuting {
             }
         }
 
-        if let error {
-            let errorMsg = error[NSAppleScript.errorMessage] as? String ?? "unknown"
-            let errorNum = error[NSAppleScript.errorNumber] as? Int ?? -1
+        if let errorNumber = execution.errorNumber {
             log(
                 "[TitleEditorService] applyViaAppleScript: FAILED",
                 level: .warn,
-                fields: ["errorMsg": errorMsg, "errorNum": String(errorNum)]
+                fields: ["errorNum": String(errorNumber)]
             )
-            scriptOutcome = "error_\(errorNum)"
-            if errorNum == -1743 {
+            scriptOutcome = "error_\(errorNumber)"
+            if errorNumber == -1743 {
                 showAutomationPermissionAlert(bundleID: bundleID)
             }
             return false
@@ -108,9 +107,9 @@ final class NSAppleScriptExecutor: AppleScriptExecuting {
         // Diagnostic: read back Terminal.app title state after setting（best-effort，跟随 tty 定向目标；模板见 +ScriptDecision.swift）
         if bundleID == "com.apple.Terminal" {
             let diagScript = Self.makeTerminalDiagnosticScript(targetTTY: targetTTY)
-            let diagAS = NSAppleScript(source: diagScript)
-            var diagErr: NSDictionary?
-            if let result = diagAS?.executeAndReturnError(&diagErr), let desc = result.stringValue {
+            // B269：诊断 readback 统一走 scriptExecutor（与主执行同一注入缝，测试可 mock）。
+            let (diagString, diagErrCode) = TitleEditorService.scriptExecutor.execute(source: diagScript)
+            if let desc = diagString {
                 let parts = desc.components(separatedBy: "|")
                 log(
                     "[TitleEditorService] applyViaAppleScript: diagnostic readback",
