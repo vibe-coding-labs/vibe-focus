@@ -323,6 +323,7 @@ final class FakeAuditor: RestoreAuditing {
         runOverlaySpaceQueryTests()
         runInstanceGuardTests()
         runBubblePreferencesIOTests()
+        runBubbleFollowNavTests()
         runLayoutPreferencesTests()
         runSessionRestoreModelCountsTests()
         runTerminalRegistryIdentityTests()
