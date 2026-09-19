@@ -219,6 +219,7 @@ final class FakeAuditor: RestoreAuditing {
         runGridTargetLogicTests()
         runGridSpaceE2E()
         runSizeE2E()
+        runAXWriteE2E()
         runFloatSettleE2E()
         runConvergencePipelineTests()
         runTitleE2E()
