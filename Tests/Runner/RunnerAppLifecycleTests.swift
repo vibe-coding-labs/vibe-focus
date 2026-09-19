@@ -154,7 +154,7 @@ extension RunnerHarness {
     // MARK: - AppDelegate+Instance（单实例锁 / 既有实例发现）
 
     func runInstanceGuardTests() {
-        print("\n=== InstanceGuard (B220) ===")
+        print("\n=== InstanceGuard (B220/B248) ===")
         let ad = AppDelegate()
 
         // findExistingInstance：Runner 无 bundle id → 枚举里不可能有同 id 别的实例
@@ -170,5 +170,46 @@ extension RunnerHarness {
         let second = ad.acquireExclusiveLock()
         check("instance: 锁互斥成立（首取成功则二取必败，或首取已被外部持有）",
               (first && !second) || (!first && !second))
+
+        // ===== B248：锁路径注入三路径 + 安装位置校验族（生产锁文件零触碰） =====
+        let fm = FileManager.default
+        let dir = "/tmp/vibefocus-instlock-\(UUID().uuidString)"
+        try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        do {
+            let savedLockPath = ad.lockFilePath
+            defer {
+                ad.lockFilePath = savedLockPath
+                try? fm.removeItem(atPath: dir)
+            }
+
+            // 1. 合法临时路径：open 创建 + flock 成功
+            ad.lockFilePath = (dir as NSString).appendingPathComponent("app.lock")
+            check("instance: 注入路径首次获取排他锁成功", ad.acquireExclusiveLock() == true)
+            check("instance: 锁文件已创建", fm.fileExists(atPath: ad.lockFilePath))
+
+            // 2. 锁已被本进程持有（同一文件新 fd）→ LOCK_EX|LOCK_NB 冲突返 false
+            check("instance: 注入路径二次获取被 flock 拒绝", ad.acquireExclusiveLock() == false)
+
+            // 3. 父目录不存在 → open 失败返 false
+            ad.lockFilePath = (dir as NSString).appendingPathComponent("no-such-dir/app.lock")
+            check("instance: 父目录缺失 open 失败返 false", ad.acquireExclusiveLock() == false)
+        }
+
+        // 版本读取与安装位置校验（CLI Bundle.main 形状下的安全分支）
+        check("instance: currentAppVersion 非空兜底", !ad.currentAppVersion().isEmpty)
+        // Runner 二进制无 .app 扩展名 → 早退 true（不弹框不 terminate）
+        check("instance: 非 .app 运行位置视为合法", ad.enforceExpectedInstallLocation() == true)
+        let expected = ad.expectedAppBundlePaths()
+        check("instance: 预期安装路径两条且绝对",
+              expected.count == 2 && expected.allSatisfy { $0.hasPrefix("/") }
+              && expected.last == "/Applications/VibeFocus.app")
+        check("instance: dist 开发路径白名单命中",
+              ad.isAllowedDevelopmentBundlePath("/tmp/somewhere/dist/VibeFocus.app"))
+        check("instance: 非 dist 安装路径不在白名单",
+              !ad.isAllowedDevelopmentBundlePath("/tmp/somewhere/VibeFocus.app"))
+
+        // 图标应用：CLI Bundle 无图标 → nil 早退；即便有也仅设 NSApp 图标（无 UI 副作用）
+        ad.applyApplicationIcon()
+        check("instance: applyApplicationIcon 无图标环境不崩", true)
     }
 }

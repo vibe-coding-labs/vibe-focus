@@ -281,7 +281,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Single Instance Check
 
-    // 文件锁路径，用于防止竞态条件（存储属性必须留类体；检查函数族在 +Instance.swift）
-    let lockFilePath = VFConstants.appLockFilePath
+    // 文件锁路径，用于防止竞态条件（存储属性必须留类体；检查函数族在 +Instance.swift）。
+    // var：默认值即 VFConstants.appLockFilePath（行为不变），测试经临时目录注入锁路径。
+    var lockFilePath = VFConstants.appLockFilePath
 
 }

@@ -16,15 +16,19 @@ final class CrashContextRecorder: @unchecked Sendable {
         var lastIngestedCrashReport: String?
     }
 
-    let stateFileURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-context.json")
-    let plainLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
-    let structuredLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl")
-    let plainCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail.log")
-    let structuredCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail-events.jsonl")
+    // IO 面用 var：生产默认值即下方字面量（行为不变）；测试经临时目录注入（B144 路径注入家法），
+    // 不得触碰 /tmp 生产上下文。崩溃取证文件由生产进程独占写。
+    var stateFileURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-context.json")
+    var plainLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus.log")
+    var structuredLogFileURL = URL(fileURLWithPath: "/tmp/vibefocus-events.jsonl")
+    var plainCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail.log")
+    var structuredCrashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-tail-events.jsonl")
+    /// bootstrap 启停崩溃快照落点（原为函数内局部常量，B248 提为属性仅供测试注入）。
+    var crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
     let maxEvents = 300
     let plainTailLineLimit = 500
     let structuredTailLineLimit = 1200
-    let diagnosticReportsDirectory = URL(
+    var diagnosticReportsDirectory = URL(
         fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Library/Logs/DiagnosticReports"),
         isDirectory: true
     )
@@ -100,7 +104,6 @@ final class CrashContextRecorder: @unchecked Sendable {
 
         // 如果上次是 cleanExit，不需要保留旧的 crash snapshot
         if let prev = previous, prev.cleanExit {
-            let crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
             if FileManager.default.fileExists(atPath: crashSnapshotURL.path) {
                 try? FileManager.default.removeItem(at: crashSnapshotURL)
                 log("CrashContextRecorder.bootstrap removed stale crash snapshot (previous clean exit)", level: .debug)
@@ -109,7 +112,6 @@ final class CrashContextRecorder: @unchecked Sendable {
 
         // 如果上次是非 cleanExit，保存 crash snapshot（tail of recent logs）
         if let prev = previous, !prev.cleanExit {
-            let crashSnapshotURL = URL(fileURLWithPath: "/tmp/vibefocus-crash-snapshot.log")
             if let snapshotData = try? Data(contentsOf: stateFileURL),
                let snapshotText = String(data: snapshotData, encoding: .utf8) {
                 var snapshotLines = snapshotText.split(separator: "\n", omittingEmptySubsequences: false)
@@ -141,8 +143,10 @@ final class CrashContextRecorder: @unchecked Sendable {
                         lastIngestedCrashReport: reportName
                     )
                     stateLock.lock()
-                    appendEventLocked("crash_report file=\(reportName) (parse_failed)")
+                    // B248 修复：先赋值再追加——原序 appendEventLocked 落在旧 state 上、
+                    // 随即被 newState 覆盖，parse_failed 事件从未进入事件日志。
                     state = newState
+                    appendEventLocked("crash_report file=\(reportName) (parse_failed)")
                     stateLock.unlock()
                     persistState()
                     return
@@ -192,12 +196,14 @@ final class CrashContextRecorder: @unchecked Sendable {
                     lastIngestedCrashReport: reportName
                 )
                 stateLock.lock()
-                appendEventLocked("crash_report file=\(reportName) exception=\(exceptionType) signal=\(exceptionSignal) frame0=\(topFrameSymbol)")
-                stateLock.unlock()
                 // 2026-08-31 修复：此前构造的 newState 从未赋给 state（state 尚为 nil，
                 // `state?.lastIngestedCrashReport` 是 no-op），reportName 不会持久化，
                 // 同一崩溃报告会被重复 ingest。改为有效赋值。
+                // B248 修复：先赋值再追加——原序 appendEventLocked 落在旧 state 上、
+                // 随即被 newState 覆盖，ingest 事件从未进入事件日志。
                 state = newState
+                appendEventLocked("crash_report file=\(reportName) exception=\(exceptionType) signal=\(exceptionSignal) frame0=\(topFrameSymbol)")
+                stateLock.unlock()
                 persistState()
                 return
             }
