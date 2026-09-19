@@ -420,3 +420,58 @@ extension RunnerHarness {
     }
     }
 }
+
+extension RunnerHarness {
+    /// B223：LayoutPreferences 读写直测——getter 三分支（未设置默认/枚举回落/数值钳制）
+    /// 此前只有 snapGap 的零星读，setter 与 coexistenceChoice 非法值回落零覆盖。
+    func runLayoutPreferencesTests() {
+        print("\n=== LayoutPreferences (B223) ===")
+        let d = UserDefaults.standard
+
+        // --- isEnabled：未设置默认 true；写 false/true 读一致；清除复位 ---
+        d.removeObject(forKey: LayoutPreferences.enabledKey)
+        check("layoutPrefs: isEnabled 未设置默认 true", LayoutPreferences.isEnabled == true)
+        LayoutPreferences.isEnabled = false
+        check("layoutPrefs: isEnabled 写 false 读 false", LayoutPreferences.isEnabled == false)
+        LayoutPreferences.isEnabled = true
+        check("layoutPrefs: isEnabled 写 true 读 true", LayoutPreferences.isEnabled == true)
+        d.removeObject(forKey: LayoutPreferences.enabledKey)
+        check("layoutPrefs: isEnabled 清除回默认", LayoutPreferences.isEnabled == true)
+
+        // --- coexistenceChoice：三枚举往返 + 非法串回落 unspecified ---
+        d.removeObject(forKey: LayoutPreferences.coexistenceChoiceKey)
+        check("layoutPrefs: coexistence 未设置 unspecified", LayoutPreferences.coexistenceChoice == .unspecified)
+        LayoutPreferences.coexistenceChoice = .keepDisabled
+        check("layoutPrefs: coexistence keepDisabled 往返", LayoutPreferences.coexistenceChoice == .keepDisabled)
+        LayoutPreferences.coexistenceChoice = .enableAnyway
+        check("layoutPrefs: coexistence enableAnyway 往返", LayoutPreferences.coexistenceChoice == .enableAnyway)
+        d.set("bogus-choice", forKey: LayoutPreferences.coexistenceChoiceKey)
+        check("layoutPrefs: coexistence 非法串回落 unspecified", LayoutPreferences.coexistenceChoice == .unspecified)
+        d.removeObject(forKey: LayoutPreferences.coexistenceChoiceKey)
+
+        // --- snapGap：未设置 0；负值下钳 0；超上限钳 40；域内直通；写读一致 ---
+        d.removeObject(forKey: LayoutPreferences.snapGapKey)
+        check("layoutPrefs: snapGap 未设置 0", LayoutPreferences.snapGap == 0)
+        LayoutPreferences.snapGap = -5
+        check("layoutPrefs: snapGap 负值读 0（getter 下钳）", LayoutPreferences.snapGap == 0)
+        LayoutPreferences.snapGap = 100
+        check("layoutPrefs: snapGap 100 读 40（getter 上钳）", LayoutPreferences.snapGap == 40)
+        LayoutPreferences.snapGap = 12.5
+        check("layoutPrefs: snapGap 域内直通 12.5", LayoutPreferences.snapGap == 12.5)
+        d.removeObject(forKey: LayoutPreferences.snapGapKey)
+        check("layoutPrefs: snapGap 清除回 0", LayoutPreferences.snapGap == 0)
+    }
+}
+
+extension RunnerHarness {
+    /// B231：WindowLayoutManagerProbe.probe 直测——候选清单非空 + running/summary 不变式。
+    func runLayoutManagerProbeTests() {
+        print("\n=== LayoutManagerProbe (B231) ===")
+        let profile = WindowLayoutManagerProbe.probe()
+        check("probe: 候选清单非空（静态目录驱动）", !profile.candidates.isEmpty)
+        check("probe: conflictSummary 与 hasRunningConflict 一致",
+              profile.conflictSummary == nil ? !profile.hasRunningConflict : profile.hasRunningConflict)
+        check("probe: running 冲突是候选子集",
+              profile.runningConflicts.allSatisfy { c in profile.candidates.contains(where: { $0.name == c.name }) })
+    }
+}
