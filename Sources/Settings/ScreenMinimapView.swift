@@ -64,11 +64,11 @@ struct ScreenMinimapView: View {
 
     // MARK: 单块屏
 
-    private func isSelectedScreen(_ screen: ScreenLayoutMapper.MappedScreen) -> Bool {
+    func isSelectedScreen(_ screen: ScreenLayoutMapper.MappedScreen) -> Bool {
         selected?.explicitDisplayID == screen.displayID
     }
 
-    private func screenView(_ screen: ScreenLayoutMapper.MappedScreen) -> some View {
+    func screenView(_ screen: ScreenLayoutMapper.MappedScreen) -> some View {
         let selectedScreen = isSelectedScreen(screen)
         let hovered = hoveredDisplayID == screen.displayID
 
@@ -117,12 +117,12 @@ struct ScreenMinimapView: View {
         .accessibilityAddTraits(selectedScreen ? .isSelected : [])
     }
 
-    private func smallScreen(_ screen: ScreenLayoutMapper.MappedScreen) -> Bool {
+    func smallScreen(_ screen: ScreenLayoutMapper.MappedScreen) -> Bool {
         screen.frame.width < 96 || screen.frame.height < 64
     }
 
     /// 两行标签：名称（+主标）一行、等宽元数据一行——同 HStack 挤一行必然截断
-    private func screenLabels(_ screen: ScreenLayoutMapper.MappedScreen, selected: Bool) -> some View {
+    func screenLabels(_ screen: ScreenLayoutMapper.MappedScreen, selected: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 Text(screen.name)
@@ -147,7 +147,7 @@ struct ScreenMinimapView: View {
         .padding(9)
     }
 
-    private func labelLine(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
+    func labelLine(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
         var parts: [String] = []
         if let input = screens.first(where: { $0.displayID == screen.displayID }) {
             parts.append("\(Int(input.cocoaFrame.width))×\(Int(input.cocoaFrame.height))")
@@ -233,7 +233,7 @@ struct ScreenMinimapView: View {
             .accessibilityAddTraits(isTargetSpace ? .isSelected : [])
     }
 
-    private func screenTapHelp(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
+    func screenTapHelp(_ screen: ScreenLayoutMapper.MappedScreen) -> String {
         let label = screen.yabaiDisplayIndex.map { "屏\($0)" } ?? "#\(screen.displayID)"
         if let visible = screen.visibleSpaceIndex,
            let position = ScreenLayoutMapper.positionInDisplay(of: visible, inAscendingIndexes: screen.spaces.map(\.yabaiIndex)) {

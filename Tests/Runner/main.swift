@@ -293,6 +293,7 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleMouseNavSweepTests()
         runRemoteResolvedSweepTests()
         runOverlayQuerySweepTests()
+        runSignalNavTailTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()
@@ -381,6 +382,7 @@ final class FakeAuditor: RestoreAuditing {
         runLLMRequestTests()
         runSettingsPrefUpdateTests()
         runPerfInstanceTests()
+        runMinimapLabelTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
