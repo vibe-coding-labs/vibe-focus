@@ -43,3 +43,20 @@ extension RunnerHarness {
               && mock.events[3].keyDown == false && mock.events[3].flags.isEmpty)
     }
 }
+
+// MARK: - B258 追加：气泡空态守卫路径（phase != .open / 无 textView / 无 panel）
+
+extension RunnerHarness {
+    func runBubbleIdleGuardTests() {
+        let controller = InputBubbleController.shared
+        // 空态（未 summon）：历史翻阅、语音让位、收尾、跟随停止全部走守卫早退。
+        check("bubbleIdle: historyPrevious 空态 false",
+              controller.historyPrevious() == false)
+        check("bubbleIdle: historyNext 空态 false",
+              controller.historyNext() == false)
+        controller.updateVoiceYield()
+        controller.finishSubmission()
+        controller.stopFollowing()
+        check("bubbleIdle: 空态收尾/跟随停止幂等不崩", true)
+    }
+}

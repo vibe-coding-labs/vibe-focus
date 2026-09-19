@@ -330,6 +330,8 @@ final class FakeAuditor: RestoreAuditing {
         runTitleEditorChannelTests()
         runVoiceQueueAdvanceTests()
         runKeyEventPosterTests()
+        runBubbleIdleGuardTests()
+        runYabaiAsyncAndVoicePersistTests()
         runSpaceMoveSkipTests()
         runHookTestAndAXReadTests()
         runAXWriteFailPathTests()
