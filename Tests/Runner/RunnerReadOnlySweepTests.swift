@@ -40,3 +40,26 @@ extension RunnerHarness {
         check("sweep: 安装扫描完成复位 isChecking", settingsView.isCheckingInstallations == false)
     }
 }
+
+// MARK: - B250 追加：makeIdentity 提缝直测（private→internal 仅可见性）
+
+extension RunnerHarness {
+    func runFindingMakeIdentityTests() {
+        let wm = WindowManager.shared
+        // 显式 bundleIdentifier 路径：五字段透传，不触 LaunchServices。
+        let explicit = wm.makeIdentity(from: .init(
+            windowID: 42, pid: getpid(), appName: "Terminal",
+            bundleIdentifier: "com.apple.Terminal", title: "示例窗"))
+        check("finding: makeIdentity 显式 bundleID 五字段透传",
+              explicit.windowID == 42 && explicit.pid == getpid()
+              && explicit.bundleIdentifier == "com.apple.Terminal"
+              && explicit.appName == "Terminal" && explicit.title == "示例窗")
+        // bundleIdentifier nil → NSRunningApplication(pid) LaunchServices 查询兜底；
+        // 幽灵 pid 查询返回 nil → identity.bundleIdentifier 保持 nil。
+        let ghost = wm.makeIdentity(from: .init(
+            windowID: 43, pid: 999_999, appName: "ghost",
+            bundleIdentifier: nil, title: "g"))
+        check("finding: makeIdentity 幽灵 pid 兜底查询得 nil",
+              ghost.bundleIdentifier == nil && ghost.windowID == 43)
+    }
+}

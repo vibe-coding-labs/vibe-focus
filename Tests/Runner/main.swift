@@ -402,6 +402,7 @@ final class FakeAuditor: RestoreAuditing {
         runSoundGateSilentTests()
         runTitleEditorAXWriteTests()
         runSoundResolveAndCrashStateTests()
+        runFindingMakeIdentityTests()
         runAudioEngineProtocolTests()
         runGridSnapshotRowTests()
     // MARK: 汇总

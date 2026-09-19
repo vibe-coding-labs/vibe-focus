@@ -216,7 +216,7 @@ extension WindowManager {
         return captureFocusedWindowIdentity()
     }
 
-    private func makeIdentity(from candidate: WindowCandidate) -> WindowIdentity {
+    func makeIdentity(from candidate: WindowCandidate) -> WindowIdentity {
         // P-INST-166: candidate→WindowIdentity 构造耗时（NSRunningApplication(processIdentifier:) LaunchServices 进程元数据查询取 bundleIdentifier；findClaudeCodeWindow P-INST-26 候选构造调用）。
         let miStart = Date()
         let identity = WindowIdentity(
