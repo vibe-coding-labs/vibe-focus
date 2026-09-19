@@ -255,6 +255,7 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleHistoryPanelKeyTests()
         runPerfMonitorTests()
         runStorageSweepTests()
+        runHookInstallSweepTests()
         runTerminalRegistryCoverageTests()
         runSessionActivityCoverageTests()
         runAuditLoggerCoverageTests()
