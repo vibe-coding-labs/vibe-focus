@@ -631,6 +631,152 @@ extension RunnerHarness {
     }
 }
 
+// MARK: - B229：会话恢复域补口（脚本构造器/模型派生量/迁移 tty 分支/命令降级链/Store 落库）
+
+extension RunnerHarness {
+    func runSessionRestoreCoverageTopUps() {
+        // A. PaneEnumeration 脚本构造器（纯字符串产物，此前 0 覆盖）
+        let enumScript = PaneEnumeration.itermEnumerateSessions()
+        check("paneScript: iTerm2 枚举面向 iterm2 + 三层循环 + tty/bounds/name 列",
+              enumScript.contains("tell application id \"com.googlecode.iterm2\"")
+              && enumScript.contains("repeat with w in windows")
+              && enumScript.contains("repeat with t in tabs of w")
+              && enumScript.contains("repeat with s in sessions of t")
+              && enumScript.contains("tty of s")
+              && enumScript.contains("linefeed"))
+        let appendTab = PaneEnumeration.itermAppendTab(windowASID: "42", command: "say \"hi\"")
+        check("paneScript: 追加 tab 指定 window id + create tab + 命令经 AppleScript 转义",
+              appendTab.contains("tell window id 42")
+              && appendTab.contains("create tab with default profile")
+              && appendTab.contains(TerminalAutomationScript.appleScriptEscaped("say \"hi\"")))
+        let writeSession = PaneEnumeration.itermWriteToSession(windowASID: "77", tabIndex: 2, sessionIndex: 3, command: "echo ok")
+        check("paneScript: 定点 session 注入 tab/session 坐标正确",
+              writeSession.contains("tell session 3 of tab 2 of window id 77")
+              && writeSession.contains("write text"))
+        check("paneScript: window 兜底委派 TerminalAutomationScript.itermInjectCommand",
+              PaneEnumeration.itermWriteToWindow(windowASID: "9", command: "c1")
+              == TerminalAutomationScript.itermInjectCommand(windowID: "9", command: "c1"))
+        check("paneScript: Terminal 注入委派 TerminalAutomationScript.terminalInjectCommand",
+              PaneEnumeration.terminalWriteToWindow(windowCGID: 88, command: "c2")
+              == TerminalAutomationScript.terminalInjectCommand(windowID: 88, command: "c2"))
+
+        // B. 模型派生量（frame setter / 三计数）
+        var win = SessionWindowSnapshot(appBundleID: "t", frame: CGRect(x: 1, y: 2, width: 3, height: 4),
+                                        displayID: 1, panes: [])
+        win.frame = CGRect(x: 9, y: 8, width: 7, height: 6)
+        check("model: frame setter 逐分量回写", win.x == 9 && win.y == 8 && win.width == 7 && win.height == 6)
+        let snap = SessionRestoreSnapshot(name: "d", windows: [
+            SessionWindowSnapshot(appBundleID: "t", frame: .zero, displayID: 1, yabaiSpace: 2, panes: [
+                SessionPaneSnapshot(kind: .shell),
+                SessionPaneSnapshot(kind: .localClaude, sessionID: "s1"),
+            ]),
+            SessionWindowSnapshot(appBundleID: "t", frame: .zero, displayID: 2, yabaiSpace: 3, panes: [
+                SessionPaneSnapshot(kind: .localClaude, sessionID: "s2"),
+                SessionPaneSnapshot(kind: .remoteSSH),
+            ]),
+            SessionWindowSnapshot(appBundleID: "t", frame: .zero, displayID: 2, yabaiSpace: nil, panes: []),
+        ], launchCommand: nil)
+        check("model: sessionPaneCount 只数有 sessionID 的 pane", snap.sessionPaneCount == 2)
+        check("model: spaceCount 去重且 nil 不计", snap.spaceCount == 2)
+        check("model: displayCount 去重", snap.displayCount == 2)
+
+        // C. migrateLegacy tty-only 分支（此前 0 覆盖；sessionID 优先级不变量一并锁定）
+        let legacy = TerminalGridSnapshot(name: "L", appBundleID: "com.apple.Terminal", displayID: 7,
+                                          displayYabaiIndex: 1, rows: 1, cols: 3, cells: [
+            TerminalGridCellSnapshot(index: 0, x: 0, y: 0, width: 10, height: 10, ttyPath: "/dev/ttys001", sessionID: "sid-1", cwd: "/a", title: "t1"),
+            TerminalGridCellSnapshot(index: 1, x: 10, y: 0, width: 10, height: 10, ttyPath: "/dev/ttys002", sessionID: nil, cwd: "/b", title: "t2"),
+            TerminalGridCellSnapshot(index: 2, x: 20, y: 0, width: 10, height: 10, ttyPath: nil, sessionID: nil, cwd: "/c", title: "t3"),
+        ], launchCommand: "htop")
+        let migrated = SessionSnapshotMigrator.migrateLegacy(legacy)
+        check("migrate: 三 cell 升格三窗、kind 分流 localClaude/shell(tty)/shell(裸)",
+              migrated.windows.count == 3
+              && migrated.windows[0].panes[0].kind == .localClaude && migrated.windows[0].panes[0].sessionID == "sid-1"
+              && migrated.windows[1].panes[0].kind == .shell && migrated.windows[1].panes[0].tty == "/dev/ttys002"
+              && migrated.windows[2].panes[0].kind == .shell && migrated.windows[2].panes[0].tty == nil)
+        check("migrate: id/launchCommand/yabai 平移无损",
+              migrated.id == legacy.id && migrated.launchCommand == "htop"
+              && migrated.windows.allSatisfy { $0.yabaiSpace == nil && $0.yabaiDisplay == 1 && $0.displayID == 7 })
+
+        // D. SessionCommandBuilder 降级链补口（fallback / 远程四分支 / 端口提取）
+        check("cmd: local 无 session 有 fallback → 启动命令",
+              SessionCommandBuilder.localCommand(cwd: nil, sessionID: nil, fallback: "npm run dev") == "npm run dev")
+        let remoteWithCwd = SessionPaneSnapshot(kind: .remoteSSH, cwd: "/remote", sshTarget: "u@h")
+        check("cmd: 远程无会话有目录 → cd+启动命令（不猜 --resume）",
+              SessionCommandBuilder.paneCommand(remoteWithCwd, launchCommand: "npm run dev")
+              == "ssh -t u@h " + SessionCommandBuilder.shellQuoted("cd '/remote' && npm run dev"))
+        let remoteNoTarget = SessionPaneSnapshot(kind: .remoteSSH, sessionID: "sid-9", cwd: "/r", sshCommand: "not-ssh")
+        check("cmd: 有会话但 target 解析不出 → 原样回放 sshCommand",
+              SessionCommandBuilder.paneCommand(remoteNoTarget, launchCommand: nil) == "not-ssh")
+        let remoteFallbackTarget = SessionPaneSnapshot(kind: .remoteSSH, sessionID: "sid-9", sshCommand: "ssh u@h")
+        check("cmd: target 从 sshCommand 兜底解析 → ssh -t 定点恢复",
+              SessionCommandBuilder.paneCommand(remoteFallbackTarget, launchCommand: nil)
+              == "ssh -t u@h " + SessionCommandBuilder.shellQuoted("claude --resume sid-9"))
+        check("cmd: 远程全缺 → nil", SessionCommandBuilder.paneCommand(SessionPaneSnapshot(kind: .remoteSSH), launchCommand: nil) == nil)
+        let remotePort = SessionPaneSnapshot(kind: .remoteSSH, sessionID: "sid-9", cwd: "/r", sshCommand: "ssh -p 2200 u@h")
+        check("cmd: 显式端口从 sshCommand 提取 → -p 2200 前置",
+              SessionCommandBuilder.paneCommand(remotePort, launchCommand: nil)
+              == "ssh -p 2200 -t u@h " + SessionCommandBuilder.shellQuoted("cd '/r' && claude --resume sid-9"))
+        check("port: sshCommand 缺 → nil", SessionPaneSnapshot(kind: .remoteSSH).sshTargetPort == nil)
+        check("port: -p 显式端口解析", SessionPaneSnapshot(kind: .remoteSSH, sshCommand: "ssh -p 2200 u@h").sshTargetPort == "2200")
+
+        // E. SessionRestoreStore 落库往返（临时 WindowStateStore 隔离，零触生产库）
+        do {
+            let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-srstore-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let store = WindowStateStore(dbPath: dir + "/t.db")
+            let sr = SessionRestoreStore(store: store)
+            check("srStore: 空库快照为空 latest nil", sr.snapshots().isEmpty && sr.latest() == nil)
+
+            let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+            let sA = SessionRestoreSnapshot(id: "a", name: "早", windows: [], launchCommand: nil, capturedAt: t0)
+            let sB = SessionRestoreSnapshot(id: "b", name: "晚", windows: [], launchCommand: "htop",
+                                            capturedAt: t0.addingTimeInterval(60))
+            sr.upsert(sA)
+            sr.upsert(sB)
+            check("srStore: upsert 两条按 capturedAt 升序读回", sr.snapshots().map(\.id) == ["a", "b"])
+            check("srStore: latest 取最新", sr.latest()?.id == "b")
+            sr.upsert(SessionRestoreSnapshot(id: "a", name: "改名", windows: [], launchCommand: nil, capturedAt: t0))
+            check("srStore: 同 id upsert 原位更新不追加",
+                  sr.snapshots().count == 2 && sr.snapshots().first?.name == "改名")
+
+            // merge 纯函数：同 id v2 优先、独有 legacy 尾随
+            let dupLegacy = SessionRestoreSnapshot(id: "a", name: "legacy版", windows: [], launchCommand: nil, capturedAt: t0)
+            let uniqLegacy = SessionRestoreSnapshot(id: "uniq", name: "独有", windows: [], launchCommand: nil, capturedAt: t0)
+            let merged = SessionRestoreStore.merge(v2: [sA], legacyConverted: [dupLegacy, uniqLegacy])
+            check("srStore: merge 同 id v2 优先、独有 legacy 尾随", merged.map(\.name) == ["早", "独有"])
+
+            // 迁移视图：legacy JSON 并入（同 id v2 优先）
+            let legacySnap = TerminalGridSnapshot(id: "legacy-1", name: "旧快照", appBundleID: "com.apple.Terminal",
+                                                  displayID: 7, displayYabaiIndex: 1, rows: 1, cols: 1, cells: [
+                TerminalGridCellSnapshot(index: 0, x: 0, y: 0, width: 10, height: 10, ttyPath: nil, sessionID: nil, cwd: nil, title: nil),
+            ], launchCommand: nil, capturedAt: t0.addingTimeInterval(120))
+            if let data = try? JSONEncoder().encode([legacySnap]),
+               let json = String(data: data, encoding: .utf8) {
+                store.savePreference(key: "terminalGridSnapshots", value: json)
+                check("srStore: legacy 经迁移视图并入（capturedAt 排序尾随）",
+                      sr.snapshots().map(\.id) == ["a", "b", "legacy-1"])
+                // remove：v2+legacy 双库同清
+                sr.remove(id: "legacy-1")
+                check("srStore: remove 同步清 legacy 库（raw 过滤为空数组）",
+                      store.loadPreference(key: "terminalGridSnapshots") == "[]"
+                      && !sr.snapshots().contains { $0.id == "legacy-1" })
+            }
+            sr.remove(id: "b")
+            check("srStore: remove v2 条目", sr.snapshots().map(\.id) == ["a"])
+
+            // formatVersion 护栏：v1 存量直写 → 读视图过滤
+            if let data = try? JSONEncoder().encode([sA]),
+               let json = String(data: data, encoding: .utf8)?
+                   .replacingOccurrences(of: "\"formatVersion\":2", with: "\"formatVersion\":1") {
+                store.savePreference(key: "sessionRestoreSnapshotsV2", value: json)
+                check("srStore: formatVersion≠2 存量被护栏过滤", sr.snapshots().isEmpty)
+            }
+        }
+
+    }
+}
+
 // MARK: - B227：SessionRestoreSnapshot 派生量与 frame 存取（纯值模型）
 
 extension RunnerHarness {

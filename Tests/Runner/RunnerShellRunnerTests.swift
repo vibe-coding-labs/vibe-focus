@@ -153,6 +153,68 @@ extension RunnerHarness {
     }
 }
 
+// MARK: - B229：ExitJournal 生产包装层直测（真身路径 = runner 角色隔离文件，零污染主应用日志）
+//
+// 此前所有 journal 测试都走路径注入变体，生产包装（无 to: 参数重载 + lastExitReason()
+// 盘读 + recordCleanExitIfUnrecorded 兜底）零覆盖。diagnosticFilePath 角色隔离保证
+// TestRunner 进程写的是 exits.jsonl-<进程名> 后缀文件——真身路径往返不触主应用审计流。
+// ⚠️ 注册顺序：本方法必须在 runRecordExitTests 之前跑——它依赖 hasRecordedExit 尚未
+// 被注入变体置位，才能走 recordCleanExitIfUnrecorded 的「写 clean」分支（静态标志无复位）。
+
+extension RunnerHarness {
+    func runJournalProductionPathTests() {
+        // 角色隔离：主应用/空进程名用规范路径，其余进程加 -<进程名> 后缀
+        check("diagPath: 主应用进程用规范路径",
+              diagnosticFilePath(base: "/tmp/x.log", processName: "VibeFocusHotkeys") == "/tmp/x.log")
+        check("diagPath: 空进程名用规范路径",
+              diagnosticFilePath(base: "/tmp/x.log", processName: "") == "/tmp/x.log")
+        check("diagPath: 其它进程加后缀",
+              diagnosticFilePath(base: "/tmp/x.log", processName: "TestRunner") == "/tmp/x.log-TestRunner")
+        let procName = ProcessInfo.processInfo.processName
+        check("diagPath: 本进程 fatal 路径带角色后缀（与主应用 fatal 文件隔离）",
+              diagnosticFatalLogPath() == "/tmp/vibefocus-crash-fatal.log-\(procName)")
+        check("diagPath: 本进程 snapshot 路径带角色后缀",
+              diagnosticSnapshotLogPath() == "/tmp/vibefocus-crash-snapshot.log-\(procName)")
+        check("exitJournal: filePath 走角色隔离（runner 专属 exits 文件 + Logs 目录）",
+              ExitJournal.filePath.hasSuffix("exits.jsonl-\(procName)")
+              && ExitJournal.filePath.contains("Library/Logs/VibeFocus"))
+
+        let journalPath = ExitJournal.filePath
+
+        // clean 兜底（hasRecordedExit 尚未置位 → 真写一条 clean 到 runner 专属文件）
+        let beforeClean = ((try? String(contentsOfFile: journalPath, encoding: .utf8)) ?? "")
+            .split(separator: "\n").count
+        ExitJournal.recordCleanExitIfUnrecorded()
+        let afterClean = ((try? String(contentsOfFile: journalPath, encoding: .utf8)) ?? "")
+            .split(separator: "\n").count
+        check("exitJournal: clean 兜底（未记录过）真写一行", afterClean == beforeClean + 1)
+
+        // recordExit 生产包装 → lastExitReason() 盘读往返（跳过 launch/坏行取最后一条 exit）
+        ExitJournal.recordExit(reason: "vf-runner-selftest")
+        check("exitJournal: recordExit 真身路径落盘且 lastExitReason() 读回",
+              ExitJournal.lastExitReason() == "vf-runner-selftest")
+
+        // hasRecordedExit 已置位 → clean 兜底不重复写
+        let beforeNoop = ((try? String(contentsOfFile: journalPath, encoding: .utf8)) ?? "")
+            .split(separator: "\n").count
+        ExitJournal.recordCleanExitIfUnrecorded()
+        let afterNoop = ((try? String(contentsOfFile: journalPath, encoding: .utf8)) ?? "")
+            .split(separator: "\n").count
+        check("exitJournal: 已显式记录退出 → clean 兜底不重复写", afterNoop == beforeNoop)
+
+        // recordLaunch 生产包装（经 VibeFocusCrashPipeline 跨模块入口）：launch 行落盘可读
+        VibeFocusCrashPipeline.recordTestLaunch(bundleID: "vf.runner.selftest", version: "0", exePath: "/bin/echo")
+        let content = (try? String(contentsOfFile: journalPath, encoding: .utf8)) ?? ""
+        check("exitJournal: recordTestLaunch 真身路径 launch 行落盘",
+              content.contains("vf.runner.selftest") && content.contains("/bin/echo"))
+
+        // openAppendFD 生产包装：fd 有效（写侧语义已由注入变体 B146 锁定）
+        let fd = ExitJournal.openAppendFD()
+        check("exitJournal: openAppendFD 真身路径 fd 有效", fd >= 0)
+        if fd >= 0 { close(fd) }
+    }
+}
+
 // MARK: - B139：claudePID / workingDirectory 解析边缘（runner 注入）
 
 extension RunnerHarness {
