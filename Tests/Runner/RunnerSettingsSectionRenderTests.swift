@@ -352,3 +352,14 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B263：TerminalGridSection 空快照态渲染（savedLayoutsCard 空态分支）
+
+extension RunnerHarness {
+    func runTGEmptySnapshotRenderTests() {
+        let view = SettingsView()
+        // gridSnapshots @State 默认空 → savedLayoutsCard 走空态文案分支
+        let renderer = ImageRenderer(content: view.savedLayoutsCard)
+        check("tgEmpty: savedLayoutsCard 空态渲染出图", renderer.nsImage != nil)
+    }
+}
