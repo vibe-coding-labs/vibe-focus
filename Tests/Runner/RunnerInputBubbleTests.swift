@@ -1547,3 +1547,57 @@ extension RunnerHarness {
         store.clear()
     }
 }
+
+// MARK: - B242：历史面板纯函数补口（行高/时间文案/面板定位几何）
+
+extension RunnerHarness {
+    func runBubblePanelPureTests() {
+        // A. 行高：收起/展开两态
+        check("panelPure: 收起行高", HistoryRowView.height(isExpanded: false) == HistoryRowView.collapsedHeight)
+        check("panelPure: 展开行高 = 收起 + 扩展量",
+              HistoryRowView.height(isExpanded: true)
+              == HistoryRowView.collapsedHeight + HistoryRowView.expandedExtraHeight)
+
+        // B. 时间文案：同天 → HH:mm（无「-」）；非同天 → MM-dd HH:mm（含「-」）
+        let now = Date()
+        let sameDay = HistoryRowView.timeText(for: now, now: now)
+        let farPast = HistoryRowView.timeText(for: now.addingTimeInterval(-400 * 86400), now: now)
+        check("panelPure: 同天时间只含 时:分", !sameDay.contains("-") && sameDay.contains(":"))
+        check("panelPure: 非同天带 月-日 前缀", farPast.contains("-") && farPast.contains(":"))
+
+        // C. 面板定位几何（锚气泡：先右后左，双轴夹进可视区）
+        let size = NSSize(width: 300, height: 400)
+        let visible = CGRect(x: 0, y: 0, width: 1700, height: 1050)
+
+        // 右侧放得下 → 贴气泡右沿 +8
+        let rightOK = InputBubbleHistoryPanelController.panelOrigin(
+            anchorFrame: CGRect(x: 100, y: 300, width: 500, height: 300),
+            panelSize: size, visibleFrame: visible)
+        check("panelPure: 右侧放得下 → 贴右沿 +8", rightOK.x == CGFloat(608))
+
+        // 右侧放不下、左侧放得下 → 贴左沿 -8
+        let leftOK = InputBubbleHistoryPanelController.panelOrigin(
+            anchorFrame: CGRect(x: 1450, y: 300, width: 240, height: 300),
+            panelSize: size, visibleFrame: visible)
+        check("panelPure: 右侧放不下 → 贴左沿 -8", leftOK.x == CGFloat(1450 - 8 - 300))
+
+        // 两侧都放不下 → 夹进可视区右缘
+        let clampedX = InputBubbleHistoryPanelController.panelOrigin(
+            anchorFrame: CGRect(x: 800, y: 300, width: 1000, height: 100),
+            panelSize: NSSize(width: 800, height: 200),
+            visibleFrame: visible)
+        check("panelPure: 双侧都放不下 → 左越界夹到 minX", clampedX.x == CGFloat(0))
+
+        // Y：气泡顶对齐后上下夹 8pt（panel 高于可视区上缘 → 贴 maxY-h-8）
+        let yTop = InputBubbleHistoryPanelController.panelOrigin(
+            anchorFrame: CGRect(x: 0, y: 900, width: 300, height: 500),
+            panelSize: size, visibleFrame: visible)
+        check("panelPure: Y 上夹（顶沿 8pt 内）", yTop.y == CGFloat(1050 - 400 - 8))
+
+        // Y：气泡远在可视区下方 → 贴 minY + 8
+        let yBottom = InputBubbleHistoryPanelController.panelOrigin(
+            anchorFrame: CGRect(x: 0, y: -3000, width: 300, height: 100),
+            panelSize: size, visibleFrame: visible)
+        check("panelPure: Y 下夹（贴 minY + 8）", yBottom.y == CGFloat(8))
+    }
+}
