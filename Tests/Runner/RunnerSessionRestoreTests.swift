@@ -1039,3 +1039,29 @@ extension RunnerHarness {
 
 // B237：异步桥接结果盒（Box 不能嵌套在泛型函数内，提文件作用域）
 final class SRResultBox<T>: @unchecked Sendable { var value: T? }
+
+// MARK: - B252：auto-restore Task 体烟测（空快照安全打穿恢复编排；有窗快照归 GRID_E2E）
+
+extension RunnerHarness {
+    func runAutoRestoreTaskBodyTests() {
+        let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-srauto-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let store = SessionRestoreStore(store: WindowStateStore(dbPath: dir + "/t.db"))
+        let controller = SessionRestoreController(store: store)
+
+        let savedEnabled = TerminalGridPreferences.autoRestoreEnabled
+        defer { TerminalGridPreferences.autoRestoreEnabled = savedEnabled }
+        TerminalGridPreferences.autoRestoreEnabled = true
+
+        store.upsert(SessionRestoreSnapshot(id: "auto-1", name: "空", windows: [], launchCommand: nil))
+        controller.hasRunAutoRestoreThisLaunch = false
+        controller.runAutoRestoreIfEnabled()
+
+        // 泵等 Task 编排走完（空窗快照：环境采集 + 空计划，真实 AppleScript 枚举 ~2s）
+        RunLoop.main.run(until: Date().addingTimeInterval(8.0))
+        check("srAuto: Task 体全程走完零崩溃（空快照防循环旗标置位）",
+              controller.hasRunAutoRestoreThisLaunch)
+        check("srAuto: 零副作用——空快照不落任何窗", store.snapshots().first?.windows.isEmpty == true)
+    }
+}
