@@ -997,4 +997,22 @@ extension RunnerHarness {
         check("cgBounds: 不存在的窗口 → nil", cgWindowBounds(for: 0xFFFF_FFF0) == nil)
 
     }
+
+    // MARK: - B277：WindowStateStore preference KV 往返（临时库，schema 建表/迁移链路直测）
+    func runStorePreferenceKVTests() {
+        let dir = "/tmp/vibefocus-b277-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        let store = WindowStateStore(dbPath: dir + "/kv.db")
+        // 冷库首次使用触发 openDatabase/createTables/migrateWindowsPK 全链
+        check("storeKV: 冷库首次查询不崩", store.loadPreference(key: "nope") == nil)
+
+        store.savePreference(key: "b277", value: "值甲")
+        store.savePreference(key: "b277", value: "值乙")   // 同键覆盖（INSERT OR REPLACE 语义）
+        check("storeKV: 写入后读回最新值", store.loadPreference(key: "b277") == "值乙")
+        store.savePreference(key: "b277b", value: "另键")
+        check("storeKV: 多键共存互不覆盖",
+              store.loadPreference(key: "b277") == "值乙" && store.loadPreference(key: "b277b") == "另键")
+    }
 }
