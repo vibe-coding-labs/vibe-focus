@@ -219,6 +219,7 @@ final class FakeAuditor: RestoreAuditing {
         runGridTargetLogicTests()
         runGridSpaceE2E()
         runSizeE2E()
+        runAXWriteE2E()
         runFloatSettleE2E()
         runConvergencePipelineTests()
         runTitleE2E()
@@ -325,7 +326,8 @@ final class FakeAuditor: RestoreAuditing {
         runScreenPositionTests()
         runLoginItemRefreshTests()
         runTitleEditorChannelTests()
-        runVoiceQueueTests()
+        runVoiceQueueAdvanceTests()
+        runAXWriteFailPathTests()
         runToggleEngineStoreTests()
         runBubblePreferencesBranchTests()
         runBindingVerifierTests()
@@ -412,6 +414,7 @@ final class FakeAuditor: RestoreAuditing {
         runFindingMakeIdentityTests()
         runTitleEditorCaptureTests()
         runAudioEngineProtocolTests()
+        runSpaceDisplayLocalTests()
         runGridSnapshotRowTests()
         runPerfWatchdogTests()   // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰
     // MARK: 汇总

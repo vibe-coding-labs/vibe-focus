@@ -786,6 +786,128 @@ extension RunnerHarness {
                   && reg.activeBindingsForUI.contains { $0.windowID == 303 })
         }
 
+        // B253：同窗多会话（远程 SSH 多会话共享同一 iTerm 窗 = 用户真实形态）——
+        // markCompleted 窗口级语义审查：直绑会话先结束不得把仍活跃的 alias 共窗
+        // 会话一起标完成（窗级「在跑 Claude」信号被掐死 → auto-show/绑定门全瞎），
+        // 且最后一个会话结束（无论直绑/alias 顺序）窗口必须能正确落 completed。
+        do {
+            let dir = "/tmp/vibefocus-swr9-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr9.db")
+            let reg = SessionWindowRegistry(store: solo)
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+            func sharedState(_ sid: String) -> WindowState {
+                WindowState(
+                    windowID: 70, pid: 4242, tty: nil, axWindowNumber: nil, appName: "iTerm2",
+                    bundleIdentifier: "com.googlecode.iterm2", title: "shared",
+                    termSessionID: nil, itermSessionID: nil, sessionID: sid,
+                    bindingType: .remote, isCompleted: false, createdAt: t0, updatedAt: t0)
+            }
+
+            // 场景一：直绑 A + alias B/C，A 先结束 → 移交给剩余 alias（B），窗口保持活跃
+            reg.windowStates[70] = sharedState("share-a")
+            reg.sessionAliasWindowID["share-b"] = 70
+            reg.sessionAliasWindowID["share-c"] = 70
+            reg.markCompleted(sessionID: "share-a")
+            check("swrShare: 直绑会话结束仍有 2 个 alias 共窗 → 窗口不落 completed",
+                  reg.windowStates[70]!.isCompleted == false
+                  && reg.sessionAliasWindowID["share-c"] == 70)
+            check("swrShare: 绑定移交剩余 alias 会话（内存+DB）",
+                  reg.windowStates[70]!.sessionID == "share-b"
+                  && reg.sessionAliasWindowID["share-b"] == nil
+                  && solo.findWindowState(windowID: 70)?.sessionID == "share-b")
+            // B 结束 → 移交给 C
+            reg.markCompleted(sessionID: "share-b")
+            check("swrShare: 逐个结束时绑定继续移交（B→C）且窗口保持活跃",
+                  reg.windowStates[70]!.isCompleted == false
+                  && reg.windowStates[70]!.sessionID == "share-c")
+            // C 结束（最后一个）→ 落 completed
+            reg.markCompleted(sessionID: "share-c")
+            check("swrShare: 最后一个会话结束 → 窗口落 completed 且别名清空",
+                  reg.windowStates[70]!.isCompleted == true
+                  && reg.sessionAliasWindowID["share-c"] == nil
+                  && solo.findWindowState(windowID: 70)?.isCompleted == true)
+
+            // 场景二：B（alias）先结束、直绑 A 仍活跃 → 窗口保持活跃且 A 的绑定不被盗
+            reg.windowStates[71] = sharedState("order-a")
+            reg.windowStates[71]!.windowID = 71
+            reg.sessionAliasWindowID["order-b"] = 71
+            reg.markCompleted(sessionID: "order-b")
+            check("swrShare: alias 会话先结束 → 窗口保持活跃且直绑会话不被移交",
+                  reg.windowStates[71]!.isCompleted == false
+                  && reg.windowStates[71]!.sessionID == "order-a")
+            reg.markCompleted(sessionID: "order-a")
+            check("swrShare: 随后直绑会话结束 → 正常落 completed",
+                  reg.windowStates[71]!.isCompleted == true)
+
+            // 相邻补测：reactivate 经 alias 会话复活共享窗；未知 session 无操作
+            reg.reactivate(sessionID: "share-b")
+            check("swrShare: reactivate 未知 session 无操作（绑定已全部完成）",
+                  reg.windowStates[70]!.isCompleted == true)
+        }
+
+        // B253：purgeClosedWindows 空快照守卫——CG 全系统窗列表为空只可能是
+        // WindowServer 瞬态/快照失败（裸系统也有 Finder 窗），拿着空列表判活会把
+        // 全部绑定连 DB 行一起清光（破坏性操作必须防御）。
+        do {
+            let dir = "/tmp/vibefocus-swr10-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr10.db")
+            let reg = SessionWindowRegistry(store: solo)
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+            reg.windowStates[80] = WindowState(
+                windowID: 80, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "guarded",
+                termSessionID: nil, itermSessionID: nil, sessionID: "purge-guard",
+                bindingType: .local, isCompleted: false, createdAt: t0, updatedAt: t0)
+            solo.saveWindowState(reg.windowStates[80]!)
+
+            reg.windowsProvider = { [] }
+            reg.purgeClosedWindows()
+            check("swrPurge: 空快照守卫 → 内存与 DB 行都不被清",
+                  reg.windowStates[80] != nil
+                  && solo.findWindowState(windowID: 80)?.sessionID == "purge-guard")
+
+            reg.windowsProvider = { [CGWindowEntry(from: [
+                kCGWindowNumber as String: UInt32(80),
+                kCGWindowOwnerPID as String: pid_t(4242),
+                kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 100, "Height": 80],
+            ])!] }
+            reg.purgeClosedWindows()
+            check("swrPurge: 正常快照（窗在列表）→ 保留",
+                  reg.windowStates[80] != nil)
+
+            reg.windowsProvider = { [CGWindowEntry(from: [
+                kCGWindowNumber as String: UInt32(81),
+                kCGWindowOwnerPID as String: pid_t(4242),
+                kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 100, "Height": 80],
+            ])!] }
+            reg.purgeClosedWindows()
+            check("swrPurge: 非空快照且窗确实不在 → 正常清理语义不变",
+                  reg.windowStates[80] == nil
+                  && solo.findWindowState(windowID: 80) == nil)
+        }
+
+        // B253 相邻补测：binding(for:) DB 损坏行（非终端 pid）清理路径
+        do {
+            let dir = "/tmp/vibefocus-swr11-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr11.db")
+            let reg = SessionWindowRegistry(store: solo)
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+            solo.saveWindowState(WindowState(
+                windowID: 90, pid: 1, tty: nil, axWindowNumber: nil, appName: "Finder",
+                bundleIdentifier: "com.apple.finder", title: "corrupt",
+                termSessionID: nil, itermSessionID: nil, sessionID: "corrupt-s",
+                bindingType: .local, isCompleted: false, createdAt: t0, updatedAt: t0))
+            check("swrCorrupt: 非终端 pid 的 DB 行 → binding 返 nil 且行被清理",
+                  reg.binding(for: "corrupt-s") == nil
+                  && solo.findWindowState(windowID: 90) == nil)
+        }
+
         // pruneExpiredBindings 内存+DB 双层清理（B111：保留期 24h 活跃/4h 完成，removed>0 才触发内存过滤）
         do {
             let dir = "/tmp/vibefocus-swr5-\(UUID().uuidString)"
