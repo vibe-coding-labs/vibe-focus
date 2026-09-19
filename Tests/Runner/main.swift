@@ -280,6 +280,7 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleHistoryPanelKeyTests()
         runPerfMonitorTests()
         runSpaceSwitchTests()
+        runSpaceQueryYabaiTests()
         runOverlaySignalTests()
         runStorageSweepTests()
         runHookInstallSweepTests()
