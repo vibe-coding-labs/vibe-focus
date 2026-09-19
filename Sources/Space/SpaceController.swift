@@ -10,7 +10,10 @@ final class SpaceController: ObservableObject, @unchecked Sendable {
 
     @Published var availability: SpaceAvailability = .unknown
     @Published var lastErrorMessage: String?
-    @Published private(set) var isEnabled: Bool = false
+    /// B256：set 放开为 internal——Settings 视图区 E2E/渲染测试以真实可用性探针
+    /// （waitForSpaceAvailability）置位后才能渲染 yabai 分支深层行（生产零变更：
+    /// 仍由 refreshAvailability/updateEnabledState 写入）。
+    @Published internal(set) var isEnabled: Bool = false
     @Published var canControlSpaces: Bool = false
 
     private var lastCheckAt: Date?
