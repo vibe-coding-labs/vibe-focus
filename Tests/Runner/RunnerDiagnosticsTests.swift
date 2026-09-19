@@ -62,7 +62,11 @@ extension RunnerHarness {
         // displayID ↔ 数组下标转换
         let mainID = wm.displayID(for: main)
         check("screenPos: 主屏 displayID 非空", mainID != nil)
-        check("screenPos: 主 displayID → 数组下标 0", wm.displayIndex(forDisplayID: mainID) == 0)
+        // B235 修：原断言「主 displayID → 下标 0」是错误环境假设——NSScreen.main
+        // （菜单栏/焦点屏）在多屏布局下不保证是 NSScreen.screens[0]（本机三屏实测
+        // 非 0）。实现语义 = NSScreen.screens 数组序往返，断言改为该不变量。
+        check("screenPos: 主 displayID → 下标与 NSScreen.screens 序往返一致",
+              wm.displayIndex(forDisplayID: mainID) == NSScreen.screens.firstIndex(of: main))
         check("screenPos: nil displayID → nil", wm.displayIndex(forDisplayID: nil) == nil)
         check("screenPos: 幻影 displayID → nil", wm.displayIndex(forDisplayID: 0xF00D) == nil)
 
