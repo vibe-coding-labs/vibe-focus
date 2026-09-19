@@ -468,3 +468,107 @@ extension RunnerHarness {
         }
     }
 }
+
+extension RunnerHarness {
+    /// B233：TerminalGridController+TargetResolve 实例级直测（B 档注入缝路线首批）——
+    /// GridTargetCode 路由四分支与回落语义、gridPlanningFrame、CGWindowList bounds→
+    /// displayID 映射、selectionPreview→resolveAppBundleID 接线。target/appPreference
+    /// 走 UserDefaults.standard 存-还守护（B84 家法）；yabai 依赖路径不在此批。
+    func runGridTargetResolveInstanceTests() {
+        print("\n=== GridTargetResolveInstance (B233) ===")
+        let controller = TerminalGridController.shared
+        let d = UserDefaults.standard
+        let savedTarget = d.string(forKey: TerminalGridPreferences.targetKey)
+        let savedAppPref = d.string(forKey: TerminalGridPreferences.appPreferenceKey)
+        defer {
+            if let savedTarget { d.set(savedTarget, forKey: TerminalGridPreferences.targetKey) }
+            else { d.removeObject(forKey: TerminalGridPreferences.targetKey) }
+            if let savedAppPref { d.set(savedAppPref, forKey: TerminalGridPreferences.appPreferenceKey) }
+            else { d.removeObject(forKey: TerminalGridPreferences.appPreferenceKey) }
+        }
+        func setTarget(_ raw: String) { d.set(raw, forKey: TerminalGridPreferences.targetKey) }
+        guard let mainScreen = NSScreen.screens.first(where: { $0.isMainScreen }) else {
+            check("gridResolve: 真机存在主屏（异常环境跳过强断言）", false)
+            return
+        }
+
+        // --- .main 路由：主屏直取、无 note ---
+        setTarget("main")
+        let rMain = controller.resolveTargetScreen()
+        check("gridResolve: main → 主屏无 note",
+              rMain?.note == nil && rMain?.screen.isMainScreen == true)
+
+        // --- .focused 路由：命中或回落二选一，回落契约锁死 ---
+        setTarget("focused")
+        let rFocused = controller.resolveTargetScreen()
+        check("gridResolve: focused → 必得屏且 note 为回落契约或 nil",
+              rFocused != nil
+              && (rFocused?.note == nil || rFocused?.note == "焦点屏不可得，已回落主屏"))
+        if rFocused?.note != nil {
+            check("gridResolve: focused 回落目标=主屏",
+                  rFocused?.screen.isMainScreen == true)
+        }
+
+        // --- .display 路由：真实 displayID 命中 / 断开回落 ---
+        if let realID = mainScreen.cgDirectDisplayID {
+            setTarget("d\(realID)")
+            let rHit = controller.resolveTargetScreen()
+            check("gridResolve: 真实 displayID 命中该屏无 note",
+                  rHit?.note == nil && rHit?.screen.cgDirectDisplayID == realID)
+            setTarget("d999999")
+            let rGone = controller.resolveTargetScreen()
+            check("gridResolve: 断开 displayID 回落主屏带 note",
+                  rGone?.screen.isMainScreen == true
+                  && rGone?.note == "目标显示器已断开，已回落主屏")
+            setTarget("d999999s3")
+            let rSpaceGone = controller.resolveTargetScreen()
+            check("gridResolve: displaySpace 断开同走回落",
+                  rSpaceGone?.screen.isMainScreen == true
+                  && rSpaceGone?.note == "目标显示器已断开，已回落主屏")
+        }
+
+        // --- gridPlanningFrame：visibleFrame 扣学习保留区，规划帧 ⊆ 可视帧 ---
+        let plan = controller.gridPlanningFrame(for: mainScreen)
+        let visible = CoordinateKit.quartzVisibleFrame(of: mainScreen)
+        check("gridResolve: 规划帧不越可视帧",
+              plan.width <= visible.width + 0.5 && plan.height <= visible.height + 0.5
+              && plan.width > 0 && plan.height > 0)
+
+        // --- primaryScreen：主 displayID 命中 ---
+        check("gridResolve: primaryScreen 即 CGMainDisplayID 屏",
+              controller.primaryScreen()?.cgDirectDisplayID == CGMainDisplayID())
+
+        // --- displayContextDisplayID：主屏 Quartz bounds → 主 displayID；副屏条件补充 ---
+        let mainQuartz = CGRect(
+            x: mainScreen.frame.minX,
+            y: CoordinateKit.mainScreenHeight - mainScreen.frame.maxY,
+            width: mainScreen.frame.width, height: mainScreen.frame.height)
+        check("gridResolve: 主屏 Quartz bounds 映射回主 displayID",
+              controller.displayContextDisplayID(for: mainQuartz) == CGMainDisplayID())
+        if NSScreen.screens.count >= 2, let sec = NSScreen.screens.first(where: { !$0.isMainScreen }) {
+            let secQuartz = CGRect(
+                x: sec.frame.minX,
+                y: CoordinateKit.mainScreenHeight - sec.frame.maxY,
+                width: sec.frame.width, height: sec.frame.height)
+            check("gridResolve: 副屏 Quartz bounds 映射回副 displayID",
+                  controller.displayContextDisplayID(for: secQuartz) == sec.cgDirectDisplayID)
+        }
+
+        // --- bundleIdentifier：launchd 无 bundle id ---
+        check("gridResolve: bundleIdentifier(launchd) nil",
+              controller.bundleIdentifier(ofPID: 1) == nil)
+
+        // --- selectionPreview→resolveAppBundleID 接线：manual 偏好直通 ---
+        d.set(TerminalGridPreferences.AppPreference.terminal.rawValue, forKey: TerminalGridPreferences.appPreferenceKey)
+        check("gridResolve: appPreference=terminal → bundleID 直取 Terminal",
+              controller.resolveAppBundleID() == "com.apple.Terminal"
+              && controller.lastTerminalSelection?.bundleID == "com.apple.Terminal")
+        d.set(TerminalGridPreferences.AppPreference.iterm2.rawValue, forKey: TerminalGridPreferences.appPreferenceKey)
+        check("gridResolve: appPreference=iterm2 → bundleID 直取 iTerm2",
+              controller.resolveAppBundleID() == "com.googlecode.iterm2")
+        d.removeObject(forKey: TerminalGridPreferences.appPreferenceKey)
+        let autoID = controller.resolveAppBundleID()
+        check("gridResolve: appPreference=auto → 落在支持表内非空 bundleID",
+              autoID != nil && !autoID!.isEmpty)
+    }
+}

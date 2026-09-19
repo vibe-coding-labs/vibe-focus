@@ -247,3 +247,16 @@ extension RunnerHarness {
               ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: nil, spaces: [space(2, true)]) == 2)
     }
 }
+
+extension RunnerHarness {
+    /// B232：move-to-main 决策层的终端身份判定 wrapper 直测（委托 TerminalRegistry 单一事实源）。
+    func runMoveToMainIdentityWrapperTests() {
+        print("\n=== MoveToMainIdentityWrapper (B232) ===")
+        check("wrapper: 终端名命中透传",
+              HookEventHandler.isTerminalOrIDEApp(appName: "iTerm2", bundleIdentifier: nil))
+        check("wrapper: IDE bundleID 命中透传",
+              HookEventHandler.isTerminalOrIDEApp(appName: nil, bundleIdentifier: "com.microsoft.VSCode"))
+        check("wrapper: 未知身份 false 透传",
+              !HookEventHandler.isTerminalOrIDEApp(appName: "Safari", bundleIdentifier: "com.apple.Safari"))
+    }
+}

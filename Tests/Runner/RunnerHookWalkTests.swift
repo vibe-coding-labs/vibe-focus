@@ -1619,6 +1619,94 @@ struct ClaudeHookPipelineInstallProbe {
     }
 }
 
+extension RunnerHarness {
+    /// B224：终端身份注册表直测——联合集合、双通道身份判定（appName/bundleID）、
+    /// isTerminalPID 守卫链（PID≤0 / launchd）、findTerminalPID 真实 ps 走查收敛。
+    func runTerminalRegistryIdentityTests() {
+        print("\n=== TerminalRegistryIdentity (B224) ===")
+
+        // --- 联合集合：终端∪IDE 双域并入 ---
+        check("registry: 联合 bundleIDs 含终端与 IDE 代表",
+              TerminalRegistry.allTerminalAndIDEBundleIDs.contains("com.apple.Terminal")
+              && TerminalRegistry.allTerminalAndIDEBundleIDs.contains("com.googlecode.iterm2")
+              && TerminalRegistry.allTerminalAndIDEBundleIDs.contains("com.microsoft.VSCode")
+              && TerminalRegistry.allTerminalAndIDEBundleIDs.count
+                  == TerminalRegistry.terminalBundleIDs.count + TerminalRegistry.ideBundleIDs.count)
+        check("registry: 联合 appNames 含终端与 IDE 代表",
+              TerminalRegistry.allTerminalAndIDEAppNames.contains("Terminal")
+              && TerminalRegistry.allTerminalAndIDEAppNames.contains("iTerm2")
+              && TerminalRegistry.allTerminalAndIDEAppNames.contains("Cursor")
+              && TerminalRegistry.allTerminalAndIDEAppNames.count
+                  == TerminalRegistry.terminalAppNames.count + TerminalRegistry.ideAppNames.count)
+
+        // --- isTerminalOrIDEApp：appName 命中 / IDE 名命中 / bundleID 命中 / 双 nil false / 未知 false ---
+        check("registry: isTerminalOrIDEApp 终端名命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: "iTerm2", bundleIdentifier: nil))
+        check("registry: isTerminalOrIDEApp IDE 名命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: "Cursor", bundleIdentifier: nil))
+        check("registry: isTerminalOrIDEApp 终端 bundleID 命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: nil, bundleIdentifier: "com.apple.Terminal"))
+        check("registry: isTerminalOrIDEApp IDE bundleID 命中",
+              TerminalRegistry.isTerminalOrIDEApp(appName: nil, bundleIdentifier: "com.microsoft.VSCode"))
+        check("registry: isTerminalOrIDEApp 双 nil false",
+              !TerminalRegistry.isTerminalOrIDEApp(appName: nil, bundleIdentifier: nil))
+        check("registry: isTerminalOrIDEApp 未知身份 false",
+              !TerminalRegistry.isTerminalOrIDEApp(appName: "Safari", bundleIdentifier: "com.apple.Safari"))
+
+        // --- isTerminalBundleID：命中/不命中 ---
+        check("registry: isTerminalBundleID iterm2 命中",
+              TerminalRegistry.isTerminalBundleID("com.googlecode.iterm2"))
+        check("registry: isTerminalBundleID VSCode 不属终端域",
+              !TerminalRegistry.isTerminalBundleID("com.microsoft.VSCode"))
+
+        // --- isTerminalPID 守卫链：PID≤0 直接 false；PID 1（launchd）走完 comm 查询仍 false ---
+        check("registry: isTerminalPID(0) 守卫 false", !TerminalRegistry.isTerminalPID(0))
+        check("registry: isTerminalPID(-1) 守卫 false", !TerminalRegistry.isTerminalPID(-1))
+        check("registry: isTerminalPID(1)=launchd false", !TerminalRegistry.isTerminalPID(1))
+
+        // --- findTerminalPID：launchd 起步上溯即断（ppid 0 不继续）→ nil；深度记账 1 ---
+        check("registry: findTerminalPID(from launchd) nil",
+              TerminalRegistry.findTerminalPID(from: 1) == nil)
+    }
+}
+
+extension RunnerHarness {
+    /// B229：LANHookPreferences.parseLegacyBindings 直测——旧格式 UserDefaults dictionary
+    /// （Int/UInt32 混态）→ 绑定映射；非数值垃圾跳过（B83 测试缝，此前零直测）。
+    func runLANLegacyBindingsTests() {
+        print("\n=== LANLegacyBindings (B229) ===")
+        let parsed = LANHookPreferences.parseLegacyBindings(from: [
+            "alpha": 11,
+            "beta": UInt32(22),
+            "garbage": "not-a-number",
+        ])
+        check("lanLegacy: Int/UInt32 双态解析 + 垃圾值跳过",
+              parsed["alpha"] == UInt32(11) && parsed["beta"] == UInt32(22)
+              && parsed["garbage"] == nil && parsed.count == 2)
+        check("lanLegacy: 空表 → 空映射",
+              LANHookPreferences.parseLegacyBindings(from: [:]).isEmpty)
+    }
+}
+
+extension RunnerHarness {
+    /// B231：handleSessionStart 无上下文分流直测——route noContext → 409 诚实拒绑，
+    /// 只动内存态 lastEventDescription（不触碰 windows 表，B193 纪律）。
+    func runSessionStartNoContextTests() {
+        print("\n=== SessionStartNoContext (B231) ===")
+        let payload = ClaudeHookPayload(
+            event: .sessionStart, sessionID: "s-noc ctx", source: nil, timestamp: nil,
+            cwd: nil, model: nil, terminalCtx: nil,
+            lastAssistantMessage: nil, transcriptPath: nil, message: nil)
+        let (status, response) = HookEventHandler.shared.handleSessionStart(payload: payload)
+        check("hookSS: 无上下文 → 409 no_terminal_context",
+              status == 409 && response.code == "no_terminal_context")
+        check("hookSS: 响应诚实标记未处理且回显 sessionID",
+              !response.handled && response.sessionID == "s-noc ctx")
+        check("hookSS: lastEventDescription 记账失败原因",
+              SessionWindowRegistry.shared.lastEventDescription.contains("无终端上下文"))
+    }
+}
+
 // MARK: - B229：TerminalRegistry findTerminalPID 真链 + 并集属性（此前仅注入谓词被测）
 
 extension RunnerHarness {
@@ -1674,5 +1762,6 @@ extension RunnerHarness {
         } else {
             check("registry: 自 pid 父链无终端 → nil（环境无关自洽）", true)
         }
+
     }
 }
