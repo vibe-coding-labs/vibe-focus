@@ -85,14 +85,8 @@ final class SessionRestoreExecutor {
             if case .create = item.action { return true }
             return false
         }
-        // 分组键序 = 首次出现序（保持快照阅读序）
-        var groupOrder: [String] = []
-        var groups: [String: [SessionRestorePlanner.Item]] = [:]
-        for item in createItems {
-            let key = "\(item.targetYabaiDisplay ?? -1):\(item.targetYabaiSpace ?? -1)"
-            if groups[key] == nil { groupOrder.append(key) }
-            groups[key, default: []].append(item)
-        }
+        // 分组键序 = 首次出现序（保持快照阅读序）；B234 提纯为纯函数（Runner 直测）。
+        let (groupOrder, groups) = Self.groupByTargetSpace(createItems)
 
         for key in groupOrder {
             let items = groups[key]!
@@ -190,6 +184,23 @@ final class SessionRestoreExecutor {
             "deliveryFailures": String(deliveryFailures), "injectFailures": String(injectFailures),
         ])
         return TerminalGridController.OperationResult(ok: true, message: message)
+    }
+
+    // MARK: 分组（纯函数，Runner 直测）
+
+    /// create 项按「目标 display:目标 space」分组，组序 = 首次出现序（保持快照阅读序，
+    /// 同组多窗一次切视角批量建）。nil display/space 落 "-1:-1" 组（无投递目标的兜底组）。
+    nonisolated static func groupByTargetSpace(
+        _ createItems: [SessionRestorePlanner.Item]
+    ) -> (groupOrder: [String], groups: [String: [SessionRestorePlanner.Item]]) {
+        var groupOrder: [String] = []
+        var groups: [String: [SessionRestorePlanner.Item]] = [:]
+        for item in createItems {
+            let key = "\(item.targetYabaiDisplay ?? -1):\(item.targetYabaiSpace ?? -1)"
+            if groups[key] == nil { groupOrder.append(key) }
+            groups[key, default: []].append(item)
+        }
+        return (groupOrder, groups)
     }
 
     // MARK: 活窗观测

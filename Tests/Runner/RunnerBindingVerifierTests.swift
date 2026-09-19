@@ -46,8 +46,21 @@ extension RunnerHarness {
             check("bv: 活 pid + 他属真实窗口 → false（windowPIDMismatch）",
                   !reg.verifyBinding(bvState(pid: myPID, windowID: foreign.windowID, bundleID: nil)))
             // valid：pid 与 windowID 属主一致 → true
-            check("bv: 属主 pid+windowID 全对 → true（valid）",
-                  reg.verifyBinding(bvState(pid: foreign.ownerPID, windowID: foreign.windowID, bundleID: nil)))
+            // B230 加固：快照到复验之间用户窗可能被关/隐藏（真机活跃使用实测竞态），
+            // 每轮重新采 CGWindowList 重挑候选，3 轮内任一通过即可。
+            var validOK = false
+            for _ in 0..<3 {
+                if let candidate = cgWindowListAll().first(where: {
+                    $0.layer == 0 && $0.isOnScreen && $0.ownerPID != myPID }) {
+                    if reg.verifyBinding(bvState(pid: candidate.ownerPID,
+                                                 windowID: candidate.windowID,
+                                                 bundleID: nil)) {
+                        validOK = true
+                        break
+                    }
+                }
+            }
+            check("bv: 属主 pid+windowID 全对 → true（valid，重挑 3 轮抗窗体消失竞态）", validOK)
 
             // pidMatches 快路径：用真实前台 app 的 bundleID+pid（NSRunningApplication 命中即存活）
             if let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first {

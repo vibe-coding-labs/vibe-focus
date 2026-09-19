@@ -60,7 +60,8 @@ extension WindowManager {
         // 目标屏：与当前 display 不同且有可见 space 的 display → NSScreen；
         // yabai display 映射不到 NSScreen 时回退第一个非主屏。
         let currentDisplay = windowInfo?.display
-        let targetYabaiDisplay = spaces?.first(where: { $0.display != currentDisplay && $0.isVisible == true })?.display
+        // B234 提纯：选择谓词落 ToggleFocusBranching 纯内核（Runner 穷尽锁定），此处只消费。
+        let targetYabaiDisplay = ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: currentDisplay, spaces: spaces)
         let targetScreen = targetYabaiDisplay.flatMap { SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: $0) }
             ?? NSScreen.screens.first(where: { $0.frame.origin != .zero })
         guard let targetScreen else {
