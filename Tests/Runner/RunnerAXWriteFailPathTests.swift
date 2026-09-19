@@ -44,3 +44,17 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B275 追加：restore 前置守卫与幽灵窗委托（无 AX 授权环境）
+
+extension RunnerHarness {
+    func runRestoreGuardTests() {
+        let wm = WindowManager.shared
+        // 无 windowID：前台 AX 查询失败（无授权）→ early return 幂等。
+        wm.restore(operationID: "b275-restore-guard")
+        check("restore: 无前台 AX 查询失败幂等早退", true)
+        // 幽灵窗 ID：委托 ToggleEngine.restore，记录不存在 → 安全跳过。
+        wm.restore(operationID: "b275-restore-ghost", windowID: 999_998)
+        check("restore: 幽灵窗委托安全跳过", true)
+    }
+}
