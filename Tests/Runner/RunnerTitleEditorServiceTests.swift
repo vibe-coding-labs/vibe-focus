@@ -107,3 +107,15 @@ extension RunnerHarness {
         service.hasShownAutomationPermissionAlert = savedAlertFlag
     }
 }
+
+// MARK: - B242/243 追加：applyViaAX not_settable 分支（CLI 无 AX 授权恒 false）
+extension RunnerHarness {
+    func runTitleEditorAXWriteTests() {
+        // 无 AX 授权的 CLI 进程：isAttributeSettable 查询失败 → not_settable 分支
+        // → return false。零标题写入（AXSetAttributeValue 不可达）。
+        let systemWide = AXUIElementCreateSystemWide()
+        let axResult = TitleEditorService.shared.applyViaAX(
+            "b243-不该写入的标题", to: systemWide)
+        check("titleEditor: applyViaAX 无授权走 not_settable 返 false", axResult == false)
+    }
+}

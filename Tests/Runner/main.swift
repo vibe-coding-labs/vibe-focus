@@ -386,6 +386,7 @@ final class FakeAuditor: RestoreAuditing {
         runPerfInstanceTests()
         runMinimapLabelTests()
         runSoundGateSilentTests()
+        runTitleEditorAXWriteTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
