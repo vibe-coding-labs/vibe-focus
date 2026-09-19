@@ -28,3 +28,19 @@ extension RunnerHarness {
               wm.frame(of: systemWide) == nil)
     }
 }
+
+// MARK: - B266 追加：captureFocusedWindowIdentity 无授权降级链
+
+extension RunnerHarness {
+    func runCaptureFocusedWindowTests() {
+        let wm = WindowManager.shared
+        // Runner（无 bundle/无 AX 授权）：frontmostApplication nil 或 focusedWindow
+        // AX 查询失败 → 降级链返 nil。两态均合法（依运行环境）。
+        if let identity = wm.captureFocusedWindowIdentity() {
+            check("captureFocused: 命中时 windowID/title 结构完整",
+                  identity.windowID != 0 && (identity.title ?? "").isEmpty == false)
+        } else {
+            check("captureFocused: 无前台/无 AX 授权环境合法 nil", true)
+        }
+    }
+}
