@@ -691,6 +691,76 @@ extension RunnerHarness {
             check("swrLookup: persistToDB 落库往返", reg.store.findWindowState(windowID: 80)?.sessionID == "main-s")
         }
 
+        // B247：hasLiveSessionBinding DB 未命中负缓存——tick（1s 节拍）对无绑定前台窗
+        // 每秒打一次主线程 SQLite 是崩溃面（2026-09-19 19:05 生产 SIGSEGV 碎在此路径
+        // sqlite3VdbeMemGrow，keepalive 重启后归因账本恰空 + 竞态吞弹=用户复诉的现场）。
+        // 契约：TTL 内「查无活跃绑定」不重触 DB；外部写库最迟 TTL 后可见（B161 契约
+        // 时限化，生产绑定走 hook 进内存不受影响）；正命中清缓存；内存路径恒优先。
+        do {
+            let dir = "/tmp/vibefocus-swr7-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let solo = WindowStateStore(dbPath: dir + "/swr7.db")
+            let reg = SessionWindowRegistry(store: solo)
+            let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+            // ① 未命中落负缓存，TTL 内短路（不再触 DB，结论恒 false）
+            check("swrMiss: 未命中落负缓存且 TTL 内短路",
+                  reg.hasLiveSessionBinding(windowID: 301, now: t0, missCacheTTL: 5) == false
+                  && reg.bindingLookupMissCache[301] == t0
+                  && reg.hasLiveSessionBinding(windowID: 301, now: t0.addingTimeInterval(4.9), missCacheTTL: 5) == false)
+
+            // ② TTL 过期重触 DB：外部写库的活跃绑定被拾取，负缓存随之清除
+            solo.saveWindowState(WindowState(
+                windowID: 301, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "ext",
+                termSessionID: nil, itermSessionID: nil, sessionID: "ext-live",
+                bindingType: .local, isCompleted: false, createdAt: t0, updatedAt: t0))
+            check("swrMiss: TTL 外重查拾取外部写库活跃绑定",
+                  reg.hasLiveSessionBinding(windowID: 301, now: t0.addingTimeInterval(5.1), missCacheTTL: 5)
+                  && reg.bindingLookupMissCache[301] == nil
+                  && reg.bindingLookupMissOrder.contains(301) == false)
+
+            // ③ DB 命中但已 completed = 「无活跃绑定」也进负缓存；外部翻活 TTL 后可见
+            solo.saveWindowState(WindowState(
+                windowID: 302, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "done",
+                termSessionID: nil, itermSessionID: nil, sessionID: "done-s",
+                bindingType: .local, isCompleted: true, createdAt: t0, updatedAt: t0))
+            check("swrMiss: completed 命中视同未命中的 TTL 内短路",
+                  reg.hasLiveSessionBinding(windowID: 302, now: t0, missCacheTTL: 5) == false
+                  && reg.bindingLookupMissCache[302] == t0)
+            var reactivated = solo.findWindowState(windowID: 302)!
+            reactivated.isCompleted = false
+            reactivated.updatedAt = t0.addingTimeInterval(1)
+            solo.saveWindowState(reactivated)
+            check("swrMiss: 外部翻活 TTL 外立即可见",
+                  reg.hasLiveSessionBinding(windowID: 302, now: t0.addingTimeInterval(5.1), missCacheTTL: 5))
+
+            // ④ 内存路径恒优先：刚记过 miss 的窗，绑定进内存后立即回真（不待 TTL 过期）。
+            // （302 在③翻活时正命中已清缓存，④ 用新窗 303 重建 miss 前置态）
+            check("swrMiss: 303 miss 记入缓存且 TTL 内短路",
+                  reg.hasLiveSessionBinding(windowID: 303, now: t0.addingTimeInterval(6), missCacheTTL: 5) == false
+                  && reg.bindingLookupMissCache[303] == t0.addingTimeInterval(6)
+                  && reg.hasLiveSessionBinding(windowID: 303, now: t0.addingTimeInterval(8), missCacheTTL: 5) == false)
+            reg.windowStates[303] = WindowState(
+                windowID: 303, pid: 4242, tty: nil, axWindowNumber: nil, appName: "Terminal",
+                bundleIdentifier: "com.apple.Terminal", title: "mem",
+                termSessionID: nil, itermSessionID: nil, sessionID: "mem-s",
+                bindingType: .local, isCompleted: false, createdAt: t0, updatedAt: t0)
+            check("swrMiss: 内存命中绕过负缓存立即回真",
+                  reg.hasLiveSessionBinding(windowID: 303, now: t0.addingTimeInterval(8.5), missCacheTTL: 5))
+
+            // ⑤ 容量 64 FIFO 淘汰（与 B184 基线表同款守恒模式）
+            for id in UInt32(400)...UInt32(469) {
+                _ = reg.hasLiveSessionBinding(windowID: id, now: t0.addingTimeInterval(10), missCacheTTL: 5)
+            }
+            check("swrMiss: 容量 64 FIFO 淘汰最旧",
+                  reg.bindingLookupMissCache.count == 64
+                  && reg.bindingLookupMissCache[400] == nil
+                  && reg.bindingLookupMissCache[469] != nil)
+        }
+
         // pruneExpiredBindings 内存+DB 双层清理（B111：保留期 24h 活跃/4h 完成，removed>0 才触发内存过滤）
         do {
             let dir = "/tmp/vibefocus-swr5-\(UUID().uuidString)"
