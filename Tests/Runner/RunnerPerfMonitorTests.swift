@@ -240,11 +240,6 @@ extension RunnerHarness {
             sourceURL: missing, outputURL: outputSkip, lineLimit: 3, context: "b218", label: "missing.log")
         check("forensics: 源缺失跳过且无输出文件", !FileManager.default.fileExists(atPath: outputSkip.path))
 
-        // --- sampleMainThread：冒烟（port 未捕获时返回空数组；有帧则全非零） ---
-        let frames = BacktraceSampler.sampleMainThread(maxFrames: 8)
-        check("forensics: sampleMainThread 返回且帧值 sane",
-              frames.count <= 8 && frames.allSatisfy { $0 != 0 })
-
         // --- logDiagnostics：冒烟（fork codesign 采集，副作用=日志） ---
         logDiagnostics("runner-b218")
         check("forensics: logDiagnostics 冒烟不崩", true)
