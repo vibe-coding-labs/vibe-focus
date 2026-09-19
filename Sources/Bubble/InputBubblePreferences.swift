@@ -16,6 +16,7 @@ enum InputBubblePreferences {
     private static let autoRestoreOnSubmitKey = "inputBubbleAutoRestoreOnSubmit"
     private static let autoHideKey = "inputBubbleAutoHide"
     private static let userPlacedFrameKey = "inputBubbleUserFrame"
+    private static let historyLimitKey = "inputBubbleHistoryLimit"
 
     /// 尺寸合法域与步长（设置页滑杆与 clamp 共用同一事实源）
     static let widthRange: (min: Double, max: Double, step: Double) = (320, 720, 20)
@@ -141,6 +142,25 @@ enum InputBubblePreferences {
                 : false
         }
         set { UserDefaults.standard.set(newValue, forKey: autoHideKey) }
+    }
+
+    /// B213：输入历史上限（条数，超出淘汰最旧）。用户定案（2026-09-19）：可设置、
+    /// 默认 1000——B196 的写死 200 对「可翻阅面板数据源」太紧，且不可见不可调。
+    /// 合法域 50~10000，未设置/越界回落默认；设置页改值即触发 store 立即裁剪。
+    static let historyLimitDefault = 1000
+    static let historyLimitRange: (min: Int, max: Int) = (50, 10000)
+    /// 设置页选择器候选（含默认）。
+    static let historyLimitChoices = [100, 200, 500, 1000, 2000, 5000]
+
+    static var historyLimit: Int {
+        get {
+            let raw = UserDefaults.standard.integer(forKey: historyLimitKey)
+            guard UserDefaults.standard.object(forKey: historyLimitKey) != nil else {
+                return historyLimitDefault
+            }
+            return min(max(raw, historyLimitRange.min), historyLimitRange.max)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: historyLimitKey) }
     }
 
     /// B162：用户拖动气泡后的记忆位置（AppKit 全局坐标 origin；nil = 从未拖过，

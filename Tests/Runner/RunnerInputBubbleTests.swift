@@ -515,6 +515,42 @@ extension RunnerHarness {
               snapStore.entries()[0].status == .draft)
         snapDefaults.removePersistentDomain(forName: snapSuite)
 
+        // --- B213 历史上限可配置：默认 1000 / 偏好跟随 / 立即裁剪 ---
+        // 用户定案（2026-09-19）：写死的 B196 容量 200 对面板数据源太紧且不可见，
+        // 改为偏好可调（默认 1000，域 50~10000），store 动态跟随，设置页改值立即裁剪。
+        check("limit B213: 默认 1000", InputBubblePreferences.historyLimitDefault == 1000)
+        check("limit B213: 合法域 50~10000", InputBubblePreferences.historyLimitRange == (50, 10000))
+        check("limit B213: 候选含默认 1000", InputBubblePreferences.historyLimitChoices.contains(1000))
+        // 偏好读写与钳制（Runner 自身 standard 域，写后必清）
+        UserDefaults.standard.removeObject(forKey: "inputBubbleHistoryLimit")
+        defer { UserDefaults.standard.removeObject(forKey: "inputBubbleHistoryLimit") }
+        check("limit B213: 未设置 → 默认 1000", InputBubblePreferences.historyLimit == 1000)
+        InputBubblePreferences.historyLimit = 30
+        check("limit B213: 低于下界 30 → 钳到 50", InputBubblePreferences.historyLimit == 50)
+        InputBubblePreferences.historyLimit = 99999
+        check("limit B213: 高于上界 99999 → 钳到 10000", InputBubblePreferences.historyLimit == 10000)
+        // store 跟随偏好：无 override 的 store 容量=偏好值（域内值——低于 50 会被钳到 50）
+        InputBubblePreferences.historyLimit = 100
+        let limitSuite = "RunnerBubbleLimit-\(UUID().uuidString)"
+        let limitDefaults = UserDefaults(suiteName: limitSuite)!
+        let followStore = InputBubbleHistoryStore(defaults: limitDefaults)
+        for idx in 1...120 {
+            followStore.record("第\(idx)条", now: Date().addingTimeInterval(Double(idx) * 0.001))
+        }
+        check("limit B213: 记录 120 条、上限 100 → 只留最新 100 条",
+              followStore.entries().count == 100 && followStore.entries()[0].text == "第120条"
+                  && followStore.entries().last?.text == "第21条")
+        // 既有条目超新上限 → applyLimitChange 立即裁剪（不等下一次懒清理）
+        InputBubblePreferences.historyLimit = 60
+        followStore.applyLimitChange()
+        check("limit B213: 上限改 60 → 立即裁剪到 60 条",
+              followStore.entries().count == 60 && followStore.entries()[0].text == "第120条")
+        // override 注入仍优先（测试通道不回归）
+        let overrideStore = InputBubbleHistoryStore(defaults: limitDefaults, capacity: 1)
+        overrideStore.record("再记一条", now: Date().addingTimeInterval(99))
+        check("limit B213: capacity override 注入优先于偏好", overrideStore.entries().count == 1)
+        limitDefaults.removePersistentDomain(forName: limitSuite)
+
         // --- ↑↓ 翻阅计划（最新在前；↑ 变旧到最旧停住；↓ 变新走出回现场；空历史不消费） ---
         if case .moveTo(let index) = InputBubbleHistoryNavPlan.up(currentIndex: nil, entryCount: 3), index == 0 {
             check("navUp: 未翻阅 → 进入最新(0)", true)

@@ -28,6 +28,8 @@ private struct InputBubbleSectionView: View {
     @State private var autoRestoreOnSubmit = InputBubblePreferences.autoRestoreOnSubmit
     @State private var autoHide = InputBubblePreferences.autoHide
     @State private var defaultPrefix = InputBubblePreferences.defaultPrefix
+    @State private var historyLimit = InputBubblePreferences.historyLimit
+    @State private var historyCount = 0
     @State private var bubbleHotKeyDisplay = InputBubblePreferences.hotKey.displayString
     /// 录制失败时强制 ShortcutRecorderButton 重建回显当前生效组合键（NSViewRepresentable
     /// 同值 @State 不触发 updateNSView）
@@ -35,6 +37,11 @@ private struct InputBubbleSectionView: View {
 
     private var isDefaultBubbleHotKey: Bool {
         InputBubblePreferences.hotKey == InputBubbleHotKeyPlan.defaultConfig
+    }
+
+    /// 候选并入当前生效值（外部 defaults 写过非候选值时 Picker 选中项不空白）
+    private var limitChoices: [Int] {
+        Array(Set(InputBubblePreferences.historyLimitChoices + [InputBubblePreferences.historyLimit])).sorted()
     }
 
     var body: some View {
@@ -132,6 +139,28 @@ private struct InputBubbleSectionView: View {
                     .onChange(of: autoHide) { newValue in
                         InputBubblePreferences.autoHide = newValue
                     }
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "历史上限",
+                detail: "输入历史保留最近 N 条（当前 \(historyCount) 条），超出自动淘汰最旧，另有 30 天过期兜底。改动立即生效并裁剪现有历史。"
+            ) {
+                Picker("", selection: $historyLimit) {
+                    ForEach(limitChoices, id: \.self) { choice in
+                        Text("最近 \(choice) 条").tag(choice)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .disabled(!enabled)
+                .onAppear { historyCount = InputBubbleHistoryStore.shared.entries().count }
+                .onChange(of: historyLimit) { newValue in
+                    InputBubblePreferences.historyLimit = newValue
+                    InputBubbleHistoryStore.shared.applyLimitChange()
+                    historyCount = InputBubbleHistoryStore.shared.entries().count
+                }
             }
 
             Divider()

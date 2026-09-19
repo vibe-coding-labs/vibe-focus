@@ -111,18 +111,27 @@ final class InputBubbleHistoryStore {
     private let defaults: UserDefaults
     private let storageKey = "inputBubbleHistory"
     /// 容量上限（超出淘汰最旧）。B196 升 200：历史成了可翻阅的面板数据源。
-    private let capacity: Int
+    /// B213：生产（capacityOverride=nil）跟随用户偏好 InputBubblePreferences.historyLimit
+    /// （默认 1000，设置页可调），动态读取——改偏好无需重建 store；测试注入定值。
+    private let capacityOverride: Int?
     /// 过期时长（输入历史比草稿留更久：草稿 7 天兜底 windowID 复用，历史 30 天是记忆兜底）
     private let maxAge: TimeInterval
 
+    private var capacity: Int { capacityOverride ?? InputBubblePreferences.historyLimit }
+
     init(
         defaults: UserDefaults = .standard,
-        capacity: Int = 200,
+        capacity: Int? = nil,
         maxAge: TimeInterval = 30 * 24 * 3600
     ) {
         self.defaults = defaults
-        self.capacity = capacity
+        self.capacityOverride = capacity
         self.maxAge = maxAge
+    }
+
+    /// B213：设置页改上限后立即裁剪——存储同步收缩，不等下一次记录的懒清理。
+    func applyLimitChange() {
+        persist(Self.prune(entries(), now: Date(), maxAge: maxAge, capacity: capacity))
     }
 
     /// 记录一条输入。空白文本忽略；与最新一条同文同窗去重/晋升（见 append）；
