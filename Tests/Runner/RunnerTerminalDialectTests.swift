@@ -43,3 +43,46 @@ extension RunnerHarness {
               && !TerminalAutomationScript.itermCreateWindow(command: "", quartzFrame: CGRect(x: 0, y: -1080, width: 1920, height: 1080)).contains("write text"))
     }
 }
+
+extension RunnerHarness {
+    /// B217：脚本构建器族零覆盖散点收编——parseBounds 解析器、Terminal 枚举/读界脚本、
+    /// PaneEnumeration 双构建器（此前直测只覆盖同族其余成员）。
+    func runTerminalScriptStragglerTests() {
+        print("\n=== TerminalScriptStragglers (B217) ===")
+
+        // --- parseBounds："l, t, r, b" 逗号串 → Quartz frame（宽高=右下减左上） ---
+        let parsed = TerminalAutomationScript.parseBounds("872, 578, 1726, 1118")
+        check("straggler: parseBounds 四元组换算 frame",
+              parsed == CGRect(x: 872, y: 578, width: 854, height: 540))
+        check("straggler: parseBounds 容忍换行与多余空白",
+              TerminalAutomationScript.parseBounds("\n  0, 0 , 100,  50 \n") == CGRect(x: 0, y: 0, width: 100, height: 50))
+        check("straggler: parseBounds 非数字 → nil",
+              TerminalAutomationScript.parseBounds("a, b, c, d") == nil)
+        check("straggler: parseBounds 不足四数 → nil",
+              TerminalAutomationScript.parseBounds("1, 2, 3") == nil)
+        check("straggler: parseBounds 空串 → nil",
+              TerminalAutomationScript.parseBounds("") == nil)
+
+        // --- Terminal.app 枚举/读界脚本：结构关键位（id|tty 行格式 + window id 定位） ---
+        let enumScript = TerminalAutomationScript.terminalEnumerateWindowTTYs()
+        check("straggler: 枚举脚本指名 Terminal + 产出 id|tty 行",
+              enumScript.contains("com.apple.Terminal")
+              && enumScript.contains("(id of w as string) & \"|\" & (tty of t)"))
+        let boundsScript = TerminalAutomationScript.terminalGetBounds(windowID: 42)
+        check("straggler: 读界脚本 return bounds of window id 42",
+              boundsScript.contains("return bounds of window id 42"))
+
+        // --- PaneEnumeration：追加 tab / 定向 session 注入构建器 ---
+        let appendTab = PaneEnumeration.itermAppendTab(windowASID: "7", command: "echo hi")
+        check("straggler: itermAppendTab 挂窗 7 + create tab + 写命令",
+              appendTab.contains("tell window id 7")
+              && appendTab.contains("create tab with default profile")
+              && appendTab.contains("write text \"echo hi\""))
+        let escaped = PaneEnumeration.itermAppendTab(windowASID: "7", command: "say \"quoted\"")
+        check("straggler: itermAppendTab 命令内引号转义",
+              escaped.contains("\\\"quoted\\\"") && !escaped.contains("say \"quoted\""))
+        let toSession = PaneEnumeration.itermWriteToSession(windowASID: "9", tabIndex: 2, sessionIndex: 3, command: "cd /tmp")
+        check("straggler: itermWriteToSession 定位 session 3 of tab 2 of window 9",
+              toSession.contains("tell session 3 of tab 2 of window id 9 to write text \"cd /tmp\""))
+    }
+}

@@ -260,6 +260,10 @@ final class FakeAuditor: RestoreAuditing {
         runTerminalRegistryIdentityTests()
         runCoordinateScreenQueryTests()
         runBindingsStoreCoverageTests()
+        runTerminalScriptStragglerTests()
+        runLANLegacyBindingsTests()
+        runAnnouncementDescriptionTests()
+        runCrashIPSParserTests()
     // MARK: 汇总
 
     print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")

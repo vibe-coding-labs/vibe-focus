@@ -1669,3 +1669,21 @@ extension RunnerHarness {
               TerminalRegistry.findTerminalPID(from: 1) == nil)
     }
 }
+
+extension RunnerHarness {
+    /// B217：LANHookPreferences.parseLegacyBindings 直测——旧格式 UserDefaults dictionary
+    /// （Int/UInt32 混态）→ 绑定映射；非数值垃圾跳过（B83 测试缝，此前零直测）。
+    func runLANLegacyBindingsTests() {
+        print("\n=== LANLegacyBindings (B217) ===")
+        let parsed = LANHookPreferences.parseLegacyBindings(from: [
+            "alpha": 11,
+            "beta": UInt32(22),
+            "garbage": "not-a-number",
+        ])
+        check("lanLegacy: Int/UInt32 双态解析 + 垃圾值跳过",
+              parsed["alpha"] == UInt32(11) && parsed["beta"] == UInt32(22)
+              && parsed["garbage"] == nil && parsed.count == 2)
+        check("lanLegacy: 空表 → 空映射",
+              LANHookPreferences.parseLegacyBindings(from: [:]).isEmpty)
+    }
+}

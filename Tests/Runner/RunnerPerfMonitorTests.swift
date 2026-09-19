@@ -186,3 +186,24 @@ extension RunnerHarness {
         }
     }
 }
+
+extension RunnerHarness {
+    /// B217：崩溃报告 IPS 解析通道直测——首行 meta + JSON payload 双段格式、
+    /// 单行/坏 JSON/非字典守卫（诊断日志副作用无害）。
+    func runCrashIPSParserTests() {
+        print("\n=== CrashIPSParser (B217) ===")
+        let payload = #"{"occurrence":{"captureTime":"2026-09-19"},"procName":"VibeFocus","faultingThread":0}"#
+        let ips = "Meta\n" + payload
+        let ok = CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: ips)
+        check("ips: 首行 meta 后 JSON 解出字段",
+              (ok?["procName"] as? String) == "VibeFocus" && (ok?["faultingThread"] as? Int) == 0)
+        check("ips: 单行无 payload → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "only-meta-line") == nil)
+        check("ips: 坏 JSON → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "Meta\n{not-json") == nil)
+        check("ips: JSON 非字典 → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "Meta\n[1,2,3]") == nil)
+        check("ips: 空串 → nil",
+              CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "") == nil)
+    }
+}
