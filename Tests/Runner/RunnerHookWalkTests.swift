@@ -1618,3 +1618,61 @@ struct ClaudeHookPipelineInstallProbe {
         ClaudeHookPreferences.installHelperScript(content: content, to: path)
     }
 }
+
+// MARK: - B229：TerminalRegistry findTerminalPID 真链 + 并集属性（此前仅注入谓词被测）
+
+extension RunnerHarness {
+    func runRegistryFindPIDTests() {
+        // 并集计算属性（此前 0 覆盖）
+        check("registry: 终端∪IDE bundleID 并集恒等",
+              TerminalRegistry.allTerminalAndIDEBundleIDs
+              == TerminalRegistry.terminalBundleIDs.union(TerminalRegistry.ideBundleIDs))
+        check("registry: 终端∪IDE 名单并集恒等",
+              TerminalRegistry.allTerminalAndIDEAppNames
+              == TerminalRegistry.terminalAppNames.union(TerminalRegistry.ideAppNames))
+
+        // isTerminalPID 非正 pid 早退
+        check("registry: pid<=0 → false", !TerminalRegistry.isTerminalPID(0) && !TerminalRegistry.isTerminalPID(-7))
+
+        // findTerminalPID：真实 ps 父链——Dock 恒在（launchd 直接收养）且非终端 → 走满链断于 launchd → nil
+        // （同时覆盖私有 getParentPID 的真实 ps -o ppid= 通道——此前 0 覆盖）
+        if let dockPID = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.dock" })?.processIdentifier {
+            check("registry: findTerminalPID Dock 链无终端 → nil（真实 ps 父链走满）",
+                  TerminalRegistry.findTerminalPID(from: dockPID) == nil)
+        }
+        check("registry: findTerminalPID 负 pid → nil", TerminalRegistry.findTerminalPID(from: -5) == nil)
+
+        // 命中路径：改名 bash 夹具（B149 同款家法——homebrew bash 拷贝改名 iTerm2，
+        // comm basename 命中 terminalAppNames；while 复合命令保持镜像在场，TERM 净杀）
+        do {
+            let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("vibefocus-regfind-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let exePath = dir + "/iTerm2"
+            let cp = Process()
+            cp.executableURL = URL(fileURLWithPath: "/bin/cp")
+            cp.arguments = ["/opt/homebrew/bin/bash", exePath]
+            try? cp.run()
+            cp.waitUntilExit()
+            let fakeTerm = Process()
+            fakeTerm.executableURL = URL(fileURLWithPath: exePath)
+            fakeTerm.arguments = ["-c", "while sleep 30; do :; done"]
+            try? fakeTerm.run()
+            let termPid = Int32(fakeTerm.processIdentifier)
+            defer {
+                if fakeTerm.isRunning { fakeTerm.terminate() }
+                if termPid > 0 { fakeTerm.waitUntilExit() }
+            }
+            check("registry: findTerminalPID 起始即终端（改名夹具经真实 comm 链命中）",
+                  fakeTerm.isRunning && TerminalRegistry.findTerminalPID(from: termPid) == termPid)
+        }
+
+        // 自 pid：真实父链跑通不悬挂；结果与谓词自洽（命中必为终端，无终端则 nil）
+        let own = Int32(ProcessInfo.processInfo.processIdentifier)
+        if let found = TerminalRegistry.findTerminalPID(from: own) {
+            check("registry: 自 pid 父链命中必为终端 pid（自洽）", TerminalRegistry.isTerminalPID(found))
+        } else {
+            check("registry: 自 pid 父链无终端 → nil（环境无关自洽）", true)
+        }
+    }
+}

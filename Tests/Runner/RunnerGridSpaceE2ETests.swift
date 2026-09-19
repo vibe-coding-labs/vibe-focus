@@ -55,8 +55,8 @@ extension RunnerHarness {
                 return
             }
             // Runner 进程内 SpaceController 从未刷新过 availability（默认 unknown）
-            SpaceController.shared.refreshAvailability(force: true)
-            guard SpaceController.shared.isEnabled else {
+            // B228：B180 探测后台化后同步断言竞态恒 false——泵 RunLoop 等结果落地
+            guard waitForSpaceAvailability() else {
                 check("SpaceE2E: yabai 可用", false)
                 return
             }
