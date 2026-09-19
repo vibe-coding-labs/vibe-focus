@@ -347,6 +347,7 @@ final class FakeAuditor: RestoreAuditing {
         runLoginItemCleanupTests()
         runAXWriteFailPathTests()
         runCaptureFocusedWindowTests()
+        runBubbleButtonCursorTests()
         runToggleEngineStoreTests()
         runBubblePreferencesBranchTests()
         runBindingVerifierTests()
