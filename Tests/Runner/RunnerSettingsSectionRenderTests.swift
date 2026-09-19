@@ -125,12 +125,12 @@ extension RunnerHarness {
         // （isHookInstalled 读真身 ~/.claude/settings.json——本机已安装=已安装分支；
         //  未安装分支随真机卸载态。按钮闭包（一键安装/卸载/测试）留白。）
         do {
-            var on = view
+            let on = view
             on.hookEnabled = true
             let r1 = ImageRenderer(content: on.claudeHookSection)
             check("renderClaude2: hookEnabled=true 全树渲染出图", r1.nsImage != nil)
 
-            var off = view
+            let off = view
             off.hookEnabled = false
             let r2 = ImageRenderer(content: off.claudeHookSection)
             check("renderClaude2: hookEnabled=false 全树渲染出图", r2.nsImage != nil)
