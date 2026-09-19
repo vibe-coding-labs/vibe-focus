@@ -228,10 +228,12 @@ extension InputBubbleController {
     }
 
     /// 目标窗中心点所在屏的 visibleFrame（找不到回落主屏）。
+    /// B234 审计：回落用 CoordinateKit.primaryScreen（origin .zero 契约），
+    /// NSScreen.main 是焦点屏，气泡会被摆到用户正用屏而非目标回落屏。
     func containingScreenVisibleFrame(for appKitFrame: CGRect) -> CGRect {
         let center = CGPoint(x: appKitFrame.midX, y: appKitFrame.midY)
         let screen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
-            ?? NSScreen.main
+            ?? CoordinateKit.primaryScreen
         return screen?.visibleFrame ?? appKitFrame
     }
 

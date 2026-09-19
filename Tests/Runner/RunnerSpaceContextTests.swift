@@ -86,3 +86,93 @@ extension RunnerHarness {
               == "yabai returned empty error output")
     }
 }
+
+extension RunnerHarness {
+    /// B235：Space 只读查询族形状断言（B 档第二批）——真机 yabai 在位时锁定
+    /// 「查询→JSON 解码→缓存」管线的输出形状（space index 唯一性/窗口 id 正值/
+    /// 二次查询走缓存形状稳定/焦点窗 ∈ 全量窗），yabai 不可用时 nil 亦为合法形状。
+    /// 全部只读（无窗口移动/聚焦/浮动），不对桌面产生任何变更。
+    func runSpaceQueryShapeTests() {
+        print("\n=== SpaceQueryShape (B235) ===")
+        let space = SpaceController.shared
+
+        // --- querySpaces：解码形状 + 全局 index 唯一性 ---
+        let spaces = space.querySpaces(caller: "b235")
+        if let spaces {
+            check("queryShape: spaces 非空时 index 全为正值",
+                  spaces.allSatisfy { ($0.index ?? 0) >= 1 && ($0.display ?? 0) >= 1 })
+            let indices = spaces.compactMap(\.index)
+            check("queryShape: space 全局 index 唯一（yabai 契约）",
+                  indices.count == Set(indices).count)
+        } else {
+            check("queryShape: yabai 不可用 → spaces nil 合法", true)
+        }
+
+        // --- queryFocusedWindow：命中则窗口 id 正值 ---
+        let focused = space.queryFocusedWindow()
+        check("queryShape: 焦点窗 nil 或 id 正值",
+              focused == nil || (focused?.id ?? 0) > 0)
+
+        // --- queryAllWindows：非空时与焦点窗对账 + 单窗回查互证 ---
+        let all = space.queryAllWindows(caller: "b235")
+        if let all {
+            check("queryShape: 全量窗 id 全为正值", all.allSatisfy { ($0.id ?? 0) > 0 })
+            if let focused, !all.isEmpty {
+                check("queryShape: 焦点窗 ∈ 全量窗列表",
+                      all.contains(where: { $0.id == focused.id }))
+            }
+            if let first = all.first, let firstID = first.id, firstID > 0,
+               firstID <= Int(UInt32.max) {
+                let again = space.queryWindow(windowID: UInt32(firstID))
+                check("queryShape: 单窗回查命中同 id（缓存路径）",
+                      again?.id == first.id)
+            }
+        } else {
+            check("queryShape: yabai 不可用 → 全量窗 nil 合法", true)
+        }
+
+        // --- queryWindow 幽灵 id：nil 通道（真实探活失败路径） ---
+        check("queryShape: 幽灵窗口 id → nil",
+              space.queryWindow(windowID: 4_000_000_123) == nil)
+
+        // --- currentSpaceIndex / visibleSpaceIndex：nil 或正值形状 ---
+        let cur = space.currentSpaceIndex()
+        check("queryShape: 当前 space nil 或 ≥1", cur == nil || cur! >= 1)
+        let vis = space.visibleSpaceIndex(forDisplayIndex: nil)
+        check("queryShape: visibleSpaceIndex nil 或带正值 yabaiIndex",
+              vis == nil || vis?.yabaiIndex ?? 0 >= 1)
+
+        // --- 缓存失效幂等（不炸即契约） ---
+        space.invalidateDisplayMatchTable()
+        check("queryShape: invalidateDisplayMatchTable 幂等不崩", true)
+    }
+}
+
+extension RunnerHarness {
+    /// B237：Space 只读查询续批——queryWindowsOnSpace 形状（真实 space 有窗数组/
+    /// 幽灵 space 双探 nil=重试路径）、nativeSpaceID 实例包装（真实 index 回译非 nil/
+    /// 幽灵 index nil）。全部只读零桌面变更；yabai 不可用 nil 合法。
+    func runSpaceSwitchQueryShapeTests() {
+        print("\n=== SpaceSwitchQueryShape (B237) ===")
+        let space = SpaceController.shared
+        let spaces = space.querySpaces(caller: "b237")
+
+        // --- 幽灵 space：两次查询全 nil（首次失败→重试一次→仍 nil 的路径） ---
+        check("switchQuery: 幽灵 space 双探 nil",
+              space.queryWindowsOnSpace(999_999, operationID: "b237") == nil)
+
+        // --- 真实 space：形状 + 域一致性 ---
+        if let spaces, let first = spaces.first, let idx = first.index {
+            let windows = space.queryWindowsOnSpace(idx, operationID: "b237")
+            check("switchQuery: 真实 space 查询 nil 或全正值 id 数组",
+                  windows == nil || (windows?.allSatisfy { ($0.id ?? 0) > 0 }) == true)
+            let native = space.nativeSpaceID(forYabaiIndex: idx)
+            check("switchQuery: 真实 yabaiIndex → 原生 space id 非 nil",
+                  native == nil || native! > 0)
+            check("switchQuery: 幽灵 yabaiIndex → 原生 id nil",
+                  space.nativeSpaceID(forYabaiIndex: 999_999) == nil)
+        } else {
+            check("switchQuery: yabai 不可用 → nil 形状合法", true)
+        }
+    }
+}

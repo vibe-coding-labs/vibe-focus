@@ -104,15 +104,8 @@ final class SessionRestoreController {
         }
 
         // 5. 远程探针：remoteSSH pane 的目的地去重后小并发打探（免密才行，失败即降级）
-        var remoteTargets: [(target: String, port: String?)] = []
-        var seenTargets = Set<String>()
-        for cls in classifications.values where cls.kind == .remoteSSH {
-            guard let target = cls.sshTarget else { continue }
-            let port = cls.sshCommand.flatMap { SessionCommandBuilder.parseTarget(from: $0)?.port }
-            if seenTargets.insert(target + "@" + (port ?? "")).inserted {
-                remoteTargets.append((target, port))
-            }
-        }
+        // B237 提纯：去重键序落纯函数（Runner 直测），此处只消费（探针通道走 deps 注入）。
+        let remoteTargets = Self.dedupeRemoteTargets(classifications.values.filter { $0.kind == .remoteSSH })
         let probeResults = await deps.probeRemoteTargets(remoteTargets)
 
         // 6. 组装快照
@@ -385,6 +378,23 @@ final class SessionRestoreController {
             }
             return SessionPaneSnapshot(kind: .shell, cwd: cwd, title: paneTitle)
         }
+    }
+
+    /// remoteSSH pane 的探针目标去重（纯函数，Runner 直测）：按 `target@port` 键去重，
+    /// sshTarget 缺失的分类跳过（恢复时原样回放命令行，无处可探），顺序保持首次出现序。
+    nonisolated static func dedupeRemoteTargets(
+        _ classifications: [PaneClassifier.Classification]
+    ) -> [(target: String, port: String?)] {
+        var result: [(target: String, port: String?)] = []
+        var seen = Set<String>()
+        for cls in classifications {
+            guard let target = cls.sshTarget else { continue }
+            let port = cls.sshCommand.flatMap { SessionCommandBuilder.parseTarget(from: $0)?.port }
+            if seen.insert(target + "@" + (port ?? "")).inserted {
+                result.append((target, port))
+            }
+        }
+        return result
     }
 
     /// 远程探针 fan-out（并发 4 封顶；每目标一次 ssh，失败空表）

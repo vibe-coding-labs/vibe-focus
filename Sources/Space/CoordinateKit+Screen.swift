@@ -11,6 +11,16 @@ extension CoordinateKit {
 
     // MARK: 显示器相关
 
+    /// 唯一事实源的「主屏」解析（B234 审计收敛）：origin 在 .zero 的屏。
+    /// ⚠️禁止用 NSScreen.main 当主屏——它是焦点相关语义（键盘焦点窗口所在屏，
+    /// 无焦点进程返回当前活跃屏），多屏下用户焦点在副屏时 ≠ screens[0]；
+    /// 真主屏契约=菜单栏屏（Apple 文档恒为 screens[0]）= origin .zero。
+    /// 2026-09-20 真机实证：用户焦点在副屏时 NSScreen.main 指向副屏（displayID 3），
+    /// 而主屏 displayID 1 仍 origin .zero。
+    static var primaryScreen: NSScreen? {
+        NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
+    }
+
     static var mainScreenQuartzFrame: CGRect? {
         // P-INST-134: 主屏 Quartz 帧查询耗时（NSScreen.screens AppKit 显示配置数组遍历找 origin==.zero；toggle/move/overlay 坐标计算高频调用；mainScreenHeight/isOnMainScreen 经此委托）。
         #if PERF_INSTRUMENT

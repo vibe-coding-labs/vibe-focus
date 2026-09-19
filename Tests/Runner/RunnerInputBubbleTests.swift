@@ -1391,3 +1391,159 @@ extension RunnerHarness {
 
     private func insetNSRect(_ r: NSRect, _ by: CGFloat) -> NSRect { r.insetBy(dx: by, dy: by) }
 }
+
+extension RunnerHarness {
+    /// B236：气泡跟随引擎 + ↑↓ 历史翻阅状态机直测（B 档第三批）。
+    /// followOrigin 纯几何三态、startFollowing/stopFollowing 状态接线、
+    /// followTick 无状态 no-op 与幽灵窗「原地停驻」分支（pid=Runner 自身存活、
+    /// windowID 幽灵 → cgWindowBounds nil 分支）、↑↓ 翻阅全状态机（phase 守卫/
+    /// up 消费变旧/最旧停住/down 走出最新回 stash 现场/未翻阅 down 不消费），
+    /// 历史仓用 shared（Runner 独立 defaults 域）+ 前后 clear() 自清理。
+    func runBubbleFollowNavTests() {
+        print("\n=== BubbleFollowNav (B236) ===")
+        let controller = InputBubbleController.shared
+        let store = InputBubbleHistoryStore.shared
+
+        // --- followOrigin 纯几何：零位移不动、位移保偏移平移、负位移反向 ---
+        check("followNav: followOrigin 零位移原点不动",
+              InputBubbleLayout.followOrigin(bubbleOrigin: CGPoint(x: 100, y: 80),
+                                             windowOriginBefore: CGPoint(x: 50, y: 60),
+                                             windowOriginNow: CGPoint(x: 50, y: 60))
+                  == CGPoint(x: 100, y: 80))
+        check("followNav: followOrigin 位移保相对偏移",
+              InputBubbleLayout.followOrigin(bubbleOrigin: CGPoint(x: 100, y: 80),
+                                             windowOriginBefore: CGPoint(x: 50, y: 60),
+                                             windowOriginNow: CGPoint(x: 90, y: 20))
+                  == CGPoint(x: 140, y: 40))
+        check("followNav: followOrigin 负位移反向跟随",
+              InputBubbleLayout.followOrigin(bubbleOrigin: CGPoint(x: 100, y: 80),
+                                             windowOriginBefore: CGPoint(x: 90, y: 20),
+                                             windowOriginNow: CGPoint(x: 50, y: 60))
+                  == CGPoint(x: 60, y: 120))
+
+        // --- startFollowing/stopFollowing 状态接线与清场 ---
+        controller.startFollowing(targetCGFrame: CGRect(x: 0, y: 0, width: 800, height: 500),
+                                  bubbleOrigin: CGPoint(x: 10, y: 10))
+        check("followNav: startFollowing 记录基线并挂 0.2s 轮询",
+              controller.followWindowOrigin != nil && controller.followBubbleOrigin == CGPoint(x: 10, y: 10)
+              && controller.followTimer != nil)
+        controller.stopFollowing()
+        check("followNav: stopFollowing 幂等清场",
+              controller.followWindowOrigin == nil && controller.followBubbleOrigin == nil
+              && controller.followTimer == nil)
+
+        // --- followTick 守卫链：无状态 no-op ---
+        let idlePhase = controller.phase
+        controller.followTick()
+        check("followNav: 无状态 tick no-op", controller.phase == idlePhase)
+
+        // --- followTick 幽灵窗「原地停驻」：pid 存活（Runner 自身）+ windowID 幽灵 ---
+        store.clear()
+        defer {
+            store.clear()
+            controller.stopFollowing()
+            controller.panel?.orderOut(nil)
+            controller.panel = nil
+            controller.textView = nil
+            controller.panelBuiltFor = nil
+            controller.phase = .idle
+            controller.target = nil
+            controller.historyNavIndex = nil
+            controller.historyStashedText = nil
+        }
+        controller.phase = .open
+        let (panel, textView) = controller.builtPanel()
+        controller.textView = textView
+        let ghostTarget = InputBubbleController.Target(
+            pid: ProcessInfo.processInfo.processIdentifier, bundleID: nil,
+            windowID: 3_999_999_999, title: "ghost")
+        controller.target = ghostTarget
+        controller.startFollowing(targetCGFrame: CGRect(x: 0, y: 0, width: 800, height: 500),
+                                  bubbleOrigin: CGPoint(x: 12, y: 34))
+        let parkedFrame = panel.frame
+        controller.followTick()
+        check("followNav: 幽灵窗 tick 原地停驻（bounds 读不到不跳）",
+              panel.frame == parkedFrame && controller.followWindowOrigin != nil
+              && controller.phase == .open)
+
+        // --- ↑↓ 翻阅状态机：phase 守卫 → up 变旧/最旧停 → down 回现场/未翻阅不消费 ---
+        // phase=.idle 时先验证守卫
+        controller.phase = .idle
+        check("followNav: phase 非 open historyPrevious false", !controller.historyPrevious())
+        controller.phase = .open
+        textView.string = "现场文本"
+        store.record("条目-e2", windowID: 777_001, windowTitle: "t", status: .submitted,
+                     now: Date().addingTimeInterval(-60))
+        store.record("条目-e1", windowID: 777_001, windowTitle: "t", status: .submitted,
+                     now: Date().addingTimeInterval(-30))
+        controller.target = InputBubbleController.Target(
+            pid: ProcessInfo.processInfo.processIdentifier, bundleID: nil,
+            windowID: 777_001, title: "t")
+        check("followNav: 未翻阅时 historyNext 不消费", !controller.historyNext())
+        check("followNav: 首次 up 消费跳最新一条（e1 比 e2 新）",
+              controller.historyPrevious() && textView.string == "条目-e1")
+        _ = controller.historyPrevious()  // 到最旧 e2
+        check("followNav: 已到最旧再 up 停住（仍最旧条目）",
+              controller.historyPrevious() && textView.string == "条目-e2")
+        check("followNav: down 回到较新一条", controller.historyNext() && textView.string == "条目-e1")
+        check("followNav: 走出最新回编辑现场",
+              controller.historyNext() && textView.string == "现场文本")
+        check("followNav: 现场还原后再 down 不消费", !controller.historyNext())
+        store.clear()
+    }
+}
+
+extension RunnerHarness {
+    /// B237：草稿终末 flush（SIGTERM 收尾路径）状态机直测——
+    /// 守卫四件套（phase/textView/target/文本≠基线）+ 命中路径草稿落账+flushPending+
+    /// 历史快照折叠记账；shared 仓（Runner 独立域）前后 clear() 自清理。
+    func runBubbleDraftFlushTests() {
+        print("\n=== BubbleDraftFlush (B237) ===")
+        let controller = InputBubbleController.shared
+        let store = InputBubbleHistoryStore.shared
+        let draftShared = InputBubbleDraftStore.shared
+        defer { draftShared.clear(for: 777_002) }
+
+        controller.phase = .open
+        let (panel, textView) = controller.builtPanel()
+        defer {
+            panel.orderOut(nil)
+            controller.panel = nil
+            controller.textView = nil
+            controller.panelBuiltFor = nil
+            controller.phase = .idle
+            controller.target = nil
+            store.clear()
+        }
+        store.clear()
+        draftShared.clear(for: 777_002)  // 跨进程持久残留清场（defaults 落盘跨 Runner 生命周期）
+        controller.target = InputBubbleController.Target(
+            pid: ProcessInfo.processInfo.processIdentifier, bundleID: nil,
+            windowID: 777_002, title: "flush-t")
+        controller.textView = textView
+
+        // --- 守卫分支：文本 == lastRestoredBaseText → 不落账 ---
+        textView.string = "未改动文本"
+        controller.lastRestoredBaseText = "未改动文本"
+        controller.flushDraftForTermination()
+        check("draftFlush: 文本未变 → 不写草稿不记快照",
+              draftShared.draft(for: 777_002) == nil && store.entries().isEmpty)
+
+        // --- 命中分支：文本改动 → 草稿落账 + pending flush + 历史快照折叠 ---
+        textView.string = " terminating 时未提交的话"
+        controller.lastRestoredBaseText = "未改动文本"
+        controller.flushDraftForTermination()
+        check("draftFlush: 终末草稿落账且 pending 已冲刷",
+              draftShared.draft(for: 777_002) == " terminating 时未提交的话")
+        let snap = store.entries()
+        check("draftFlush: 历史滚动草稿快照已记账",
+              snap.contains(where: { $0.text == " terminating 时未提交的话" }) && snap.count == 1)
+        controller.lastRestoredBaseText = " terminating 时未提交的话"
+
+        // --- 幂等：同文本二次 flush 不再重复记账（B209 折叠） ---
+        controller.flushDraftForTermination()
+        check("draftFlush: 同文本二次 flush 幂等",
+              store.entries().count == 1 && draftShared.draft(for: 777_002) == " terminating 时未提交的话")
+        store.clear()
+    }
+}
