@@ -152,7 +152,7 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 | ~~WindowManager+Toggle+Decision (28)~~ | ✅ B274 已清（evaluateRestoreDecision 输入收集段注入直测） |
 | ~~VoiceAnnouncementManager+RestoreOutcome (27)~~ | ✅ B276 复核改判：plan 纯映射已测（B229），残量=announce 发声接线 → C4 出声豁免 |
 | ~~YabaiClient (28)~~ | ✅ B276 复核改判：fallback 链已测（B271），残支=cache/candidates 段执行顺序依赖（先到测试先填充静态缓存，无法稳定认领）→ C7 顺序依赖豁免 |
-| SpaceController (27) | refresh 内部状态迁移（B261 基础上补残支） |
+| ~~SpaceController (27)~~ | ✅ B279 部分清账（refresh 节流窗分支+updateEnabledState 迁移）；余量=后台 fork 应用段归 C7 |
 | WindowStateStore+Database (26) | 临时库 schema 迁移/错误分支 |
 | ~~TargetResolve (23)~~ | ✅ B277 复核改判：selectionPreview 静态缝已测（B106/HookWalk），残支=AX/E2E 域 | TTYWriter (23)✅B278 已清(open 失败分支) / SessionActivityTracker (23)✅B278 已清(prune 年龄容量淘汰+parse 坏条目跳过) / Toggle+Restore+Stages (20) / Support+Diagnostics (20) 残支零星提缝 |
 
