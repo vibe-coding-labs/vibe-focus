@@ -244,7 +244,8 @@ extension RunnerHarness {
                 let hooks = (readJSON(home + "/.claude/settings.json")?["hooks"] as? [String: Any]) ?? [:]
                 // 种子 PreToolUse + 生成的四事件并存（合并语义；B196 起 +Notification）
                 let registered = hooks.keys.sorted()
-                check("remoteInstall[jq]: 注册 SessionStart/Stop/UserPromptSubmit/Notification 且种子 hook 保留",
+                let regKeys = registered.joined(separator: ",")
+                check("remoteInstall[jq]: 注册四事件+种子保留 keys=[\(regKeys)]",
                       registered == ["Notification", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
 
                 let entryOK = (hooks["Stop"] as? [[String: Any]])?.first != nil
