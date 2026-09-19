@@ -125,15 +125,72 @@ extension RunnerHarness {
         // （isHookInstalled 读真身 ~/.claude/settings.json——本机已安装=已安装分支；
         //  未安装分支随真机卸载态。按钮闭包（一键安装/卸载/测试）留白。）
         do {
-            var on = view
+            let on = view
             on.hookEnabled = true
             let r1 = ImageRenderer(content: on.claudeHookSection)
             check("renderClaude2: hookEnabled=true 全树渲染出图", r1.nsImage != nil)
 
-            var off = view
+            let off = view
             off.hookEnabled = false
             let r2 = ImageRenderer(content: off.claudeHookSection)
             check("renderClaude2: hookEnabled=false 全树渲染出图", r2.nsImage != nil)
         }
+    }
+}
+
+// MARK: - B258：LANSettingsView 深层行渲染（spool 主机行/状态文本/安装通道）
+
+extension RunnerHarness {
+    func runLANViewDeepRenderTests() {
+        let savedLanMode = UserDefaults.standard.object(forKey: LANHookPreferences.lanModeKey)
+        let savedHosts = RemoteSpoolHosts.loadHosts()
+        let savedToken = ClaudeHookPreferences.authToken
+        let savedRunner = RemoteSpoolDrainer.shared.processRunner
+        defer {
+            if let savedLanMode { UserDefaults.standard.set(savedLanMode, forKey: LANHookPreferences.lanModeKey) }
+            else { UserDefaults.standard.removeObject(forKey: LANHookPreferences.lanModeKey) }
+            RemoteSpoolHosts.saveHosts(savedHosts)
+            ClaudeHookPreferences.authToken = savedToken
+            RemoteSpoolDrainer.shared.processRunner = savedRunner
+            RemoteSpoolHosts.saveHosts([])
+            RemoteSpoolDrainer.shared.applyPreferences()
+        }
+
+        // 状态产线：假 runner 拉取 3 条（exit 0）→ drainNow → statuses 落账
+        RemoteSpoolHosts.saveHosts(["vf-lan-deep"])
+        ClaudeHookPreferences.isEnabled = true
+        ClaudeHookPreferences.authToken = "vf-lan-token"
+        let canned: SpoolProcessRunner = { _, _, _ in
+            let lines = (1...3).map { "{\"event\":\"SessionEnd\",\"session_id\":\"vf-lan-deep-\($0)\"}" }
+            return (exitCode: 0, stdout: lines.joined(separator: "\n"), stderr: "")
+        }
+        RemoteSpoolDrainer.shared.processRunner = canned
+        RemoteSpoolDrainer.shared.drainNow()
+        let deadline = Date().addingTimeInterval(5.0)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            if RemoteSpoolDrainer.shared.statuses["vf-lan-deep"]?.lastDrainAt != nil { break }
+        }
+        check("lanDeep: 前置——假 runner 拉取后 statuses 落账",
+              RemoteSpoolDrainer.shared.statuses["vf-lan-deep"]?.lastDrainAt != nil)
+
+        // lanMode 开 + 主机非空 → 详情分区/主机行/状态文本/安装通道全渲染
+        UserDefaults.standard.set(true, forKey: LANHookPreferences.lanModeKey)
+        let view = LANSettingsView()
+        let renderer = ImageRenderer(content: view.body)
+        check("lanDeep: 深层行全树渲染出图", renderer.nsImage != nil)
+
+        // 错误分支：假 runner 返回 exit 255 → lastError 落账 → 错误文本渲染
+        RemoteSpoolDrainer.shared.processRunner = { _, _, _ in
+            (exitCode: 255, stdout: "", stderr: "ssh: connect failed")
+        }
+        RemoteSpoolDrainer.shared.drainNow()
+        let errDeadline = Date().addingTimeInterval(3.0)
+        while Date() < errDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            if RemoteSpoolDrainer.shared.statuses["vf-lan-deep"]?.lastError != nil { break }
+        }
+        let errRenderer = ImageRenderer(content: LANSettingsView())
+        check("lanDeep: 拉取失败分支渲染出图（错误文本行）", errRenderer.nsImage != nil)
     }
 }
