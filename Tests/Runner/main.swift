@@ -365,6 +365,7 @@ final class FakeAuditor: RestoreAuditing {
         runToggleFallbackTests()
         runStuckRouteEarlyExitTests()
         runWindowCoreReadTests()
+        runClaudeCodeFindingTests()
         runCrashSnapshotBufferTests()
         runTerminalContextMatchTests()
         runDiagnosticsSamplerTests()
