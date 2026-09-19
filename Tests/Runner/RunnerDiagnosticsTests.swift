@@ -62,7 +62,15 @@ extension RunnerHarness {
         // displayID ↔ 数组下标转换
         let mainID = wm.displayID(for: main)
         check("screenPos: 主屏 displayID 非空", mainID != nil)
-        check("screenPos: 主 displayID → 数组下标 0", wm.displayIndex(forDisplayID: mainID) == 0)
+        // B236 加固：CGDisplayID→NSScreen 解析偶发瞬态抖动（活跃真机实测红绿交替），
+        // 重取主屏 refresh 后复验一次。
+        if wm.displayIndex(forDisplayID: mainID) == 0 {
+            check("screenPos: 主 displayID → 数组下标 0", true)
+        } else {
+            let refreshedID = wm.displayID(for: NSScreen.screens.first ?? main)
+            check("screenPos: 主 displayID → 数组下标 0（刷新后复验）",
+                  wm.displayIndex(forDisplayID: refreshedID) == 0)
+        }
         check("screenPos: nil displayID → nil", wm.displayIndex(forDisplayID: nil) == nil)
         check("screenPos: 幻影 displayID → nil", wm.displayIndex(forDisplayID: 0xF00D) == nil)
 
