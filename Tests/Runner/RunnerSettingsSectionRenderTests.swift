@@ -12,7 +12,7 @@ import SwiftUI
 @testable import VibeFocusKit
 
 /// 合成 CGEventTapProxy（OpaquePointer 非可选，测试用虚拟值——handleCGEvent 不读 proxy）
-private let dummyProxy = unsafeBitCast(UnsafeRawPointer(bitPattern: 0xDEAD)!, to: CGEventTapProxy.self)
+private var dummyProxy: CGEventTapProxy { unsafeBitCast(UnsafeRawPointer(bitPattern: 0xDEAD)!, to: CGEventTapProxy.self) }
 
 extension RunnerHarness {
     func runSettingsSectionRenderTests() {
@@ -428,13 +428,13 @@ extension RunnerHarness {
         // ===== C. CodexSection 横幅双态渲染 =====
         do {
             let view = SettingsView()
-            var ok = view
+            let ok = view
             ok.codexInstallMessage = "已安装到 Codex"
             ok.codexInstallSucceeded = true
             let rOK = ImageRenderer(content: ok.codexSection)
             check("hotkeyOffline: codex 安装成功横幅渲染", rOK.nsImage != nil)
 
-            var fail = view
+            let fail = view
             fail.codexInstallMessage = "安装失败"
             fail.codexInstallSucceeded = false
             let rFail = ImageRenderer(content: fail.codexSection)
