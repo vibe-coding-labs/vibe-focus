@@ -394,6 +394,7 @@ final class FakeAuditor: RestoreAuditing {
         runMinimapLabelTests()
         runSoundGateSilentTests()
         runTitleEditorAXWriteTests()
+        runSoundResolveAndCrashStateTests()
         runGridSnapshotRowTests()
     // MARK: 汇总
 

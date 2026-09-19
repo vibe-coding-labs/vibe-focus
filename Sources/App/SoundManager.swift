@@ -317,7 +317,7 @@ final class SoundManager: ObservableObject {
         }
     }
 
-    private func resolveSound(
+    func resolveSound(
         soundType: CompletionSoundType? = nil,
         customPath: String? = nil
     ) -> NSSound? {
@@ -347,7 +347,7 @@ final class SoundManager: ObservableObject {
         return result
     }
 
-    private func bundledSound(named name: String) -> NSSound? {
+    func bundledSound(named name: String) -> NSSound? {
         // P-INST-164: 内置音频资源查找耗时（Bundle.main.url forResource 多扩展名 m4a/wav/mp3 × 2 路径查 + NSSound(contentsOf:byReference:) 加载解码；resolveSound P-INST-163 builtin 分支调用）。
         #if PERF_INSTRUMENT
         let bsStart = Date()
