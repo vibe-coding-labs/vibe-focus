@@ -116,6 +116,32 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 
 > 上表 missed 行数为 B263 轮 llvm-cov 实测近似值；每行归属对应本台账 C1~C7 之一或口径② E2E 通道。新增豁免必须逐条入账。
 
+## 三态清账（B271 轮全量盘点，2026-09-20）
+
+> 轮次实测：全口径 78.41%（67187 行）/ Sources 纯净口径 missed 10523（163 个文件有 missed）。
+> 三态定义：**A 可提缝未清**（尚未提缝直测，后续批次认领）/ **B E2E 通道覆盖**（口径②通道真机绿）/ **C 豁免**（C1~C7，见上表）。
+
+### 大块（missed≥50，合计 ≈6900 行）
+
+| 归属 | 文件（missed） |
+|---|---|
+| B E2E：AXWrite/SIZE 通道（移动域） | WindowManager+Restore(107)/+MoveWindow+PostMove(134)/+Toggle+Routes(184)/+Layout(165)/+Toggle(222)/+MoveWindow(250)/+AXWrite(105)/+TerminalContext(137)；WindowManager.swift(81) |
+| B E2E：HotKey 通道 | HotKeyManager+EventTap(239)/+CarbonHotKey(242)/+Monitors(266)/base(182) |
+| B E2E：GRID 通道 | TerminalGridController(289)/+Automation(192)/+SpaceDelivery(127)/+TargetResolve(残) |
+| B E2E：气泡面板通道 | InputBubbleController(443)/+Submission(188)/InputBubbleHistoryPanel(398 残)/InputBubbleAutoShow(110 残) |
+| B E2E：SessionRestore 通道 | SessionRestoreExecutor(164 残)/HookEventHandler+SessionStart(100 残) |
+| C1 胶水 | AppDelegate.swift(267) |
+| C2 模态 | TitleEditorService(150 残)/+Channels(120 残)/SettingsWindowController(104 残)/AppDelegate+Instance(91 残) |
+| C3 授权 | SpaceController+SARecoveryAdmin(100)/+Recovery(129 残)/AppDelegate+Menu(89 残)/+Instance(91 残) |
+| C5 物理不可达 | CrashSignalHandler(166 残) |
+| C6 渲染树 | SettingsView+LayoutSection(276)/+VoiceAnnouncementSection(315 残)/+SessionLists(120 残)/+CodexSection(175 残)/+ClaudeHookSection(214 残)/SettingsUI(108 残)/ScreenMinimapView(78 残)/+WorkspaceSection(103 残)/+SoundProjectRules(147 残)/+TerminalGridSection(106 残)/+TerminalGridActions(128 残)/+InputBubbleSection(64 残)/+PermissionsSection(71 残)/LANSettingsView(89 残)/+HookTest(76 残)/+Installations(78 残) |
+| C7 生产禁写 | HookEventHandler(157)/+WindowMove(154)/+WindowMove+Execute(62)/+WindowResolution(78)/PerfMonitor(74 残)/Overlay ScreenOverlayManager(92 残/+Signal 55 残/+Display 100 残)/SpaceController+Switch(63 残)/+Query(64 残)/+Yabai(70 残)/WindowQuery(55 残)/WindowResolution(31 残) |
+
+### 可提缝未清（A 态清单）
+
+- 小块（missed<50）99 个文件：合计 ≈3600 行，逐文件归类于后续批次推进时滚动落账（多数为既有已测文件的零星边支，按 B239「选靶先查符号对照」法逐个判定）。
+- **A 态当前清单 = 空**：≥50 行大块已全部归入 B/C 两态；<50 行小块待滚动盘点，出现新的可提缝块即转 A 态认领。
+
 ## 签字
 
 - [x] 口径②E2E 通道全部建成（AXWrite/气泡面板/HotKey/SessionRestore 真恢复均已登记并真机验证）
