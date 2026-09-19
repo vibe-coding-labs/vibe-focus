@@ -207,3 +207,46 @@ extension RunnerHarness {
               CrashContextRecorder.shared.parseIPSJSONPayloadAndLog(from: "") == nil)
     }
 }
+
+extension RunnerHarness {
+    /// B218：崩溃取证/诊断通道注入式补测——captureTail URL 注入双分支（截尾语义 +
+    /// 源缺失跳过）、sampleMainThread 冒烟、logDiagnostics/心跳注册冒烟（副作用=日志）。
+    func runCrashForensicsIOTests() {
+        print("\n=== CrashForensicsIO (B218) ===")
+        let dir = "/tmp/vf-b218-forensics-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+
+        // --- captureTail：10 行源截尾 3 行；多余空行保留语义（omittingEmpty=false） ---
+        let source = URL(fileURLWithPath: dir + "/app.log")
+        let body = (1...10).map { "line-\($0)" }.joined(separator: "\n")
+        try? body.data(using: .utf8)!.write(to: source)
+        let output = URL(fileURLWithPath: dir + "/tail.txt")
+        CrashContextRecorder.shared.captureTail(
+            sourceURL: source, outputURL: output, lineLimit: 3, context: "b218", label: "app.log")
+        let tail = try? String(contentsOf: output, encoding: .utf8)
+        check("forensics: captureTail 截尾 3 行保序",
+              tail == "line-8\nline-9\nline-10")
+        let outputAll = URL(fileURLWithPath: dir + "/tail-all.txt")
+        CrashContextRecorder.shared.captureTail(
+            sourceURL: source, outputURL: outputAll, lineLimit: 100, context: "b218", label: "app.log")
+        check("forensics: lineLimit 超行数全量保留",
+              (try? String(contentsOf: outputAll, encoding: .utf8)) == body)
+
+        // --- 源缺失：跳过分支（不产出输出文件、不崩） ---
+        let missing = URL(fileURLWithPath: dir + "/missing.log")
+        let outputSkip = URL(fileURLWithPath: dir + "/tail-skip.txt")
+        CrashContextRecorder.shared.captureTail(
+            sourceURL: missing, outputURL: outputSkip, lineLimit: 3, context: "b218", label: "missing.log")
+        check("forensics: 源缺失跳过且无输出文件", !FileManager.default.fileExists(atPath: outputSkip.path))
+
+        // --- sampleMainThread：冒烟（port 未捕获时返回空数组；有帧则全非零） ---
+        let frames = BacktraceSampler.sampleMainThread(maxFrames: 8)
+        check("forensics: sampleMainThread 返回且帧值 sane",
+              frames.count <= 8 && frames.allSatisfy { $0 != 0 })
+
+        // --- logDiagnostics：冒烟（fork codesign 采集，副作用=日志） ---
+        logDiagnostics("runner-b218")
+        check("forensics: logDiagnostics 冒烟不崩", true)
+    }
+}
