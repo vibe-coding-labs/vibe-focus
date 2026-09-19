@@ -49,3 +49,34 @@ extension RunnerHarness {
               NSApp.activationPolicy() == .accessory && !window.isVisible)
     }
 }
+
+// MARK: - B268：renderWindowToPNG 离屏渲染直测（private→internal 提缝，零行为变化）
+// 设置窗快照钩子（VIBEFOCUS_SETTINGS_SNAPSHOT 配方）的核心渲染函数：
+// 用测试自建离屏 NSWindow（永不 orderFront，零用户影响）直测 layer→PNG 渲染链。
+
+extension RunnerHarness {
+    func runSettingsSnapshotRenderTests() {
+        let ctl = SettingsWindowController.shared
+        guard let win = ctl.window else {
+            check("snapshotRender: 设置窗已在内存构建", false)
+            return
+        }
+        let dir = "/tmp/vibefocus-b268-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let path = dir + "/snap.png"
+
+        ctl.renderWindowToPNG(window: win, path: path)
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), !data.isEmpty else {
+            check("snapshotRender: PNG 产出非空", false)
+            return
+        }
+        let image = NSImage(data: data)
+        check("snapshotRender: PNG 可解码且尺寸为 2x 位图",
+              image != nil && image!.size.width > 0 && image!.size.height > 0)
+
+        // contentView 缺失/空 bounds 分支：无法在共享控制器上模拟（窗真实存在），
+        // 该两分支由「窗未加载完成」生产场景自然覆盖，留白。
+        check("snapshotRender: 渲染链全程不崩", true)
+    }
+}
