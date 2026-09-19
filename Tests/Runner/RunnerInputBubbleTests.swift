@@ -1021,6 +1021,109 @@ extension RunnerHarness {
         check("hint: ⌘Y 提示进底栏文案（提交模式）", InputBubbleKeyPlan.hintText(submitOnEnter: true).contains("⌘Y 历史面板"))
         check("hint: ⌘Y 提示进底栏文案（默认模式）", InputBubbleKeyPlan.hintText(submitOnEnter: false).contains("⌘Y 历史面板"))
     }
+
+    /// B214：InputBubblePreferences 全偏好存取分支直测（此前 40% 函数覆盖——
+    /// getter 缺省回落/setter 落库/尺寸广播/热键解码回落/用户摆位编解码全链未测）。
+    /// Runner 二进制的 UserDefaults.standard 是自身独立域，与生产 app 隔离；用后清理。
+    func runBubblePreferencesBranchTests() {
+        func clearAll() {
+            for key in ["inputBubbleEnabled", "inputBubbleWidth", "inputBubbleHeight",
+                        "inputBubbleSubmitOnEnter", "inputBubbleAutoShowOnFocus",
+                        "inputBubbleDefaultPrefix", "inputBubbleHotKeyConfiguration",
+                        "inputBubbleAutoShowOnMoveToMain", "inputBubbleAutoRestoreOnSubmit",
+                        "inputBubbleAutoHide", "inputBubbleUserFrame"] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        clearAll()
+        defer { clearAll() }
+
+        // ===== 布尔偏好三态：未设置回落默认 / set 落库 / get 回读 =====
+        check("prefs: isEnabled 未设置 → true（B129 默认开）", InputBubblePreferences.isEnabled == true)
+        InputBubblePreferences.isEnabled = false
+        check("prefs: isEnabled set false → 回读 false", InputBubblePreferences.isEnabled == false)
+        check("prefs: submitOnEnter 未设置 → false（B161 Enter 换行默认）",
+              InputBubblePreferences.submitOnEnter == false)
+        InputBubblePreferences.submitOnEnter = true
+        check("prefs: submitOnEnter set true → 回读 true", InputBubblePreferences.submitOnEnter == true)
+        check("prefs: autoShowOnFocus 未设置 → true（B160 默认开）",
+              InputBubblePreferences.autoShowOnFocus == true)
+        InputBubblePreferences.autoShowOnFocus = false
+        check("prefs: autoShowOnFocus set false → 回读 false", InputBubblePreferences.autoShowOnFocus == false)
+        check("prefs: autoShowOnMoveToMain 未设置 → true（B162 默认开）",
+              InputBubblePreferences.autoShowOnMoveToMain == true)
+        InputBubblePreferences.autoShowOnMoveToMain = false
+        check("prefs: autoShowOnMoveToMain set false → 回读 false",
+              InputBubblePreferences.autoShowOnMoveToMain == false)
+        check("prefs: autoRestoreOnSubmit 未设置 → true（B176 默认开）",
+              InputBubblePreferences.autoRestoreOnSubmit == true)
+        InputBubblePreferences.autoRestoreOnSubmit = false
+        check("prefs: autoRestoreOnSubmit set false → 回读 false",
+              InputBubblePreferences.autoRestoreOnSubmit == false)
+        check("prefs: autoHide 未设置 → false（B183 跟随模式默认）",
+              InputBubblePreferences.autoHide == false)
+        InputBubblePreferences.autoHide = true
+        check("prefs: autoHide set true → 回读 true", InputBubblePreferences.autoHide == true)
+
+        // ===== defaultPrefix：缺省空串 + 原样保留尾随空格 =====
+        check("prefs: defaultPrefix 未设置 → 空串", InputBubblePreferences.defaultPrefix == "")
+        InputBubblePreferences.defaultPrefix = "  /goal  "
+        check("prefs: defaultPrefix 尾随空格原样保留",
+              InputBubblePreferences.defaultPrefix == "  /goal  ")
+
+        // ===== 热键：未设置回落 defaultConfig / 坏数据回落 / 合法往返 =====
+        check("prefs: hotKey 未设置 → defaultConfig",
+              InputBubblePreferences.hotKey == InputBubbleHotKeyPlan.defaultConfig)
+        UserDefaults.standard.set(Data([0xFF, 0x00]), forKey: "inputBubbleHotKeyConfiguration")
+        check("prefs: hotKey 坏 JSON → defaultConfig（手写 defaults 不致崩）",
+              InputBubblePreferences.hotKey == InputBubbleHotKeyPlan.defaultConfig)
+        let custom = HotKeyConfiguration(keyCode: 7, modifiers: UInt32(controlKey))
+        InputBubblePreferences.hotKey = custom
+        check("prefs: hotKey 合法 JSON 往返", InputBubblePreferences.hotKey == custom)
+
+        // ===== 尺寸：set 归一落库 + 变化广播 / 同值不广播（NoteProbe 家法） =====
+        final class SizeProbe: NSObject {
+            var count = 0
+            @objc func hit(_ note: Notification) { count += 1 }
+        }
+        let sizeProbe = SizeProbe()
+        NotificationCenter.default.addObserver(
+            sizeProbe, selector: #selector(SizeProbe.hit(_:)),
+            name: InputBubblePreferences.sizeDidChangeNotification, object: nil
+        )
+        defer { NotificationCenter.default.removeObserver(sizeProbe) }
+
+        check("prefs: bubbleWidth 未设置 → 默认 480", InputBubblePreferences.bubbleWidth == 480)
+        InputBubblePreferences.bubbleWidth = 300          // 低于下界 → 钳 320，广播
+        check("prefs: bubbleWidth 300 → 钳 320", InputBubblePreferences.bubbleWidth == 320)
+        InputBubblePreferences.bubbleWidth = 10000        // 超上界 → 钳 720
+        check("prefs: bubbleWidth 10000 → 钳 720", InputBubblePreferences.bubbleWidth == 720)
+        InputBubblePreferences.bubbleWidth = 505          // 步长 20 取整 → 500
+        check("prefs: bubbleWidth 505 → 步进取整 500", InputBubblePreferences.bubbleWidth == 500)
+        InputBubblePreferences.bubbleWidth = 500          // 首次落 500：变化 → 广播一次
+        check("prefs: bubbleWidth 变化广播（拖拽落账/滑杆联动数据源）", sizeProbe.count >= 1)
+        let beforeSame = sizeProbe.count
+        InputBubblePreferences.bubbleWidth = 500          // 同值写 → 不广播（联动回路收敛）
+        check("prefs: bubbleWidth 同值写不广播", sizeProbe.count == beforeSame)
+
+        check("prefs: bubbleHeight 未设置 → 默认 150", InputBubblePreferences.bubbleHeight == 150)
+        InputBubblePreferences.bubbleHeight = 40          // 低于下界 → 钳 100
+        check("prefs: bubbleHeight 40 → 钳 100", InputBubblePreferences.bubbleHeight == 100)
+        InputBubblePreferences.bubbleHeight = 99999       // 超上界 → 钳 300
+        check("prefs: bubbleHeight 99999 → 钳 300", InputBubblePreferences.bubbleHeight == 300)
+        InputBubblePreferences.bubbleHeight = 0           // 0 = 未设置语义 → 默认 150
+        check("prefs: bubbleHeight 0 → 默认 150", InputBubblePreferences.bubbleHeight == 150)
+        InputBubblePreferences.bubbleHeight = 155         // 步长 10 → 160
+        check("prefs: bubbleHeight 155 → 步进取整 160", InputBubblePreferences.bubbleHeight == 160)
+
+        // ===== userPlacedOrigin：nil 默认 / set 编码往返 / nil 写清除 =====
+        check("prefs: userPlacedOrigin 未拖过 → nil", InputBubblePreferences.userPlacedOrigin == nil)
+        InputBubblePreferences.userPlacedOrigin = CGPoint(x: 1234.5, y: -678.0)
+        check("prefs: userPlacedOrigin 编码往返（含负 y 副屏区）",
+              InputBubblePreferences.userPlacedOrigin == CGPoint(x: 1234.5, y: -678.0))
+        InputBubblePreferences.userPlacedOrigin = nil
+        check("prefs: userPlacedOrigin 写 nil → 清除", InputBubblePreferences.userPlacedOrigin == nil)
+    }
 }
 
 extension RunnerHarness {
