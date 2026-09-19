@@ -102,4 +102,23 @@ extension RunnerHarness {
         server.stop()
         check("hookPort: 守卫后 server 保持停止", server.isRunning == false)
     }
+
+    // MARK: - B281：startIfNeeded 深层守卫（needsRestart 短路/token 变更重启/stop 幂等）
+    func runHookServerRestartGuardTests() {
+        let server = ClaudeHookServer.shared
+        server.stop()
+        let testPort = Int.random(in: 20000...60000)
+
+        server.startIfNeeded(port: testPort, token: nil)
+        check("hookRestart: 首次启动 isRunning", server.isRunning)
+
+        server.startIfNeeded(port: testPort, token: nil)
+        check("hookRestart: 同配置二次调用不重启（仍运行同端口）", server.isRunning)
+
+        server.startIfNeeded(port: testPort, token: "b281-token")
+        check("hookRestart: token 变更触发重启且保持运行", server.isRunning)
+
+        server.stop()
+        check("hookRestart: stop 后归零", server.isRunning == false)
+    }
 }

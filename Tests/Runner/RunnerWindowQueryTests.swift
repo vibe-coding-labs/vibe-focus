@@ -60,4 +60,24 @@ extension RunnerHarness {
         check("findCC: 带项目名约束链路贯通",
               constrained == nil || constrained!.windowID != 0)
     }
+
+    // MARK: - B281：resolveWindow fast path/traversal AX 读路径边支（全程只读）
+    func runResolveWindowEdgeTests() {
+        let wm = WindowManager.shared
+        // 真实捕获前台窗口身份（Runner AX 已授信；无前台窗则诚实跳过）
+        guard let identity = wm.captureFocusedWindowIdentity() else {
+            check("resolveWin: 无前台窗身份，环境不符诚实跳过", true)
+            return
+        }
+        // fast path：同窗身份二次解析 → AXUIElement 非空
+        let resolved = wm.resolveWindow(identity: identity)
+        check("resolveWin: fast path 解析出 AX 引用", resolved != nil)
+        // traversal：伪造不存在的窗口标题 → fast path miss → 全量遍历按 ID 匹配 miss → nil
+        let bogus = WindowIdentity(
+            windowID: identity.windowID &+ 0x7FFF,
+            pid: identity.pid, bundleIdentifier: identity.bundleIdentifier,
+            appName: identity.appName, title: "b281-bogus-title")
+        let missing = wm.resolveWindow(identity: bogus)
+        check("resolveWin: 伪身份遍历 miss → nil", missing == nil)
+    }
 }
