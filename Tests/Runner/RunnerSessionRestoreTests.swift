@@ -750,3 +750,37 @@ extension RunnerHarness {
         check("derived: displayCount 去重", snap.displayCount == 1)
     }
 }
+
+// MARK: - B234：SessionRestoreExecutor 分组提纯（组序 = 快照阅读序的契约锁）
+
+extension RunnerHarness {
+    func runSessionRestoreExecutorTests() {
+        func item(_ display: Int?, _ space: Int?, index: Int) -> SessionRestorePlanner.Item {
+            SessionRestorePlanner.Item(
+                windowIndex: index,
+                action: .create(commands: [nil]),
+                targetYabaiDisplay: display,
+                targetYabaiSpace: space,
+                targetFrame: CGRect(x: 0, y: 0, width: 10, height: 10),
+                notes: [])
+        }
+        // 组序 = 首次出现序（快照阅读序），同组多窗聚合
+        let (order, groups) = SessionRestoreExecutor.groupByTargetSpace([
+            item(1, 2, index: 0), item(2, 3, index: 1), item(1, 2, index: 2), item(1, 5, index: 3),
+        ])
+        check("srExec: 组序 = 首次出现序（阅读序不乱）", order == ["1:2", "2:3", "1:5"])
+        check("srExec: 同组多窗聚合且组内有序",
+              groups["1:2"]?.map(\.windowIndex) == [0, 2] && groups["2:3"]?.map(\.windowIndex) == [1]
+              && groups["1:5"]?.map(\.windowIndex) == [3])
+        // nil display/space → "-1:-1" 兜底组
+        let (order2, groups2) = SessionRestoreExecutor.groupByTargetSpace([
+            item(nil, nil, index: 7), item(1, nil, index: 8),
+        ])
+        check("srExec: nil 落 -1 兜底键", order2 == ["-1:-1", "1:-1"]
+              && groups2["-1:-1"]?.map(\.windowIndex) == [7] && groups2["1:-1"]?.map(\.windowIndex) == [8])
+        // 空输入 → 空组
+        check("srExec: 空输入 → 空组序", SessionRestoreExecutor.groupByTargetSpace([]).groupOrder.isEmpty)
+        // 非 create 动作由调用方先过滤（本函数契约：只收 create 项）——nil 值项同样按目标键分组
+        check("srExec: notes 为空数组不变", SessionRestoreExecutor.groupByTargetSpace([item(3, 4, index: 9)]).groups["3:4"]?.first?.notes.isEmpty == true)
+    }
+}

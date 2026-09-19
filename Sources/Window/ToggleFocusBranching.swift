@@ -42,3 +42,16 @@ enum ToggleFocusBranching {
         cgList.first { $0.windowID == winID }
     }
 }
+
+// MARK: - stuck 解堵目标屏选择（B234 提纯）
+extension ToggleFocusBranching {
+
+    /// stuck 解堵的目标 yabai display：与窗口当前 display 不同、且有可见 space 的
+    /// 第一个 display（yabai 枚举序即优先序）。nil = 单屏/全部同屏/候选都无可见
+    /// space——调用方回退 NSScreen 兜底（第一个非主屏）。
+    /// 历史竞态注记：NSScreen 0-based 序 ≠ yabai 1-based 序，本函数只产 yabai 索引，
+    /// NSScreen 换算集中在 SpaceController.exactNSScreen(forYabaiDisplayIndex:)。
+    static func stuckTargetYabaiDisplay(currentDisplay: Int?, spaces: [YabaiSpaceInfo]?) -> Int? {
+        spaces?.first(where: { $0.display != currentDisplay && $0.isVisible == true })?.display
+    }
+}
