@@ -368,6 +368,7 @@ final class FakeAuditor: RestoreAuditing {
         runReadOnlySweepTests()
         runCaptureSeamTests()
         runSettingsViewSectionBodyTests()
+        runSettingsRenderPilotTests()
         runSettingsDGroupTests()
         runLLMRequestTests()
     // MARK: 汇总
