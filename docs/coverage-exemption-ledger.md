@@ -73,14 +73,14 @@
 | 网格 Space 投递 | `VIBEFOCUS_GRID_SPACE_E2E=1` | ✅ 既有，真机绿 |
 | 网格目标屏编排 | `VIBEFOCUS_GRID_TARGET_E2E=1` | ✅ 既有，真机绿 |
 | 终端标题定向改名 | `VIBEFOCUS_TITLE_E2E=1` | ✅ 既有，真机绿 |
-| HotKey 三件套（Carbon/tap/monitors） | `VIBEFOCUS_HOTKEY_E2E=1` | ✅ B244 通道就位 |
+| HotKey 三件套（Carbon/tap/monitors） | `VIBEFOCUS_HOTKEY_E2E=1` | ✅ B244 通道，B255 独立复跑绿 |
+| **气泡真面板域** | `VIBEFOCUS_BUBBLE_PANEL_E2E=1` | ✅ **B255 新建，真机绿**（summon/dismiss/锚定全链） |
 | **AXWrite 编排层** | `VIBEFOCUS_AXWRITE_E2E=1` | ✅ **B253 新建，真机绿**（B252 号被并行线占用） |
-| 气泡真面板域 | 待建 | ⬜（ summon/提交管线，需真面板自动化） |
 | SessionRestore 真恢复域 | 待建 | ⬜（restore 链已有真机人工闭环，待 env 门控自动化） |
 
 ## 签字
 
-- [ ] 口径②剩余通道建成（气泡面板 / SessionRestore）
+- [ ] 口径②剩余通道建成（SessionRestore 真恢复域；气泡面板/AXWrite/HotKey 均已绿）
 - [ ] 豁免条目复核（逐条确认替代验证通道有效）
 - [ ] 发布前全量 E2E 一轮 + 门禁三绿 + 本台账对照刷新
 

@@ -220,6 +220,7 @@ final class FakeAuditor: RestoreAuditing {
         runGridSpaceE2E()
         runSizeE2E()
         runAXWriteE2E()
+        runBubblePanelE2E()
         runFloatSettleE2E()
         runConvergencePipelineTests()
         runTitleE2E()
