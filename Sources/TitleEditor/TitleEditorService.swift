@@ -206,13 +206,7 @@ final class TitleEditorService {
             return
         }
 
-        let projectName: String
-        if let cwd = cwd, !cwd.isEmpty {
-            projectName = URL(fileURLWithPath: cwd).lastPathComponent
-        } else {
-            projectName = "Claude"
-        }
-        let title = "\(projectName) — Claude Code"
+        let title = Self.autoTitle(forCWD: cwd)
 
         log(
             "[TitleEditorService] autoSetTitle",
@@ -225,6 +219,17 @@ final class TitleEditorService {
         )
 
         applyTitle(title, to: window, pid: pid, bundleID: bundleID)
+    }
+
+    /// SessionStart 自动标题模板（纯函数）：项目名取 cwd 末段，cwd 空/nil 兜底 "Claude"。
+    static func autoTitle(forCWD cwd: String?) -> String {
+        let projectName: String
+        if let cwd = cwd, !cwd.isEmpty {
+            projectName = URL(fileURLWithPath: cwd).lastPathComponent
+        } else {
+            projectName = "Claude"
+        }
+        return "\(projectName) — Claude Code"
     }
 
     // MARK: - Title Application
