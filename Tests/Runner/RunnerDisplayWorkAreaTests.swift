@@ -131,7 +131,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B215：CoordinateKit+Screen 的 NSScreen 查询半区直测——矩形主屏判定包装、
+    /// B222：CoordinateKit+Screen 的 NSScreen 查询半区直测——矩形主屏判定包装、
     /// 数组索引、yabai 索引互逆、isMainScreen。双屏条件分支用环境守卫（<2 屏跳过强断言）。
     func runCoordinateScreenQueryTests() {
         print("\n=== CoordinateScreenQuery (B215) ===")

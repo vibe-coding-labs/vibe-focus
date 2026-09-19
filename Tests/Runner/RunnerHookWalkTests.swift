@@ -1620,7 +1620,7 @@ struct ClaudeHookPipelineInstallProbe {
 }
 
 extension RunnerHarness {
-    /// B215：终端身份注册表直测——联合集合、双通道身份判定（appName/bundleID）、
+    /// B222：终端身份注册表直测——联合集合、双通道身份判定（appName/bundleID）、
     /// isTerminalPID 守卫链（PID≤0 / launchd）、findTerminalPID 真实 ps 走查收敛。
     func runTerminalRegistryIdentityTests() {
         print("\n=== TerminalRegistryIdentity (B215) ===")
@@ -1671,7 +1671,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B217：LANHookPreferences.parseLegacyBindings 直测——旧格式 UserDefaults dictionary
+    /// B224：LANHookPreferences.parseLegacyBindings 直测——旧格式 UserDefaults dictionary
     /// （Int/UInt32 混态）→ 绑定映射；非数值垃圾跳过（B83 测试缝，此前零直测）。
     func runLANLegacyBindingsTests() {
         print("\n=== LANLegacyBindings (B217) ===")
@@ -1689,7 +1689,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B219：handleSessionStart 无上下文分流直测——route noContext → 409 诚实拒绑，
+    /// B226：handleSessionStart 无上下文分流直测——route noContext → 409 诚实拒绑，
     /// 只动内存态 lastEventDescription（不触碰 windows 表，B193 纪律）。
     func runSessionStartNoContextTests() {
         print("\n=== SessionStartNoContext (B219) ===")

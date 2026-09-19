@@ -188,7 +188,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B217：崩溃报告 IPS 解析通道直测——首行 meta + JSON payload 双段格式、
+    /// B224：崩溃报告 IPS 解析通道直测——首行 meta + JSON payload 双段格式、
     /// 单行/坏 JSON/非字典守卫（诊断日志副作用无害）。
     func runCrashIPSParserTests() {
         print("\n=== CrashIPSParser (B217) ===")
@@ -209,7 +209,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B218：崩溃取证/诊断通道注入式补测——captureTail URL 注入双分支（截尾语义 +
+    /// B225：崩溃取证/诊断通道注入式补测——captureTail URL 注入双分支（截尾语义 +
     /// 源缺失跳过）、sampleMainThread 冒烟、logDiagnostics/心跳注册冒烟（副作用=日志）。
     func runCrashForensicsIOTests() {
         print("\n=== CrashForensicsIO (B218) ===")
@@ -252,7 +252,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B219：诊断面补测——BacktraceSampler.symbolize 未命中回落 hex、DoctorPaths.live
+    /// B226：诊断面补测——BacktraceSampler.symbolize 未命中回落 hex、DoctorPaths.live
     /// 路径契约、VibeFocusDoctor.report 冒烟。
     func runDiagnosticsSmallTests() {
         print("\n=== DiagnosticsSmall (B219) ===")

@@ -568,7 +568,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B217：日志/文案描述 getter 直测——QueuedAnnouncement.logDescription 双分支、
+    /// B224：日志/文案描述 getter 直测——QueuedAnnouncement.logDescription 双分支、
     /// CustomSoundStatus.uiDescription 三态（设置页 detail 文案防漂移）。
     func runAnnouncementDescriptionTests() {
         print("\n=== AnnouncementDescriptions (B217) ===")

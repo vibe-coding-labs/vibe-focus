@@ -45,7 +45,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B217：脚本构建器族零覆盖散点收编——parseBounds 解析器、Terminal 枚举/读界脚本、
+    /// B224：脚本构建器族零覆盖散点收编——parseBounds 解析器、Terminal 枚举/读界脚本、
     /// PaneEnumeration 双构建器（此前直测只覆盖同族其余成员）。
     func runTerminalScriptStragglerTests() {
         print("\n=== TerminalScriptStragglers (B217) ===")
@@ -88,7 +88,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B219：itermEnumerateSessions 构建器结构关键位（winID|tab|sess|tty|bounds|name 行格式）。
+    /// B226：itermEnumerateSessions 构建器结构关键位（winID|tab|sess|tty|bounds|name 行格式）。
     func runItermEnumerateSessionsScriptTests() {
         print("\n=== ItermEnumerateSessions (B219) ===")
         let script = PaneEnumeration.itermEnumerateSessions()

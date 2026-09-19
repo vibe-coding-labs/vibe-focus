@@ -221,7 +221,7 @@ extension RunnerHarness {
 }
 
 extension RunnerHarness {
-    /// B220：move-to-main 决策层的终端身份判定 wrapper 直测（委托 TerminalRegistry 单一事实源）。
+    /// B227：move-to-main 决策层的终端身份判定 wrapper 直测（委托 TerminalRegistry 单一事实源）。
     func runMoveToMainIdentityWrapperTests() {
         print("\n=== MoveToMainIdentityWrapper (B220) ===")
         check("wrapper: 终端名命中透传",
