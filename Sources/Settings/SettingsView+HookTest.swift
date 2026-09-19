@@ -34,14 +34,11 @@ extension SettingsView {
             ]
         )
 
+        let startPayload = Self.makeTestHookPayload(event: "SessionStart", sessionID: testSessionID)
         Self.sendHookRequest(
             port: port,
             endpoint: ClaudeHookPreferences.endpointPath,
-            payload: [
-                "event": "SessionStart",
-                "session_id": testSessionID,
-                "source": "test-ui"
-            ],
+            payload: startPayload,
             token: token
         ) { result in
             switch result {
@@ -56,14 +53,11 @@ extension SettingsView {
                             "port": String(endPort)
                         ]
                     )
+                    let endPayload = Self.makeTestHookPayload(event: "SessionEnd", sessionID: testSessionID)
                     Self.sendHookRequest(
                         port: endPort,
                         endpoint: ClaudeHookPreferences.endpointPath,
-                        payload: [
-                            "event": "SessionEnd",
-                            "session_id": testSessionID,
-                            "source": "test-ui"
-                        ],
+                        payload: endPayload,
                         token: endToken
                     ) { endResult in
                         if case .failure(let endError) = endResult {
@@ -126,6 +120,16 @@ extension SettingsView {
 
     /// 请求构造唯一事实源（纯函数，B35 提纯）：URL 拼接/方法/头/JSON 体。
     /// 发收与线程模型留在 sendHookRequest；测试无需网络即可锁定请求契约。
+    /// 测试事件 payload 构建（B241 提纯：原内联在 sendTestHookEvent 的两处字典字面量；
+    /// source 恒 test-ui 供服务端辨认 UI 测试流量）。
+    nonisolated static func makeTestHookPayload(event: String, sessionID: String) -> [String: String] {
+        [
+            "event": event,
+            "session_id": sessionID,
+            "source": "test-ui"
+        ]
+    }
+
     nonisolated static func buildHookRequest(
         port: Int,
         endpoint: String,

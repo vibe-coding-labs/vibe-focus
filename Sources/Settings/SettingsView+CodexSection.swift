@@ -118,6 +118,22 @@ extension SettingsView {
         }
     }
 
+    /// codex 测试事件 payload 构建（B241 提纯：基础三字段 + 调用方 extraFields 合并，
+    /// 同键冲突以基础三字段胜（merge 闭包保 current）——与原内联 merge 语义一致）。
+    nonisolated static func makeCodexTestPayload(
+        event: String,
+        sessionID: String,
+        extraFields: [String: String] = [:]
+    ) -> [String: String] {
+        var payload: [String: String] = [
+            "event": event,
+            "session_id": sessionID,
+            "source": "test-ui"
+        ]
+        payload.merge(extraFields) { current, _ in current }
+        return payload
+    }
+
     /// 通用 codex 测试事件发送（B207 自 B206 的 PermissionRequest 专用版泛化）：
     /// 走同一 hook 端点与 token 门，session 前缀 codex-test- 便于日志辨认。
     private func sendCodexTestEvent(
@@ -143,12 +159,8 @@ extension SettingsView {
             ]
         )
 
-        var payload: [String: String] = [
-            "event": event,
-            "session_id": testSessionID,
-            "source": "test-ui"
-        ]
-        payload.merge(extraFields) { current, _ in current }
+        let payload = Self.makeCodexTestPayload(
+            event: event, sessionID: testSessionID, extraFields: extraFields)
 
         Self.sendHookRequest(
             port: port,
