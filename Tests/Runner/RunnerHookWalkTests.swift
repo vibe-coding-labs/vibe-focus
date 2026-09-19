@@ -2068,3 +2068,52 @@ extension RunnerHarness {
               uninstallOK && afterDoc != nil)
     }
 }
+
+// MARK: - B254：Claude settings 安装/清理 home 注入回环（临时 home 零触 ~/.claude 与 ~/.vibefocus）
+
+extension RunnerHarness {
+    func runHookClaudeSettingsHomeTests() {
+        let home = (NSTemporaryDirectory() as NSString).appendingPathComponent("vf-hclaude-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let fm = FileManager.default
+        let savedToken = ClaudeHookPreferences.authToken
+        let savedCooldown = UserDefaults.standard.object(forKey: ClaudeHookPreferences.lastInstallAtKey)
+        defer {
+            ClaudeHookPreferences.authToken = savedToken
+            if let savedCooldown { UserDefaults.standard.set(savedCooldown, forKey: ClaudeHookPreferences.lastInstallAtKey) }
+            else { UserDefaults.standard.removeObject(forKey: ClaudeHookPreferences.lastInstallAtKey) }
+        }
+        ClaudeHookPreferences.authToken = "vf-claude-token"
+        UserDefaults.standard.removeObject(forKey: ClaudeHookPreferences.lastInstallAtKey)
+
+        // A. 安装全链：settings.json 合并 hooks + 脚本/配置落临时 home
+        let (installOK, installMsg) = ClaudeHookPreferences.installHookToClaudeSettings(home: home)
+        let settingsPath = ClaudeHookPreferences.claudeSettingsPath(home: home)
+        let settings = (try? JSONSerialization.jsonObject(with: fm.contents(atPath: settingsPath) ?? Data())) as? [String: Any]
+        let hooks = settings?["hooks"] as? [String: Any]
+        check("claudeHome: 安装成功且 settings.json 合并 hooks 键", installOK && hooks != nil)
+        check("claudeHome: Stop/SessionStart 注册进 settings.json",
+              hooks?["Stop"] != nil && hooks?["SessionStart"] != nil)
+        let scriptPath = (home as NSString).appendingPathComponent(".vibefocus/hook-forwarder.sh")
+        let configPath = (home as NSString).appendingPathComponent(".vibefocus/hook-config.json")
+        check("claudeHome: 脚本+配置落临时 home（真身零触碰）",
+              fm.isExecutableFile(atPath: scriptPath) && fm.fileExists(atPath: configPath))
+
+        // B. 冷却防抖：3s 内二次安装跳过重装（lastInstallAtKey 已由首装记录）
+        let settingsBefore = fm.contents(atPath: settingsPath)
+        let (secondOK, secondMsg) = ClaudeHookPreferences.installHookToClaudeSettings(home: home)
+        if let a = settingsBefore, let b = fm.contents(atPath: settingsPath), a != b {
+            try? a.write(to: URL(fileURLWithPath: "/tmp/vf-A.json"))
+            try? b.write(to: URL(fileURLWithPath: "/tmp/vf-B.json"))
+        }
+        check("claudeHome: 冷却内内容无变化 → 「配置无变化」跳过重装（settings 字节原样）",
+              secondOK && secondMsg == "配置无变化"
+              && fm.contents(atPath: settingsPath) == settingsBefore)
+
+        // C. removeHelperFiles(home:)：脚本+配置清理、settings.json 不动
+        ClaudeHookPreferences.removeHelperFiles(home: home)
+        check("claudeHome: removeHelperFiles 清脚本+配置（settings 不动）",
+              !fm.fileExists(atPath: scriptPath) && !fm.fileExists(atPath: configPath)
+              && fm.fileExists(atPath: settingsPath))
+    }
+}
