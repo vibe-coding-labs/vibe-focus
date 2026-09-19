@@ -335,6 +335,7 @@ final class FakeAuditor: RestoreAuditing {
         runAXWriteRetryTests()
         runSpaceMoveSkipTests()
         runSpaceQueryReadOnlyTests()
+        runTargetResolveTests()
         runHookTestAndAXReadTests()
         runAXWriteFailPathTests()
         runToggleEngineStoreTests()
