@@ -6,23 +6,23 @@
 
   <defs>
     <linearGradient id="vf-bg" x1="512" y1="44" x2="512" y2="980" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#101A36"/>
-      <stop offset="1" stop-color="#378A8E"/>
+      <stop offset="0" stop-color="#E64A33"/>
+      <stop offset="1" stop-color="#F49A4A"/>
     </linearGradient>
 
     <linearGradient id="vf-frame" x1="154" y1="134" x2="870" y2="896" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.14"/>
-      <stop offset="1" stop-color="#C9F8FF" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#FFE1C9" stop-opacity="0.20"/>
     </linearGradient>
 
     <linearGradient id="vf-main" x1="300" y1="270" x2="726" y2="736" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="0.58" stop-color="#F8FCFF"/>
-      <stop offset="1" stop-color="#9DEFFF"/>
+      <stop offset="0.58" stop-color="#FFF6EC"/>
+      <stop offset="1" stop-color="#FFD9B8"/>
     </linearGradient>
 
     <linearGradient id="vf-secondary" x1="382" y1="422" x2="638" y2="700" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#CFF9FF"/>
+      <stop offset="0" stop-color="#FFE9D2"/>
       <stop offset="1" stop-color="#FFFFFF"/>
     </linearGradient>
 

@@ -1,942 +1,693 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  useCallback
-} from 'react';
-import {
-  AppstoreOutlined,
-  CheckCircleOutlined,
-  DesktopOutlined,
-  EyeOutlined,
-  GithubOutlined,
-  PlayCircleOutlined,
-  ThunderboltOutlined,
-  PauseCircleOutlined,
-  FullscreenOutlined,
-  FullscreenExitOutlined,
-  LoadingOutlined,
-  MacCommandOutlined,
-  SyncOutlined
-} from '@ant-design/icons';
+import { useEffect, useRef, useState } from 'react';
 import { MonitorFrame } from './components/MonitorFrame';
-import {
-  Anchor,
-  Button,
-  Card,
-  Col,
-  Collapse,
-  Divider,
-  Layout,
-  Row,
-  Space,
-  Statistic,
-  Steps,
-  Tag,
-  Typography,
-  Tooltip
-} from 'antd';
 
-const { Header, Content, Footer } = Layout;
-const { Title, Paragraph, Text } = Typography;
+const RELEASES_URL = 'https://github.com/vibe-coding-labs/vibe-focus/releases';
+const REPO_URL = 'https://github.com/vibe-coding-labs/vibe-focus';
+const LATEST_VERSION = '0.0.89';
+// vite base=/vibe-focus/（GitHub Pages 项目页）：public 资源必须拼 BASE_URL，否则线上 404
+const BASE = import.meta.env.BASE_URL;
+
+/* ---------------------------------- 图标（手绘描边风） ---------------------------------- */
+
+type IconProps = { className?: string };
+
+const IconBolt = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H13L13 2z" />
+  </svg>
+);
+
+const IconBubble = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-2.9-.4-4.1-1L3 20l1.1-4.2A8.5 8.5 0 1 1 21 11.5z" />
+    <path d="M8 10h8M8 13.5h5" />
+  </svg>
+);
+
+const IconGrid = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="8" height="8" rx="1.5" />
+    <rect x="13" y="3" width="8" height="8" rx="1.5" />
+    <rect x="3" y="13" width="8" height="8" rx="1.5" />
+    <rect x="13" y="13" width="8" height="8" rx="1.5" />
+  </svg>
+);
+
+const IconSessions = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 12a9 9 0 1 0 9-9" />
+    <path d="M12 7v5l3.5 3.5" />
+    <path d="M3 3l4 2-2 4" />
+  </svg>
+);
+
+const IconMap = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2.5" y="5" width="14" height="11" rx="1.5" />
+    <rect x="15" y="9" width="6.5" height="10" rx="1.5" />
+    <circle cx="7" cy="9" r="1.2" />
+    <path d="M5.5 13.5h6" />
+  </svg>
+);
+
+const IconGlobe = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18" />
+    <path d="M12 3a14.5 14.5 0 0 1 0 18 14.5 14.5 0 0 1 0-18z" />
+  </svg>
+);
+
+const IconShield = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" />
+    <path d="M9.5 11.5l2 2 3.5-4" />
+  </svg>
+);
+
+const IconGithub = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.63.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.7 0 0 .84-.28 2.75 1.05a9.36 9.36 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.4.2 2.44.1 2.7.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.6.69.49A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z" />
+  </svg>
+);
+
+const IconDownload = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3v12" />
+    <path d="M7 11l5 5 5-5" />
+    <path d="M4 20h16" />
+  </svg>
+);
+
+const IconTerminal = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M7 9l3 3-3 3" />
+    <path d="M12.5 15H17" />
+  </svg>
+);
+
+const IconApple = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M16.7 12.9c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.86-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.3 1.2 9.7.8 1.2 1.8 2.5 3.1 2.4 1.2-.05 1.7-.8 3.2-.8s1.9.8 3.2.77c1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.03-.01-2.6-1-2.7-3.9zM14.4 5.2c.7-.8 1.1-2 1-3.2-1 .04-2.2.66-2.9 1.5-.6.7-1.2 1.9-1 3 1.1.1 2.2-.55 2.9-1.3z" />
+  </svg>
+);
+
+/* ---------------------------------- 数据 ---------------------------------- */
 
 const pains = [
-  '带鱼屏、曲面屏用户频繁扭头看副屏窗口，长期导致颈椎不适。',
-  '使用 Claude Code 编程时，终端在副屏，需要频繁扭头查看 AI 响应结果。',
-  '窗口跑到了副屏，录屏、演示前还要手动拖回主屏并调尺寸。',
-  '聚焦结束后，很难精确恢复原来的位置和大小。'
+  {
+    title: '副屏窗口反复扭头看',
+    text: '带鱼屏、曲面屏、双屏用户在编码时频繁扭头看副屏终端，一天下来颈椎先罢工。'
+  },
+  {
+    title: 'AI 响应要人盯着',
+    text: 'Claude Code 跑长任务时，你不知道它什么时候完成，只能反复切过去看。'
+  },
+  {
+    title: '录屏演示前手忙脚乱',
+    text: '窗口跑在副屏，录屏、开会、直播前要手动拖回主屏、拉尺寸、摆半天。'
+  },
+  {
+    title: '聚焦之后回不去',
+    text: '临时聚焦完成后，原始位置和大小很难精确复原，桌面越摆越乱。'
+  }
 ];
 
 const capabilities = [
   {
-    title: '一键聚焦当前窗口',
-    description: '把当前窗口移动到主屏，并铺满可见区域，而不是切到另一个全屏 Space。',
-    icon: <ThunderboltOutlined />
+    icon: <IconBolt />,
+    title: '一键聚焦 / 恢复',
+    text: '⌃Q 把当前窗口移到主屏并铺满可见区域，再按一次精确回到原位置、原尺寸——不切 Space，不动桌面结构。'
   },
   {
-    title: '一键恢复原布局',
-    description: '临时聚焦完成后，再按一次快捷键就恢复原位置和大小。支持自定义恢复策略：可切回原工作区，也可将窗口拉到当前工作区。',
-    icon: <CheckCircleOutlined />
+    icon: <IconTerminal />,
+    title: 'AI 对话自动聚焦',
+    text: 'Claude Code / Codex 完成响应（Stop 事件）时，终端自动拉回主屏——响应好了窗口自己过来，不用盯。'
   },
   {
-    title: 'Claude Code 自动化',
-    description: '深度集成 Claude Code，对话结束时自动聚焦终端到主屏，提交新 Prompt 时自动恢复原位。全程零手动操作。',
-    icon: <MacCommandOutlined />
+    icon: <IconBubble />,
+    title: '⌃X 输入气泡',
+    text: '不切窗口直接下指令：Markdown 实时渲染、↑↓ 翻历史、⌘Y 历史面板、AX 落地验证保证回车必达。'
   },
   {
-    title: '多终端精确匹配',
-    description: '通过 TTY、PPID、会话 ID 等终端上下文精确匹配窗口。多个 Claude Code 实例并行工作也不会错乱。',
-    icon: <DesktopOutlined />
+    icon: <IconGrid />,
+    title: '网格布局',
+    text: '把散落的窗口一键捕获进网格，多屏逐格铺位；临时拼装的工作台随时可恢复。'
   },
   {
-    title: '菜单栏常驻，不打断桌面',
-    description: '需要时随时可用，不需要时安静待在菜单栏里。Hook 服务器自动启停，无需额外配置。',
-    icon: <EyeOutlined />
+    icon: <IconSessions />,
+    title: '会话恢复',
+    text: '重启或重连后，多屏 × 多工作区的终端会话窗口布局完整还原，直接接着上次干。'
   },
   {
-    title: '权限与状态可诊断',
-    description: '设置页可以检查授权、Hook 连接状态、活跃会话和快捷键配置，减少排查成本。',
-    icon: <AppstoreOutlined />
+    icon: <IconMap />,
+    title: '屏幕小地图 + 空间角标',
+    text: 'Minimap 浮层实时显示每块屏的窗口分布，「屏号-位次」角标让窗口去向一目了然。'
+  },
+  {
+    icon: <IconGlobe />,
+    title: 'LAN 远程',
+    text: 'SSH 到远程机器跑的 Claude Code 会话，一样触发本机的自动拉窗——远程编码同款体验。'
+  },
+  {
+    icon: <IconShield />,
+    title: '权限自愈与诊断',
+    text: '辅助功能授权竞态自动检测自愈，Doctor 一键体检授权、Hook 连接与快捷键状态。'
   }
 ];
 
-const scenarios = [
-  '使用 Claude Code 编程时，副屏终端自动聚焦到主屏查看响应结果，保护颈椎。',
-  '带鱼屏、曲面屏用户，无需频繁扭头即可查看副屏窗口内容，保护颈椎。',
-  '录屏、演示、直播前，把当前窗口立即拉回主屏，保持自然视线。',
-  '多显示器办公时，一键聚焦和恢复，降低频繁拖窗和重新摆窗的机械劳动。'
-];
+const terminals = ['Terminal.app', 'iTerm2', 'Warp', 'Ghostty', 'Alacritty', 'kitty', 'VS Code', 'Cursor'];
 
-type DemoMediaKind = 'GIF' | 'Video';
-
-type DemoItem = {
-  key: string;
-  title: string;
-  description: string;
-  kind: DemoMediaKind;
-  expectedPath: string;
-  src?: string;
-  poster?: string;
-  // 视频配置选项
-  playsInline?: boolean;
-  controls?: boolean;
-  muted?: boolean;
-  loop?: boolean;
-  autoPlay?: boolean;
-};
-
-const demoAssets: DemoItem[] = [
-  {
-    key: 'focus-to-main-display',
-    title: '演示 01：一键拉回主屏并铺满',
-    description: '展示从副屏窗口快速进入主屏聚焦态，适合录屏前 3 秒切换。',
-    kind: 'GIF',
-    expectedPath: '/vibe-focus/demos/focus-to-main-display.gif',
-    src: '/vibe-focus/demos/focus-to-main-display.gif',
-    poster: '/vibe-focus/demos/focus-to-main-display-poster.jpg'
-  },
-  {
-    key: 'restore-original-layout',
-    title: '演示 02：再次触发恢复原布局',
-    description: '展示聚焦结束后窗口回到原位置与尺寸，避免手动摆窗。',
-    kind: 'Video',
-    expectedPath: '/vibe-focus/demos/restore-original-layout.mp4',
-    src: '/vibe-focus/demos/restore-original-layout.mp4',
-    poster: '/vibe-focus/demos/restore-original-layout-poster.jpg',
-    playsInline: true,
-    controls: false,
-    muted: true,
-    loop: true,
-    autoPlay: true
-  },
-  {
-    key: 'permissions-diagnostics',
-    title: '演示 03：权限和状态诊断',
-    description: '展示设置页里的辅助功能权限、登录项和快捷键状态检查。',
-    kind: 'Video',
-    expectedPath: '/vibe-focus/demos/permissions-diagnostics.mp4',
-    src: '/vibe-focus/demos/permissions-diagnostics.mp4',
-    poster: '/vibe-focus/demos/permissions-diagnostics-poster.jpg',
-    playsInline: true,
-    controls: false,
-    muted: true,
-    loop: true,
-    autoPlay: true
-  },
-  {
-    key: 'claude-code-auto-focus',
-    title: '演示 04：Claude Code 对话结束自动聚焦',
-    description: '展示 Claude Code 响应完成后，终端窗口自动移到主屏并铺满的效果。',
-    kind: 'Video',
-    expectedPath: '/vibe-focus/demos/claude-code-auto-focus.mp4'
-  },
-  {
-    key: 'claude-code-auto-restore',
-    title: '演示 05：提交 Prompt 自动恢复',
-    description: '展示提交新 Prompt 后，窗口自动从主屏恢复到副屏原始位置的效果。',
-    kind: 'Video',
-    expectedPath: '/vibe-focus/demos/claude-code-auto-restore.mp4'
-  }
+const hookSteps = [
+  { key: 'start', title: '副屏开始对话', desc: '在副屏终端正常启动 Claude Code，专注写你的需求。' },
+  { key: 'focus', title: 'Claude 完成响应', desc: 'Stop 事件触发，Vibe Focus 立即收到通知。' },
+  { key: 'review', title: '窗口自动到主屏', desc: '终端被拉回主屏铺满，视线不用离开正前方。' },
+  { key: 'stay', title: '继续输入，窗口不动', desc: '提交与语音输入期间窗口保持原地，绝不打断你的节奏。' }
 ];
 
 const faqs = [
   {
-    key: '1',
-    label: 'Vibe Focus 为什么能保护颈椎？',
-    children:
-      '带鱼屏、曲面屏等 40 英寸以上大屏幕用户，经常需要扭头看副屏窗口。Vibe Focus 让你一键将窗口聚焦到主屏中央，配合 Claude Code 自动化集成，对话结束时自动聚焦，无需频繁转动头部，有效减少颈椎压力。'
+    q: 'Vibe Focus 为什么能保护颈椎？',
+    a: '带鱼屏、曲面屏等大屏用户经常需要扭头看副屏窗口。Vibe Focus 把「看副屏」变成「窗口自己来主屏」：一键快捷键，或 Claude Code 完成响应时自动拉回，显著减少扭头次数。'
   },
   {
-    key: '2',
-    label: 'Claude Code 集成如何工作？',
-    children:
-      'Vibe Focus 在本地启动一个 HTTP 服务器，接收 Claude Code 的 Hook 事件。当 Claude 完成响应（Stop 事件）时，自动将终端窗口移到主屏；当用户提交新 Prompt（UserPromptSubmit 事件）时，自动将窗口恢复到原位。整个过程通过 TTY、PPID 等终端上下文精确匹配，无需任何手动操作。'
+    q: 'Claude Code / Codex 集成如何工作？',
+    a: 'Vibe Focus 在本地启动一个 HTTP 服务器接收 Hook 事件：Claude 完成响应（Stop）时自动把绑定终端拉回主屏；你提交 Prompt 或语音输入期间，窗口保持原地不动。支持本地与 LAN 远程会话，通过 TTY、PPID、会话 ID 精确匹配窗口，多实例并行不串窗。'
   },
   {
-    key: '3',
-    label: '它和 macOS 原生全屏有什么区别？',
-    children:
-      '原生全屏会切到独立 Space，更重；Vibe Focus 是把窗口铺满主屏可见区域，适合短流程聚焦，不会强行改变你的桌面结构。'
+    q: '输入气泡是什么？',
+    a: '按 ⌃X 唤出的浮动输入框：不切窗口、不打断当前终端，直接输入要发给 Claude Code / Codex 的指令。支持 Markdown 实时渲染（Typora 式）、↑↓ 翻阅历史、⌘Y 打开历史面板回填草稿。回车提交前会通过 AX 落地验证确保粘贴完成后再发送，长文本也不会出现「进了输入框没发送」的情况。'
   },
   {
-    key: '4',
-    label: '为什么需要辅助功能权限？',
-    children:
-      '因为应用需要控制其他 App 的窗口位置和大小，这是 macOS 的受保护能力，所以首次使用必须给 Vibe Focus 辅助功能权限。如果权限异常，可在设置页复制重置命令并在终端执行。'
+    q: '它和 macOS 原生全屏有什么区别？',
+    a: '原生全屏会切到独立 Space，进出代价大；Vibe Focus 是把窗口铺满主屏可见区域，不改变你的桌面结构，适合短流程聚焦，结束后一键精确恢复。'
   },
   {
-    key: '5',
-    label: '支持哪些终端和 IDE？',
-    children:
-      'Terminal.app、iTerm2、Warp、Ghostty、Alacritty、kitty 等终端均已适配。IDE 集成终端方面支持 VS Code 和 Cursor。Claude Code 的 Hook 集成对所有终端有效，自动匹配逻辑会根据终端类型选择最佳策略。'
+    q: '为什么需要辅助功能权限？',
+    a: '移动和调整其他 App 的窗口是 macOS 的受保护能力，首次使用必须授予辅助功能权限。如果授权异常，设置页可一键诊断并复制重置命令；Vibe Focus 还内置授权竞态自愈，多数异常无需手动处理。'
   },
   {
-    key: '6',
-    label: '什么是跨工作区支持？',
-    children:
-      '当系统安装了 yabai 窗口管理器时，Vibe Focus 可以跨 Space（工作区）移动窗口，并提供两种恢复策略：切回原工作区，或把窗口拉到当前工作区。'
+    q: '支持哪些终端和 IDE？',
+    a: 'Terminal.app、iTerm2、Warp、Ghostty、Alacritty、kitty 均已适配，IDE 集成终端支持 VS Code 与 Cursor。自动匹配逻辑按终端类型选择最佳策略。'
   },
   {
-    key: '7',
-    label: '哪些人最适合用它？',
-    children:
-      '使用 Claude Code 进行 Vibe Coding 的开发者、经常开会录屏的人、双屏/多屏环境下深度工作的用户，会最明显感受到收益。特别是大屏幕用户，自动聚焦功能可以大幅减少扭头次数。'
+    q: '什么是跨工作区支持？',
+    a: '安装 yabai 窗口管理器后，Vibe Focus 可以跨 Space 移动窗口：目标窗口在不可见工作区时先聚焦带切，再执行移动，配合两种恢复策略（切回原工作区 / 拉到当前工作区）。'
+  },
+  {
+    q: '适合谁用？',
+    a: '用 Claude Code / Codex 做 Vibe Coding 的开发者、多显示器深度办公用户、经常录屏演示的人收益最直接——尤其是 40 英寸以上带鱼屏、曲面屏用户。'
   }
 ];
 
-// 自定义 Hook：视频视口自动播放
-function useVideoAutoPlay(videoRef: React.RefObject<HTMLVideoElement>) {
-  const [isInViewport, setIsInViewport] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
+/* ---------------------------------- 动效基建 ---------------------------------- */
 
+/** 进视口显现：挂载后观察所有 .reveal 元素，进入视口加 .is-visible */
+function useRevealObserver() {
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const observer = new IntersectionObserver(
+    const els = Array.from(document.querySelectorAll('.reveal'));
+    if (!('IntersectionObserver' in window)) {
+      els.forEach((el) => el.classList.add('is-visible'));
+      return;
+    }
+    const io = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          setIsInViewport(entry.isIntersecting);
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            io.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' }
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+}
+
+/** 导航滚动毛玻璃 */
+function useScrolled(threshold = 24) {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > threshold);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [threshold]);
+  return scrolled;
+}
+
+/** 视口内自动播放 */
+function useInViewportPlay(ref: React.RefObject<HTMLVideoElement>) {
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            video.play().then(
+              () => setPlaying(true),
+              () => setPlaying(false)
+            );
+          } else {
+            video.pause();
+            setPlaying(false);
+          }
         });
       },
       { threshold: 0.3 }
     );
-
-    observer.observe(video);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [videoRef]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (isInViewport) {
-      video.play().catch(() => {
-        // 自动播放可能被浏览器阻止，忽略错误
-      });
-    } else {
-      video.pause();
-    }
-  }, [isInViewport, videoRef]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-
-    video.addEventListener('play', handlePlay);
-    video.addEventListener('pause', handlePause);
-
-    return () => {
-      video.removeEventListener('play', handlePlay);
-      video.removeEventListener('pause', handlePause);
-    };
-  }, [videoRef]);
-
-  return { isInViewport, isPlaying };
+    io.observe(video);
+    return () => io.disconnect();
+  }, [ref]);
+  return playing;
 }
 
-// 视频播放器组件
-interface VideoPlayerProps {
-  item: DemoItem;
-}
+/* ---------------------------------- 组件 ---------------------------------- */
 
-function VideoPlayer({ item }: VideoPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const { isPlaying } = useVideoAutoPlay(videoRef);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  const toggleFullscreen = useCallback(async () => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    try {
-      if (!isFullscreen) {
-        if (container.requestFullscreen) {
-          await container.requestFullscreen();
-        }
-      } else {
-        if (document.exitFullscreen) {
-          await document.exitFullscreen();
-        }
-      }
-    } catch (err) {
-      console.error('Fullscreen error:', err);
-    }
-  }, [isFullscreen]);
-
-  const togglePlay = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (video.paused) {
-      video.play();
-    } else {
-      video.pause();
-    }
-  }, []);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
-
-  const handleVideoClick = () => {
-    toggleFullscreen();
-  };
-
-  const handleLoadedData = () => {
-    setIsLoaded(true);
-  };
-
-  // 视频内容
-  const videoContent = (
-    <video
-      ref={videoRef}
-      className="demo-media"
-      src={item.src}
-      poster={item.poster}
-      muted={item.muted !== false}
-      loop={item.loop !== false}
-      playsInline={item.playsInline !== false}
-      controls={isFullscreen || item.controls}
-      onClick={handleVideoClick}
-      onLoadedData={handleLoadedData}
-      preload="metadata"
-      style={{
-        width: '100%',
-        height: '100%',
-        objectFit: 'contain',
-        display: 'block',
-      }}
-    >
-      <source src={item.src} type="video/mp4" />
-    </video>
-  );
-
+function Nav() {
+  const scrolled = useScrolled();
+  const links = [
+    ['#features', '功能'],
+    ['#automation', '自动化'],
+    ['#demo', '演示'],
+    ['#download', '下载'],
+    ['#faq', 'FAQ']
+  ];
   return (
-    <div
-      ref={containerRef}
-      className={`video-player-container ${isFullscreen ? 'is-fullscreen' : ''}`}
-    >
-      {!isLoaded && (
-        <div className="video-loading">
-          <LoadingOutlined className="video-loading-icon" />
-        </div>
-      )}
-
-      {/* 全屏模式：直接显示视频 */}
-      {isFullscreen ? (
-        videoContent
-      ) : (
-        /* 正常模式：用 MonitorFrame 包裹 */
-        <MonitorFrame isActive={isPlaying} brand="Vibe Focus">
-          {videoContent}
-        </MonitorFrame>
-      )}
-
-      {/* 播放/暂停指示器 - 仅在非全屏时显示 */}
-      {!isFullscreen && (
-        <div className={`video-play-indicator ${isPlaying ? 'is-playing' : 'is-paused'}`}>
-          {isPlaying ? (
-            <PauseCircleOutlined className="video-indicator-icon" />
-          ) : (
-            <PlayCircleOutlined className="video-indicator-icon" />
-          )}
-        </div>
-      )}
-
-      {/* 视频控制栏 */}
-      <div className="video-controls">
-        <Tooltip title={isPlaying ? '暂停' : '播放'}>
-          <button
-            className="video-control-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              togglePlay();
-            }}
-          >
-            {isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-          </button>
-        </Tooltip>
-        <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
-          <button
-            className="video-control-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleFullscreen();
-            }}
-          >
-            {isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-          </button>
-        </Tooltip>
+    <header className={`nav ${scrolled ? 'is-scrolled' : ''}`}>
+      <div className="nav-inner">
+        <a href="#top" className="nav-brand">
+          <img src={`${BASE}logo.svg`} alt="Vibe Focus" className="nav-logo" />
+          <span className="nav-brand-text">Vibe Focus</span>
+        </a>
+        <nav className="nav-links">
+          {links.map(([href, label]) => (
+            <a key={href} href={href}>{label}</a>
+          ))}
+        </nav>
+        <a className="btn btn-primary btn-sm nav-cta" href="#download">
+          <IconDownload className="btn-icon" />
+          免费下载
+        </a>
+        <a
+          className="nav-github"
+          href={REPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="GitHub 仓库"
+        >
+          <IconGithub />
+        </a>
       </div>
-    </div>
+    </header>
   );
 }
 
-// Hero 视频组件
-function HeroVideoPlayer() {
+function Hero() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const { isPlaying } = useVideoAutoPlay(videoRef);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  const toggleFullscreen = useCallback(async () => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    try {
-      if (!isFullscreen) {
-        if (container.requestFullscreen) {
-          await container.requestFullscreen();
-        }
-      } else {
-        if (document.exitFullscreen) {
-          await document.exitFullscreen();
-        }
-      }
-    } catch (err) {
-      console.error('Fullscreen error:', err);
-    }
-  }, [isFullscreen]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
-
-  // 视频内容
-  const videoContent = (
-    <video
-      ref={videoRef}
-      className="hero-video-player"
-      src="/vibe-focus/demos/hero-loop-preview.mp4?v=9"
-      autoPlay
-      muted
-      loop
-      playsInline
-      controls={isFullscreen}
-      onClick={toggleFullscreen}
-      style={{
-        width: '100%',
-        height: '100%',
-        objectFit: 'contain',
-        objectPosition: 'center center',
-        display: 'block',
-      }}
-    />
-  );
-
+  const playing = useInViewportPlay(videoRef);
   return (
-    <div
-      ref={containerRef}
-      className={`video-player-container hero-video-wrapper ${isFullscreen ? 'is-fullscreen' : ''}`}
-    >
-      {/* 全屏模式：直接显示视频 */}
-      {isFullscreen ? (
-        videoContent
-      ) : (
-        /* 正常模式：用 MonitorFrame 包裹 */
-        <MonitorFrame isActive={isPlaying} brand="Vibe Focus">
-          {videoContent}
-        </MonitorFrame>
-      )}
-
-      {/* 播放/暂停指示器 - 仅在非全屏时显示 */}
-      {!isFullscreen && (
-        <div className={`video-play-indicator ${isPlaying ? 'is-playing' : 'is-paused'}`}>
-          {isPlaying ? (
-            <PauseCircleOutlined className="video-indicator-icon" />
-          ) : (
-            <PlayCircleOutlined className="video-indicator-icon" />
-          )}
+    <section className="hero" id="top">
+      <div className="hero-blob hero-blob-a" aria-hidden="true" />
+      <div className="hero-blob hero-blob-b" aria-hidden="true" />
+      <div className="hero-inner">
+        <div className="hero-copy">
+          <span className="hero-badge reveal">
+            <span className="hero-badge-dot" />
+            macOS 菜单栏 · Claude Code / Codex 深度集成 · v{LATEST_VERSION}
+          </span>
+          <h1 className="hero-title reveal" style={{ '--delay': '0.06s' } as React.CSSProperties}>
+            窗口自动就位，
+            <br />
+            编码<em className="grad-text">不再扭头</em>
+          </h1>
+          <p className="hero-sub reveal" style={{ '--delay': '0.12s' } as React.CSSProperties}>
+            一键聚焦 / 恢复窗口布局；AI 对话结束自动拉回主屏；⌃X 输入气泡让你
+            不切窗口直接下指令。把「拖窗、摆窗、盯屏」这些机械动作全部交给系统。
+          </p>
+          <div className="hero-actions reveal" style={{ '--delay': '0.18s' } as React.CSSProperties}>
+            <a className="btn btn-primary btn-lg" href="#download">
+              <IconDownload className="btn-icon" />
+              免费下载 v{LATEST_VERSION}
+            </a>
+            <a className="btn btn-ghost btn-lg" href="#automation">
+              看它如何工作
+            </a>
+          </div>
+          <div className="hero-stats reveal" style={{ '--delay': '0.24s' } as React.CSSProperties}>
+            <div className="hero-stat">
+              <strong>⌃Q</strong>
+              <span>一键聚焦 / 恢复</span>
+            </div>
+            <div className="hero-stat">
+              <strong>⌃X</strong>
+              <span>输入气泡直达</span>
+            </div>
+            <div className="hero-stat">
+              <strong>2 大 CLI</strong>
+              <span>Claude Code · Codex</span>
+            </div>
+            <div className="hero-stat">
+              <strong>8+</strong>
+              <span>终端与 IDE 适配</span>
+            </div>
+          </div>
         </div>
-      )}
-
-      {/* 视频控制栏 */}
-      <div className="video-controls">
-        <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
-          <button
-            className="video-control-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleFullscreen();
-            }}
-          >
-            {isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-          </button>
-        </Tooltip>
+        <div className="hero-media reveal" style={{ '--delay': '0.15s' } as React.CSSProperties}>
+          <div className="hero-media-glow" aria-hidden="true" />
+          <MonitorFrame isActive={playing} brand="Vibe Focus">
+            <video
+              ref={videoRef}
+              className="hero-video"
+              src="/vibe-focus/demos/hero-loop-preview.mp4?v=10"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+            />
+          </MonitorFrame>
+        </div>
       </div>
-    </div>
+      <div className="terminal-strip" aria-hidden="true">
+        <div className="terminal-strip-track">
+          {[...terminals, ...terminals].map((t, i) => (
+            <span key={i} className="terminal-chip">
+              <IconTerminal className="terminal-chip-icon" />
+              {t}
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
-// Claude Code 自动化工作流步骤
-const hookWorkflowSteps = [
-  {
-    key: 'start',
-    title: '在副屏启动对话',
-    description: '在副屏终端中启动 Claude Code 对话，正常编码。'
-  },
-  {
-    key: 'auto-focus',
-    title: '对话结束自动聚焦',
-    description: 'Claude 完成响应后，终端窗口自动移到主屏并铺满。'
-  },
-  {
-    key: 'review',
-    title: '在主屏查看结果',
-    description: '无需扭头，在主屏直接查看 Claude 的响应内容。'
-  },
-  {
-    key: 'auto-restore',
-    title: '提交 Prompt 自动恢复',
-    description: '提交新 Prompt 后，窗口自动回到副屏原始位置。'
-  }
-];
-
-// 自动循环工作流展示组件
-function HookWorkflowAnimation() {
-  const [activeStep, setActiveStep] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setActiveStep((prev) => (prev + 1) % hookWorkflowSteps.length);
-    }, 3000);
-    return () => clearInterval(timer);
-  }, []);
-
+function Pains() {
   return (
-    <div className="hook-workflow-container">
-      <div className="hook-workflow-track">
-        {hookWorkflowSteps.map((step, index) => (
-          <div
-            key={step.key}
-            className={`hook-workflow-step ${index === activeStep ? 'active' : ''}`}
-          >
-            <div className="hook-workflow-step-number">
-              {index + 1}
-            </div>
-            <div className="hook-workflow-step-content">
-              <div className="hook-workflow-step-title">{step.title}</div>
-              <div className="hook-workflow-step-desc">{step.description}</div>
-            </div>
-            {index < hookWorkflowSteps.length - 1 && (
-              <div className={`hook-workflow-connector ${index < activeStep ? 'active' : ''}`}>
-                <div className="hook-workflow-connector-line" />
-              </div>
-            )}
+    <section className="section" id="problem">
+      <div className="section-head reveal">
+        <span className="section-kicker">问题</span>
+        <h2 className="section-title">多屏工作流里，这些动作每天都在浪费你</h2>
+        <p className="section-lead">窗口管理与「盯着 AI」都是低频高打断的机械劳动，累积起来就是持续的颈椎与注意力损耗。</p>
+      </div>
+      <div className="pain-grid">
+        {pains.map((p, i) => (
+          <div className="pain-card reveal" key={p.title} style={{ '--delay': `${i * 0.07}s` } as React.CSSProperties}>
+            <span className="pain-num">0{i + 1}</span>
+            <h3>{p.title}</h3>
+            <p>{p.text}</p>
           </div>
         ))}
       </div>
-      <div className="hook-workflow-loop-hint">
-        <SyncOutlined className="hook-workflow-loop-icon" />
-        <span>全程自动循环，无需手动操作</span>
+    </section>
+  );
+}
+
+function Features() {
+  return (
+    <section className="section section-alt" id="features">
+      <div className="section-head reveal">
+        <span className="section-kicker">功能</span>
+        <h2 className="section-title">从一个快捷键，长成一套窗口自动驾驶系统</h2>
+        <p className="section-lead">0.0.x 持续迭代 20+ 个版本：聚焦、气泡、网格、会话恢复、小地图、远程联动，全部为你自动就位。</p>
       </div>
-    </div>
+      <div className="feature-grid">
+        {capabilities.map((c, i) => (
+          <div className="feature-card reveal" key={c.title} style={{ '--delay': `${(i % 4) * 0.06}s` } as React.CSSProperties}>
+            <div className="feature-icon">{c.icon}</div>
+            <h3>{c.title}</h3>
+            <p>{c.text}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Automation() {
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setActive((p) => (p + 1) % hookSteps.length), 2600);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <section className="section" id="automation">
+      <div className="section-head reveal">
+        <span className="section-kicker">自动化</span>
+        <h2 className="section-title">Claude Code / Codex 完成响应，窗口自己过来</h2>
+        <p className="section-lead">
+          Hook 事件驱动，全程零手动：<strong>Stop</strong> 拉回主屏看结果，提交与语音输入期间窗口纹丝不动。
+        </p>
+      </div>
+
+      <div className="flow reveal" data-step={active}>
+        <div className="flow-stage" aria-hidden="true">
+          <div className="flow-screen flow-screen-secondary">
+            <span className="flow-screen-label">副屏</span>
+            <div className="flow-window flow-window-code">
+              <span className="flow-window-dots"><i /><i /><i /></span>
+              <span className="flow-window-title">claude</span>
+              <div className="flow-window-lines"><i /><i /><i className="short" /></div>
+            </div>
+          </div>
+          <div className="flow-screen flow-screen-primary">
+            <span className="flow-screen-label">主屏</span>
+            <div className="flow-window flow-window-main">
+              <span className="flow-window-dots"><i /><i /><i /></span>
+              <span className="flow-window-title">claude — 响应完成</span>
+              <div className="flow-window-lines"><i /><i /><i /><i className="short" /></div>
+            </div>
+            <div className="flow-bubble">
+              <span className="flow-bubble-caret" />
+              ⏎ 已自动提交 · 窗口不动
+            </div>
+          </div>
+          <svg className="flow-arrow" viewBox="0 0 120 60" aria-hidden="true">
+            <path d="M4 44 C 40 8, 78 8, 114 36" />
+            <polygon className="flow-arrow-head" points="114,36 103,30 106,41" />
+          </svg>
+        </div>
+
+        <div className="flow-steps">
+          {hookSteps.map((s, i) => (
+            <button
+              key={s.key}
+              type="button"
+              className={`flow-step ${i === active ? 'is-active' : ''} ${i < active ? 'is-done' : ''}`}
+              onClick={() => setActive(i)}
+            >
+              <span className="flow-step-index">{i + 1}</span>
+              <span className="flow-step-body">
+                <strong>{s.title}</strong>
+                <span>{s.desc}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="flow-hint reveal">
+          <IconBolt className="flow-hint-icon" />
+          点击任意步骤查看窗口行为 · 实际由 Hook 事件实时触发
+        </p>
+      </div>
+
+      <div className="auto-cards">
+        <div className="auto-card reveal">
+          <h4>Stop → 拉回主屏</h4>
+          <p>Claude 完成响应或会话结束时，绑定的终端窗口自动移动到主屏并铺满——多实例按会话精确绑定，不串窗。</p>
+        </div>
+        <div className="auto-card reveal" style={{ '--delay': '0.07s' } as React.CSSProperties}>
+          <h4>输入期间绝不搬窗</h4>
+          <p>你提交 Prompt、语音输入时窗口保持原地——自动化从不与你的手抢窗口，聚焦多久由你决定。</p>
+        </div>
+        <div className="auto-card reveal" style={{ '--delay': '0.14s' } as React.CSSProperties}>
+          <h4>本地与远程同款</h4>
+          <p>SSH 到局域网机器跑的 Claude Code / Codex 会话同样生效，转发器自动把 Hook 事件送回本机。</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DemoVideo({ src }: { src: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const playing = useInViewportPlay(videoRef);
+  return (
+    <MonitorFrame isActive={playing} brand="Vibe Focus">
+      <video
+        ref={videoRef}
+        className="demo-video"
+        src={src}
+        muted
+        loop
+        playsInline
+        preload="metadata"
+      />
+    </MonitorFrame>
+  );
+}
+
+function Demos() {
+  return (
+    <section className="section section-alt" id="demo">
+      <div className="section-head reveal">
+        <span className="section-kicker">演示</span>
+        <h2 className="section-title">实际运行效果</h2>
+        <p className="section-lead">聚焦、恢复与权限诊断的真实录屏，进入视口自动播放。</p>
+      </div>
+      <div className="demo-grid">
+        <div className="demo-card reveal">
+          <div className="demo-media">
+            <img src="/vibe-focus/demos/focus-to-main-display.gif" alt="一键拉回主屏并铺满" loading="lazy" />
+          </div>
+          <h3>一键拉回主屏并铺满</h3>
+          <p>从副屏窗口到主屏聚焦态，一次按键完成。</p>
+        </div>
+        <div className="demo-card reveal" style={{ '--delay': '0.07s' } as React.CSSProperties}>
+          <div className="demo-media">
+            <DemoVideo src="/vibe-focus/demos/restore-original-layout.mp4" />
+          </div>
+          <h3>再次触发，恢复原布局</h3>
+          <p>窗口回到原位置与尺寸，桌面回到你摆好的样子。</p>
+        </div>
+        <div className="demo-card reveal" style={{ '--delay': '0.14s' } as React.CSSProperties}>
+          <div className="demo-media">
+            <DemoVideo src="/vibe-focus/demos/permissions-diagnostics.mp4" />
+          </div>
+          <h3>权限与状态诊断</h3>
+          <p>辅助功能授权、登录项、快捷键状态一站检查。</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Download() {
+  return (
+    <section className="section" id="download">
+      <div className="section-head reveal">
+        <span className="section-kicker">下载</span>
+        <h2 className="section-title">一分钟装好，马上少扭头</h2>
+        <p className="section-lead">免费开源，从 GitHub Releases 下载最新构建，或用源码一行命令安装。</p>
+      </div>
+      <div className="download-card reveal">
+        <div className="download-main">
+          <div className="download-version">
+            <span className="download-version-pill">
+              <IconApple className="download-apple" />
+              v{LATEST_VERSION} · Apple Silicon
+            </span>
+            <span className="download-version-note">菜单栏常驻 · 安装即用</span>
+          </div>
+          <div className="download-actions">
+            <a className="btn btn-primary btn-lg" href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
+              <IconDownload className="btn-icon" />
+              从 GitHub Releases 下载
+            </a>
+            <a className="btn btn-ghost" href={`${REPO_URL}#readme`} target="_blank" rel="noopener noreferrer">
+              安装文档
+            </a>
+          </div>
+        </div>
+        <div className="download-steps">
+          <div className="download-step">
+            <span className="download-step-num">1</span>
+            <div>
+              <strong>下载解压</strong>
+              <span>从 Releases 下载 <code>VibeFocus-{LATEST_VERSION}-macos.zip</code> 并解压。</span>
+            </div>
+          </div>
+          <div className="download-step">
+            <span className="download-step-num">2</span>
+            <div>
+              <strong>拖入「应用程序」</strong>
+              <span>首次启动若被 Gatekeeper 拦截，右键 → 打开 一次即可。</span>
+            </div>
+          </div>
+          <div className="download-step">
+            <span className="download-step-num">3</span>
+            <div>
+              <strong>授予辅助功能权限</strong>
+              <span>设置 → 隐私与安全性 → 辅助功能，勾选 VibeFocus；遇到异常用设置页 Doctor 一键诊断。</span>
+            </div>
+          </div>
+        </div>
+        <div className="download-source">
+          <span>偏好源码安装？</span>
+          <code>git clone {REPO_URL}.git &amp;&amp; cd vibe-focus &amp;&amp; ./install.sh</code>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Faq() {
+  return (
+    <section className="section section-alt" id="faq">
+      <div className="section-head reveal">
+        <span className="section-kicker">FAQ</span>
+        <h2 className="section-title">常见问题</h2>
+      </div>
+      <div className="faq-list reveal">
+        {faqs.map((f) => (
+          <details key={f.q} className="faq-item">
+            <summary>
+              {f.q}
+              <span className="faq-chevron" aria-hidden="true" />
+            </summary>
+            <p>{f.a}</p>
+          </details>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="footer">
+      <div className="footer-inner">
+        <div className="footer-brand">
+          <img src={`${BASE}logo.svg`} alt="Vibe Focus" className="footer-logo" />
+          <div>
+            <strong>Vibe Focus</strong>
+            <span>为多显示器 Vibe Coding 而生的窗口自动驾驶系统</span>
+          </div>
+        </div>
+        <nav className="footer-links">
+          <a href="#features">功能</a>
+          <a href="#automation">自动化</a>
+          <a href="#demo">演示</a>
+          <a href="#download">下载</a>
+          <a href={REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+        <span className="footer-copy">© 2024-2026 Vibe Focus · Open Source</span>
+      </div>
+    </footer>
   );
 }
 
 export default function App() {
+  useRevealObserver();
   return (
-    <Layout className="site-shell">
-      <Header className="site-header">
-        <div className="brand">
-          <img src="/logo.svg" alt="Vibe Focus Logo" className="brand-logo" />
-          <div>
-            <div className="brand-title">Vibe Focus</div>
-            <div className="brand-subtitle">保护颈椎，专注编码</div>
-          </div>
-        </div>
-        <Anchor
-          className="header-anchor"
-          direction="horizontal"
-          items={[
-            { key: 'problem', href: '#problem', title: '问题' },
-            { key: 'solution', href: '#solution', title: '解决方案' },
-            { key: 'claude-code', href: '#claude-code', title: 'Claude Code' },
-            { key: 'demo', href: '#demo', title: '效果演示' },
-            { key: 'features', href: '#features', title: '功能' },
-            { key: 'scenes', href: '#scenes', title: '场景' },
-            { key: 'faq', href: '#faq', title: 'FAQ' }
-          ]}
-        />
-        <a
-          href="https://github.com/vibe-coding-labs/vibe-focus"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="github-link"
-        >
-          <GithubOutlined />
-        </a>
-      </Header>
-
-      <Content className="site-content">
-        <section className="hero">
-          <div className="hero-bg" />
-          <div className="hero-content">
-            <Row gutter={[28, 28]} align="middle" className="hero-grid">
-              <Col xs={24} lg={9}>
-                <Space direction="vertical" size={20} className="hero-main">
-                  <Tag color="cyan" className="hero-tag">
-                    保护颈椎 · Claude Code 深度集成
-                  </Tag>
-                  <Title className="hero-title">
-                    <span>告别频繁扭头</span>
-                    保护颈椎健康
-                  </Title>
-                  <Paragraph className="hero-description">
-                    专为带鱼屏、曲面屏等 40 英寸以上大屏幕用户设计。Vibe Focus 让你无需频繁扭头看副屏窗口，
-                    一键将窗口聚焦到主屏中央。现已深度集成 Claude Code，
-                    对话结束时自动聚焦，提交新 Prompt 时自动恢复，全程零手动操作。
-                  </Paragraph>
-                  <Space wrap size={16}>
-                    <Button type="primary" size="large" href="#solution">
-                      了解它如何工作
-                    </Button>
-                    <Button size="large" href="#demo">
-                      先看效果演示
-                    </Button>
-                  </Space>
-                </Space>
-              </Col>
-
-              <Col xs={24} lg={15}>
-                <Card className="hero-video-card" bordered={false}>
-                  <div className="hero-video-shell">
-                    <HeroVideoPlayer />
-                  </div>
-                </Card>
-              </Col>
-
-              <Col span={24}>
-                <Row gutter={[16, 16]} className="hero-stats">
-                  <Col xs={12} md={6}>
-                    <Card className="stat-card">
-                      <Statistic title="快捷键" value="聚焦 / 恢复" />
-                    </Card>
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Card className="stat-card">
-                      <Statistic title="Claude Code" value="自动化集成" />
-                    </Card>
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Card className="stat-card">
-                      <Statistic title="适配环境" value="多显示器办公" />
-                    </Card>
-                  </Col>
-                  <Col xs={12} md={6}>
-                    <Card className="stat-card">
-                      <Statistic title="运行方式" value="菜单栏常驻" />
-                    </Card>
-                  </Col>
-                </Row>
-              </Col>
-            </Row>
-          </div>
-        </section>
-
-        <section id="problem" className="section">
-          <div className="section-header">
-            <Title level={2}>大屏幕用户的颈椎困扰</Title>
-            <Paragraph className="section-lead">
-              40 英寸以上的带鱼屏、曲面屏在 Vibe Coding 时提供了更大的视野，但也带来了频繁扭头的问题。Vibe Focus 专门解决这一健康隐患。
-            </Paragraph>
-          </div>
-          <Row gutter={[24, 24]}>
-            {pains.map((item, index) => (
-              <Col xs={24} md={12} key={index}>
-                <Card className="info-card" bordered={false}>
-                  <div className="info-card-number">0{index + 1}</div>
-                  <Paragraph className="info-card-text">{item}</Paragraph>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        </section>
-
-        <section id="solution" className="section section-alt">
-          <div className="section-header">
-            <Title level={2}>保护颈椎，从减少扭头开始</Title>
-            <Paragraph className="section-lead">
-              它不只优化窗口管理，更重要的是保护你的颈椎健康。通过减少频繁扭头，让你在享受大屏幕带来的效率提升的同时，远离颈椎问题。
-            </Paragraph>
-          </div>
-          <Steps
-            responsive
-            current={3}
-            className="solution-steps"
-            items={[
-              {
-                title: '按下快捷键',
-                description: '默认是 ⌃Q（Control+Q），也可以在设置页里重新录制。请确保快捷键不与系统快捷键冲突。'
-              },
-              {
-                title: '移动并铺满主屏',
-                description: '把当前窗口送到主屏的可见区域，而不是切系统全屏。'
-              },
-              {
-                title: '继续完成任务',
-                description: '录屏、演示、深度工作，都不需要再手动拖窗。'
-              },
-              {
-                title: '再次按键恢复',
-                description: '结束聚焦后，窗口回到原位置与大小。'
-              }
-            ]}
-          />
-        </section>
-
-        <section id="claude-code" className="section">
-          <div className="section-header">
-            <Title level={2}>Claude Code 深度集成</Title>
-            <Paragraph className="section-lead">
-              与 Claude Code 无缝集成，对话结束时自动聚焦终端窗口到主屏，提交新 Prompt 时自动恢复原位。全程零手动操作，让你专注于编码本身。
-            </Paragraph>
-          </div>
-          <HookWorkflowAnimation />
-          <Row gutter={[24, 24]} style={{ marginTop: 48 }}>
-            <Col xs={24} md={8}>
-              <Card className="feature-card" bordered={false}>
-                <div className="feature-card-content">
-                  <div className="feature-icon-wrapper">
-                    <ThunderboltOutlined />
-                  </div>
-                  <div className="feature-text">
-                    <Title level={4}>对话结束自动聚焦</Title>
-                    <Paragraph>Claude 完成响应后，终端窗口自动移到主屏。Stop 和 SessionEnd 事件均可触发。</Paragraph>
-                  </div>
-                </div>
-              </Card>
-            </Col>
-            <Col xs={24} md={8}>
-              <Card className="feature-card" bordered={false}>
-                <div className="feature-card-content">
-                  <div className="feature-icon-wrapper">
-                    <CheckCircleOutlined />
-                  </div>
-                  <div className="feature-text">
-                    <Title level={4}>提交 Prompt 自动恢复</Title>
-                    <Paragraph>提交新 Prompt 时，窗口自动回到副屏原始位置和大小。精确保存窗口状态，恢复零误差。</Paragraph>
-                  </div>
-                </div>
-              </Card>
-            </Col>
-            <Col xs={24} md={8}>
-              <Card className="feature-card" bordered={false}>
-                <div className="feature-card-content">
-                  <div className="feature-icon-wrapper">
-                    <MacCommandOutlined />
-                  </div>
-                  <div className="feature-text">
-                    <Title level={4}>多终端精确匹配</Title>
-                    <Paragraph>通过 TTY、PPID、会话 ID 精确匹配窗口，多 Claude Code 实例并行也不会错乱。</Paragraph>
-                  </div>
-                </div>
-              </Card>
-            </Col>
-          </Row>
-        </section>
-
-        <section id="demo" className="section">
-          <div className="section-header">
-            <Title level={2}>效果演示</Title>
-            <Paragraph className="section-lead">
-              以下演示展示了 Vibe Focus 的核心功能，使用 Remotion 生成。
-              <br />
-              每个演示都展示了多显示器工作流中的实际应用场景。
-            </Paragraph>
-          </div>
-          <Row gutter={[24, 32]}>
-            {demoAssets.map((item) => (
-              <Col xs={24} md={12} lg={8} key={item.key}>
-                <Card className="demo-card" bordered={false}>
-                  <div className="demo-media-shell">
-                    {item.src ? (
-                      item.kind === 'Video' ? (
-                        <VideoPlayer item={item} />
-                      ) : (
-                        <img className="demo-media" src={item.src} alt={item.title} />
-                      )
-                    ) : (
-                      <div className="demo-placeholder">
-                        <PlayCircleOutlined className="demo-placeholder-icon" />
-                        <Text className="demo-placeholder-title">{item.kind} 占位区</Text>
-                        <Text className="demo-placeholder-path">{item.expectedPath}</Text>
-                      </div>
-                    )}
-                  </div>
-                  <div className="demo-card-content">
-                    <Space size={8} className="demo-card-tags">
-                      <Tag color="cyan">{item.kind}</Tag>
-                      <Tag color="blue">演示 0{item.key.split('-').pop()?.slice(0, 2) || '1'}</Tag>
-                    </Space>
-                    <Title level={4} className="demo-card-title">{item.title}</Title>
-                    <Paragraph className="demo-card-description">
-                      {item.description}
-                    </Paragraph>
-                  </div>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        </section>
-
-        <section id="features" className="section">
-          <div className="section-header">
-            <Title level={2}>核心功能</Title>
-            <Paragraph className="section-lead">
-              五大核心能力，覆盖多显示器工作流中的关键场景
-            </Paragraph>
-          </div>
-          <Row gutter={[24, 24]}>
-            {capabilities.map((item, index) => (
-              <Col xs={24} md={12} key={item.title}>
-                <Card className="feature-card" bordered={false}>
-                  <div className="feature-card-content">
-                    <div className="feature-icon-wrapper">
-                      {item.icon}
-                    </div>
-                    <div className="feature-text">
-                      <Title level={4}>{item.title}</Title>
-                      <Paragraph>{item.description}</Paragraph>
-                    </div>
-                  </div>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        </section>
-
-        <section id="scenes" className="section section-alt">
-          <div className="section-header">
-            <Title level={2}>适合谁用</Title>
-            <Paragraph className="section-lead">
-              如果你在使用带鱼屏、曲面屏等 40 英寸以上大屏幕，这些场景会让你感受到 Vibe Focus 的价值
-            </Paragraph>
-          </div>
-          <Row gutter={[24, 24]}>
-            {scenarios.map((item, index) => (
-              <Col xs={24} md={12} key={index}>
-                <Card className="scene-card" bordered={false}>
-                  <div className="scene-card-content">
-                    <div className="scene-icon-wrapper">
-                      <AppstoreOutlined />
-                    </div>
-                    <Text className="scene-text">{item}</Text>
-                  </div>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        </section>
-
-        <section className="section section-cta">
-          <Card className="cta-card" bordered={false}>
-            <Row gutter={[48, 32]} align="middle">
-              <Col xs={24} lg={16}>
-                <Title level={2} className="cta-title">
-                  大屏编码，健康颈椎，Vibe Coding 更持久
-                </Title>
-                <Paragraph className="cta-description">
-                  一键聚焦 + Claude Code 自动化集成，让你在带鱼屏、曲屏等大屏幕上高效编码的同时，
-                  大幅减少扭头次数。无论是手动快捷键还是全自动 Hook，Vibe Focus 都能帮你把窗口带到视线中央。
-                </Paragraph>
-              </Col>
-              <Col xs={24} lg={8}>
-                <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                  <Button type="primary" size="large" block href="#faq" className="cta-button-primary">
-                    查看常见问题
-                  </Button>
-                  <Button size="large" block href="https://github.com/vibe-coding-labs/vibe-focus" className="cta-button-secondary">
-                    查看项目仓库
-                  </Button>
-                </Space>
-              </Col>
-            </Row>
-          </Card>
-        </section>
-
-        <section id="faq" className="section">
-          <div className="section-header">
-            <Title level={2}>常见问题</Title>
-            <Paragraph className="section-lead">
-              关于 Vibe Focus 的使用疑问，在这里找到答案
-            </Paragraph>
-          </div>
-          <Collapse items={faqs} className="faq" bordered={false} />
-        </section>
-
-        <Divider />
-      </Content>
-
-      <Footer className="site-footer">
-        <div className="footer-content">
-          <div className="footer-brand">
-            <img src="/logo.svg" alt="Vibe Focus" className="footer-logo" />
-            <div>
-              <Text strong className="footer-title">Vibe Focus</Text>
-              <Text className="footer-subtitle">
-                为带鱼屏、曲面屏等大屏幕用户设计的颈椎保护工具
-              </Text>
-            </div>
-          </div>
-          <div className="footer-links">
-            <Space size={24} className="footer-nav">
-              <a href="#problem">问题</a>
-              <a href="#solution">解决方案</a>
-              <a href="#claude-code">Claude Code</a>
-              <a href="#demo">效果演示</a>
-              <a href="#features">功能</a>
-              <a href="#faq">FAQ</a>
-            </Space>
-          </div>
-          <Text className="footer-copyright">
-            &copy; 2024-2026 Vibe Focus. All rights reserved.
-          </Text>
-        </div>
-      </Footer>
-    </Layout>
+    <>
+      <Nav />
+      <main>
+        <Hero />
+        <Pains />
+        <Features />
+        <Automation />
+        <Demos />
+        <Download />
+        <Faq />
+      </main>
+      <Footer />
+    </>
   );
 }
