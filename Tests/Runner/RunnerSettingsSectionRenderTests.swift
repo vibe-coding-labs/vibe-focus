@@ -560,3 +560,23 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B268：SessionLists / SettingsUI 共通组件渲染补充
+
+extension RunnerHarness {
+    func runSessionListsAndSettingsUIRenderTests() {
+        let view = SettingsView()
+
+        let r1 = ImageRenderer(content: view.activeSessionList)
+        check("render268: activeSessionList 渲染出图", r1.nsImage != nil)
+
+        let r2 = ImageRenderer(content: view.overlaySection)
+        check("render268: overlaySection 渲染出图", r2.nsImage != nil)
+
+        let r3 = ImageRenderer(content: view.claudeHookSection)
+        check("render268: claudeHookSection 渲染出图", r3.nsImage != nil)
+
+        let r4 = ImageRenderer(content: view.terminalGridSection)
+        check("render268: terminalGridSection 渲染出图", r4.nsImage != nil)
+    }
+}

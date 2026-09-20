@@ -254,6 +254,7 @@ final class FakeAuditor: RestoreAuditing {
         runSettingsSectionDeepRenderTests()
         runSettingsSectionDeepRender2Tests()
         runTGEmptySnapshotRenderTests()
+        runSessionListsAndSettingsUIRenderTests()
         runSettingsCommonSectionRenderTests()
         runWorkspaceAndSessionRenderTests()
         runAllSectionsRenderTests()
