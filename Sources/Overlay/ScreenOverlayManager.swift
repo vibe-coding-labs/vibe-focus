@@ -53,6 +53,9 @@ final class ScreenOverlayManager: ObservableObject {
     /// 唤醒/解锁重建 debounce。事件离散（system wake/screens wake/unlock 各一发），
     /// 1.0s 合并连发并给 WindowServer 唤醒后的重排留稳定时间。
     static let wakeRebuildDebounceInterval: TimeInterval = 1.0
+    /// 唤醒事件后的延迟补射间隔（自事件起算 = debounce + 此值）。用户「唤醒→解锁」
+    /// 间隔内补射落点在已解锁桌面，兜底 screenIsUnlocked 通知未达时的可见挂接。
+    static let wakeRebuildFollowUpIntervals: [TimeInterval] = [45, 180]
 
     var cachedDisplayIndices: [UUID: Int] = [:]
     var lastQueryTimes: [UUID: Date] = [:]
@@ -268,27 +271,51 @@ final class ScreenOverlayManager: ObservableObject {
         }
         pendingWakeRebuildWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            let startedAt = Date()
-            let previousWindows = self.overlayWindows
-            // 全量 close+重建：幽灵窗的就地 update/show 无法重新挂接可见空间，
-            // 必须销毁重建（事件离散且已 debounce，2026-08-10 SIGSEGV 的 close+create
-            // 竞态场景是屏幕重排通知风暴，此处无该风险）。
-            self.hideOverlays()
-            self.showOverlays()
-            logOperationDuration(
-                "[Overlay] wake rebuild finished",
-                startedAt: startedAt,
-                warnThresholdMs: 200,
-                fields: [
-                    "event": reason,
-                    "beforeCount": String(previousWindows.count),
-                    "afterCount": String(self.overlayWindows.count)
-                ]
-            )
+            self?.performWakeRebuild(reason: reason)
         }
         pendingWakeRebuildWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + ScreenOverlayManager.wakeRebuildDebounceInterval, execute: work)
+        // 唤醒类事件追加延迟补射：用户「唤醒→输入密码→解锁」需要数秒到数分钟，
+        // +1s 的首射大概率落在锁屏期（幽灵上下文），补射落点在解锁后的桌面，
+        // 兜底 screenIsUnlocked 分布式通知万一未达时仍能完成可见挂接。
+        let isWakeEvent = reason == NSWorkspace.screensDidWakeNotification.rawValue
+            || reason == NSWorkspace.didWakeNotification.rawValue
+        if isWakeEvent {
+            for interval in ScreenOverlayManager.wakeRebuildFollowUpIntervals {
+                let delay = ScreenOverlayManager.wakeRebuildDebounceInterval + interval
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.performWakeRebuild(reason: "\(reason)+followup\(Int(interval))s")
+                }
+            }
+        }
+    }
+
+    /// 全量重建角标窗（close+create）。唤醒/解锁家族事件共用的执行体；
+    /// 幽灵窗的就地 update/show 无法重新挂接可见空间，必须销毁重建
+    /// （事件离散且已 debounce，2026-08-10 SIGSEGV 的 close+create 竞态场景
+    /// 是屏幕重排通知风暴，此处无该风险）。
+    private func performWakeRebuild(reason: String) {
+        guard Self.wakeRebuildDecision(
+            enabled: preferences.isEnabled,
+            crashLoopSuppressed: crashLoopSuppressed,
+            inputBubbleSuppressed: overlaysSuppressedForInputBubble
+        ) else {
+            return
+        }
+        let startedAt = Date()
+        let previousCount = overlayWindows.count
+        hideOverlays()
+        showOverlays()
+        logOperationDuration(
+            "[Overlay] wake rebuild finished",
+            startedAt: startedAt,
+            warnThresholdMs: 200,
+            fields: [
+                "event": reason,
+                "beforeCount": String(previousCount),
+                "afterCount": String(overlayWindows.count)
+            ]
+        )
     }
 
     // MARK: - Public Methods

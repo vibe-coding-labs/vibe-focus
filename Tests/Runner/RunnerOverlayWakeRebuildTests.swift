@@ -34,5 +34,7 @@ extension RunnerHarness {
                 enabled: false, crashLoopSuppressed: true, inputBubbleSuppressed: true))
         check("wakeRebuild T6: debounce 间隔为正（合并连发+给 WindowServer 稳定窗）",
               ScreenOverlayManager.wakeRebuildDebounceInterval > 0)
+        check("wakeRebuild T7: 唤醒补射间隔递增且为正（解锁后桌面兜底挂接）",
+              ScreenOverlayManager.wakeRebuildFollowUpIntervals == [45, 180])
     }
 }
