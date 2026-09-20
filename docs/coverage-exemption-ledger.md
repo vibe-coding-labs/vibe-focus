@@ -171,6 +171,8 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 
 #### B 态·E2E 通道覆盖（≈900 行，25 文件）
 
+**B300（2026-09-20）B 态清账首批 5 项**：TerminalUsageTracker 22→0（**100%**，合成 NSWorkspace 激活通知直投 workspace 通知中心+RunLoop 泵，零真实激活）、SessionRestorePlanner 6→1、ShellRunner 9→1（幽灵可执行两入口/超时 terminate 两变体/孙进程占管道 grace 两入口）、ToggleEngine 6→2、ClaudeSessionLocator 6→2（五入口缺省 runner 参数路径幽灵输入打穿）；Runner 3585→3614 全绿、全口径 72.50%→73.18%。B 态余量=真机域（按键注入/AX 写/真实面板），归既有 E2E 通道。
+
 InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreController(18)/Planner(6)/Store(2)/PaneClassifier(1)/RemoteSessionProbe(1)/SSHCommandParser(2, 真恢复通道) · OverlayWindow(5)/+Refresh(18)/+SpaceQuery(18)/SpaceSnapshot(3, overlay 真窗域) · WindowManager+AXRead(8)/+ScreenPosition(4)/+TerminalContext+Helpers(4)/+Toggle+FocusFallback(19, pickFallback 已测+AX 边支) · Space/CoordinateKit+Screen(7)/+Context(21)/+Move(32, toggled=AXWrite/SIZE 通道)/NativeSpaceBridge(18) · Toggle/ToggleEngine(6) · Hook/HookEventHandler+Remote(1)/+Notification(1)/SessionWindowRegistry 三件(21)/SessionPanelLogic(2) · TerminalGrid/ClaudeSessionLocator(6)/ScreenLayoutMapper(1)/TerminalAutomationScript(1)/Store(3)/SelectionResolver(1)/UsageTracker(6) · SettingsView+TitleEditorSection(2)/+HotKeySection(6) · App/TranscriptTail(4)/VoiceManager+Persistence(3)/+Queue(4) · Support/AuditLogger(3)/AXSelfHeal(2)/CGWindowEntry(2)/ExitJournal(4)/FrameConvergence(4)/FrameWriteExecutor(2)/MoveToMainPipeline(5)/ShellRunner(9)/TerminalRegistry(2)/YabaiEnvironmentProbe(2)/Doctor+InstallInventory(7)/BuildCapabilities(1)/CrashRuntimeSnapshot(1) · Layout/LayoutHotKeyTable(2)/WindowLayoutManagerProbe(1) · Hook/HookScriptGenerator(4)/RemoteInstallDeploy(2)/RemoteInstallScriptBuilder(1)/LANHookPreferences(1)
 
 #### C 态·豁免（≈2250 行，36 文件）
