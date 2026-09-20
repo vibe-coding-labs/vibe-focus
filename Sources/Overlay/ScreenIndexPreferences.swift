@@ -63,6 +63,29 @@ struct ScreenIndexPreferences: Codable {
 
     static let userDefaultsKey = "screenIndexPreferences"
 
+    // MARK: 进程级持久化沙箱（2026-09-20 生产配置污染根治）
+    /// 真实装机 app 判定：只有 Bundle.main 带 canonical bundle id 的进程才允许读写
+    /// 生产三源（SQLite 主源 ~/.vibefocus/vibefocus.db + CFPreferences plist +
+    /// UserDefaults）。其余一切进程（VibeFocusTestRunner、裸 .build 调试二进制）
+    /// 读写一律落按 pid 隔离的 /tmp 沙箱文件。
+    ///
+    /// ## 背景（2026-09-20「屏幕序号无法渲染」事故根因）
+    /// Runner 的偏好/渲染/退出链路测试会触发 `ScreenIndexPreferences.save()`（didSet →
+    /// schedulePreferenceSave、legacy 迁移回写、flushPendingPreferenceSave），把测试
+    /// 偏好（topLeft/48/0.8，含测试崩溃残留的 enabled=false 中间态）写进生产库；
+    /// app 重启后加载测试垃圾 → 用户角标配置（右下角/32/30%）被静默改写甚至整体
+    /// 熄灭。CFPreferences 写入此前经 `?? AppIdentity.bundleID` 兜底同样污染共享 plist。
+    static var isProductionAppProcess: Bool {
+        Bundle.main.bundleIdentifier == AppIdentity.bundleID
+    }
+
+    /// 沙箱偏好文件：按 pid 隔离——并行 Runner 进程互不污染，同进程内
+    /// save→load 往返保真（依赖持久化的既有测试无需改动）。
+    static var sandboxPreferencesURL: URL {
+        URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("vibefocus-screen-index-prefs-sandbox-\(ProcessInfo.processInfo.processIdentifier).json")
+    }
+
     @MainActor
     static func load() -> ScreenIndexPreferences {
         // P-INST-205: 屏幕索引偏好加载端到端耗时（loadFromSQLite P-INST-101 + CFPreferencesCopyAppValue + UserDefaults.standard.string/data + JSONDecoder.decode + legacy migration save；启动 + overlay 刷新调用，多源 fallback 链）。
@@ -72,6 +95,15 @@ struct ScreenIndexPreferences: Codable {
             log("[ScreenIndexPreferences] load finished", level: .debug, fields: ["durationMs": String(elapsedMilliseconds(since: lpStart))])
         }
         #endif
+        // 沙箱进程：只读沙箱文件，缺失回落 .default，生产三源零触碰（读取也不允许——
+        // 否则测试断言会依赖装机实机的残留配置，跨机器不确定）。
+        guard isProductionAppProcess else {
+            if let data = FileManager.default.contents(atPath: sandboxPreferencesURL.path),
+               let prefs = try? JSONDecoder().decode(ScreenIndexPreferences.self, from: data) {
+                return enforcePerScreenSpaceIndexingIfNeeded(prefs)
+            }
+            return .default
+        }
         // 1. SQLite 主源（~/.vibefocus/vibefocus.db — 不受 app rebuild 影响）
         if let sqlitePrefs = loadFromSQLite() {
             log("ScreenIndexPreferences loaded from SQLite: isEnabled=\(sqlitePrefs.isEnabled)")
@@ -216,6 +248,13 @@ struct ScreenIndexPreferences: Codable {
             ])
         }
         #endif
+        // 沙箱进程：原子写 /tmp 沙箱文件即返回，生产三源（SQLite/plist/defaults）零触碰。
+        guard Self.isProductionAppProcess else {
+            if let data = try? JSONEncoder().encode(self) {
+                try? data.write(to: Self.sandboxPreferencesURL, options: .atomic)
+            }
+            return
+        }
         guard let data = try? JSONEncoder().encode(self),
               let jsonString = String(data: data, encoding: .utf8) else {
             log("ScreenIndexPreferences: Failed to encode")
