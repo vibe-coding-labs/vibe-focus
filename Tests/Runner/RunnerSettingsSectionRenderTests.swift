@@ -580,3 +580,19 @@ extension RunnerHarness {
         check("render268: terminalGridSection 渲染出图", r4.nsImage != nil)
     }
 }
+
+// MARK: - B285 续：SessionLists/WorkspaceSection/SettingsUI 深层渲染
+
+extension RunnerHarness {
+    func runSessionListsAndWorkspaceRenderTests() {
+        let view = SettingsView()
+
+        // workspaceSection：yabai 可用（Runner 有 yabai）
+        let rWS = ImageRenderer(content: view.workspaceSection)
+        check("renderB285: workspaceSection 渲染出图", rWS.nsImage != nil)
+
+        // SessionLists：activeSessionList live 面板（registry 共享实例读-only）
+        let rSL = ImageRenderer(content: view.activeSessionList)
+        check("renderB285: activeSessionList 渲染出图", rSL.nsImage != nil)
+    }
+}
