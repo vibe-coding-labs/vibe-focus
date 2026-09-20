@@ -194,4 +194,8 @@ InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreCont
   每通道跑后 iTerm2 窗口数回到 42（清场归零）。对照刷新=B263 轮实测（全口径 77.24%/Sources 纯净 70.01%）+ 逐文件归属核对表。
 
 （签署区：用户 / 负责会话，发布前填写）
+
+### 待补签（B299 提请，2026-09-20）
+
+- [ ] B299 豁免增改补签：①Support+Diagnostics 残 20 行改判 C7-装机态（触发=破坏装机：无 caps 二进制/缺 codesign/删证书/mdfind 失效；替代验证=--diagnose 冒烟）；②Finding 残 15 行（前台环境态）/StateStore+Database 残 2 行（HOME 污染风险）留白注记；③门禁环境注记（显示器休眠致 yabai 聚合查询截断，Runner 须 `caffeinate -d`；全绿实证 3596/3596）。**已向用户提请，待确认后勾选**。
 - [x] 用户签字：已确认签署（用户于 2026-09-20 验收对话中裁决「可测面 100% + E2E + 豁免台账」口径并确认签署） 日期：2026-09-20
