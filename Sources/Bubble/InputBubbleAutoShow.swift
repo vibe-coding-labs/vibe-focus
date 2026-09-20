@@ -112,9 +112,12 @@ final class InputBubbleAutoShow {
     /// 首观测即有历史基线照样触发。容量 64 淘汰最旧，防长会话无界增长。
     private var onMainBaselineByWindow: [UInt32: Bool] = [:]
     private var baselineOrder: [UInt32] = []
-    /// B305：前台 app 身份缓存（pid → localizedName/bundleIdentifier）。属性读取走
-    /// LaunchServices 同步 XPC（装机实锤主线程 STALL 单次 1~7s、每天数百次，卡死期间
-    /// 热键 tap/Carbon 分发全停）；前台 pid 未变的拍复用缓存，pid 变化才重读。
+    /// B305：前台 app 身份缓存（实例身份 + pid → localizedName/bundleIdentifier）。
+    /// 属性读取走 LaunchServices 同步 XPC（装机实锤主线程 STALL 单次 1~7s、每天数百次，
+    /// 卡死期间热键 tap/Carbon 分发全停；0.0.84 首日实测 processIdentifier 也在卡点——
+    /// pid 并非免 XPC 属性）。实例身份（ObjectIdentifier 纯指针比较）命中拍零属性读取，
+    /// pid 作次键兜底 AppKit 换包装，双变才全量重读。
+    private var frontIdentityObjectID: ObjectIdentifier?
     private var frontIdentityPID: pid_t?
     private var frontIdentityName: String?
     private var frontIdentityBundleID: String?
@@ -183,25 +186,43 @@ final class InputBubbleAutoShow {
     func tick() {
         let controller = InputBubbleController.shared
         let front = NSWorkspace.shared.frontmostApplication
-        // B305：前台身份按 pid 缓存（决策表 InputBubbleFrontIdentityPlan，Runner 直测）。
-        // localizedName/bundleIdentifier 的读取走 LaunchServices 同步 XPC——装机实锤
-        // 每秒 tick 重复读导致主线程 STALL 单次 1~7s（热键 tap/Carbon 分发全停）；
-        // pid 未变的拍零属性读取，只在 pid 变化时重读并回写。
-        let frontPID = front?.processIdentifier
+        // B305：前台身份缓存（决策表 InputBubbleFrontIdentityPlan，Runner 直测）。
+        // localizedName/bundleIdentifier/processIdentifier 的读取都可能走 LaunchServices
+        // 同步 XPC——装机实锤每秒 tick 重复读导致主线程 STALL 单次 1~7s（热键 tap/Carbon
+        // 分发全停）；0.0.84 首日实测 processIdentifier 也在卡点。两级判定：
+        // 一级实例身份（ObjectIdentifier 纯指针比较零 XPC）命中拍零属性读取；
+        // 二级 pid 对账兜底 AppKit 换包装，双变才全量重读回写。
         var identityName: String?
         var identityBundleID: String?
-        switch InputBubbleFrontIdentityPlan.source(cachedPID: frontIdentityPID, currentPID: frontPID) {
-        case .cached:
+        let currentObjectID = front.map { ObjectIdentifier($0) }
+        if InputBubbleFrontIdentityPlan.identityHit(
+            currentObjectID: currentObjectID,
+            cachedObjectID: frontIdentityObjectID
+        ) {
+            // 一级命中：整拍零属性读取
             identityName = frontIdentityName
             identityBundleID = frontIdentityBundleID
-        case .readFresh:
-            identityName = front?.localizedName
-            identityBundleID = front?.bundleIdentifier
-            frontIdentityPID = frontPID
-            frontIdentityName = identityName
-            frontIdentityBundleID = identityBundleID
-        case .none:
-            break
+        } else {
+            // 一级未命中：读一次 pid 对账（此读为可接受成本，且结果必须回写防下次重读）
+            let currentPID = front?.processIdentifier
+            switch InputBubbleFrontIdentityPlan.source(cachedPID: frontIdentityPID, currentPID: currentPID) {
+            case .cachedByPID:
+                identityName = frontIdentityName
+                identityBundleID = frontIdentityBundleID
+                frontIdentityObjectID = currentObjectID
+            case .readFresh:
+                identityName = front?.localizedName
+                identityBundleID = front?.bundleIdentifier
+                frontIdentityObjectID = currentObjectID
+                frontIdentityPID = currentPID
+                frontIdentityName = identityName
+                frontIdentityBundleID = identityBundleID
+            case .none:
+                break
+            case .cached:
+                // 一级未命中时 pid 命中只会得到 .cachedByPID，此分支不可达
+                break
+            }
         }
         let frontIsTerminal = TerminalRegistry.isTerminalOrIDEApp(
             appName: identityName,

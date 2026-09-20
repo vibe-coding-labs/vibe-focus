@@ -1644,17 +1644,33 @@ extension RunnerHarness {
               InputBubbleActivationPlan.nextStep(panelIsKey: false, appIsActive: false, elapsedMs: 0, pollIntervalMs: 77, budgetMs: budget)
               == .retryAfterMs(77))
 
-        // --- InputBubbleFrontIdentityPlan 三态（缓存命中零 XPC 的决策核心）---
-        // 首拍无缓存 → 读新值并回写
-        check("frontIdentity: 无缓存 → readFresh",
-              InputBubbleFrontIdentityPlan.source(cachedPID: nil, currentPID: 42) == .readFresh)
-        // pid 未变 → 缓存命中（免 LaunchServices XPC 重读的 B305 语义）
-        check("frontIdentity: pid 未变 → cached",
-              InputBubbleFrontIdentityPlan.source(cachedPID: 42, currentPID: 42) == .cached)
-        // pid 变化（用户切 app/重启终端）→ 重读
+        // --- InputBubbleFrontIdentityPlan 两级判定（缓存命中零 XPC 的决策核心）---
+        // 一级 identityHit：实例身份（ObjectIdentifier 纯指针比较零 XPC）
+        // ⚠️ 对象必须由局部变量保活——ObjectIdentifier(NSObject()) 的临时实例在语句尾
+        // 释放，下一条语句的 malloc 会复用同一地址使两个「不同」身份相等（实测踩中）。
+        let objA = NSObject()
+        let objB = NSObject()
+        let idA = ObjectIdentifier(objA)
+        let idA2 = ObjectIdentifier(objA)
+        let idB = ObjectIdentifier(objB)
+        check("frontIdentity: 实例身份命中 → 零属性读取拍",
+              InputBubbleFrontIdentityPlan.identityHit(currentObjectID: idA, cachedObjectID: idA))
+        check("frontIdentity: 实例不同 → 一级未命中",
+              !InputBubbleFrontIdentityPlan.identityHit(currentObjectID: idA, cachedObjectID: idB))
+        check("frontIdentity: 无缓存实例 → 一级未命中",
+              !InputBubbleFrontIdentityPlan.identityHit(currentObjectID: idA, cachedObjectID: nil))
+        check("frontIdentity: 无前台实例 → 一级未命中",
+              !InputBubbleFrontIdentityPlan.identityHit(currentObjectID: nil, cachedObjectID: idA))
+        check("frontIdentity: 存活的不同对象身份必不同（判定语义前提）", idA != idB)
+        check("frontIdentity: 同一对象多次取身份恒相等（判定语义前提）", idA == idA2)
+        // 二级 source：仅在一级未命中时调用（此刻读一次 processIdentifier 为可接受成本）
+        // pid 未变（AppKit 换包装兜底）→ cachedByPID
+        check("frontIdentity: pid 未变 → cachedByPID",
+              InputBubbleFrontIdentityPlan.source(cachedPID: 42, currentPID: 42) == .cachedByPID)
+        // pid 变化（用户切 app/重启终端）→ 全量重读回写
         check("frontIdentity: pid 变化 → readFresh",
               InputBubbleFrontIdentityPlan.source(cachedPID: 42, currentPID: 43) == .readFresh)
-        // 无前台 app（锁屏 loginwindow 之外的空窗态）→ none 且缓存不动
+        // 无前台 app → none 且缓存不动
         check("frontIdentity: 无前台 → none",
               InputBubbleFrontIdentityPlan.source(cachedPID: 42, currentPID: nil) == .none)
         check("frontIdentity: 无缓存也无前台 → none",

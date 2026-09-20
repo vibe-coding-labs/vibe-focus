@@ -440,24 +440,37 @@ enum InputBubbleActivationPlan {
 }
 
 /// tick 前台身份读取策略（B305，纯函数直测）。
-/// NSRunningApplication 的 localizedName/bundleIdentifier 每次读取都可能走
-/// LaunchServices 同步 XPC（装机实锤主线程 STALL 单次 1~7s、每天数百次，
-/// 卡死期间热键 tap/Carbon 分发全停=⌃X 按了没反应）。输出「本拍从哪读身份」：
-/// 调用侧按分支行动，保证缓存命中的拍零属性读取（processIdentifier 是本地
-/// 属性可免 XPC 常读，作为比对键）。
+/// NSRunningApplication 的 localizedName/bundleIdentifier/**processIdentifier**
+/// 读取都可能走 LaunchServices 同步 XPC（装机实锤主线程 STALL 单次 1~7s、每天
+/// 数百次，卡死期间热键 tap/Carbon 分发全停=⌃X 按了没反应；0.0.84 装机首日
+/// 实测 processIdentifier 同样出现在 STALL 卡点——pid 并非免 XPC 的本地属性）。
+/// 两级判定（调用侧按序执行，保证命中拍零属性读取）：
+/// ① identityHit：实例身份（ObjectIdentifier 纯指针比较，零 XPC）——命中即全缓存复用；
+/// ② 未命中才读一次 processIdentifier 进 source 对账：pid 未变=换包装兜底（cachedByPID），
+///   pid 变=全量重读回写（readFresh），无前台=none。
 enum InputBubbleFrontIdentityPlan {
     enum Source: Equatable {
-        /// pid 未变：用缓存身份，本拍零 XPC
+        /// 二级判定专用：一级 identityHit 未命中时不会出现此值（语义上已被一级覆盖）
         case cached
-        /// pid 变化/首拍：读 localizedName/bundleIdentifier 并回写缓存
+        /// 实例不同但 pid 未变：用缓存身份，仅补读 processIdentifier 对账并刷新实例键
+        case cachedByPID
+        /// 实例与 pid 双变/首拍：读 localizedName/bundleIdentifier/processIdentifier 并回写
         case readFresh
         /// 无前台 app：终端判定恒 false，缓存保持原样
         case none
     }
 
+    /// 一级：实例身份命中判定（ObjectIdentifier 纯指针比较，零 XPC——调用侧先走此判定，
+    /// 命中即整拍零属性读取）。
+    static func identityHit(currentObjectID: ObjectIdentifier?, cachedObjectID: ObjectIdentifier?) -> Bool {
+        guard let currentObjectID, let cachedObjectID else { return false }
+        return currentObjectID == cachedObjectID
+    }
+
+    /// 二级：pid 对账（仅在一级未命中后调用，此刻读一次 processIdentifier 为可接受成本）。
     static func source(cachedPID: pid_t?, currentPID: pid_t?) -> Source {
         guard let currentPID else { return .none }
-        return currentPID == cachedPID ? .cached : .readFresh
+        return currentPID == cachedPID ? .cachedByPID : .readFresh
     }
 }
 
