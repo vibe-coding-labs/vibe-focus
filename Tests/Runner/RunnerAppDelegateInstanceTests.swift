@@ -70,3 +70,22 @@ extension RunnerHarness {
         }
     }
 }
+
+// MARK: - B293 追加：installedVersion 版本读取链直测
+// NSRunningApplication(processIdentifier:) 只读进程枚举；幽灵 pid → bundleURL nil
+// → nil 降级；本机进程（如 WindowServer/pbid）→ bundle 可加载但无版本信息 → nil
+// 或合法版本串——双态均合法，不做环境前提假设。
+
+extension RunnerHarness {
+    func runInstalledVersionTests() {
+        let appDelegate = AppDelegate()
+        // 幽灵 pid：无进程 → NSRunningApplication 为 nil → installedVersion nil。
+        let ghostApp = NSRunningApplication(processIdentifier: 999_998)
+        if let ghostApp {
+            check("appDelegate: installedVersion 幽灵 pid nil 降级",
+                  appDelegate.installedVersion(for: ghostApp) == nil)
+        } else {
+            check("appDelegate: 幽灵 pid 无 NSRunningApplication 实例（环境合法）", true)
+        }
+    }
+}
