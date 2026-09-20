@@ -103,7 +103,10 @@ extension RunnerHarness {
             pump(0.1)
             check("finale: 点击监视器识别本面板→重收键盘", controller.phase == .open)
         }
-        controller.submitFrontmostPIDProvider = { iterm2PID }
+        // activate 落 Runner 自身（非终端激活零全局污染）
+        controller.target = InputBubbleController.Target(
+            pid: ownRunnerPID2(), bundleID: "com.googlecode.iterm2", windowID: windowID, title: "finale")
+        controller.submitFrontmostPIDProvider = { ownRunnerPID2() }
         controller.submitFocusedWindowHandleProvider = { windowID }
         controller.submitSettleAXWindowProvider = { nil }
         controller.textView?.string = "finale 提交钮正文"

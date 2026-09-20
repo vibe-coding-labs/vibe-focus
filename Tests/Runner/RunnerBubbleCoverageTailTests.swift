@@ -168,8 +168,12 @@ extension RunnerHarness {
                   InputBubbleHistoryPanelController.shared.isVisible)
             controller.toggleHistoryPanel()
             pump(0.1)
-            // 提交键位需要前台/柄缝（真实前台在登录屏不可匹配）
-            controller.submitFrontmostPIDProvider = { iterm2PID }
+            // 提交键位需要前台/柄缝（真实前台在登录屏不可匹配）；
+            // activate 落在 Runner 自身（非终端激活零全局污染）
+            controller.target = InputBubbleController.Target(
+                pid: ownRunnerPID(), bundleID: "com.googlecode.iterm2",
+                windowID: controller.target?.windowID ?? 0, title: "t3")
+            controller.submitFrontmostPIDProvider = { ownRunnerPID() }
             controller.submitFocusedWindowHandleProvider = { controller.target?.windowID }
             controller.submitSettleAXWindowProvider = { nil }
             InputBubblePreferences.submitOnEnter = true
@@ -202,9 +206,13 @@ extension RunnerHarness {
             textView.keyDown(with: keyEvent(UInt16(kVK_Return), flags: []))
             check("tail: 换行语义臂（submitOnEnter=false Enter 不提交）",
                   controller.phase == .open && textView.string.hasPrefix(before))
-            // ⌘Enter（submitOnEnter=false）= 注入并提交（文本非空才能过提交门）
+            // ⌘Enter（submitOnEnter=false）= 注入并提交（文本非空才能过提交门；
+            // activate 落 Runner 自身零全局污染）
             controller.textView?.string = "tail cmd enter 正文"
-            controller.submitFrontmostPIDProvider = { iterm2PID }
+            controller.target = InputBubbleController.Target(
+                pid: ownRunnerPID(), bundleID: "com.googlecode.iterm2",
+                windowID: controller.target?.windowID ?? 0, title: "t3b")
+            controller.submitFrontmostPIDProvider = { ownRunnerPID() }
             controller.submitFocusedWindowHandleProvider = { controller.target?.windowID }
             check("tail: ⌘Enter 前置态 open", controller.phase == .open)
             let liveTV = controller.textView ?? textView

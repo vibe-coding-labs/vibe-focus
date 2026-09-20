@@ -205,7 +205,11 @@ extension RunnerHarness {
         }
 
         // --- S8 提交链全真面板（mock 键击 + 前台/柄/AX 缝） ---
-        controller.submitFrontmostPIDProvider = { iterm2PID }
+        // 提交会对 target 发 activate——pid 换成 Runner 自身（非终端激活，
+        // 不污染全局 didActivate 通知流，bstate 等后续测试零互扰）
+        controller.target = InputBubbleController.Target(
+            pid: ownRunnerPID(), bundleID: "com.googlecode.iterm2", windowID: windowA, title: "s8")
+        controller.submitFrontmostPIDProvider = { ownRunnerPID() }
         controller.submitFocusedWindowHandleProvider = { windowA }
         controller.submitSettleAXWindowProvider = { nil }  // 登录屏 AX 封锁 → verifyNoAXWindow 兜底
         controller.submit(mode: .submit)
