@@ -277,6 +277,8 @@ final class InputBubbleHistoryPanelController: NSObject {
     private var clearButton: HistoryMiniButton?
     private var clearArmed = false
     private var clearDisarmWorkItem: DispatchWorkItem?
+    /// B306：键盘收发复查循环的在途拍（close 时取消，防给已关面板发激活）
+    private var settleWorkItem: DispatchWorkItem?
     private let panelWidth: CGFloat = 460
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -304,6 +306,42 @@ final class InputBubbleHistoryPanelController: NSObject {
         clearButton = nil
         clearArmed = false
         clearDisarmWorkItem?.cancel()
+        // B306：复查循环随面板生命周期终止
+        settleWorkItem?.cancel()
+        settleWorkItem = nil
+    }
+
+    /// B306：历史面板收键盘复查循环（决策表 InputBubbleActivationPlan 与气泡主链共用，
+    /// Runner 直测三态真值表）。未落定（panel.isKeyWindow && NSApp.isActive）的拍重发
+    /// 激活三件套+搜索框第一响应者；预算耗尽落 WARN 留证；面板已关零动作。
+    private func settleActivationKeyboard(elapsedMs: Int) {
+        guard let panel, panel.isVisible else { return }
+        let step = InputBubbleActivationPlan.nextStep(
+            panelIsKey: panel.isKeyWindow,
+            appIsActive: NSApp.isActive,
+            elapsedMs: elapsedMs,
+            pollIntervalMs: InputBubbleTiming.activationPollIntervalMs,
+            budgetMs: InputBubbleTiming.activationBudgetMs
+        )
+        switch step {
+        case .settled:
+            return
+        case .giveUp:
+            log("[InputBubble] history panel activation not settled; keyboard may not reach search field", level: .warn, fields: [
+                "elapsedMs": String(elapsedMs)
+            ])
+        case .retryAfterMs(let delayMs):
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKey()
+            if let field = searchField {
+                panel.makeFirstResponder(field)
+            }
+            let item = DispatchWorkItem { [weak self] in
+                self?.settleActivationKeyboard(elapsedMs: elapsedMs + delayMs)
+            }
+            settleWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs), execute: item)
+        }
     }
 
     private func open(anchorFrame: CGRect, currentWindowID: UInt32?, fill: @escaping (String) -> Void) {
@@ -344,6 +382,13 @@ final class InputBubbleHistoryPanelController: NSObject {
         panel.makeKeyAndOrderFront(nil)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // B204 键盘闭环（⌘Y→打搜索词→Enter 填充）的前提：搜索框是第一响应者
+        if let field = searchField {
+            panel.makeFirstResponder(field)
+        }
+        // B306：activate 单发被系统冷却/事件处理期推迟时静默失败=面板看得见打不进字，
+        // 与 B305 唤起链/B306 点击回焦链同根因同药方——每拍重发复查循环。
+        settleActivationKeyboard(elapsedMs: 0)
         installMonitors()
         log("[InputBubble] history panel opened", fields: [
             "scope": String(describing: scope),

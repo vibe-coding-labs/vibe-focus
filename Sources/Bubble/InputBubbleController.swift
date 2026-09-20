@@ -599,12 +599,19 @@ final class InputBubbleController: NSObject {
     }
 
     /// B183：失焦后点击气泡 → 重新激活本 app 并恢复 textView 第一响应者（幂等）。
+    /// B306：activate 单发不可靠（系统对短时重复 activate 有冷却节流，鼠标事件
+    /// 处理期发起也会被推迟——B305 在唤起链实锤的同款坑，点击链此前从未享受同款
+    /// 修复），失败形态=「点得着气泡、打不进字」。发完三件套后接入 B305 每拍重发
+    /// 复查循环：未落定（panel.isKeyWindow && NSApp.isActive）的拍重发，预算内落定
+    /// 即返回（app 本就活跃时首拍 settled，零定时器开销）；仍失败落 WARN 留证。
+    /// ⌘Y 历史填充走本函数，同享重发保护。
     func refocusPanel() {
         guard phase == .open, panel != nil else { return }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         panel?.makeKey()
         textView?.window?.makeFirstResponder(textView)
+        settleActivationKeyboard(elapsedMs: 0)
     }
 
     /// B183：气泡内任意点击 → 回焦。本地监视器覆盖 textView 等子视图吃掉的 mouseDown
