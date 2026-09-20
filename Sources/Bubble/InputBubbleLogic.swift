@@ -409,6 +409,84 @@ enum InputBubbleTiming {
     /// 用户打字全无反应。预算与提交链同取 2000ms；成功路径首拍即返回。
     static let activationPollIntervalMs: Int = 100
     static let activationBudgetMs: Int = 2000
+    /// B308：粘贴落地验证轮询间隔（提交链 Return 前置校验）。
+    static let pasteSettlePollIntervalMs: Int = 30
+}
+
+/// 粘贴→Return 顺序竞速治理（B308）。
+/// 症状：气泡提交后文字进了输入框但 Return 没生效。根因：Cmd+V 在终端侧是
+/// 异步粘贴作业（读 pasteboard→分块写 pty，大文本/SSH 流控/负载下可持续 >80ms
+/// 甚至分块间歇写），而 Return 是键事件即时写 pty——两条独立通道，盲等 80ms
+/// 不构成顺序保证。两种失败形状同症：
+/// ① \r 先于粘贴写入：ClaudeCode 收到空输入上的 Enter（no-op），粘贴随后落地=文字在框内未发送；
+/// ② \r 落进分块粘贴字节流中间：被 bracketed paste 标记（ESC[200~…ESC[201~）包住，
+///    成了粘贴内容里的字面换行=文字（多行）在框内未提交。
+/// 治理：能读终端屏文本的 app（iTerm2/Terminal）走 AX 落地验证——看到粘贴尾部
+/// 上屏才发 Return（顺序获得实证）；验证不可用/超时退回尺寸感知延迟兜底
+/// （比旧盲等 80ms 对大文本给足余量），下限=旧常量，行为只松不紧。
+enum InputBubblePasteSettlePlan {
+    enum Mode: Equatable {
+        /// AX 落地验证（粘贴尾部上屏才发 Return）
+        case axVerify
+        /// 尺寸感知盲延迟（AX 不可用 app 或验证超时兜底）
+        case blindDelay
+    }
+
+    /// 终端屏文本可经 AXTextArea/AXValue 读回的 app（实测以真机复核为准，读不到自动降级）。
+    static let axCapableBundleIDs: Set<String> = [
+        "com.googlecode.iterm2",
+        "com.apple.Terminal",
+    ]
+
+    static func mode(forBundleID bundleID: String?) -> Mode {
+        guard let bundleID, axCapableBundleIDs.contains(bundleID) else { return .blindDelay }
+        return .axVerify
+    }
+
+    /// 尺寸感知兜底延迟：下限=旧盲等 80ms（小文本行为不变）；超过 2KB 后每 4KB
+    /// 加 60ms（覆盖分块粘贴与流控写入时长），上限 1200ms（再大也不无限等）。
+    static func fallbackDelayMs(textByteCount: Int) -> Int {
+        let extraSteps = max(0, (textByteCount - 2048 + 4095) / 4096)
+        return min(InputBubbleTiming.pasteToReturnDelayMs + extraSteps * 60, 1200)
+    }
+
+    /// AX 验证轮询预算：同形状给验证路径更足的时间（验证只在成功时提前，
+    /// 失败侧代价=超时后才发 Return，比盲等最多慢几百毫秒且顺序仍有序——
+    /// 超时场景是「粘贴真没上屏」，此时盲发 Return 本来就是旧缺陷行为）。
+    static func verifyBudgetMs(textByteCount: Int) -> Int {
+        let extraSteps = max(0, (textByteCount - 2048 + 4095) / 4096)
+        return min(350 + extraSteps * 100, 2500)
+    }
+
+    /// 粘贴尾部匹配长度（字符）：足以代表「这段文字上屏了」，短到不易被
+    /// 终端行折叠/裁剪破坏。
+    static let tailCharacterCount = 12
+
+    /// 终端屏渲染噪声：TUI 边框（ClaudeCode 输入框 │─ 等）、行折叠插入的空白、
+    /// 提示符符号。判定前双方都按此归一（去噪声后做包含匹配）。
+    static func normalizedForScreenMatch(_ s: String) -> String {
+        String(s.filter { char in
+            !char.isWhitespace && !terminalRenderNoise.contains(char)
+        })
+    }
+
+    static let terminalRenderNoise: Set<Character> = [
+        "│", "┃", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼", "─", "━", "═", "|", ">", "·",
+    ]
+
+    /// 落地判定：终端屏文本（归一后）包含粘贴尾部（归一后）。
+    /// - screenText nil/空 = 读不到（验证通道失效）→ false（调用方走超时兜底）；
+    /// - pastedText 去首尾空白后为空不会到这里（提交门已挡空白文本），
+    ///   防御性返回 false（不误发 Return）。
+    static func pasteLanded(screenText: String?, pastedText: String) -> Bool {
+        guard let screenText, !screenText.isEmpty else { return false }
+        let trimmed = pastedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let tail = String(trimmed.suffix(tailCharacterCount))
+        let needle = normalizedForScreenMatch(tail)
+        guard !needle.isEmpty else { return false }
+        return normalizedForScreenMatch(screenText).contains(needle)
+    }
 }
 
 /// 唤起收键盘重试决策（B305，纯函数直测）。

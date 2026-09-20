@@ -20,6 +20,32 @@ import Carbon
 // Sources/Bubble/InputBubbleController+Submission.swift — B151 自 InputBubbleController.swift
 // 按域拆出（逐字搬移零行为变更）：提交链的注入机械（等前台→窗口柄复核→键击投递→收尾）。
 // 注入门纯决策在 InputBubbleSubmitGate（RunnerInputBubbleTests 直测），本文件只做编排。
+// B308：Return 投递时序治理——粘贴落地验证（AX）+ 尺寸感知兜底，纯决策在
+// InputBubblePasteSettlePlan（RunnerInputBubbleTests 直测），本文件只做编排。
+
+/// Return 投递依据（取证字段，进日志与 crash context）。
+enum InputBubbleReturnLanding: String {
+    /// AX 验证：粘贴尾部已上屏
+    case axVerified
+    /// AX 验证预算耗尽（读不到/粘贴不上屏），兜底照发=旧行为下限
+    case verifyTimeout
+    /// 目标窗 AX 窗口取不到（瞬间态），兜底照发
+    case verifyNoAXWindow
+    /// app 不支持 AX 屏文本读取，尺寸感知盲延迟
+    case blindDelay
+}
+
+/// AXUIElement 跨队列承载盒（AXUIElement 非 Sendable，StrictConcurrency 下
+/// 显式盒传递；单元素单读零共享态）。
+private final class AXWindowBox: @unchecked Sendable {
+    let window: AXUIElement
+    init(_ window: AXUIElement) { self.window = window }
+}
+
+/// B308：粘贴落地验证的 AX 读取后台串行队列（深树遍历离开主线程，B305 教训）。
+private enum PasteSettleAXQueue {
+    static let queue = DispatchQueue(label: "vibefocus.inputbubble.pasteSettleAX")
+}
 
 extension InputBubbleController {
 
@@ -68,12 +94,18 @@ extension InputBubbleController {
     }
 
     func inject(steps: [InputBubbleKeyPlan.Step], target: Target, text: String) {
+        let settleMode = InputBubblePasteSettlePlan.mode(forBundleID: target.bundleID)
+        let bytes = text.utf8.count
         log("[InputBubble] injecting", fields: [
             "steps": steps.map { $0 == .paste ? "paste" : "return" }.joined(separator: ","),
+            "bytes": String(bytes),
+            "settle": settleMode == .axVerify ? "ax" : "blind",
             "windowID": String(target.windowID),
             "pid": String(target.pid)
         ])
-        CrashContextRecorder.shared.record("input_bubble_inject windowID=\(target.windowID) steps=\(steps.count)")
+        CrashContextRecorder.shared.record(
+            "input_bubble_inject windowID=\(target.windowID) steps=\(steps.count) bytes=\(bytes) settle=\(settleMode == .axVerify ? "ax" : "blind")"
+        )
         // B195：提交内容进全局历史（↑↓ 翻阅/跨窗恢复兜底），随后照旧清草稿。
         // B196：状态=已提交，带窗口归属（面板按窗过滤/草稿晋升依赖）。
         // abort 不清不记（abortSubmission 路径不经此处）。
@@ -86,30 +118,91 @@ extension InputBubbleController {
         // B162：注入放行即消费草稿（abort 不清——文本保留在草稿里，重开气泡可续）
         InputBubbleDraftStore.shared.clear(for: target.windowID)
 
-        // B176 提交后自动归位：决策在注入起点采集（窗态 580ms 注入窗口内不变），
-        // 执行在收尾块（Return 已落地）。仅气泡提交路径；abort 不归位（用户还需要这扇窗）。
+        let startedAt = Date()
+        // paste 恒在 t0（steps 契约：paste 首位或唯一）。B308 起与 Return 解耦：
+        // Return 不再盲等固定 80ms，按 settle 计划验证落地后再发（根因：终端侧
+        // Cmd+V 是异步分块粘贴作业，键事件与粘贴写入两条通道无顺序保证）。
+        if steps.contains(.paste) {
+            DispatchQueue.main.asyncAfter(deadline: .now()) { [weak self] in
+                self?.postKeyCombo(keyCode: CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
+            }
+        }
+        guard steps.contains(.returnKey) else {
+            // pasteOnly：无 Return，收尾节奏与旧行为一致（单步 totalMs=0 + 500ms）
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(InputBubbleTiming.clipboardRestoreDelayMs)) { [weak self] in
+                self?.restoreClipboardIfSafe()
+                self?.finishSubmission()
+            }
+            return
+        }
+        switch settleMode {
+        case .axVerify:
+            settlePasteThenReturn(target: target, text: text, startedAt: startedAt)
+        case .blindDelay:
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: bytes))
+            ) { [weak self] in
+                self?.postReturn(landedBy: .blindDelay, target: target, text: text, startedAt: startedAt)
+            }
+        }
+    }
+
+    /// B308：粘贴落地验证循环——看到粘贴尾部上屏才发 Return。
+    /// 每拍复查前台（NSWorkspace 非 AX，廉价）：注入窗口期用户切走 → abort 不发
+    /// Return（粘贴已落框，宁缺勿错，与提交门「宁可不注入不可射错窗」同则）。
+    /// AX 屏文本读在后台串行队列（深树遍历不占主线程，B305 教训；messaging
+    /// timeout 封顶单次调用）；读不到/预算耗尽 → 仍发 Return（=旧行为下限，
+    /// 绝不因验证通道失灵而吞提交）。
+    func settlePasteThenReturn(target: Target, text: String, startedAt: Date) {
+        let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        guard elapsedMs < InputBubblePasteSettlePlan.verifyBudgetMs(textByteCount: text.utf8.count) else {
+            postReturn(landedBy: .verifyTimeout, target: target, text: text, startedAt: startedAt)
+            return
+        }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid else {
+            abortSubmission(reason: "frontmost lost during paste settle", target: target)
+            return
+        }
+        guard let axWindow = WindowManager.shared.focusedWindow(for: target.pid) else {
+            postReturn(landedBy: .verifyNoAXWindow, target: target, text: text, startedAt: startedAt)
+            return
+        }
+        let box = AXWindowBox(axWindow)
+        PasteSettleAXQueue.queue.async { [weak self] in
+            let screenText = WindowManager.terminalScreenText(of: box.window)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.phase == .submitting else { return }
+                if InputBubblePasteSettlePlan.pasteLanded(screenText: screenText, pastedText: text) {
+                    self.postReturn(landedBy: .axVerified, target: target, text: text, startedAt: startedAt)
+                } else {
+                    self.settlePasteThenReturn(target: target, text: text, startedAt: startedAt)
+                }
+            }
+        }
+    }
+
+    /// B308：Return 落地（验证通过/兜底）→ 投递 Return → 收尾。
+    /// B176 归位决策采集点从注入起点移到 Return 落点（Return 时点不再固定 80ms，
+    /// 决策所需的窗态在投递瞬间读更新鲜），执行仍在收尾块（Return 已落地后）。
+    func postReturn(landedBy: InputBubbleReturnLanding, target: Target, text: String, startedAt: Date) {
+        let waitedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        log("[InputBubble] return posting", fields: [
+            "landedBy": landedBy.rawValue,
+            "waitedMs": String(waitedMs),
+            "windowID": String(target.windowID)
+        ])
+        CrashContextRecorder.shared.record(
+            "input_bubble_return landedBy=\(landedBy.rawValue) waitedMs=\(waitedMs) windowID=\(target.windowID)"
+        )
+        postKeyCombo(keyCode: CGKeyCode(kVK_Return), flags: [])
         let autoRestoreDecision = InputBubbleAutoRestoreGate.decide(
             preferenceEnabled: InputBubblePreferences.autoRestoreOnSubmit,
-            submits: steps.contains(.returnKey),
+            submits: true,
             hasToggleRecord: ToggleEngine.shared.load(windowID: target.windowID) != nil,
             isOnMainScreen: WindowManager.shared.isWindowOnMainScreen(windowID: target.windowID)
         )
         let restoreWindowID = target.windowID
-
-        for (index, step) in steps.enumerated() {
-            let delayMs = index * InputBubbleTiming.pasteToReturnDelayMs
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
-                switch step {
-                case .paste:
-                    self?.postKeyCombo(keyCode: CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
-                case .returnKey:
-                    self?.postKeyCombo(keyCode: CGKeyCode(kVK_Return), flags: [])
-                }
-            }
-        }
-
-        let totalMs = max(steps.count - 1, 0) * InputBubbleTiming.pasteToReturnDelayMs
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(totalMs + InputBubbleTiming.clipboardRestoreDelayMs)) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(InputBubbleTiming.clipboardRestoreDelayMs)) { [weak self] in
             self?.restoreClipboardIfSafe()
             self?.autoRestoreIfDecided(decision: autoRestoreDecision, windowID: restoreWindowID)
             self?.finishSubmission()

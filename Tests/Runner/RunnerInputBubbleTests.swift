@@ -397,6 +397,99 @@ extension RunnerHarness {
         }
         let capacityPruned = InputBubbleDraftStore.prune(aged, now: now, maxAge: 7 * 24 * 3600, capacity: 32)
         check("prune: 容量裁剪保留最新 32 条", capacityPruned.count == 32 && capacityPruned["39"] != nil && capacityPruned["7"] == nil)
+
+        // --- B308 粘贴→Return 顺序竞速治理（「文字进框但不发送」回归锁）---
+        // 根因：Cmd+V 在终端侧是异步分块粘贴作业，Return 键事件盲等 80ms 不构成
+        // 顺序保证（\r 可先于粘贴写入或落进 bracketed paste 字节流中间，两者同症=
+        // 文字上屏但 ClaudeCode 不提交）。修复=iTerm2/Terminal 走 AX 落地验证，
+        // 其余/超时走尺寸感知兜底延迟。以下锁死决策层全部行为面。
+        //
+        // ① 分流模式：AX 可读 app 走验证，其余（nil/未知 bundle）走盲延迟
+        check("pasteSettle: iTerm2 → axVerify",
+              InputBubblePasteSettlePlan.mode(forBundleID: "com.googlecode.iterm2") == .axVerify)
+        check("pasteSettle: Terminal.app → axVerify",
+              InputBubblePasteSettlePlan.mode(forBundleID: "com.apple.Terminal") == .axVerify)
+        check("pasteSettle: VS Code → blindDelay（AX 屏文本不可读）",
+              InputBubblePasteSettlePlan.mode(forBundleID: "com.microsoft.VSCode") == .blindDelay)
+        check("pasteSettle: 未知 app → blindDelay",
+              InputBubblePasteSettlePlan.mode(forBundleID: "com.example.unknown") == .blindDelay)
+        check("pasteSettle: bundle nil → blindDelay",
+              InputBubblePasteSettlePlan.mode(forBundleID: nil) == .blindDelay)
+        // ② 兜底延迟：小文本=旧盲等 80ms（行为不变下限），大文本按 4KB 步进给足
+        // 分块粘贴余量，封顶 1200ms（旧实现的固定 80ms 正是竞速窗口本身）
+        check("pasteSettle: 0B → 80ms（旧下限不变）",
+              InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: 0) == 80)
+        check("pasteSettle: 2KB → 80ms（基线内不涨价）",
+              InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: 2048) == 80)
+        check("pasteSettle: 2049B → 140ms（超基线即起涨）",
+              InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: 2049) == 140)
+        check("pasteSettle: 6144B → 140ms（4KB 步进边界含）",
+              InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: 6144) == 140)
+        check("pasteSettle: 6145B → 200ms（步进边界外进阶）",
+              InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: 6145) == 200)
+        check("pasteSettle: 1MB → 封顶 1200ms",
+              InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: 1_048_576) == 1200)
+        // 单调性性质锁：字节越多等待越不缩（防未来改公式引入回退）
+        var prevDelay = 0
+        var delayMonotone = true
+        for bytes in stride(from: 0, through: 200_000, by: 4096) {
+            let d = InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: bytes)
+            if d < prevDelay { delayMonotone = false }
+            prevDelay = d
+        }
+        check("pasteSettle: 兜底延迟随字节单调不减", delayMonotone)
+        // ③ 验证预算：同形状、更足（验证失败侧只慢几百 ms，换来顺序实证）
+        check("pasteSettle: 0B 验证预算 350ms",
+              InputBubblePasteSettlePlan.verifyBudgetMs(textByteCount: 0) == 350)
+        check("pasteSettle: 大文本验证预算封顶 2500ms",
+              InputBubblePasteSettlePlan.verifyBudgetMs(textByteCount: 1_048_576) == 2500)
+        check("pasteSettle: 验证预算 ≥ 兜底延迟（超时兜底不早于盲等）",
+              InputBubblePasteSettlePlan.verifyBudgetMs(textByteCount: 0)
+                  >= InputBubblePasteSettlePlan.fallbackDelayMs(textByteCount: 0))
+        // ④ 落地判定：粘贴尾部（去终端渲染噪声）出现在屏文本即认定落地
+        let longPrompt = String(repeating: "请审查这段代码的边界条件，", count: 8) + "然后给出修复方案"
+        check("pasteSettle: 尾部原文上屏 → 落地",
+              InputBubblePasteSettlePlan.pasteLanded(
+                screenText: "> " + longPrompt + "\n│", pastedText: longPrompt))
+        // TUI 边框/折叠噪声不得破坏匹配：屏上渲染的是粘贴尾部（needle=末 12 字符），
+        // 中间被边框/空格打断仍须命中
+        let tailBody = "long prefix content final answer summary line"
+        check("pasteSettle: 边框与空格打断尾部仍认定落地",
+              InputBubblePasteSettlePlan.pasteLanded(
+                screenText: "…header\n│ abcdef " + String(tailBody.suffix(12)) + " rest…\n└",
+                pastedText: tailBody))
+        // 多行粘贴：屏上按行渲染夹边框，归一后匹配
+        let multiline = "第一行\n第二行 tail-of-prompt"
+        check("pasteSettle: 多行粘贴折叠渲染仍认定落地",
+              InputBubblePasteSettlePlan.pasteLanded(
+                screenText: "│ 第一行 │\n│ 第二行 tail-of-prompt │\n└",
+                pastedText: multiline))
+        // 屏文本没有尾部 → 未落地（验证循环继续等，不能误发 Return）
+        check("pasteSettle: 尾部不在屏上 → 未落地",
+              !InputBubblePasteSettlePlan.pasteLanded(
+                screenText: "> 完全无关的终端输出\n$ ", pastedText: longPrompt))
+        // 屏文本读不到（nil/空）→ 未落地（走超时兜底，不误判）
+        check("pasteSettle: 屏文本 nil → 未落地",
+              !InputBubblePasteSettlePlan.pasteLanded(screenText: nil, pastedText: longPrompt))
+        check("pasteSettle: 屏文本空 → 未落地",
+              !InputBubblePasteSettlePlan.pasteLanded(screenText: "", pastedText: longPrompt))
+        // 短文本（不足 12 字符）整段做 needle
+        check("pasteSettle: 短文本整段匹配",
+              InputBubblePasteSettlePlan.pasteLanded(screenText: "> 你好世界", pastedText: "你好世界"))
+        check("pasteSettle: CJK 尾部跨边框匹配",
+              InputBubblePasteSettlePlan.pasteLanded(
+                screenText: "│ " + String("很长的前缀内容……测试尾部锚点".suffix(12)) + "│",
+                pastedText: "很长的前缀内容……测试尾部锚点"))
+        // 粘贴文本本身空白（提交门已挡，防御性不误发）
+        check("pasteSettle: 粘贴文本纯空白 → 不认定落地",
+              !InputBubblePasteSettlePlan.pasteLanded(screenText: "> x", pastedText: "   "))
+        // ⑤ 提交链行为面回归：steps 契约不变（paste 恒先于 return，executor 只认这个序）
+        check("pasteSettle: submit 步序回归 = paste→return",
+              InputBubbleKeyPlan.steps(for: .submit) == [.paste, .returnKey])
+        check("pasteSettle: 盲等常量仍是下限事实源（80ms）",
+              InputBubbleTiming.pasteToReturnDelayMs == 80)
+        check("pasteSettle: 验证轮询间隔 30ms",
+              InputBubbleTiming.pasteSettlePollIntervalMs == 30)
     }
 }
 

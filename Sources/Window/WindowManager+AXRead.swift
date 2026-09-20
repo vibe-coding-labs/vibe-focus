@@ -142,4 +142,38 @@ extension WindowManager {
         }
         return settable.boolValue
     }
+
+    /// B308：读终端窗口的屏幕文本（首个 AXTextArea 的 AXValue，深度优先）。
+    /// 提交链粘贴落地验证专用：目标窗此刻是前台 key window（可见 space，
+    /// 不在铁律的副屏独立 Space 阻塞禁区）；读不到/无文本区返回 nil，验证
+    /// 路径自动降级超时兜底，绝不阻塞提交。
+    /// nonisolated 纯 C 调用：可在后台队列执行（深树遍历不上主线程，B305 教训）。
+    nonisolated static func terminalScreenText(of window: AXUIElement) -> String? {
+        // 单次 AX 调用耗时封顶：读不到快速失败走降级，不拖死验证循环
+        //（虽在后台队列，预算仍要可控）。
+        AXUIElementSetMessagingTimeout(window, 0.15)
+        var visited = 0
+        func walk(_ element: AXUIElement) -> String? {
+            guard visited < 40 else { return nil }
+            visited += 1
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            if let role = roleRef as? String, role == kAXTextAreaRole {
+                var valueRef: CFTypeRef?
+                let status = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef)
+                if status == .success, let text = valueRef as? String, !text.isEmpty {
+                    return text
+                }
+                // 文本区读不到值：该分支无产出，继续找兄弟/子树
+            }
+            var childrenRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+                  let children = childrenRef as? [AXUIElement] else { return nil }
+            for child in children {
+                if let found = walk(child) { return found }
+            }
+            return nil
+        }
+        return walk(window)
+    }
 }
