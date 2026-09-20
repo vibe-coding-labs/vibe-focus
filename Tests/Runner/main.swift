@@ -215,6 +215,7 @@ final class FakeAuditor: RestoreAuditing {
     func runAllTests() {
         runRestoreOrchestrationTests()
         runRestoreStageTests()
+        runRestoreStageClampTests()
         runLayoutGridTests()
         runGridTargetE2E()
         runGridTargetLogicTests()
@@ -472,6 +473,8 @@ final class FakeAuditor: RestoreAuditing {
         runTitleEditorAXWriteTests()
         runSoundResolveAndCrashStateTests()
         runFindingMakeIdentityTests()
+        runFindingMatchedIdentityTests()
+        runStoreDatabaseTests()
         runTitleEditorCaptureTests()
         runAudioEngineProtocolTests()
         runReadOnlyTailTests()

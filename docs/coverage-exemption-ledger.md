@@ -146,7 +146,7 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 
 | 文件 (missed) | 提缝方向 |
 |---|---|
-| WindowManager+Finding (49) | CGWindowList 窗口匹配链，注入化直测 |
+| ~~WindowManager+Finding (49)~~ | ✅ B299 已清主体：matchedWindowIdentity 尾段提纯（行为逐行等价）后注入候选表，策略 1/2 两日志分支+身份构造编排直测；残 15 行=captureFocusedWindowIdentity 三守卫（无前台 app/无焦点窗/无 handle，14 行）+ findClaudeCodeWindow 真实命中转发 return（1 行）→ 前台环境态留白归 B 态 AXRead 通道 |
 | ~~SoundManager (45)~~ | ✅ B273 已清（钳制纯逻辑+API 往返还原） |
 | ~~ScreenIndexPreferences (40)~~ | ✅ B273 已清（savesLegacyUpgrade=false 注入，legacy 迁移/垃圾数据直测，零落库） |
 | ~~ClaudeHookServer (25)~~ | ✅ B274 已清（端口守卫低/高双分支直测） |
@@ -154,8 +154,14 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 | ~~VoiceAnnouncementManager+RestoreOutcome (27)~~ | ✅ B276 复核改判：plan 纯映射已测（B229），残量=announce 发声接线 → C4 出声豁免 |
 | ~~YabaiClient (28)~~ | ✅ B276 复核改判：fallback 链已测（B271），残支=cache/candidates 段执行顺序依赖（先到测试先填充静态缓存，无法稳定认领）→ C7 顺序依赖豁免 |
 | ~~SpaceController (27)~~ | ✅ B279 部分清账（refresh 节流窗分支+updateEnabledState 迁移）；余量=后台 fork 应用段归 C7 |
-| WindowStateStore+Database (26) | 临时库 schema 迁移/错误分支 |
-| ~~TargetResolve (23)~~ | ✅ B277 复核改判：selectionPreview 静态缝已测（B106/HookWalk），残支=AX/E2E 域 | TTYWriter (23)✅B278 已清(open 失败分支) / SessionActivityTracker (23)✅B278 已清(prune 年龄容量淘汰+parse 坏条目跳过) / Toggle+Restore+Stages (20) / Support+Diagnostics (20) 残支零星提缝 |
+| ~~WindowStateStore+Database (26)~~ | ✅ B299 已清：env 注入缝（VIBEFOCUS_DB_PATH 父目录自动创建）+ 垃圾文件库 WAL/schema/prepare 连锁败 + 第二连接 BEGIN EXCLUSIVE 写锁 BUSY step 失败 + PK 迁移三态（成功含 OR IGNORE 去重/建表失败 windows_v2 被占/拷贝失败回滚 DROP）；残 1 行=home 分支 .vibefocus 建目录（需 HOME 无 .vibefocus，跨测试污染风险不提缝） |
+| ~~TargetResolve (23)~~ | ✅ B277 复核改判：selectionPreview 静态缝已测（B106/HookWalk），残支=AX/E2E 域 | TTYWriter (23)✅B278 已清(open 失败分支) / SessionActivityTracker (23)✅B278 已清(prune 年龄容量淘汰+parse 坏条目跳过) / ~~Toggle+Restore+Stages (20)~~ ✅ B299 已清（preMoveSpace=nil 预取跳过 + clamp 重试成功路 restore_clamped 闭环，exactNSScreen 环境门控防假红） / ~~Support+Diagnostics (20)~~ ✅ B299 复核改判：全部为装机态分支 → 豁免台账 C7-装机态（见下） |
+
+#### A 态复核改判·装机态锁死（B299）
+
+| 文件 (missed) | 归因 | 不可达证明 |
+|---|---|---|
+| Support+Diagnostics (20) | ①BuildCapabilities MISSING 分支：Runner 二进制经同一构建链编译，caps 恒在（missingCaps.isEmpty）→「装机漂移」分支语义上不可达；②execPath "nil"/unreadable 分支：CLI Bundle.main.executableURL 恒非 nil；③codesign/security unable-to-run 分支：/usr/bin 固定路径进程恒存在；④codesign stdout 非空分支：codesign -dv 输出恒走 stderr；⑤findAppBundlePaths mdfind 失败分支：mdfind 恒存在且 exit 0；⑥security stderr 非空分支：需删除 VibeFocus 签名证书（破坏用户钥匙串） | 全部为「装机环境异常」告警分支，触发条件=破坏性改变本机装机状态；替代验证=生产 --diagnose 报告冒烟（B292 logAvailability 先例） |
 
 #### B 态·E2E 通道覆盖（≈900 行，25 文件）
 

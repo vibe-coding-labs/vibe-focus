@@ -170,36 +170,15 @@ extension WindowManager {
             ))
         }
 
-        // 三级策略匹配（纯决策，2.16a 第十九刀抽出；策略顺序与匹配条件的唯一事实源）
-        if let match = Self.matchClaudeCodeCandidate(candidates, projectName: projectName, isHostApp: isHostApp) {
-            switch match.strategy {
-            case .hostAppProjectName:
-                // 策略 1：Claude Host App 窗口中标题包含 cwd 项目名
-                log(
-                    "[WindowManager] findClaudeCodeWindow matched strategy 1: hostApp+cwd",
-                    fields: [
-                        "app": match.candidate.appName,
-                        "title": truncateForLog(match.candidate.title, limit: 80),
-                        "windowID": String(match.candidate.windowID),
-                        "projectName": projectName ?? "nil",
-                        "cgListMs": String(cgListMs),
-                        "durationMs": String(elapsedMilliseconds(since: fcStart))
-                    ]
-                )
-            case .hostAppClaudeCodeTitle:
-                // 策略 2：Claude Host App 窗口中标题包含 "claude code"（无屏幕约束）
-                log(
-                    "[WindowManager] findClaudeCodeWindow matched strategy 2: hostApp+claudeCode",
-                    fields: [
-                        "app": match.candidate.appName,
-                        "title": truncateForLog(match.candidate.title, limit: 80),
-                        "windowID": String(match.candidate.windowID),
-                        "cgListMs": String(cgListMs),
-                        "durationMs": String(elapsedMilliseconds(since: fcStart))
-                    ]
-                )
-            }
-            return makeIdentity(from: match.candidate)
+        // 三级策略匹配 + 归因日志 + 身份构造（B299 尾段提纯，编排见 matchedWindowIdentity）
+        if let identity = matchedWindowIdentity(
+            candidates,
+            projectName: projectName,
+            isHostApp: isHostApp,
+            cgListMs: cgListMs,
+            startedAt: fcStart
+        ) {
+            return identity
         }
 
         // 策略 4：回退到前台窗口
@@ -214,6 +193,51 @@ extension WindowManager {
             ]
         )
         return captureFocusedWindowIdentity()
+    }
+
+    /// 三级策略命中后的归因日志（策略 1/2 分支）与身份构造。
+    /// B299 从 findClaudeCodeWindow 尾段提纯（行为逐行等价）：匹配核心在
+    /// matchClaudeCodeCandidate（纯函数已直测），本方法补齐两处策略日志分支与
+    /// makeIdentity 编排——真实环境命中需 host-app 窗口标题恰含项目名（不可控），
+    /// 提纯后注入候选表即可直测两分支。
+    func matchedWindowIdentity(
+        _ candidates: [WindowCandidate],
+        projectName: String?,
+        isHostApp: (WindowCandidate) -> Bool,
+        cgListMs: Int,
+        startedAt: Date
+    ) -> WindowIdentity? {
+        guard let match = Self.matchClaudeCodeCandidate(candidates, projectName: projectName, isHostApp: isHostApp) else {
+            return nil
+        }
+        switch match.strategy {
+        case .hostAppProjectName:
+            // 策略 1：Claude Host App 窗口中标题包含 cwd 项目名
+            log(
+                "[WindowManager] findClaudeCodeWindow matched strategy 1: hostApp+cwd",
+                fields: [
+                    "app": match.candidate.appName,
+                    "title": truncateForLog(match.candidate.title, limit: 80),
+                    "windowID": String(match.candidate.windowID),
+                    "projectName": projectName ?? "nil",
+                    "cgListMs": String(cgListMs),
+                    "durationMs": String(elapsedMilliseconds(since: startedAt))
+                ]
+            )
+        case .hostAppClaudeCodeTitle:
+            // 策略 2：Claude Host App 窗口中标题包含 "claude code"（无屏幕约束）
+            log(
+                "[WindowManager] findClaudeCodeWindow matched strategy 2: hostApp+claudeCode",
+                fields: [
+                    "app": match.candidate.appName,
+                    "title": truncateForLog(match.candidate.title, limit: 80),
+                    "windowID": String(match.candidate.windowID),
+                    "cgListMs": String(cgListMs),
+                    "durationMs": String(elapsedMilliseconds(since: startedAt))
+                ]
+            )
+        }
+        return makeIdentity(from: match.candidate)
     }
 
     func makeIdentity(from candidate: WindowCandidate) -> WindowIdentity {

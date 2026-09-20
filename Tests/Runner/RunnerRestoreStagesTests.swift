@@ -92,4 +92,51 @@ extension RunnerHarness {
                   || true)
         }
     }
+
+    // B299：clamp 重试成功路（P1 保守退让闭环）+ 预取跳过分支。
+    // clamp 块要求 yabai 屏号能映射真实 NSScreen（匹配表或表外兜底）——环境门控：
+    // 映射不可得时如实跳过（不产假红），健康环境/E2E 全量打穿。
+    func runRestoreStageClampTests() {
+        let record = ToggleRecord(
+            windowID: 42, pid: 1, bundleIdentifier: "test", appName: "t",
+            origFrame: CGRect(x: 100, y: 100, width: 400, height: 300),
+            sourceSpace: 1, sourceDisplay: 1, sourceYabaiDisp: 1, sourceDispSpace: 1,
+            targetFrame: CGRect(x: 100, y: 100, width: 400, height: 300),
+            targetDisplay: 1, toggledAt: Date(), sessionID: nil, reason: "manual")
+
+        // ===== E. preMoveSpace=nil → 守卫预取跳过（guardPrefetchedWindows=nil）=====
+        do {
+            let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: nil)
+            let ctx = ToggleEngine.performSourcePreSwitch(
+                record: record, channels: ch, windowID: 42, trace: "b299-e")
+            check("restoreStage: preMoveSpace nil → 预取跳过（nil 表）",
+                  ctx.preMoveSpace == nil && ctx.guardPrefetchedWindows == nil)
+        }
+
+        // ===== F. 屏外 origFrame → 夹进源屏幂等重试成功（restore_clamped 闭环）=====
+        guard SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: 1) != nil else {
+            check("restoreStage: clamp 重试成功路（环境无屏号映射，跳过）", true)
+            return
+        }
+        do {
+            let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
+            let rec = FakeRecords(record: record)
+            let win = FakeWindows(findResult: nil, moveResult: true)
+            win.displayContextResult = (yabaiIndex: nil, displayID: nil) // origFrame 落所有屏之外
+            let aud = FakeAuditor()
+            let pre = ToggleEngine.RestorePreMoveContext(
+                preMoveSpace: 1, spaceExact: true, guardPrefetchedWindows: [])
+            let outcome = ToggleEngine.performMoveFailureStage(
+                record: record, windowID: 42, triggerSource: "b299", trace: "b299-clamp",
+                spaceExact: true, preMove: pre, windows: win, channels: ch, records: rec, auditor: aud)
+            if case .restored = outcome { check("restoreStage: clamp 重试成功产出 restored", true) } else { check("restoreStage: clamp 重试成功产出 restored", false) }
+            check("restoreStage: clamp 重试成功清记录", rec.clearCalls == 1)
+            check("restoreStage: clamp 重试审计带 clampedRestore 标记",
+                  aud.events.contains {
+                      $0.eventType == "restore_success" && $0.details["clampedRestore"] == "true"
+                  })
+            check("restoreStage: clamp 重试以 restore_clamped 阶段直写一次",
+                  win.moveCalls.count == 1 && win.moveCalls[0].stage == "restore_clamped")
+        }
+    }
 }

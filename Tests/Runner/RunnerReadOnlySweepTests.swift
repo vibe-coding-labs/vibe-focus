@@ -63,3 +63,48 @@ extension RunnerHarness {
               ghost.bundleIdentifier == nil && ghost.windowID == 43)
     }
 }
+
+// MARK: - B299 追加：matchedWindowIdentity 两策略日志分支注入直测
+
+extension RunnerHarness {
+    func runFindingMatchedIdentityTests() {
+        print("\n=== FindingMatchedIdentity (B299) ===")
+        // 真实环境命中需 host-app 窗口标题恰含 cwd 项目名（不可控）；B299 提纯后
+        // 注入候选表确定性打穿策略 1/2 两日志分支 + 身份构造编排。
+        do {
+            let wm = WindowManager()
+            let host = WindowManager.WindowCandidate(
+                windowID: 901, pid: 100_001, appName: "iTerm2",
+                bundleIdentifier: "com.googlecode.iterm2", title: "vibe-focus-cov271 — zsh")
+            let nonHost = WindowManager.WindowCandidate(
+                windowID: 902, pid: 100_002, appName: "Safari",
+                bundleIdentifier: "com.apple.Safari", title: "vibe-focus-cov271 in tab")
+            let claudeTitle = WindowManager.WindowCandidate(
+                windowID: 903, pid: 100_001, appName: "iTerm2",
+                bundleIdentifier: nil, title: "Claude Code — session")
+            let isHost = { (c: WindowManager.WindowCandidate) in c.appName == "iTerm2" }
+
+            // 策略 1：host-app + 标题含 cwd 项目名（非 host 同标题窗不参战）
+            let m1 = wm.matchedWindowIdentity(
+                [nonHost, host], projectName: "vibe-focus-cov271", isHostApp: isHost,
+                cgListMs: 3, startedAt: Date())
+            check("finding: 策略1 hostApp+cwd 命中并构造身份",
+                  m1?.windowID == 901 && m1?.appName == "iTerm2"
+                  && m1?.title == "vibe-focus-cov271 — zsh")
+            // projectName nil → 策略 1 不启用；标题无 "claude code" → 整体 nil（调用方回退前台）
+            let noMatch = wm.matchedWindowIdentity(
+                [host], projectName: nil, isHostApp: isHost, cgListMs: 1, startedAt: Date())
+            check("finding: 无项目名且无 claude code 标题 → nil", noMatch == nil)
+            // 策略 2：projectName nil 时 host-app 标题含 "claude code" 命中
+            let m2 = wm.matchedWindowIdentity(
+                [host, claudeTitle], projectName: nil, isHostApp: isHost,
+                cgListMs: 2, startedAt: Date())
+            check("finding: 策略2 hostApp+claudeCode 命中", m2?.windowID == 903)
+            // 策略 1 优先于策略 2：projectName 与 claude code 标题同时可得时取策略 1
+            let m3 = wm.matchedWindowIdentity(
+                [claudeTitle, host], projectName: "vibe-focus-cov271", isHostApp: isHost,
+                cgListMs: 2, startedAt: Date())
+            check("finding: 策略1 优先于策略2", m3?.windowID == 901)
+        }
+    }
+}
