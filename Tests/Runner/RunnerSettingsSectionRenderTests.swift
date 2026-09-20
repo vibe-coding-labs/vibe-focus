@@ -536,3 +536,27 @@ extension RunnerHarness {
               && ScreenIndexPreferences.default.opacity > 0 && ScreenIndexPreferences.default.opacity <= 1)
     }
 }
+
+// MARK: - B288：Settings 共通分区 ImageRenderer 渲染补充
+
+extension RunnerHarness {
+    func runSettingsCommonSectionRenderTests() {
+        let view = SettingsView()
+
+        // 各分区 ImageRenderer 渲染验证（构建机器全树求值零崩溃）
+        let sections: [(String, any View)] = [
+            ("overlaySection", view.overlaySection),
+            ("workspaceSection", view.workspaceSection),
+            ("antiDisturbRows", view.antiDisturbRows),
+            ("projectRulesSection", view.projectRulesSection),
+            ("customAudioFileRows", view.customAudioFileRows),
+            ("terminalGridSection", view.terminalGridSection),
+            ("claudeHookSection", view.claudeHookSection),
+            ("codexSection", view.codexSection),
+        ]
+        for (name, section) in sections {
+            let renderer = ImageRenderer(content: AnyView(section))
+            check("commonRender: \(name) 渲染出图", renderer.nsImage != nil)
+        }
+    }
+}
