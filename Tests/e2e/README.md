@@ -17,6 +17,7 @@
 | `VIBEFOCUS_AXWRITE_E2E=1` | AXWrite 编排层逐函数取证：resizeViaAX 同屏收窄、apply 两阶段 size+position（yabai 读回对账） | iTerm2、yabai；清理只用 yabai scoped 通道（⚠️iTerm2 AppleScript id 与 yabai id 不同源，close every window 会危及用户窗） |
 | `VIBEFOCUS_TITLE_E2E=1` | 终端标题定向改名（Ctrl+T 链路）：tty 寻址命中自建会话、写入生效、双端自关清理 | iTerm2、Terminal、yabai |
 | `VIBEFOCUS_HOTKEY_E2E=1` | HotKey 三件套真机验证：Carbon 注册全家族（primary/Ctrl+T/气泡/摆位表）+注销、CGEventTap 创建/使能/移除、Fallback monitors 成对安装移除、handleFallbackEvent 合成非匹配键只读路由。⚠️注册即系统级生效，同方法内立即全量注销（暴露窗 <100ms）；持久留白=handleHotKeyEvent 真实 EventRef 路由归生产观察 | 证书签名 runner、本机 AX 授权 |
+| `VIBEFOCUS_OVERLAY_E2E=1` | Overlay 家族真窗链：showOverlays/hideOverlays/updateOverlayPositions/updateOverlaysInPlace 全家、气泡抑制开关、crash-loop 熔断守卫、triggerForceRefresh 重刷新+去重广播、refreshSpaceIndices 后台 Task 真实 yabai 落账。只动自家 borderless 窗（ignoresMouseEvents，不抢焦点），结束 hideOverlays 归零 | 本机 yabai；跑前 caffeinate -u 唤醒 + -d 压休眠 |
 
 > B56 起 E2E 用例代码分布在 `Tests/Runner/Runner*E2E*.swift`（`RunnerHarness` 的
 > extension，如 GRID_TARGET→RunnerGridTargetE2ETests.swift）；新增 E2E = 新建域

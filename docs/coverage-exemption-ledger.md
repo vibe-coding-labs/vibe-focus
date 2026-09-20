@@ -83,6 +83,7 @@
 | **气泡真面板域** | `VIBEFOCUS_BUBBLE_PANEL_E2E=1` | ✅ **B255 新建，真机绿**（summon/dismiss/锚定全链） |
 | **SessionRestore 真恢复域** | `VIBEFOCUS_SESSION_RESTORE_E2E=1` | ✅ 既有七腿通道（捕获审计/双屏恢复/claude resume 注入/skipAlive），B257 登记入账 |
 | **AXWrite 编排层** | `VIBEFOCUS_AXWRITE_E2E=1` | ✅ **B253 新建，真机绿**（B252 号被并行线占用） |
+| **Overlay 家族真窗链** | `VIBEFOCUS_OVERLAY_E2E=1` | ✅ **B301 新建，真机绿**（3628/3628；OverlayWindow 5→1、+Display 100→22、base 87→76；残行=SIGUSR1 处理体 C5+空延迟表功能关死+查询失败分支 getYabaiPath 注入不可达归 C7） |
 | SessionRestore 真恢复域 | 待建 | ⬜（restore 链已有真机人工闭环，待 env 门控自动化） |
 
 ## ⚠️ 收口运维纪律（B259 联跑实测教训，2026-09-20）
@@ -172,6 +173,8 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 #### B 态·E2E 通道覆盖（≈900 行，25 文件）
 
 **B300（2026-09-20）B 态清账首批 5 项**：TerminalUsageTracker 22→0（**100%**，合成 NSWorkspace 激活通知直投 workspace 通知中心+RunLoop 泵，零真实激活）、SessionRestorePlanner 6→1、ShellRunner 9→1（幽灵可执行两入口/超时 terminate 两变体/孙进程占管道 grace 两入口）、ToggleEngine 6→2、ClaudeSessionLocator 6→2（五入口缺省 runner 参数路径幽灵输入打穿）；Runner 3585→3614 全绿、全口径 72.50%→73.18%。B 态余量=真机域（按键注入/AX 写/真实面板），归既有 E2E 通道。
+
+**B301（2026-09-20）Overlay 家族 E2E 通道开建**：`VIBEFOCUS_OVERLAY_E2E=1`（Tests/e2e/README 已登记）——真窗链全家+抑制开关+熔断守卫+force refresh 双分支+后台 Task 真实 yabai 落账；默认门禁恒跑离屏生命周期节（不 orderFront）。家族 missed 352→188（E2E 模式实测），TOTAL 全口径 73.18%→73.48%。⚠️复核提示：ScreenIndexPreferences 66 missed 为并行线「进程级持久化沙箱修复」（0.0.81）新增代码，B273 清账注记对该文件失效待重审；+SpaceQuery 残 18 行=yabai 级失败注入经 preferences.yabaiPath 不可达（getYabaiPath 仅消费于 getPerScreenSpaceIndexAsync 单点）归 C7；+Signal 残 55 行=SIGUSR1 处理体（C5，B234 DispatchSourceSignal CLI 不投递）+signalFollowUpRefreshDelays 空表功能关死体。
 
 InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreController(18)/Planner(6)/Store(2)/PaneClassifier(1)/RemoteSessionProbe(1)/SSHCommandParser(2, 真恢复通道) · OverlayWindow(5)/+Refresh(18)/+SpaceQuery(18)/SpaceSnapshot(3, overlay 真窗域) · WindowManager+AXRead(8)/+ScreenPosition(4)/+TerminalContext+Helpers(4)/+Toggle+FocusFallback(19, pickFallback 已测+AX 边支) · Space/CoordinateKit+Screen(7)/+Context(21)/+Move(32, toggled=AXWrite/SIZE 通道)/NativeSpaceBridge(18) · Toggle/ToggleEngine(6) · Hook/HookEventHandler+Remote(1)/+Notification(1)/SessionWindowRegistry 三件(21)/SessionPanelLogic(2) · TerminalGrid/ClaudeSessionLocator(6)/ScreenLayoutMapper(1)/TerminalAutomationScript(1)/Store(3)/SelectionResolver(1)/UsageTracker(6) · SettingsView+TitleEditorSection(2)/+HotKeySection(6) · App/TranscriptTail(4)/VoiceManager+Persistence(3)/+Queue(4) · Support/AuditLogger(3)/AXSelfHeal(2)/CGWindowEntry(2)/ExitJournal(4)/FrameConvergence(4)/FrameWriteExecutor(2)/MoveToMainPipeline(5)/ShellRunner(9)/TerminalRegistry(2)/YabaiEnvironmentProbe(2)/Doctor+InstallInventory(7)/BuildCapabilities(1)/CrashRuntimeSnapshot(1) · Layout/LayoutHotKeyTable(2)/WindowLayoutManagerProbe(1) · Hook/HookScriptGenerator(4)/RemoteInstallDeploy(2)/RemoteInstallScriptBuilder(1)/LANHookPreferences(1)
 
