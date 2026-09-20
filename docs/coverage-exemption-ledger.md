@@ -6,6 +6,12 @@
 > 测量工具：`bash Scripts/coverage_test_runner.sh`（llvm-cov，插桩构建+全量 Runner）。
 > Sources 纯净口径自算：`llvm-cov report … | grep '^Sources/'` 后按 Lines 列加权（全口径报告含 Tests 行数会虚高）。
 > 刷新命令：跑完覆盖率脚本后对照本台账逐行核对；**每条豁免必须有替代验证通道，否则不得豁免**。
+> ⚠️**门禁环境注记**（2026-09-20 B299 后补）：**显示器休眠会使 yabai v7.1.18 的全局聚合查询
+> （`-m query --spaces` / `--displays`）确定性截断**（恒返 2 字节 `[` 且 exit 0；按 display 作用域
+> 查询正常，唤醒即愈）→ Runner 的 spaceSwitch/spaceQY 两前置确定性红、另 11 个 yabai 依赖块
+> 被跳过。**跑 VibeFocusTestRunner / 覆盖率管线前用 `caffeinate -d <命令>` 压住显示休眠**；
+> 诊断顺序：`yabai -m query --spaces | wc -c` 等于 2 即中招，`caffeinate -u -t 2` 唤醒即恢复。
+> 全绿实证：`caffeinate -d` 下 Runner **3596/3596 全绿**（f00da47）。
 
 ## C1 生命周期胶水（启动编排，单进程内不可重入）
 
