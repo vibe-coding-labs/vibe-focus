@@ -200,7 +200,7 @@ InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreCont
 
 （签署区：用户 / 负责会话，发布前填写）
 
-### 待补签（B299+B300 提请，2026-09-20）
+### 待补签（B299+B300+B301 提请，2026-09-20）
 
-- [ ] B299 豁免增改补签：①Support+Diagnostics 残 20 行改判 C7-装机态（触发=破坏装机：无 caps 二进制/缺 codesign/删证书/mdfind 失效；替代验证=--diagnose 冒烟）；②Finding 残 15 行（前台环境态）/StateStore+Database 残 2 行（HOME 污染风险）留白注记；③门禁环境注记（显示器休眠致 yabai 聚合查询截断，Runner 须 `caffeinate -d`；全绿实证 3596/3596）。②B300（main 8341f62）：B 态五项清账（Tracker 100%/ShellRunner 9→1/Planner 6→1/Locator 6→2/ToggleEngine 6→2，均为单测可达行而非新豁免；B 态余量真机域归既有 E2E 通道）；③门禁环境纪律补全：先 `caffeinate -u` 唤醒再 `-d` 压住（-d 不唤醒已睡屏幕）。Runner 3614/3614 全绿。**已两次向用户提请，待确认后勾选**。
+- [ ] B299 豁免增改补签：①Support+Diagnostics 残 20 行改判 C7-装机态（触发=破坏装机：无 caps 二进制/缺 codesign/删证书/mdfind 失效；替代验证=--diagnose 冒烟）；②Finding 残 15 行（前台环境态）/StateStore+Database 残 2 行（HOME 污染风险）留白注记；③门禁环境注记（显示器休眠致 yabai 聚合查询截断，Runner 须 `caffeinate -d`；全绿实证 3596/3596）。②B300（main 8341f62）：B 态五项清账（Tracker 100%/ShellRunner 9→1/Planner 6→1/Locator 6→2/ToggleEngine 6→2，均为单测可达行而非新豁免；B 态余量真机域归既有 E2E 通道）；③门禁环境纪律补全：先 `caffeinate -u` 唤醒再 `-d` 压住（-d 不唤醒已睡屏幕）。Runner 3614/3614 全绿。④B301（main 4848a28）：Overlay 家族 E2E 通道（`VIBEFOCUS_OVERLAY_E2E=1`），家族 352→188 missed；SIGUSR1 处理体归 C5、空延迟表功能关死体、SpaceQuery 注入不可达归 C7；⑤ScreenIndexPreferences 66 行=并行线 0.0.81 沙箱修复新代码，待其责任线重审。Runner 默认门禁 3619/3619+E2E 模式 3628/3628 全绿。**已三次向用户提请（AskUserQuestion 均未应答），待确认后勾选**。
 - [x] 用户签字：已确认签署（用户于 2026-09-20 验收对话中裁决「可测面 100% + E2E + 豁免台账」口径并确认签署） 日期：2026-09-20
