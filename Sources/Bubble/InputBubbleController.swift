@@ -44,9 +44,10 @@ final class InputBubbleController: NSObject {
     /// setFrameOrigin 的 didMove 通知同步派发，布尔标记即足够。
     var suppressMoveTracking = false
 
-    /// B133：尺寸/回车语义从偏好读取（设置页可调）；面板按「构建参数指纹」缓存，
-    /// 指纹变化（改尺寸/改回车行为）时下次唤起重建，避免陈旧布局。
-    var panelBuiltFor: (size: NSSize, submitOnEnter: Bool)?
+    /// B133：尺寸/回车语义/编辑器形态从偏好读取（设置页可调）；面板按「构建参数
+    /// 指纹」缓存，指纹变化（改尺寸/改回车行为/改编辑器形态）时下次唤起重建，
+    /// 避免陈旧布局。编辑器形态切换另有通知热重建通道（bubbleEditorKindDidChange）。
+    var panelBuiltFor: InputBubblePanelBuildPlan.Fingerprint?
     var bubbleSize: NSSize {
         NSSize(width: InputBubblePreferences.bubbleWidth, height: InputBubblePreferences.bubbleHeight)
     }
@@ -94,6 +95,13 @@ final class InputBubbleController: NSObject {
             self,
             selector: #selector(bubbleSizeDidChange(_:)),
             name: InputBubblePreferences.sizeDidChangeNotification,
+            object: nil
+        )
+        // 2026-09-20：编辑器形态切换 → 打开中的气泡面板热重建（文本/选区/位置保留）
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(bubbleEditorKindDidChange(_:)),
+            name: InputBubblePreferences.editorKindDidChangeNotification,
             object: nil
         )
     }
@@ -699,5 +707,30 @@ extension InputBubbleController: NSWindowDelegate {
               abs(current.width - newSize.width) > 0.5 || abs(current.height - newSize.height) > 0.5
         else { return }
         applyPanelSize(newSize)
+    }
+
+    // MARK: 编辑器形态切换联动（2026-09-20 双形态）
+
+    /// 编辑器形态变化 → 打开中的气泡热重建（关着时零开销：下次唤起经指纹自然重建）。
+    /// 现场全保留：文本/选区/面板位置原样带过（跟随基线不变——origin 不动）。
+    /// 正常路径设置窗在气泡存续期已被 orderOut（showPanel），此通知运行期实际来自
+    /// defaults 写穿通道；防御性保留「开着也能切」的全 case 语义。
+    @objc func bubbleEditorKindDidChange(_ notification: Notification) {
+        guard phase == .open, let panel, let currentTextView = textView else { return }
+        let text = currentTextView.string
+        let selection = currentTextView.selectedRange()
+        let origin = panel.frame.origin
+        panelBuiltFor = nil
+        let (rebuilt, newTextView) = builtPanel()
+        rebuilt.setFrameOrigin(origin)
+        newTextView.string = text
+        newTextView.setSelectedRange(selection)
+        (rebuilt.contentView as? BubbleCardView)?.normalizeHorizontalOrigin()
+        rebuilt.makeKeyAndOrderFront(nil)
+        rebuilt.makeKey()
+        newTextView.window?.makeFirstResponder(newTextView)
+        log("[InputBubble] editor kind switched live", fields: [
+            "kind": InputBubblePreferences.editorKind.rawValue
+        ])
     }
 }

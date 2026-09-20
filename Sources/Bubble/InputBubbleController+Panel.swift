@@ -10,8 +10,11 @@ extension InputBubbleController {
     func builtPanel() -> (InputBubblePanel, NSTextView) {
         let size = bubbleSize
         let submitOnEnter = InputBubblePreferences.submitOnEnter
-        if let panel, let textView, let built = panelBuiltFor,
-           built.size == size, built.submitOnEnter == submitOnEnter {
+        let editorKind = InputBubblePreferences.editorKind
+        if let panel, let textView,
+           !InputBubblePanelBuildPlan.needsRebuild(
+            built: panelBuiltFor, size: size,
+            submitOnEnter: submitOnEnter, editorKind: editorKind) {
             return (panel, textView)
         }
         if let stale = panel { stale.orderOut(nil) }
@@ -98,7 +101,11 @@ extension InputBubbleController {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
 
-        let textView = InputBubbleTextView(frame: scroll.bounds)
+        // 编辑器形态分支：plain=现行多行纯文本；markdown=Typora 式输入即渲染
+        // （键位语义同款继承，差异只在显示层——MarkdownBubbleTextView 全文重渲染）。
+        let textView: InputBubbleTextView = editorKind == .markdown
+            ? MarkdownBubbleTextView(frame: scroll.bounds)
+            : InputBubbleTextView(frame: scroll.bounds)
         // B162：Enter/⌘Enter 走 keyDown 层拦截回调（doCommandBy 收不到 ⌘Enter）
         textView.onEnterKey = { [weak self] commandHeld in
             self?.handleEnter(commandHeld: commandHeld)
@@ -139,7 +146,9 @@ extension InputBubbleController {
 
         self.panel = panel
         self.textView = textView
-        self.panelBuiltFor = (size, submitOnEnter)
+        self.panelBuiltFor = InputBubblePanelBuildPlan.Fingerprint(
+            size: size, submitOnEnter: submitOnEnter, editorKind: editorKind
+        )
         return (panel, textView)
     }
 
@@ -190,7 +199,11 @@ extension InputBubbleController {
         panel.setFrame(NSRect(origin: origin, size: newSize), display: true)
         suppressMoveTracking = false
         (panel.contentView as? BubbleCardView)?.applyLayout(size: newSize)
-        panelBuiltFor = (newSize, InputBubblePreferences.submitOnEnter)
+        panelBuiltFor = InputBubblePanelBuildPlan.Fingerprint(
+            size: newSize,
+            submitOnEnter: InputBubblePreferences.submitOnEnter,
+            editorKind: InputBubblePreferences.editorKind
+        )
     }
 
     /// 锚点：目标窗（AppKit 全局坐标）左下内侧，夹进所在屏 visibleFrame。

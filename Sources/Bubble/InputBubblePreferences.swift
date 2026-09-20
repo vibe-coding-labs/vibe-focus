@@ -1,6 +1,14 @@
 import CoreGraphics
 import Foundation
 
+/// 输入气泡编辑器形态（2026-09-20 双形态重构）：
+/// plain = 现行多行纯文本；markdown = Typora 式输入即渲染（语法标记保留、
+/// 提交的仍是 Markdown 源文本——渲染只换属性不改字符串，注入语义与纯文本一致）。
+enum InputBubbleEditorKind: String, CaseIterable, Hashable {
+    case plain
+    case markdown
+}
+
 /// 输入气泡功能偏好（B129 开关 + B133 设置页：尺寸/回车默认行为）。
 /// 热键三通道（CGEventTap/Carbon/fallback monitor）都在 isEnabled 闸门后；
 /// 数值读取经 clamp 归一（defaults 手写越界不影响 UI 与注入）。
@@ -17,6 +25,7 @@ enum InputBubblePreferences {
     private static let autoHideKey = "inputBubbleAutoHide"
     private static let userPlacedFrameKey = "inputBubbleUserFrame"
     private static let historyLimitKey = "inputBubbleHistoryLimit"
+    private static let editorKindKey = "inputBubbleEditorKind"
 
     /// 尺寸合法域与步长（设置页滑杆与 clamp 共用同一事实源）
     static let widthRange: (min: Double, max: Double, step: Double) = (320, 720, 20)
@@ -28,6 +37,26 @@ enum InputBubblePreferences {
     /// 打开中的气泡面板实时 relayout 与设置页 @State 回写都消费此通知。
     /// 只在值真正变化时发（同值写不广播，联动回路自然收敛）。
     static let sizeDidChangeNotification = Notification.Name("InputBubbleSizeDidChange")
+
+    /// 编辑器形态变化广播：气泡开着时控制器热重建面板（文本/选区/位置保留）；
+    /// 关着时下次唤起经面板构建指纹自然生效。同样只在值真正变化时发。
+    static let editorKindDidChangeNotification = Notification.Name("InputBubbleEditorKindDidChange")
+
+    /// 编辑器形态（默认 plain 保持现行行为；defaults 手写非法 raw 回落 plain）。
+    static var editorKind: InputBubbleEditorKind {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: editorKindKey),
+                  let kind = InputBubbleEditorKind(rawValue: raw) else { return .plain }
+            return kind
+        }
+        set {
+            let changed = editorKind != newValue
+            UserDefaults.standard.set(newValue.rawValue, forKey: editorKindKey)
+            if changed {
+                NotificationCenter.default.post(name: editorKindDidChangeNotification, object: nil)
+            }
+        }
+    }
 
     static var isEnabled: Bool {
         get {
