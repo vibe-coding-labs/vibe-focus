@@ -1600,4 +1600,64 @@ extension RunnerHarness {
             panelSize: size, visibleFrame: visible)
         check("panelPure: Y 下夹（贴 minY + 8）", yBottom.y == CGFloat(8))
     }
+
+    // MARK: - B305 唤起收键盘重试决策 + tick 前台身份缓存决策
+
+    func runBubbleActivationPlanTests() {
+        print("\n=== InputBubble ActivationPlan (B305) ===")
+        let poll = InputBubbleTiming.activationPollIntervalMs
+        let budget = InputBubbleTiming.activationBudgetMs
+
+        // 时序常量契约：轮询间隔与预算落定值锁定（预算与提交链 B176 同 2000ms）
+        check("activationPlan: 轮询间隔 = 100ms", poll == 100)
+        check("activationPlan: 预算 = 2000ms", budget == 2000)
+
+        // --- InputBubbleActivationPlan 真值表（三态穷尽）---
+        // key window + app 活跃 → 已落定（哪怕预算耗尽，落定优先）
+        check("activationPlan: 双达标 → settled",
+              InputBubbleActivationPlan.nextStep(panelIsKey: true, appIsActive: true, elapsedMs: budget + 500, pollIntervalMs: poll, budgetMs: budget)
+              == .settled)
+        check("activationPlan: 首拍双达标 → settled",
+              InputBubbleActivationPlan.nextStep(panelIsKey: true, appIsActive: true, elapsedMs: 0, pollIntervalMs: poll, budgetMs: budget)
+              == .settled)
+        // app 活跃但 key window 未立起（激活冷却/推迟的典型形态）→ 重试
+        check("activationPlan: 仅 app 活跃 → retryAfterMs",
+              InputBubbleActivationPlan.nextStep(panelIsKey: false, appIsActive: true, elapsedMs: 0, pollIntervalMs: poll, budgetMs: budget)
+              == .retryAfterMs(poll))
+        // key window 已 key 但 app 未活跃 → 仍重试（不达双条件不放行）
+        check("activationPlan: 仅 panel key → retryAfterMs",
+              InputBubbleActivationPlan.nextStep(panelIsKey: true, appIsActive: false, elapsedMs: 500, pollIntervalMs: poll, budgetMs: budget)
+              == .retryAfterMs(poll))
+        // 双不达标 → 重试
+        check("activationPlan: 双缺失 → retryAfterMs",
+              InputBubbleActivationPlan.nextStep(panelIsKey: false, appIsActive: false, elapsedMs: 0, pollIntervalMs: poll, budgetMs: budget)
+              == .retryAfterMs(poll))
+        // 预算边界：恰好 = 预算仍未达标 → 放弃（giveUp 留 WARN 痕）
+        check("activationPlan: 预算耗尽 → giveUp",
+              InputBubbleActivationPlan.nextStep(panelIsKey: false, appIsActive: true, elapsedMs: budget, pollIntervalMs: poll, budgetMs: budget)
+              == .giveUp)
+        check("activationPlan: 预算内最后一线仍重试",
+              InputBubbleActivationPlan.nextStep(panelIsKey: false, appIsActive: false, elapsedMs: budget - poll, pollIntervalMs: poll, budgetMs: budget)
+              == .retryAfterMs(poll))
+        // 重试间隔按参数透传（不写死，改常量时断言不失真）
+        check("activationPlan: retry 间隔透传参数",
+              InputBubbleActivationPlan.nextStep(panelIsKey: false, appIsActive: false, elapsedMs: 0, pollIntervalMs: 77, budgetMs: budget)
+              == .retryAfterMs(77))
+
+        // --- InputBubbleFrontIdentityPlan 三态（缓存命中零 XPC 的决策核心）---
+        // 首拍无缓存 → 读新值并回写
+        check("frontIdentity: 无缓存 → readFresh",
+              InputBubbleFrontIdentityPlan.source(cachedPID: nil, currentPID: 42) == .readFresh)
+        // pid 未变 → 缓存命中（免 LaunchServices XPC 重读的 B305 语义）
+        check("frontIdentity: pid 未变 → cached",
+              InputBubbleFrontIdentityPlan.source(cachedPID: 42, currentPID: 42) == .cached)
+        // pid 变化（用户切 app/重启终端）→ 重读
+        check("frontIdentity: pid 变化 → readFresh",
+              InputBubbleFrontIdentityPlan.source(cachedPID: 42, currentPID: 43) == .readFresh)
+        // 无前台 app（锁屏 loginwindow 之外的空窗态）→ none 且缓存不动
+        check("frontIdentity: 无前台 → none",
+              InputBubbleFrontIdentityPlan.source(cachedPID: 42, currentPID: nil) == .none)
+        check("frontIdentity: 无缓存也无前台 → none",
+              InputBubbleFrontIdentityPlan.source(cachedPID: nil, currentPID: nil) == .none)
+    }
 }

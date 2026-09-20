@@ -403,6 +403,62 @@ enum InputBubbleTiming {
     static let pasteToReturnDelayMs: Int = 80
     /// 注入完成到恢复剪贴板的延迟
     static let clipboardRestoreDelayMs: Int = 500
+    /// 唤起收键盘轮询间隔 / 总预算（B305）。
+    /// showPanel 的 activate 单发会被系统激活冷却（macOS 14+ 对短时重复 activate
+    /// 节流）或鼠标事件处理期推迟而静默失败——气泡在屏上但 key window 没立起来，
+    /// 用户打字全无反应。预算与提交链同取 2000ms；成功路径首拍即返回。
+    static let activationPollIntervalMs: Int = 100
+    static let activationBudgetMs: Int = 2000
+}
+
+/// 唤起收键盘重试决策（B305，纯函数直测）。
+/// showPanel 首次 activate + makeKey + makeFirstResponder 之后按拍复查：
+/// key window 与 app 激活双双落定 → 收工；预算耗尽仍不达标 → 放弃并留痕；
+/// 否则每拍重发三件套（B176 每拍重发同款——单发激活被推迟/冷却时，
+/// 逐拍重发让推迟的激活在事件落定后兑现）。
+enum InputBubbleActivationPlan {
+    enum Step: Equatable {
+        /// 激活已落定（panel 是 key window 且 app 活跃），键盘可达 textView
+        case settled
+        /// 再等 intervalMs 后重发激活三件套并复查
+        case retryAfterMs(Int)
+        /// 预算耗尽仍不达标：放弃重试，调用方落 WARN 留证
+        case giveUp
+    }
+
+    static func nextStep(
+        panelIsKey: Bool,
+        appIsActive: Bool,
+        elapsedMs: Int,
+        pollIntervalMs: Int,
+        budgetMs: Int
+    ) -> Step {
+        if panelIsKey && appIsActive { return .settled }
+        if elapsedMs >= budgetMs { return .giveUp }
+        return .retryAfterMs(pollIntervalMs)
+    }
+}
+
+/// tick 前台身份读取策略（B305，纯函数直测）。
+/// NSRunningApplication 的 localizedName/bundleIdentifier 每次读取都可能走
+/// LaunchServices 同步 XPC（装机实锤主线程 STALL 单次 1~7s、每天数百次，
+/// 卡死期间热键 tap/Carbon 分发全停=⌃X 按了没反应）。输出「本拍从哪读身份」：
+/// 调用侧按分支行动，保证缓存命中的拍零属性读取（processIdentifier 是本地
+/// 属性可免 XPC 常读，作为比对键）。
+enum InputBubbleFrontIdentityPlan {
+    enum Source: Equatable {
+        /// pid 未变：用缓存身份，本拍零 XPC
+        case cached
+        /// pid 变化/首拍：读 localizedName/bundleIdentifier 并回写缓存
+        case readFresh
+        /// 无前台 app：终端判定恒 false，缓存保持原样
+        case none
+    }
+
+    static func source(cachedPID: pid_t?, currentPID: pid_t?) -> Source {
+        guard let currentPID else { return .none }
+        return currentPID == cachedPID ? .cached : .readFresh
+    }
 }
 
 /// 面板构建指纹（B175 尺寸 + B161 回车语义 + 2026-09-20 编辑器形态）：

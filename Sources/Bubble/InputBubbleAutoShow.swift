@@ -112,6 +112,12 @@ final class InputBubbleAutoShow {
     /// 首观测即有历史基线照样触发。容量 64 淘汰最旧，防长会话无界增长。
     private var onMainBaselineByWindow: [UInt32: Bool] = [:]
     private var baselineOrder: [UInt32] = []
+    /// B305：前台 app 身份缓存（pid → localizedName/bundleIdentifier）。属性读取走
+    /// LaunchServices 同步 XPC（装机实锤主线程 STALL 单次 1~7s、每天数百次，卡死期间
+    /// 热键 tap/Carbon 分发全停）；前台 pid 未变的拍复用缓存，pid 变化才重读。
+    private var frontIdentityPID: pid_t?
+    private var frontIdentityName: String?
+    private var frontIdentityBundleID: String?
 
     private init() {}
 
@@ -177,9 +183,30 @@ final class InputBubbleAutoShow {
     func tick() {
         let controller = InputBubbleController.shared
         let front = NSWorkspace.shared.frontmostApplication
-        let frontIsTerminal = front.map {
-            TerminalRegistry.isTerminalOrIDEApp(appName: $0.localizedName, bundleIdentifier: $0.bundleIdentifier)
-        } ?? false
+        // B305：前台身份按 pid 缓存（决策表 InputBubbleFrontIdentityPlan，Runner 直测）。
+        // localizedName/bundleIdentifier 的读取走 LaunchServices 同步 XPC——装机实锤
+        // 每秒 tick 重复读导致主线程 STALL 单次 1~7s（热键 tap/Carbon 分发全停）；
+        // pid 未变的拍零属性读取，只在 pid 变化时重读并回写。
+        let frontPID = front?.processIdentifier
+        var identityName: String?
+        var identityBundleID: String?
+        switch InputBubbleFrontIdentityPlan.source(cachedPID: frontIdentityPID, currentPID: frontPID) {
+        case .cached:
+            identityName = frontIdentityName
+            identityBundleID = frontIdentityBundleID
+        case .readFresh:
+            identityName = front?.localizedName
+            identityBundleID = front?.bundleIdentifier
+            frontIdentityPID = frontPID
+            frontIdentityName = identityName
+            frontIdentityBundleID = identityBundleID
+        case .none:
+            break
+        }
+        let frontIsTerminal = TerminalRegistry.isTerminalOrIDEApp(
+            appName: identityName,
+            bundleIdentifier: identityBundleID
+        )
 
         // B185：跨屏检测扫描前台终端 app 的「全部」onscreen 常规窗——多窗多屏下
         // z 序最顶窗未必是用户刚移动的窗（真机探针实锤：z 顶停留旧窗时，被移窗的
@@ -216,7 +243,7 @@ final class InputBubbleAutoShow {
             lastEvaluatedWindowID = topWindowID
             log("[InputBubble] auto-show summon", fields: [
                 "windowID": topWindowID.map(String.init) ?? "nil",
-                "bundleID": front?.bundleIdentifier ?? "nil"
+                "bundleID": identityBundleID ?? "nil"
             ])
             CrashContextRecorder.shared.record("input_bubble_autoshow windowID=\(topWindowID.map(String.init) ?? "nil")")
             controller.summon()
@@ -267,13 +294,13 @@ final class InputBubbleAutoShow {
             if controller.isIdle {
                 log("[InputBubble] move-to-main auto-show summon", fields: [
                     "windowID": String(arrived.windowID),
-                    "bundleID": frontApp.bundleIdentifier ?? "nil"
+                    "bundleID": identityBundleID ?? "nil"
                 ])
                 CrashContextRecorder.shared.record("input_bubble_autoshow_move windowID=\(arrived.windowID)")
                 controller.summonForMovedWindow(
                     windowID: arrived.windowID,
                     pid: frontApp.processIdentifier,
-                    appName: frontApp.localizedName
+                    appName: identityName
                 )
             } else {
                 let disposition = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
@@ -289,7 +316,7 @@ final class InputBubbleAutoShow {
                     controller.retargetForMovedWindow(
                         windowID: arrived.windowID,
                         pid: frontApp.processIdentifier,
-                        appName: frontApp.localizedName
+                        appName: identityName
                     )
                 }
             }

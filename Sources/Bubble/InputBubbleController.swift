@@ -269,6 +269,10 @@ final class InputBubbleController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKey()
         textView.window?.makeFirstResponder(textView)
+        // B305：单发激活不可靠——系统激活冷却（macOS 14+ 短时重复 activate 节流）或
+        // 事件处理期推迟都会静默失败，气泡在屏上但收不到键盘=「无法输入任何内容」。
+        // 按 B176 每拍重发同款模式复查，预算内不落定就重发三件套；仍失败落 WARN 留证。
+        settleActivationKeyboard(elapsedMs: 0)
         // B180：气泡存续期隐藏自家浮层（幂等）——见 ScreenOverlayManager.setOverlaysSuppressedForInputBubble
         ScreenOverlayManager.shared.setOverlaysSuppressedForInputBubble(true)
         // B183：绑定跟随模式（自动隐藏=关，默认）启动跟随引擎；自动隐藏=开则不跟随（旧行为）
@@ -287,6 +291,36 @@ final class InputBubbleController: NSObject {
             "origin": "\(Int(origin.x)),\(Int(origin.y))",
             "restoredFrom": restored.from.rawValue
         ])
+    }
+
+    /// B305：唤起收键盘复查循环（决策表 InputBubbleActivationPlan，Runner 直测）。
+    /// key window 与 app 激活未落定的拍重发激活三件套；气泡已关（phase != .open）
+    /// 时静默终止，不给已关闭的面板发激活。
+    func settleActivationKeyboard(elapsedMs: Int) {
+        guard phase == .open, let panel, let textView else { return }
+        let step = InputBubbleActivationPlan.nextStep(
+            panelIsKey: panel.isKeyWindow,
+            appIsActive: NSApp.isActive,
+            elapsedMs: elapsedMs,
+            pollIntervalMs: InputBubbleTiming.activationPollIntervalMs,
+            budgetMs: InputBubbleTiming.activationBudgetMs
+        )
+        switch step {
+        case .settled:
+            return
+        case .giveUp:
+            log("[InputBubble] activation not settled; keyboard may not reach bubble", level: .warn, fields: [
+                "elapsedMs": String(elapsedMs),
+                "windowID": target.map { String($0.windowID) } ?? "nil"
+            ])
+        case .retryAfterMs(let delayMs):
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKey()
+            textView.window?.makeFirstResponder(textView)
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
+                self?.settleActivationKeyboard(elapsedMs: elapsedMs + delayMs)
+            }
+        }
     }
 
     /// Esc / 点外部 / toggle 关闭。reactivateTarget：Esc 关闭时把焦点还给终端
