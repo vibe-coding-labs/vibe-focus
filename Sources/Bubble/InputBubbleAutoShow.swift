@@ -124,6 +124,12 @@ final class InputBubbleAutoShow {
 
     private init() {}
 
+    /// B310 观察缝：nil = 生产事实源（NSWorkspace.frontmostApplication）；
+    /// 已设置时返回值即权威（含 nil=「无前台」场景也可注入）。
+    /// 仅 Runner tick 编排直测注入真实 NSRunningApplication（只换事实来源，
+    /// 判定/扫描/基线记账全走生产路径）。
+    var frontmostAppProvider: (() -> NSRunningApplication?)?
+
     func start() {
         guard observer == nil else { return }
         let autoshow = InputBubbleAutoShow.shared
@@ -185,7 +191,7 @@ final class InputBubbleAutoShow {
 
     func tick() {
         let controller = InputBubbleController.shared
-        let front = NSWorkspace.shared.frontmostApplication
+        let front = frontmostAppProvider.map { $0() } ?? NSWorkspace.shared.frontmostApplication
         // B305：前台身份缓存（决策表 InputBubbleFrontIdentityPlan，Runner 直测）。
         // localizedName/bundleIdentifier/processIdentifier 的读取都可能走 LaunchServices
         // 同步 XPC——装机实锤每秒 tick 重复读导致主线程 STALL 单次 1~7s（热键 tap/Carbon
@@ -374,11 +380,6 @@ final class InputBubbleAutoShow {
 
     /// 前台终端 app 的最顶层 onscreen 常规窗（CGWindowList 顺序即 z 序，非阻塞）。
     /// B180：返回完整 entry，跨屏检测需要 bounds 判主屏归属。
-    private func topmostOnscreenWindowEntry(pid: pid_t) -> CGWindowEntry? {
-        let entries: [CGWindowEntry] = cgWindowListAll()
-        for entry in entries where entry.ownerPID == pid && entry.layer == 0 && entry.isOnScreen {
-            return entry
-        }
-        return nil
-    }
+    // B311 清扫：v1 单窗观测遗留 helper topmostOnscreenWindowEntry 已随 B185 全扫版
+    // 退役（零调用死代码），本批删除。
 }

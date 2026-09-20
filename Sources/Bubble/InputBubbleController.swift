@@ -35,6 +35,19 @@ final class InputBubbleController: NSObject {
     /// 键击投递注入缝（B255）：默认真实 CGEvent HID 投递，测试注入 mock 记录序列。
     var keyEventPoster: KeyEventPosting = CGKeyEventPoster()
 
+    /// B310 提交链观察缝：nil = 生产事实源（NSWorkspace / WindowManager AX）。
+    /// 仅 Runner 提交管线直测注入——只换事实来源，不换判定（判定仍在 Gate/Plan）。
+    /// - submitFrontmostPIDProvider：waitFrontmost/settle 两处前台 pid 读；
+    /// - submitFocusedWindowHandleProvider：注入门的聚焦窗柄校验；
+    /// - submitSettleAXWindowProvider：settle 落地验证的 AX 窗元素；
+    /// - submitHasToggleRecordProvider：归位决策的 toggle 记录判读
+    ///   （缝后 restore 仍走 ToggleEngine.shared 全注入通道，nil 记录自然落 failed 臂，
+    ///   全程零生产 DB 写——写共享库才能覆盖的路径归豁免台账）。
+    var submitFrontmostPIDProvider: (() -> pid_t?)?
+    var submitFocusedWindowHandleProvider: (() -> UInt32?)?
+    var submitSettleAXWindowProvider: (() -> AXUIElement?)?
+    var submitHasToggleRecordProvider: (() -> Bool)?
+
     /// 设置窗可见性暂存（B133：气泡与设置窗都是本 app key 候选，同屏竞争时设置窗
     /// 作为 main window 会抢走 key 使气泡收不到键盘——TitleEditor 同款解法：
     /// 气泡存续期临时 orderOut 设置窗，气泡关闭后恢复可见性）
@@ -639,7 +652,9 @@ final class InputBubbleController: NSObject {
         submit(mode: .submit)
     }
 
-    fileprivate func submit(mode: InputBubbleSubmitMode) {
+    /// B310 放开 internal（原 fileprivate，B244/B253 先例）：提交管线 Runner 直测入口，
+    /// 语义不变（Enter 键位/提交钮/直测三通道汇合点）。
+    func submit(mode: InputBubbleSubmitMode) {
         PerfMonitor.shared.beginSection("bubble.submit", fields: ["mode": String(describing: mode)])
         defer { PerfMonitor.shared.endSection() }
         guard phase == .open, let target = target, let textView = textView else { return }

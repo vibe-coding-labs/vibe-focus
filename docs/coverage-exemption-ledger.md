@@ -70,6 +70,34 @@
 | RemoteSpoolDrain 网络排水路径（drainNow/tick 真发） | ~80 | 需翻 claudeHook 真实 defaults——生产 app 实时读取同一 standard 域（B247 并发污染根因） | spool 落盘/重放预算/生命周期已单测；远程双机转发 E2E 已人工闭环（B123/B124） |
 | HookEventHandler handleStop/handleUserPromptSubmit 执行段 | ~110 | 委托真实建窗/移动热路径（B242 裁决：收益 ~100 行 vs 热路径写入侧风险，不值） | 门 0/守卫分支已单测；restore 链真机 E2E 已绿 |
 
+
+## B311 气泡模块冲刺新增豁免（2026-09-20，待签字）
+
+> 背景：B311 将 Sources/Bubble 全模块从 64.5% 推至 **92.0% 行覆盖**（missed 457→104），
+> Logic/Clipboard/ArrivalMover 三文件 100%。新增测试：RunnerBubbleSubmitPipelineTests（B310，
+> 提交管线编排+观察缝）与 RunnerBubbleLifecyclePanelTests / RunnerBubbleCoverageSweepTests /
+> RunnerBubbleCoverageTailTests / RunnerBubbleCoverageFinaleTests（B311，真面板生命周期+
+> 历史面板全流程+视图渲染+AutoShow tick 编排，输入空闲门控）。以下为剩余 104 行的逐块归因：
+>
+> ⚠️ 环境注记：本轮测量的会话处于**登录屏**（loginwindow 持 SecureEventInput，跨进程 AX
+> 恒 -25208、合成 HID 事件被丢弃）——AX 依赖路径按门控自动跳过，健康会话重跑覆盖率即
+> 自动转绿（RunnerBubbleSubmitPipelineTests 的 axVerified/timeout 双场景，属门控非豁免）。
+
+| 文件 / 函数 | 近似行数 | 原因（实证） | 替代验证 |
+|---|---|---|---|
+| InputBubbleController `summon` 焦点捕获链（focusedWindow/windowHandle/cgBounds/showPanel） | ~21 | AX 真实读取：登录屏 AX 全封锁；健康会话需真实终端前台+聚焦窗 | 真机 E2E（B129 闭环/B255 真面板通道）；日常使用 |
+| InputBubbleController `summon` no-frontmost/ownApp 守卫臂 | ~8 | 前台 app 恒非 nil 不可造 nil；ownApp 需本 app 真前台（设置页试键场景） | 纯门 InputBubbleSummonGate 已穷尽直测；真机设置页试键人工验收 |
+| InputBubbleController+Submission settle AX 验证主链（后台读+main 归决） | ~10 | 自有窗 AX 探针双场景（axVerified/timeout）已入 Runner，登录屏自动跳过=**门控非豁免**，健康会话重跑即绿 | RunnerBubbleSubmitPipelineTests |
+| InputBubbleController+Submission autoRestore restore 分支（Task→ToggleEngine.restore 双结局臂） | ~24 | 需共享 SQLite windows 表实记录+实窗移动（C7 生产禁写归口） | ToggleEngine.restore 本体注入式穷尽直测（B157/B237 前批）；GRID_E2E 真机通道 |
+| InputBubbleController+Submission `abortFrontmostMismatch` 臂 | 2 | 注释明示不可达（达此处时 frontmostMatches 恒 true） | 纯门 InputBubbleSubmitGate 已穷尽直测 |
+| InputBubbleAutoShow tick summon 臂 + move-to-main arrival 编排（扫描/抑制/重定向） | ~55 | 需「活跃会话绑定窗真实跨屏迁移」+归因账本新鲜记录（写生产注册表=C7 归口；迁移=真机域） | 纯门 decideMoveToMainArrival / decideArrivalWhileBubbleOpen / decideArrivalWhileBubbleOpen 已穷尽直测；GRID_E2E/真机 B184 通道 |
+| InputBubbleAutoShow `.cached` 臂 / bounds-nil 守卫 | ~6 | .cached 一级未命中下结构性不可达（注释明示）；本机 CG 窗恒带 bounds | 决策表 InputBubbleFrontIdentityPlan 已穷尽直测 |
+| InputBubbleHistoryPanel `init?(coder:)` ×3 | 3 | XIB-less 手工视图死模板（保留以满足 NSCoding 契约） | —（物理死代码） |
+| InputBubbleHistoryPanel `.settled` 臂 / 监视器 invisible 守卫 / fill nil-handler | ~8 | 真机 key-window 落定语义；fillHandler 在行存在期恒非 nil（防御） | 真机历史面板人工验收 |
+| MarkdownLiveRenderPlan 零推进/regex 编译/字体回落防御臂 | ~7 | NSString lineRange 恒含换行（注释明示）；固定 pattern 编译恒成功；Menlo 恒在 | 渲染契约（串逐字一致+属性面）已穷尽直测 |
+| DraftStore/HistoryStore JSONEncoder 失败守卫、Preferences `step≤0` 臂、Panel/Controller `screens.first ?? 0` 族 | ~8 | 纯 Codable 不可失败/常量域/显示器恒存在的防御臂 | —（物理不可达） |
+
+
 ## 真机 E2E 通道矩阵（口径②的覆盖面）
 
 | 通道 | 环境变量 | 状态 |

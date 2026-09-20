@@ -51,11 +51,13 @@ extension InputBubbleController {
 
     /// 激活后等前台/窗口柄到位再注入（非阻塞轮询；超时宁可不注入）。
     func waitFrontmostAndInject(target: Target, text: String, mode: InputBubbleSubmitMode, elapsedMs: Int) {
-        let frontmostMatches = NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid
+        let frontmostPID = submitFrontmostPIDProvider?() ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let frontmostMatches = frontmostPID == target.pid
         if frontmostMatches {
             // 前台已到位：再验窗口柄（防激活期间切 tab / 关窗）
-            let handle = WindowManager.shared.focusedWindow(for: target.pid)
-                .flatMap { WindowManager.shared.windowHandle(for: $0) }
+            let handle = submitFocusedWindowHandleProvider?()
+                ?? WindowManager.shared.focusedWindow(for: target.pid)
+                    .flatMap { WindowManager.shared.windowHandle(for: $0) }
             let gate = InputBubbleSubmitGate.decide(
                 text: text,
                 mode: mode,
@@ -159,11 +161,11 @@ extension InputBubbleController {
             postReturn(landedBy: .verifyTimeout, target: target, text: text, startedAt: startedAt)
             return
         }
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid else {
+        guard (submitFrontmostPIDProvider?() ?? NSWorkspace.shared.frontmostApplication?.processIdentifier) == target.pid else {
             abortSubmission(reason: "frontmost lost during paste settle", target: target)
             return
         }
-        guard let axWindow = WindowManager.shared.focusedWindow(for: target.pid) else {
+        guard let axWindow = submitSettleAXWindowProvider?() ?? WindowManager.shared.focusedWindow(for: target.pid) else {
             postReturn(landedBy: .verifyNoAXWindow, target: target, text: text, startedAt: startedAt)
             return
         }
@@ -198,7 +200,7 @@ extension InputBubbleController {
         let autoRestoreDecision = InputBubbleAutoRestoreGate.decide(
             preferenceEnabled: InputBubblePreferences.autoRestoreOnSubmit,
             submits: true,
-            hasToggleRecord: ToggleEngine.shared.load(windowID: target.windowID) != nil,
+            hasToggleRecord: submitHasToggleRecordProvider?() ?? (ToggleEngine.shared.load(windowID: target.windowID) != nil),
             isOnMainScreen: WindowManager.shared.isWindowOnMainScreen(windowID: target.windowID)
         )
         let restoreWindowID = target.windowID
