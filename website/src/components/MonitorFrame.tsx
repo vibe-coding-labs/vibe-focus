@@ -7,8 +7,12 @@ interface MonitorFrameProps {
   className?: string;
 }
 
-// 显示器外框：暖咖啡色机身（与页面奶油/珊瑚语系同源），播放中机身右下角
-// 珊瑚色电源灯呼吸（.monitor-led 动画在 styles.css）。
+// 显示器整机（写实向）：
+// - 只有边框是深色（暖咖啡），屏面为亮色奶油——视频以「深色终端窗口」形式
+//   嵌在亮色屏面上，带轻微投影，像显示器正显示一个 app 窗口
+// - 支架一体：颈部上端插进面板后方（无拼接缝），胶囊脚与颈部同色相连，
+//   落地影贴住脚底——整机一个物理对象，不是三块散件
+// - 播放中边框右下角珊瑚色电源灯呼吸（.monitor-led 动画在 styles.css）
 export const MonitorFrame: React.FC<MonitorFrameProps> = ({
   children,
   isActive = false,
@@ -23,44 +27,53 @@ export const MonitorFrame: React.FC<MonitorFrameProps> = ({
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
+        width: '100%',
       }}
     >
-      {/* Monitor Frame */}
+      {/* Panel（zIndex 1，颈部上端藏在其后方） */}
       <div
         className="monitor-frame-container"
         style={{
           position: 'relative',
-          background: 'transparent',
-          borderRadius: '14px',
-          padding: '8px',
-          filter: 'drop-shadow(0 26px 44px rgba(64, 54, 43, 0.22))',
+          zIndex: 1,
+          width: '100%',
+          borderRadius: '16px',
+          padding: '9px',
+          filter: 'drop-shadow(0 22px 38px rgba(64, 54, 43, 0.20))',
         }}
       >
-        {/* Screen Bezel — 暖咖啡机身 + 蜜桃细描边 */}
+        {/* 边框：暖咖啡深色 */}
         <div
-          className="monitor-frame-bezel"
           style={{
             position: 'relative',
             background: 'linear-gradient(180deg, #2A221A 0%, #211B14 100%)',
-            borderRadius: '12px',
-            overflow: 'hidden',
-            padding: '12px',
+            borderRadius: '13px',
+            padding: '11px 11px 24px',
             border: '1px solid #3D3225',
             boxShadow: 'inset 0 1px 0 rgba(255, 225, 201, 0.08)',
           }}
         >
-          {/* Screen Content — 暖黑屏（视频 letterbox 处不显冷灰） */}
+          {/* 亮色屏面：奶油渐变 + 内凹感 */}
           <div
-            className="monitor-frame-screen"
             style={{
-              position: 'relative',
-              aspectRatio: '16 / 9',
-              background: '#14100B',
-              borderRadius: '5px',
-              overflow: 'hidden',
+              borderRadius: '6px',
+              background: 'linear-gradient(180deg, #FAF6EC 0%, #EFE7D8 100%)',
+              padding: '3.2%',
+              boxShadow: 'inset 0 1px 3px rgba(64, 54, 43, 0.16)',
             }}
           >
-            {children}
+            {/* 屏上内容窗：视频作为深色窗口嵌在亮屏上 */}
+            <div
+              style={{
+                aspectRatio: '16 / 9',
+                borderRadius: '4px',
+                overflow: 'hidden',
+                background: '#14100B',
+                boxShadow: '0 3px 14px rgba(30, 24, 17, 0.28)',
+              }}
+            >
+              {children}
+            </div>
           </div>
 
           {/* Power LED — 播放中珊瑚呼吸，待机暖棕 */}
@@ -75,7 +88,6 @@ export const MonitorFrame: React.FC<MonitorFrameProps> = ({
               borderRadius: '50%',
               background: isActive ? '#FF8266' : '#4A3B2E',
               boxShadow: isActive ? '0 0 9px rgba(255, 130, 102, 0.85)' : 'none',
-              opacity: isActive ? 1 : 0.8,
               transition: 'background 0.35s ease, box-shadow 0.35s ease',
             }}
           />
@@ -99,42 +111,42 @@ export const MonitorFrame: React.FC<MonitorFrameProps> = ({
         </div>
       </div>
 
-      {/* Stand Neck */}
+      {/* 支架颈部：上端插进面板后方（marginTop 负值 + zIndex 0），无拼接缝 */}
       <div
-        className="monitor-frame-stand-neck"
         style={{
-          width: '80px',
-          height: '50px',
-          background: 'linear-gradient(180deg, #332920 0%, #2A2119 100%)',
-          marginTop: '-2px',
-          clipPath: 'polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%)',
+          position: 'relative',
+          zIndex: 0,
+          width: '92px',
+          height: '46px',
+          marginTop: '-6px',
+          background: 'linear-gradient(180deg, #2A2119 0%, #241D16 100%)',
+          borderRadius: '0 0 8px 8px',
         }}
       />
 
-      {/* Stand Base */}
+      {/* 胶囊脚：与颈部同色相连，顶部一线暖高光 */}
       <div
-        className="monitor-frame-stand-base"
         style={{
-          width: '160px',
-          height: '16px',
-          background: '#241D16',
-          borderRadius: '8px 8px 0 0',
+          position: 'relative',
+          zIndex: 0,
+          width: '208px',
+          height: '13px',
           marginTop: '-2px',
-          border: '1px solid #3D3225',
-          borderBottom: 'none',
+          borderRadius: '999px',
+          background: 'linear-gradient(180deg, #332920 0%, #241D16 100%)',
+          boxShadow: 'inset 0 1px 0 rgba(255, 225, 201, 0.10)',
         }}
       />
 
-      {/* Stand Shadow — 暖色落地影（不再用纯黑椭圆） */}
+      {/* 落地影：贴住脚底 */}
       <div
-        className="monitor-frame-stand-shadow"
         style={{
-          width: '190px',
-          height: '10px',
-          background:
-            'radial-gradient(ellipse at center, rgba(64, 54, 43, 0.28), rgba(64, 54, 43, 0) 72%)',
-          marginTop: '-5px',
+          width: '236px',
+          height: '12px',
+          marginTop: '-4px',
           borderRadius: '50%',
+          background:
+            'radial-gradient(ellipse at center, rgba(64, 54, 43, 0.26), rgba(64, 54, 43, 0) 72%)',
         }}
       />
     </div>
