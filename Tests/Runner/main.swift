@@ -338,6 +338,7 @@ final class FakeAuditor: RestoreAuditing {
         runAuditLoggerCoverageTests()
         runPrefModelsCoverageTests()
         runScreenIndexPrefsSandboxTests()
+        runOverlayWakeRebuildTests()
         runAppVersionTests()
         runWindowWorkExecutorTests()
         runNativeSpaceBridgeTests()

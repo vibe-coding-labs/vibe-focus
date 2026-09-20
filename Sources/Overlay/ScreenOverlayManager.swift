@@ -45,9 +45,14 @@ final class ScreenOverlayManager: ObservableObject {
     // 拔插屏时该通知常短时间内多次到达，立即重建 overlay 会与 refreshSpaceIndices
     // 后台 Task 竞争 WindowServer。debounce 合并连发，等配置稳定后重建一次。
     var pendingScreenChangeWorkItem: DispatchWorkItem?
+    /// 屏幕/会话唤醒-解锁全量重建 debounce work item（2026-09-20 角标幽灵窗修复）。
+    var pendingWakeRebuildWorkItem: DispatchWorkItem?
     /// 屏幕变化通知 debounce 间隔。0.25s 合并拔插屏的多次连发（display removal +
     /// reconfiguration），又远低于人眼感知，避免在 WindowServer 重排中途重建 overlay。
     static let screenChangeDebounceInterval: TimeInterval = 1.0  // 增加到 1 秒，给 WindowServer 足够时间稳定
+    /// 唤醒/解锁重建 debounce。事件离散（system wake/screens wake/unlock 各一发），
+    /// 1.0s 合并连发并给 WindowServer 唤醒后的重排留稳定时间。
+    static let wakeRebuildDebounceInterval: TimeInterval = 1.0
 
     var cachedDisplayIndices: [UUID: Int] = [:]
     var lastQueryTimes: [UUID: Date] = [:]
@@ -134,6 +139,30 @@ final class ScreenOverlayManager: ObservableObject {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        // 唤醒/解锁全量重建（2026-09-20「角标看不见」事故根治）：锁屏/熄屏期间
+        // orderFront 的 canJoinAllSpaces 窗口会挂在幽灵空间——WindowServer 报 onscreen、
+        // 离屏渲染正常，但永不合成到用户可见空间（实锤：两代角标窗口截图内容完美、
+        // 用户解锁后任何角落都看不见）。唤醒/解锁事件后做一次 hideOverlays+showOverlays
+        // 全量重建，让窗口重新挂接当前可见空间。
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceCenter.addObserver(
+            self,
+            selector: #selector(handleScreenWakeOrUnlockNotification(_:)),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+        workspaceCenter.addObserver(
+            self,
+            selector: #selector(handleScreenWakeOrUnlockNotification(_:)),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleScreenWakeOrUnlockNotification(_:)),
+            name: Notification.Name("com.apple.screenIsUnlocked"),
+            object: nil
+        )
         startRefreshTimer()
     }
 
@@ -206,6 +235,60 @@ final class ScreenOverlayManager: ObservableObject {
         }
         pendingScreenChangeWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + ScreenOverlayManager.screenChangeDebounceInterval, execute: work)
+    }
+
+    // MARK: - 唤醒/解锁全量重建（2026-09-20 角标幽灵窗修复）
+
+    /// 唤醒/解锁重建判定（纯函数，真值表锁定于 RunnerOverlayWakeRebuildTests）。
+    ///
+    /// ## 场景
+    /// - 锁屏/熄屏期间创建的 canJoinAllSpaces 角标窗挂在幽灵空间（onscreen 但不可见），
+    ///   唤醒/解锁后需 hideOverlays+showOverlays 全量重建重新挂接可见空间；
+    /// - enabled=false / 崩溃循环熔断：不重建（与 showOverlays 内部守卫同语义，避免空转日志）；
+    /// - 输入气泡存续期抑制（B180）：不得借重建把浮层拉回来；
+    /// - 不受 automaticRefreshSuspended 门控：设置窗获焦挂起的只是刷新 Timer，
+    ///   唤醒重建是可见性修复，语义与 applyPreferenceRefresh 同级。
+    static func wakeRebuildDecision(
+        enabled: Bool,
+        crashLoopSuppressed: Bool,
+        inputBubbleSuppressed: Bool
+    ) -> Bool {
+        enabled && !crashLoopSuppressed && !inputBubbleSuppressed
+    }
+
+    @objc private func handleScreenWakeOrUnlockNotification(_ notification: Notification) {
+        let reason = notification.name.rawValue
+        guard Self.wakeRebuildDecision(
+            enabled: preferences.isEnabled,
+            crashLoopSuppressed: crashLoopSuppressed,
+            inputBubbleSuppressed: overlaysSuppressedForInputBubble
+        ) else {
+            log("[Overlay] wake rebuild skipped (disabled/crash-loop/bubble-suppressed)", level: .debug, fields: ["event": reason])
+            return
+        }
+        pendingWakeRebuildWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let startedAt = Date()
+            let previousWindows = self.overlayWindows
+            // 全量 close+重建：幽灵窗的就地 update/show 无法重新挂接可见空间，
+            // 必须销毁重建（事件离散且已 debounce，2026-08-10 SIGSEGV 的 close+create
+            // 竞态场景是屏幕重排通知风暴，此处无该风险）。
+            self.hideOverlays()
+            self.showOverlays()
+            logOperationDuration(
+                "[Overlay] wake rebuild finished",
+                startedAt: startedAt,
+                warnThresholdMs: 200,
+                fields: [
+                    "event": reason,
+                    "beforeCount": String(previousWindows.count),
+                    "afterCount": String(self.overlayWindows.count)
+                ]
+            )
+        }
+        pendingWakeRebuildWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + ScreenOverlayManager.wakeRebuildDebounceInterval, execute: work)
     }
 
     // MARK: - Public Methods
