@@ -362,6 +362,7 @@ final class FakeAuditor: RestoreAuditing {
         runCodexTestEventTests()
         runScriptExecutorTests()
         runAppDelegateInstanceTests()
+        runAppDelegateLaunchStepTests()
         runHotKeyTriggerGuardTests()
         runInstallationsFailPathTests()
         runCaptureFocusedWindowTests()
