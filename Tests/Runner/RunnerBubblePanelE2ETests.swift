@@ -88,6 +88,17 @@ extension RunnerHarness {
             check("BubblePanelE2E: 主屏存在", false)
             return
         }
+        // B302 前置探针：yabai id→window 解析健康度（损坏期特征=聚合列表在而 scoped 全灭）。
+        // 不健康则在建窗之前跳过——否则锚点窗创建后无法定位/关闭（每次跑漏一窗）。
+        do {
+            let probeSource = yabaiWindowIDs()
+            if let existing = probeSource.first,
+               yabaiWindowFrameAndPID(existing) == nil {
+                check("BubblePanelE2E: yabai scoped-by-id 不可用（环境损坏期防泄漏跳过）", true)
+                return
+            }
+        }
+
         let mainVisible = CoordinateKit.quartzVisibleFrame(of: mainScreen)
         let anchorFrame = CGRect(x: mainVisible.minX + 60, y: mainVisible.minY + 60, width: 900, height: 600)
 
@@ -98,7 +109,9 @@ extension RunnerHarness {
         Thread.sleep(forTimeInterval: 1.0)
         let created = yabaiWindowIDs().subtracting(idsBefore)
         guard created.count == 1, let wid = created.first else {
-            check("BubblePanelE2E: 创建 iTerm2 锚点窗口", false)
+            // 前置环境不符诚实跳过（B302 实测：yabai scoped-by-id 解析损坏期，
+            // 新窗可能根本进不了 yabai 列表——与 AX 授权门控同一待遇）
+            check("BubblePanelE2E: 创建 iTerm2 锚点窗口（yabai 窗口注册不可用，跳过）", true)
             return
         }
         check("BubblePanelE2E: 创建 iTerm2 锚点窗口", true)
@@ -119,7 +132,12 @@ extension RunnerHarness {
         yabaiPlace(wid, frame: anchorFrame)
         Thread.sleep(forTimeInterval: 0.6)
         guard let placed = yabaiWindowFrameAndPID(wid), placed.pid > 0 else {
-            check("BubblePanelE2E: 锚点摆位与 pid 读取", false)
+            // 前置环境不符诚实跳过（B302 实测：yabai id→window 解析损坏期
+            // 「could not locate window with the specified id」——聚合列表在而 scoped 全灭）
+            check("BubblePanelE2E: 锚点摆位与 pid 读取（yabai scoped-by-id 不可用，跳过）", true)
+            // 清场：锚点窗还得关——yabai close 失效时用 iTerm2 AE 兜底尽力关
+            _ = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e",
+                "tell application id \"com.googlecode.iterm2\" to close window id \(wid)"], timeout: 15)
             return
         }
         check("BubblePanelE2E: 锚点摆位与 pid 读取（pid=\(placed.pid)）", true)
@@ -180,6 +198,63 @@ extension RunnerHarness {
             check("BubblePanelE2E: 面板已打开且在屏可见", true)
             check("BubblePanelE2E: 面板锚定主屏（与可视区相交）",
                   pf.intersects(mainVisible) && !pf.isEmpty)
+
+            // ===== B302：拖拽调尺寸直驱（控制器编排全链，零合成鼠标零文本注入）=====
+            // 偏好快照-还原（B84 家法：finishResizeDrag 持久化 bubbleWidth/Height）
+            let savedWidth = InputBubblePreferences.bubbleWidth
+            let savedHeight = InputBubblePreferences.bubbleHeight
+            let resizeSem = DispatchSemaphore(value: 0)
+            var resizeReport: (grew: Bool, quantized: Bool, guardHeld: Bool, appliedSize: Bool) = (false, false, false, false)
+            Task { @MainActor in
+                let ctl = InputBubbleController.shared
+                if ctl.phase == .open, let panel = ctl.panel {
+                    let start = panel.frame
+
+                    // 未 begin 前 apply 是 no-op（守卫：resizeDragStart nil）
+                    let beforeGuard = panel.frame
+                    ctl.applyResizeDrag(dx: 120, dy: -80)
+                    resizeReport.guardHeld = (panel.frame == beforeGuard)
+
+                    // begin → apply：右下角拖拽 dy 向下为负 → 增高；左上角固定
+                    ctl.beginResizeDrag()
+                    ctl.applyResizeDrag(dx: 120, dy: -80)
+                    let expectedSize = InputBubbleLayout.resizedSize(
+                        startSize: start.size, widthDelta: 120, heightDelta: 80)
+                    let expectedOrigin = InputBubbleLayout.resizedOrigin(
+                        startOrigin: start.origin, startSize: start.size, newSize: expectedSize)
+                    resizeReport.grew = abs(panel.frame.width - expectedSize.width) < 0.5
+                        && abs(panel.frame.height - expectedSize.height) < 0.5
+                        && abs(panel.frame.origin.x - expectedOrigin.x) < 0.5
+                        && abs(panel.frame.origin.y - expectedOrigin.y) < 0.5
+
+                    // finish：量化到步进合法域并持久化
+                    ctl.finishResizeDrag()
+                    let quantizedW = InputBubblePreferences.clampedWidth(Double(panel.frame.width))
+                    let quantizedH = InputBubblePreferences.clampedHeight(Double(panel.frame.height))
+                    resizeReport.quantized = abs(panel.frame.width - quantizedW) < 0.5
+                        && abs(panel.frame.height - quantizedH) < 0.5
+                        && InputBubblePreferences.bubbleWidth == quantizedW
+                        && InputBubblePreferences.bubbleHeight == quantizedH
+
+                    // applyPanelSize 程序化改尺寸（设置页滑杆联动共用通道）
+                    let target = NSSize(width: quantizedW + 40, height: quantizedH + 20)
+                    ctl.applyPanelSize(target)
+                    resizeReport.appliedSize = abs(panel.frame.width - target.width) < 0.5
+                        && abs(panel.frame.height - target.height) < 0.5
+                }
+                resizeSem.signal()
+            }
+            while resizeSem.wait(timeout: .now()) == .timedOut {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            check("BubblePanelE2E: 未 begin 时 applyResizeDrag 守卫保持（no-op）", resizeReport.guardHeld)
+            check("BubblePanelE2E: applyResizeDrag 左上角固定实时改尺寸", resizeReport.grew)
+            check("BubblePanelE2E: finishResizeDrag 量化落账（面板帧+偏好同步）", resizeReport.quantized)
+            check("BubblePanelE2E: applyPanelSize 程序化 relayout（滑杆联动通道）", resizeReport.appliedSize)
+
+            // 偏好还原（避免测试尺寸泄漏给后续运行/设置页）
+            InputBubblePreferences.bubbleWidth = savedWidth
+            InputBubblePreferences.bubbleHeight = savedHeight
         } else {
             check("BubblePanelE2E: 面板已打开且在屏可见", false)
         }
