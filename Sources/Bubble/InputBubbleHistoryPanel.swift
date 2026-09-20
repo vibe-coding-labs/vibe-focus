@@ -309,6 +309,10 @@ final class InputBubbleHistoryPanelController: NSObject {
         // B306：复查循环随面板生命周期终止
         settleWorkItem?.cancel()
         settleWorkItem = nil
+        // B307：面板曾是 key window，orderOut 后 key 的系统回落（app 内次候选窗口）
+        // 在激活边缘态下可能无主——显式把键盘还给还开着的气泡（⌘Y 语义即「回到输入」；
+        // 气泡未开时 refocusPanel 的 phase guard 自然 no-op，dismiss 联动路径同样安全）。
+        InputBubbleController.shared.refocusPanel()
     }
 
     /// B306：历史面板收键盘复查循环（决策表 InputBubbleActivationPlan 与气泡主链共用，
