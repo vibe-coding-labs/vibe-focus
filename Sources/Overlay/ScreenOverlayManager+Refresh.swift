@@ -47,6 +47,10 @@ extension ScreenOverlayManager {
             screenSpaceCache.removeAll()
         }
 
+        // 幽灵窗自审计（2026-09-20 第三层兜底）：事件类触发（唤醒/解锁/补射）全部
+        // 错过时，刷新周期内自查 occlusionState，全遮蔽即重建。轻量：N 个位读取。
+        auditOverlayVisibility()
+
         let screens = NSScreen.screens
 
         // 主线程预解析：提取 Sendable 值（NSScreen 不可跨 actor 传递）。

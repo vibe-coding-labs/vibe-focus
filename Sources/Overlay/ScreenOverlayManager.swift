@@ -56,6 +56,11 @@ final class ScreenOverlayManager: ObservableObject {
     /// 唤醒事件后的延迟补射间隔（自事件起算 = debounce + 此值）。用户「唤醒→解锁」
     /// 间隔内补射落点在已解锁桌面，兜底 screenIsUnlocked 通知未达时的可见挂接。
     static let wakeRebuildFollowUpIntervals: [TimeInterval] = [45, 180]
+    /// 可见性自审计重建冷却：遮蔽（角标被其他窗口全盖）与挂接失败在 occlusionState
+    /// 上同签名，冷却把最坏重建频率钳在 1/30s，避免遮蔽场景抖动。
+    static let visibilityAuditCooldown: TimeInterval = 30
+    /// 上次可见性自审计重建时刻。
+    var lastVisibilityRebuildAt: Date = .distantPast
 
     var cachedDisplayIndices: [UUID: Int] = [:]
     var lastQueryTimes: [UUID: Date] = [:]
@@ -316,6 +321,59 @@ final class ScreenOverlayManager: ObservableObject {
                 "afterCount": String(overlayWindows.count)
             ]
         )
+    }
+
+    // MARK: - 可见性自审计（2026-09-20 幽灵窗根治第三层兜底）
+
+    /// 可见性自审计判定（纯函数，真值表锁定于 RunnerOverlayWakeRebuildTests）。
+    ///
+    /// ## 场景
+    /// screenIsUnlocked 分布式通知实测不可达（装机 0.0.86 上解锁后 0 次送达）、
+    /// 唤醒补射有时间盲区（唤醒→解锁间隔超长时全部落在锁屏期）——任何事件丢失
+    /// 都会让幽灵窗存活。本判定不依赖任何事件：解锁态（前台 ≠ loginwindow）下
+    /// 用 NSWindow.occlusionState 自查，全部角标窗均不可见即全量重建。
+    /// - enabled=false / 崩溃熔断 / 气泡抑制：不审计（与既有守卫同语义）；
+    /// - 无角标窗：不审计（无东西可救，避免空转）；
+    /// - 任一角标窗可见：不审计（正常态，全遮蔽才是失败签名）；
+    /// - 冷却未到：不重建（防遮蔽场景下的重建抖动，遮蔽非挂接失败）。
+    static func visibilityAuditDecision(
+        frontmostBundleID: String?,
+        enabled: Bool,
+        crashLoopSuppressed: Bool,
+        inputBubbleSuppressed: Bool,
+        overlayWindowCount: Int,
+        visibleOverlayCount: Int,
+        secondsSinceLastRebuild: TimeInterval,
+        cooldown: TimeInterval
+    ) -> Bool {
+        guard enabled, !crashLoopSuppressed, !inputBubbleSuppressed else { return false }
+        guard let front = frontmostBundleID, front != "com.apple.loginwindow" else { return false }
+        guard overlayWindowCount > 0, visibleOverlayCount == 0 else { return false }
+        return secondsSinceLastRebuild >= cooldown
+    }
+
+    /// 刷新周期调用的可见性自审计入口（轻量：N 个 occlusionState 位读取）。
+    func auditOverlayVisibility() {
+        let visibleCount = overlayWindows.values.filter {
+            $0.occlusionState.contains(.visible)
+        }.count
+        guard Self.visibilityAuditDecision(
+            frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            enabled: preferences.isEnabled,
+            crashLoopSuppressed: crashLoopSuppressed,
+            inputBubbleSuppressed: overlaysSuppressedForInputBubble,
+            overlayWindowCount: overlayWindows.count,
+            visibleOverlayCount: visibleCount,
+            secondsSinceLastRebuild: Date().timeIntervalSince(lastVisibilityRebuildAt),
+            cooldown: Self.visibilityAuditCooldown
+        ) else {
+            return
+        }
+        lastVisibilityRebuildAt = Date()
+        log("[Overlay] visibility audit: all overlays occluded in unlocked session, rebuilding", fields: [
+            "windows": String(overlayWindows.count)
+        ])
+        performWakeRebuild(reason: "visibility_audit")
     }
 
     // MARK: - Public Methods

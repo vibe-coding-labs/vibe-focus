@@ -36,5 +36,57 @@ extension RunnerHarness {
               ScreenOverlayManager.wakeRebuildDebounceInterval > 0)
         check("wakeRebuild T7: 唤醒补射间隔递增且为正（解锁后桌面兜底挂接）",
               ScreenOverlayManager.wakeRebuildFollowUpIntervals == [45, 180])
+
+        // 可见性自审计（第三层兜底，2026-09-20）：解锁通知不可达 + 补射时间盲区的
+        // 终极兜底——解锁态下全部角标窗 occlusionState 不可见即全量重建。
+        check("visibilityAudit T8: 解锁态+有窗+全不可见+冷却已过 → 重建",
+              ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.Terminal", enabled: true,
+                crashLoopSuppressed: false, inputBubbleSuppressed: false,
+                overlayWindowCount: 3, visibleOverlayCount: 0,
+                secondsSinceLastRebuild: 31, cooldown: 30))
+        check("visibilityAudit T9: 前台=loginwindow（锁屏态）→ 不审计（锁屏期重建无意义）",
+              !ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.loginwindow", enabled: true,
+                crashLoopSuppressed: false, inputBubbleSuppressed: false,
+                overlayWindowCount: 3, visibleOverlayCount: 0,
+                secondsSinceLastRebuild: 31, cooldown: 30))
+        check("visibilityAudit T10: enabled=false → 不审计",
+              !ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.Terminal", enabled: false,
+                crashLoopSuppressed: false, inputBubbleSuppressed: false,
+                overlayWindowCount: 3, visibleOverlayCount: 0,
+                secondsSinceLastRebuild: 31, cooldown: 30))
+        check("visibilityAudit T11: 无角标窗 → 不审计（无东西可救）",
+              !ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.Terminal", enabled: true,
+                crashLoopSuppressed: false, inputBubbleSuppressed: false,
+                overlayWindowCount: 0, visibleOverlayCount: 0,
+                secondsSinceLastRebuild: 31, cooldown: 30))
+        check("visibilityAudit T12: 任一角标可见 → 不审计（全遮蔽才是失败签名）",
+              !ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.Terminal", enabled: true,
+                crashLoopSuppressed: false, inputBubbleSuppressed: false,
+                overlayWindowCount: 3, visibleOverlayCount: 1,
+                secondsSinceLastRebuild: 31, cooldown: 30))
+        check("visibilityAudit T13: 冷却未到 → 不重建（防遮蔽场景抖动）",
+              !ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.Terminal", enabled: true,
+                crashLoopSuppressed: false, inputBubbleSuppressed: false,
+                overlayWindowCount: 3, visibleOverlayCount: 0,
+                secondsSinceLastRebuild: 5, cooldown: 30))
+        check("visibilityAudit T14: 崩溃熔断/气泡抑制 → 不审计",
+              !ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.Terminal", enabled: true,
+                crashLoopSuppressed: true, inputBubbleSuppressed: false,
+                overlayWindowCount: 3, visibleOverlayCount: 0,
+                secondsSinceLastRebuild: 31, cooldown: 30)
+              && !ScreenOverlayManager.visibilityAuditDecision(
+                frontmostBundleID: "com.apple.Terminal", enabled: true,
+                crashLoopSuppressed: false, inputBubbleSuppressed: true,
+                overlayWindowCount: 3, visibleOverlayCount: 0,
+                secondsSinceLastRebuild: 31, cooldown: 30))
+        check("visibilityAudit T15: 冷却常量为正",
+              ScreenOverlayManager.visibilityAuditCooldown == 30)
     }
 }
