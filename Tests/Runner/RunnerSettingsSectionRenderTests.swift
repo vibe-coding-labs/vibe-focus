@@ -508,3 +508,31 @@ extension RunnerHarness {
         check("render266: activeSessionList 渲染出图", rSL.nsImage != nil)
     }
 }
+
+// MARK: - B268：ScreenIndexPreferences Codable/默认值/多实例一致性
+
+extension RunnerHarness {
+    func runScreenIndexPrefsTests() {
+        // Codable 回环：编码→解码无损
+        let original = ScreenIndexPreferences.default
+        let data = try! JSONEncoder().encode(original)
+        let decoded = try! JSONDecoder().decode(ScreenIndexPreferences.self, from: data)
+        check("prefs: Codable 回环无损", decoded.isEnabled == original.isEnabled && decoded.fontSize == original.fontSize && decoded.panelScale == original.panelScale)
+
+        // 修改后编码→解码保真
+        var modified = ScreenIndexPreferences.default
+        modified.fontSize = 72
+        modified.opacity = 0.5
+        modified.panelMargin = 30
+        modified.isEnabled = false
+        let data2 = try! JSONEncoder().encode(modified)
+        let decoded2 = try! JSONDecoder().decode(ScreenIndexPreferences.self, from: data2)
+        check("prefs: 修改后回环保真", decoded2.fontSize == 72 && decoded2.opacity == 0.5 && decoded2.panelMargin == 30 && decoded2.isEnabled == false)
+
+        // 默认值合理性
+        check("prefs: 默认值合理（enabled/fontSize>0/opacity 0-1）",
+              ScreenIndexPreferences.default.isEnabled
+              && ScreenIndexPreferences.default.fontSize > 0
+              && ScreenIndexPreferences.default.opacity > 0 && ScreenIndexPreferences.default.opacity <= 1)
+    }
+}

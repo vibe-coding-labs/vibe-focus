@@ -455,6 +455,7 @@ final class FakeAuditor: RestoreAuditing {
         runMiscStragglerTests()
         runScreenMinimapViewTests()
         runSettingsTerminalGridTabRenderTests()
+        runScreenIndexPrefsTests()
         runSettingsDGroupTests()
         runLLMRequestTests()
         runSettingsPrefUpdateTests()
