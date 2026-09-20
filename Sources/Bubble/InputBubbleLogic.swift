@@ -404,3 +404,26 @@ enum InputBubbleTiming {
     /// 注入完成到恢复剪贴板的延迟
     static let clipboardRestoreDelayMs: Int = 500
 }
+
+/// 面板构建指纹（B175 尺寸 + B161 回车语义 + 2026-09-20 编辑器形态）：
+/// 任一变化 → 下次唤起重建面板（避免陈旧布局/编辑器类型）。
+/// 纯判定 Runner 直测；重建编排归 InputBubbleController+Panel。
+enum InputBubblePanelBuildPlan {
+    struct Fingerprint: Equatable {
+        let size: NSSize
+        let submitOnEnter: Bool
+        let editorKind: InputBubbleEditorKind
+    }
+
+    static func needsRebuild(
+        built: Fingerprint?,
+        size: NSSize,
+        submitOnEnter: Bool,
+        editorKind: InputBubbleEditorKind
+    ) -> Bool {
+        guard let built else { return true }
+        return built.size != size
+            || built.submitOnEnter != submitOnEnter
+            || built.editorKind != editorKind
+    }
+}

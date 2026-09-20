@@ -22,7 +22,8 @@ final class InputBubblePanel: NSPanel {
 /// B195：↑↓ 历史翻阅——光标在首行按 ↑ / 末行按 ↓ 才进历史回调（多行编辑的
 /// 光标移动不受干扰）；回调返回 false（无历史可翻）落 super 正常移动光标；
 /// IME 组词态一律放行（B172 同款）。
-final class InputBubbleTextView: NSTextView {
+/// 非 final：MarkdownBubbleTextView（同模块）继承键位语义、只重写显示层。
+class InputBubbleTextView: NSTextView {
     /// 非 ⇧ 的 Return/小键盘 Enter 按下回调（commandHeld = ⌘ 是否按住）
     var onEnterKey: ((Bool) -> Void)?
     /// B195：↑↓ 历史翻阅回调，返回 true=已消费
@@ -72,6 +73,47 @@ final class InputBubbleTextView: NSTextView {
     var isSelectionOnLastLine: Bool {
         let line = (string as NSString).lineRange(for: NSRange(location: selectedRange().location, length: 0))
         return NSMaxRange(line) >= (string as NSString).length
+    }
+}
+
+// MARK: - Markdown 实时渲染输入框（Typora 式编辑即预览，2026-09-20）
+/// 键位语义与 InputBubbleTextView 完全一致（Enter/⌘Enter 拦截、↑↓ 历史、⌘Y 全继承），
+/// 差异仅在显示层：用户编辑 / 程序化赋值后全文重渲染（源码零改动只换属性，
+/// MarkdownLiveRenderPlan 唯一事实源）。提交给终端的仍是 Markdown 源文本。
+/// IME 组词态暂停渲染（组词中的属性回写会打断输入法），收词后的 didChangeText 补上。
+final class MarkdownBubbleTextView: InputBubbleTextView {
+    /// 渲染重入守卫：textStorage 程序化属性编辑不触发 didChangeText（只有
+    /// shouldChangeText 用户编辑路径会），此标记防未来路径变化引入递归。
+    private var isRenderingPass = false
+
+    override var string: String {
+        get { super.string }
+        set {
+            super.string = newValue
+            applyLiveRender()
+        }
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        applyLiveRender()
+    }
+
+    /// 全文重渲染：渲染结果字符串与源码逐字一致 → 选区/滚动位置天然保持；
+    /// 渲染后按光标所在块刷新 typingAttributes（新输入继承当前块基样式）。
+    func applyLiveRender() {
+        guard !isRenderingPass, !hasMarkedText(), let storage = textStorage else { return }
+        isRenderingPass = true
+        defer { isRenderingPass = false }
+        let source = storage.string
+        let cursor = selectedRange().location
+        let rendered = MarkdownLiveRenderPlan.render(source)
+        storage.beginEditing()
+        rendered.enumerateAttributes(in: NSRange(location: 0, length: rendered.length)) { attrs, range, _ in
+            storage.setAttributes(attrs, range: range)
+        }
+        storage.endEditing()
+        typingAttributes = MarkdownLiveRenderPlan.typingAttributes(for: source, cursorLocation: cursor)
     }
 }
 

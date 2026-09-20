@@ -23,6 +23,7 @@ private struct InputBubbleSectionView: View {
     @State private var width = InputBubblePreferences.bubbleWidth
     @State private var height = InputBubblePreferences.bubbleHeight
     @State private var submitOnEnter = InputBubblePreferences.submitOnEnter
+    @State private var editorKind = InputBubblePreferences.editorKind
     @State private var autoShowOnFocus = InputBubblePreferences.autoShowOnFocus
     @State private var autoShowOnMoveToMain = InputBubblePreferences.autoShowOnMoveToMain
     @State private var autoRestoreOnSubmit = InputBubblePreferences.autoRestoreOnSubmit
@@ -124,6 +125,24 @@ private struct InputBubbleSectionView: View {
                     .onChange(of: autoShowOnMoveToMain) { newValue in
                         InputBubblePreferences.autoShowOnMoveToMain = newValue
                     }
+            }
+
+            Divider()
+
+            SettingsRow(
+                title: "编辑器形态",
+                detail: "多行文本 = 现行纯文本编辑；Markdown 实时预览 = Typora 式输入即渲染（标题/粗体/代码块等边输入边上样式，语法标记保留，提交的仍是 Markdown 源文本，注入语义不变）。改动立即生效，气泡开着时自动热切换。"
+            ) {
+                Picker("", selection: $editorKind) {
+                    Text("多行文本").tag(InputBubbleEditorKind.plain)
+                    Text("Markdown 实时预览").tag(InputBubbleEditorKind.markdown)
+                }
+                .labelsHidden()
+                .frame(width: 190)
+                .disabled(!enabled)
+                .onChange(of: editorKind) { newValue in
+                    InputBubblePreferences.editorKind = newValue
+                }
             }
 
             Divider()
