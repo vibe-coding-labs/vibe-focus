@@ -13,11 +13,12 @@ enum InputBubbleArrivalMover: Equatable {
     case userAction   // 用户/其它来源移动（⌃Q 摆位、拖动、外部 yabai、显示器重排）→ 不弹
 
     /// WindowMoveReason → 移动者分类。userPromptSubmit 路径已随 B126 退役（UPS 永不搬窗），
-    /// 保守归为 userAction：宁可不弹，不可误弹。
+    /// 保守归为 userAction：宁可不弹，不可误弹。agentCommand（命令 API 显式移动）
+    /// 同保守原则不弹气泡——agent 编排中的移动是程序性行为，弹气泡反而打断用户。
     static func map(_ reason: WindowMoveReason) -> InputBubbleArrivalMover {
         switch reason {
         case .claudeSessionEnd: return .hookPull
-        case .manualHotkey, .userPromptSubmit: return .userAction
+        case .manualHotkey, .userPromptSubmit, .agentCommand: return .userAction
         }
     }
 }

@@ -10,6 +10,9 @@ enum WindowMoveReason: String, Codable {
     case manualHotkey = "manual_hotkey"
     case claudeSessionEnd = "claude_session_end"
     case userPromptSubmit = "user_prompt_submit"
+    /// Agent 命令 API 显式移动（POST /api/v1/windows/move-main）：
+    /// 落 windows 表 toggle_reason 与审计，与 hook 自动链明确区分归因。
+    case agentCommand = "agent_command"
 }
 
 /// Identifies a window by CGWindowID, PID, and optional metadata.

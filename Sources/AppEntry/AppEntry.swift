@@ -14,6 +14,23 @@ struct VibeFocusApp: App {
     }
 
     init() {
+        // Agent CLI 子命令（design-agent-access.md 通道①）：`VibeFocusHotkeys status`、
+        // `windows list` 等。读类本地直读（CG/JSON 文件，App 不在跑也可用），写类转发
+        // 常驻 App 的 /api/v1/*。首 token 不是已知动词 → notOurs，App 照常启动；
+        // 是 CLI 形态但语法错 → 打印用法退 2。不取单实例锁、不进事件循环。
+        switch AgentCLIRouter.parse(Array(CommandLine.arguments.dropFirst())) {
+        case .notOurs:
+            break
+        case .invalid(let message):
+            FileHandle.standardError.write(Data("参数错误: \(message)\n\n\(AgentCLIRouter.usage)\n".utf8))
+            fflush(stdout)
+            exit(2)
+        case .command(let command):
+            fflush(stdout)
+            let code = AgentCLI.run(command)
+            fflush(stdout)
+            exit(code)
+        }
         // 崩溃管道自测：`VibeFocusHotkeys --crash-test-signal` 手工安装信号处理器、
         // 写启动审计后 raise(SIGTRAP)，端到端演练「审计行 + fatal 文本 + BACKTRACE +
         // 归档」全链路（SIGTRAP 类死亡无 .ips，本开关是唯一可主动触发的验证手段）。

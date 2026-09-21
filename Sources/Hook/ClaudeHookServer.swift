@@ -18,7 +18,8 @@ final class ClaudeHookServer: ObservableObject {
     @Published var unmatchedSessionCount = 0
 
     private var server: GCDWebServer?
-    private var activePort: Int?
+    /// 当前监听端口（Agent API status 读取；internal 供 +API 扩展访问）。
+    var activePort: Int?
     var configuredToken: String?
     /// 当前监听实例的绑定模式（true=仅本机）。纳入重启判定：运行中翻转「局域网模式」
     /// 必须重绑定，否则开 LAN 无效、关 LAN 继续暴露 0.0.0.0（2026-09-10 模块审计实锤）。
@@ -122,6 +123,10 @@ final class ClaudeHookServer: ObservableObject {
                 }
             }
         )
+
+        // Agent 命令 API（/api/v1/*）：与 hook 同 server、同 token 门、同绑定面
+        // （127.0.0.1 语义随 bindToLocalhost）。分级授权在 AgentApiCore 判定。
+        registerAgentAPIRoutes(on: webServer)
 
         do {
             try webServer.start(options: [

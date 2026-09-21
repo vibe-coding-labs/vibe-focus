@@ -31,12 +31,15 @@ final class TerminalGridController {
 
     // MARK: 创建网格
 
-    func createGrid() async -> OperationResult {
+    /// - Parameters:
+    ///   - rowsOverride/colsOverride: Agent 命令 API 的行列覆盖（nil=用当前网格偏好）；
+    ///     参数合法性（1...8 钳制）已在 AgentApiRequestDecoder 入口把关。
+    func createGrid(rowsOverride: Int? = nil, colsOverride: Int? = nil) async -> OperationResult {
         PerfMonitor.shared.beginSection("grid.create")
         defer { PerfMonitor.shared.endSection() }
         let op = makeOperationID(prefix: "grid-create")
-        let rows = TerminalGridPreferences.rows
-        let cols = TerminalGridPreferences.cols
+        let rows = rowsOverride ?? TerminalGridPreferences.rows
+        let cols = colsOverride ?? TerminalGridPreferences.cols
 
         guard let (screen, screenNote) = resolveTargetScreen() else {
             return OperationResult(ok: false, message: "无法确定目标显示器")
