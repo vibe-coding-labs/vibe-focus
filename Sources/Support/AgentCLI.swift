@@ -241,15 +241,15 @@ enum AgentCLIExitCode {
 
 // MARK: - 连接配置
 
-enum AgentCLIConnection {
-    struct Config: Equatable {
-        let port: Int
-        let token: String?
+public enum AgentCLIConnection {
+    public struct Config: Equatable {
+        public let port: Int
+        public let token: String?
     }
 
     /// 凭据单一事实源与 hook 一致：① CFPreferences（AppIdentity.bundleID 域，与
     /// RemoteInstallDeploy 同款直读）；② ~/.vibefocus/hook-config.json 兜底。
-    static func load(home: String = NSHomeDirectory()) -> Config {
+    public static func load(home: String = NSHomeDirectory()) -> Config {
         let prefPort = CFPreferencesCopyAppValue(
             ClaudeHookPreferences.portKey as CFString,
             AppIdentity.bundleID as CFString

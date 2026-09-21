@@ -14,7 +14,8 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "VibeFocusHotkeys", targets: ["VibeFocusHotkeys"])
+        .executable(name: "VibeFocusHotkeys", targets: ["VibeFocusHotkeys"]),
+        .executable(name: "VibeFocusMCP", targets: ["VibeFocusMCP"])
     ],
     dependencies: [
         .package(url: "https://github.com/yene/GCDWebServer", from: "3.5.4")
@@ -28,7 +29,7 @@ let package = Package(
                 .target(name: "Csqlite3")
             ],
             path: "Sources",
-            exclude: ["AppEntry"],
+            exclude: ["AppEntry", "MCPBridge"],
             resources: [
                 .copy("../Resources/yabai-space-changed.sh"),
                 .copy("../Resources/claude-session-hook-example.sh"),
@@ -42,6 +43,14 @@ let package = Package(
             name: "VibeFocusHotkeys",
             dependencies: ["VibeFocusKit"],
             path: "Sources/AppEntry"
+        ),
+        // MCP stdio 桥（Agent 接入通道③）：agent host 拉起本进程，JSON-RPC ↔
+        // App 命令 API。协议纯逻辑在 Kit/MCPProtocol（Runner 直测），这里只有
+        // stdio 循环 + curl 壳。
+        .executableTarget(
+            name: "VibeFocusMCP",
+            dependencies: ["VibeFocusKit"],
+            path: "Sources/MCPBridge"
         ),
         // 真实代码测试运行器（2026-09-02，CLT-only 环境的 swift test 过渡通道）：
         // CLT 无 XCTest/Swift Testing 运行时，Tests/XCTest 套件无法在本机执行。
