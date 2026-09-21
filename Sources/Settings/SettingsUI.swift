@@ -70,6 +70,12 @@ public struct SettingsView: View {
     @State var codexInstallSucceeded = true
     @State var codexTestMessage: String?
 
+    // Agent 接入（卡片见 SettingsView+AgentAccessSection.swift；API 侧同键读取于
+    // AgentAccessPreferences——@AppStorage 直写 standard 域，App 内每请求实时生效）
+    @AppStorage(AgentAccessPreferences.enabledKey) var agentAccessEnabled = AgentAccessPreferences.defaultEnabled
+    @AppStorage(AgentAccessPreferences.allowWindowOpsKey) var agentAllowWindowOps = AgentAccessPreferences.defaultAllowWindowOps
+    @AppStorage(AgentAccessPreferences.allowCreateWindowsKey) var agentAllowCreateWindows = AgentAccessPreferences.defaultAllowCreateWindows
+
     // Hook 触发开关
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop
     @AppStorage(ClaudeHookPreferences.triggerOnSessionEndKey) var triggerOnSessionEnd = ClaudeHookPreferences.defaultTriggerOnSessionEnd
@@ -163,6 +169,14 @@ public struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     codexSection
+                }
+            }
+            .scrollIndicators(.visible)
+
+        case .agentAccess:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    agentAccessSection
                 }
             }
             .scrollIndicators(.visible)
