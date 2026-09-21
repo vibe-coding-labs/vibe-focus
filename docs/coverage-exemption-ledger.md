@@ -132,6 +132,7 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 | B263 轮 | 2026-09-20 | 77.24%（66708 行） | 70.01%（36933 行，missed 11114） | 3410/3410 | 插桩构建 llvm-cov 实测 |
 | **B270 终值轮** | 2026-09-20 | 78.15%（67144 行） | 71.61%（37066 行，missed 10523） | 3431/3431 | 全部 E2E 通道当日独立绿；多线并行清扫持续 |
 | **B282 复核轮（最新）** | 2026-09-20 | **78.91%**（67746 行） | **72.75%**（37066 行，missed 10103） | 3506/3506 | A 态清单清账推进（B272~B281 六批），签署时点后净提升 +0.76pp 全口径/+1.14pp 纯净 |
+| **B312 轮（最新）** | 2026-09-21 | —（本轮仅跑 Sources 口径） | **74.76%**（37971 行，missed 9585；批前 74.66%/9622） | 3839/3839 | A 态清单最后两具名残留清账（B312：SoundManager 残支 45→12 + ScreenIndex 迁移臂 66→60），并清 B311 遗留测试警告 9 条（零警告门禁复原）；全口径列本轮未测，口径以 Sources 纯净为准 |
 
 **低覆盖文件归属核对**（B263 轮，missed≥100 行者全部归位）：
 
@@ -182,8 +183,8 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 | 文件 (missed) | 提缝方向 |
 |---|---|
 | ~~WindowManager+Finding (49)~~ | ✅ B299 已清主体：matchedWindowIdentity 尾段提纯（行为逐行等价）后注入候选表，策略 1/2 两日志分支+身份构造编排直测；残 15 行=captureFocusedWindowIdentity 三守卫（无前台 app/无焦点窗/无 handle，14 行）+ findClaudeCodeWindow 真实命中转发 return（1 行）→ 前台环境态留白归 B 态 AXRead 通道 |
-| ~~SoundManager (45)~~ | ✅ B273 已清（钳制纯逻辑+API 往返还原） |
-| ~~ScreenIndexPreferences (40)~~ | ✅ B273 已清（savesLegacyUpgrade=false 注入，legacy 迁移/垃圾数据直测，零落库） |
+| ~~SoundManager (45→12)~~ | ✅ B273 清钳制/往返；✅ B312 清残支：节流臂/免打扰臂（mock 播放口+基线相对计数，对套件先验播放态免疫）/resolve 失败双臂（Runner 无 Sounds 资源实锤）/5s 兜底身份校验（6.5s RunLoop 泵锁「旧闭包不掐新播放」竞态契约）/loadPreferences 缺数据+坏数据双臂（B248 仅可见性提缝 internal+阳性对照防假绿）；残 12 行归因：AppSoundPlayer.play 体=C4 真实发声、NSSound(named:)/Basso 系统音恒在+Bundle Sounds 资源仅装机有=装机态、savePreferences encode catch=Codable 不可失败防御臂 |
+| ~~ScreenIndexPreferences (40→66→60)~~ | ✅ B273 已清（savesLegacyUpgrade=false 注入）；⚠️0.0.81 沙箱修复新增 66 行致注记失效（B301 点名待重审）；✅ **B312 复审终局**：enforce 全局→分屏迁移臂 6 行清零（save 恒走沙箱零生产触碰，G1~G3）；残 60 行=load()/save() 生产三源链（SQLite 主源+CFPreferences+UserDefaults）——**0.0.81 沙箱守卫本体**，isProductionAppProcess 在 Runner 恒 false=按设计不可达，强提缝须翻真实 plist/生产库违反 C7 红线 → 归 C7-装机态；替代验证=装机日常+设置页角标人工验收+2026-09-20「屏幕序号无法渲染」生产事故闭环 |
 | ~~ClaudeHookServer (25)~~ | ✅ B274 已清（端口守卫低/高双分支直测） |
 | ~~WindowManager+Toggle+Decision (28)~~ | ✅ B274 已清（evaluateRestoreDecision 输入收集段注入直测） |
 | ~~VoiceAnnouncementManager+RestoreOutcome (27)~~ | ✅ B276 复核改判：plan 纯映射已测（B229），残量=announce 发声接线 → C4 出声豁免 |
@@ -204,6 +205,7 @@ HOTKEY/SESSION_RESTORE）；联跑 1 轮失败并已清理归零——正式收�
 
 **B301（2026-09-20）Overlay 家族 E2E 通道开建**：`VIBEFOCUS_OVERLAY_E2E=1`（Tests/e2e/README 已登记）——真窗链全家+抑制开关+熔断守卫+force refresh 双分支+后台 Task 真实 yabai 落账；默认门禁恒跑离屏生命周期节（不 orderFront）。家族 missed 352→188（E2E 模式实测），TOTAL 全口径 73.18%→73.48%。⚠️复核提示：ScreenIndexPreferences 66 missed 为并行线「进程级持久化沙箱修复」（0.0.81）新增代码，B273 清账注记对该文件失效待重审；+SpaceQuery 残 18 行=yabai 级失败注入经 preferences.yabaiPath 不可达（getYabaiPath 仅消费于 getPerScreenSpaceIndexAsync 单点）归 C7；+Signal 残 55 行=SIGUSR1 处理体（C5，B234 DispatchSourceSignal CLI 不投递）+signalFollowUpRefreshDelays 空表功能关死体。
 **B302（2026-09-20）气泡拖拽调宽驱动入通道**：builtPanel 后直驱 beginResizeDrag/applyResizeDrag/finishResizeDrag/applyPanelSize 全链（左上角固定几何对账 InputBubbleLayout 纯函数、未 begin 守卫、量化落账+偏好同步、滑杆联动通道，偏好快照-还原 B84 家法）；零合成鼠标零文本注入。⚠️环境受阻：yabai 新坏法——**id→window 解析全灭**（聚合列表在而 scoped-by-id 全灭，重启 daemon/唤醒均不愈，需注销/重启），锚点建立不可→通道防泄漏前置探针（对既有窗 scoped 探测，不通则建窗前跳过，零泄漏）。InputBubbleController+Panel 维持 B 态待环境愈后重测。
+**B312（2026-09-21）A 态清单收官批**：SoundManager 残支 45→12 + ScreenIndexPreferences 复审清迁移臂（详见 A 清单两行）；连带修复 B311 批遗留的 9 条测试警告（Finale 6+Tail 3，零警告门禁复原）；新文件 RunnerSoundScreenPrefsResidueTests.swift 14 断言。门禁：build 零警告 + Runner 3839/3839（普通+插桩双轮）+ Standalone 全过；Sources 纯净 74.66%→74.76%（missed 9622→9585，两靶点 -37 行精确对账）。**A 态具名清单自此清零**：余量全部归 B（E2E 通道）或 C（C1~C7 豁免），后续新代码按「新缺口逐条入账」纪律执行。
 
 InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreController(18)/Planner(6)/Store(2)/PaneClassifier(1)/RemoteSessionProbe(1)/SSHCommandParser(2, 真恢复通道) · OverlayWindow(5)/+Refresh(18)/+SpaceQuery(18)/SpaceSnapshot(3, overlay 真窗域) · WindowManager+AXRead(8)/+ScreenPosition(4)/+TerminalContext+Helpers(4)/+Toggle+FocusFallback(19, pickFallback 已测+AX 边支) · Space/CoordinateKit+Screen(7)/+Context(21)/+Move(32, toggled=AXWrite/SIZE 通道)/NativeSpaceBridge(18) · Toggle/ToggleEngine(6) · Hook/HookEventHandler+Remote(1)/+Notification(1)/SessionWindowRegistry 三件(21)/SessionPanelLogic(2) · TerminalGrid/ClaudeSessionLocator(6)/ScreenLayoutMapper(1)/TerminalAutomationScript(1)/Store(3)/SelectionResolver(1)/UsageTracker(6) · SettingsView+TitleEditorSection(2)/+HotKeySection(6) · App/TranscriptTail(4)/VoiceManager+Persistence(3)/+Queue(4) · Support/AuditLogger(3)/AXSelfHeal(2)/CGWindowEntry(2)/ExitJournal(4)/FrameConvergence(4)/FrameWriteExecutor(2)/MoveToMainPipeline(5)/ShellRunner(9)/TerminalRegistry(2)/YabaiEnvironmentProbe(2)/Doctor+InstallInventory(7)/BuildCapabilities(1)/CrashRuntimeSnapshot(1) · Layout/LayoutHotKeyTable(2)/WindowLayoutManagerProbe(1) · Hook/HookScriptGenerator(4)/RemoteInstallDeploy(2)/RemoteInstallScriptBuilder(1)/LANHookPreferences(1)
 
@@ -217,7 +219,7 @@ InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreCont
 | C6 渲染树 | SettingsComponents(18)/+Audio(35)/+Navigation(15)/+Shortcuts(14)/DesignSystem(1)/GridSnapshotWidgets(8)/SettingsView+OverlaySection(32)/+SoundAntiDisturb(23) |
 | C7 生产禁写/信号 | ScreenIndexPreferences(40)/HookInstaller(14)/CodexHookInstaller(13)/ClaudeHookPreferences(4)/ClaudeHookServer+Request(6)/SpaceController.swift(27, refresh 内部 fork 编排) |
 
-> 注：SpaceController.swift(27) 原判 A，B271 复核其残支=refreshAvailability 后台 fork 编排内部行（无单测可达入口），改判 C7；SoundManager(45) 中 resolveSound 已由并行 B262 批测过，残支=播放队列出声段边缘——维持 A（提缝方向=静音时段/节流边界纯逻辑）。
+> 注：SpaceController.swift(27) 原判 A，B271 复核其残支=refreshAvailability 后台 fork 编排内部行（无单测可达入口），改判 C7；SoundManager 残支已由 B312 终局清账（45→12，残量=C4 发声+装机态+防御臂，见 A 清单行）。
 
 ## 签字
 
@@ -232,4 +234,5 @@ InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreCont
 ### 待补签（B299+B300+B301 提请，2026-09-20）
 
 - [ ] B299 豁免增改补签：①Support+Diagnostics 残 20 行改判 C7-装机态（触发=破坏装机：无 caps 二进制/缺 codesign/删证书/mdfind 失效；替代验证=--diagnose 冒烟）；②Finding 残 15 行（前台环境态）/StateStore+Database 残 2 行（HOME 污染风险）留白注记；③门禁环境注记（显示器休眠致 yabai 聚合查询截断，Runner 须 `caffeinate -d`；全绿实证 3596/3596）。②B300（main 8341f62）：B 态五项清账（Tracker 100%/ShellRunner 9→1/Planner 6→1/Locator 6→2/ToggleEngine 6→2，均为单测可达行而非新豁免；B 态余量真机域归既有 E2E 通道）；③门禁环境纪律补全：先 `caffeinate -u` 唤醒再 `-d` 压住（-d 不唤醒已睡屏幕）。Runner 3614/3614 全绿。④B301（main 4848a28）：Overlay 家族 E2E 通道（`VIBEFOCUS_OVERLAY_E2E=1`），家族 352→188 missed；SIGUSR1 处理体归 C5、空延迟表功能关死体、SpaceQuery 注入不可达归 C7；⑤ScreenIndexPreferences 66 行=并行线 0.0.81 沙箱修复新代码，待其责任线重审。Runner 默认门禁 3619/3619+E2E 模式 3628/3628 全绿。**已三次向用户提请（AskUserQuestion 均未应答），待确认后勾选**。
+- [ ] B312 补签提请（2026-09-21）：①ScreenIndexPreferences 残 60 行改判 C7-装机态（0.0.81 沙箱守卫本体，强提缝=写真实 plist 违反生产禁写）；②SoundManager 残 12 行归因 C4/装机态/防御臂；③B311 豁免清单（上节）一并提请。Runner 3839/3839，Sources 纯净 74.76%。
 - [x] 用户签字：已确认签署（用户于 2026-09-20 验收对话中裁决「可测面 100% + E2E + 豁免台账」口径并确认签署） 日期：2026-09-20

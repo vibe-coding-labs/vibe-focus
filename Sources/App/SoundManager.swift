@@ -411,7 +411,9 @@ import Foundation
         }
     }
 
-    private static func loadPreferences() -> SoundPreferences {
+    /// internal：缺数据/坏数据两分支 Runner 直测（B312，B248 仅可见性提缝标准）；
+    /// 直测自带 UserDefaults 快照-还原，生产键零残留。
+    static func loadPreferences() -> SoundPreferences {
         // P-INST-208: 声音偏好加载耗时（UserDefaults.standard.data CFPreferences 读 + JSONDecoder.decode；声音偏好变更 + 启动加载调用；slow-op ≥5ms warn）。
         #if PERF_INSTRUMENT
         let lprStart = Date()

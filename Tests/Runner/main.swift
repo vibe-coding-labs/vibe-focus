@@ -486,6 +486,7 @@ final class FakeAuditor: RestoreAuditing {
         runStoreDatabaseTests()
         runTitleEditorCaptureTests()
         runAudioEngineProtocolTests()
+        runSoundScreenPrefsResidueTests()
         runReadOnlyTailTests()
         runSessionActivityWriteTests()
         runSettingsFullRenderTests()

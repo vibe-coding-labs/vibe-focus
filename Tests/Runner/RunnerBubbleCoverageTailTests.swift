@@ -149,7 +149,7 @@ extension RunnerHarness {
             pump(0.2)
             let opened = InputBubbleHistoryPanelController.shared.isVisible
             check("tail: 历史钮闭包开历史面板", opened)
-            controller.toggleHistoryPanel()
+            _ = controller.toggleHistoryPanel()
             pump(0.1)
             check("tail: ⌘Y 语义收回历史面板", !InputBubbleHistoryPanelController.shared.isVisible)
         }
@@ -166,7 +166,7 @@ extension RunnerHarness {
             pump(0.2)
             check("tail: ⌘Y 键位经视图闭包打开历史面板",
                   InputBubbleHistoryPanelController.shared.isVisible)
-            controller.toggleHistoryPanel()
+            _ = controller.toggleHistoryPanel()
             pump(0.1)
             // 提交键位需要前台/柄缝（真实前台在登录屏不可匹配）；
             // activate 落在 Runner 自身（非终端激活零全局污染）
@@ -294,9 +294,8 @@ extension RunnerHarness {
         NSApp.appearance = dark
         let panelCtrl = InputBubbleHistoryPanelController.shared
         panelCtrl.close()
-        var darkFilled: String?
         panelCtrl.toggle(anchorFrame: NSRect(x: 100, y: 100, width: 600, height: 400),
-                         currentWindowID: 889_001) { darkFilled = $0 }
+                         currentWindowID: 889_001) { _ in }
         pump(0.3)
         check("tail: dark 头部构建（buildHeader dark 臂）", panelCtrl.isVisible)
         // 可见态 toggle = close 臂

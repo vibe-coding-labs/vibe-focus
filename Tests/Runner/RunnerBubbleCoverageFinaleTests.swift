@@ -94,7 +94,7 @@ extension RunnerHarness {
         controller.summonForMovedWindow(windowID: windowID, pid: iterm2PID, appName: "iTerm2")
         pump(0.3)
         guard controller.phase == .open, let panel = controller.panel,
-              let card = panel.contentView as? BubbleCardView else {
+              panel.contentView is BubbleCardView else {
             check("finale: 面板未开（环境受限跳过后续）", true)
             return
         }
@@ -151,9 +151,8 @@ extension RunnerHarness {
         InputBubbleHistoryStore.shared.record("finale 草稿条目",
                                               windowID: historyWindowID, windowTitle: "fw",
                                               status: .draft)
-        var filled: String?
         panelCtrl.toggle(anchorFrame: NSRect(x: 100, y: 100, width: 600, height: 400),
-                         currentWindowID: historyWindowID) { filled = $0 }
+                         currentWindowID: historyWindowID) { _ in }
         pump(0.3)
         guard panelCtrl.isVisible,
               let content = NSApp.windows.first(where: { $0 is InputBubbleHistoryPanel && $0.isVisible }),
@@ -212,8 +211,8 @@ extension RunnerHarness {
         panelCtrl.toggle(anchorFrame: NSRect(x: 100, y: 100, width: 600, height: 400),
                          currentWindowID: historyWindowID) { _ in }
         pump(0.3)
-        if let field = walk(contentView ?? NSView(),
-                            { ($0 as? NSTextField)?.placeholderString?.contains("搜索") == true }) as? NSTextField {
+        if walk(contentView,
+                { ($0 as? NSTextField)?.placeholderString?.contains("搜索") == true }) is NSTextField {
             panelCtrl.close()
             panelCtrl.toggle(anchorFrame: NSRect(x: 100, y: 100, width: 600, height: 400),
                              currentWindowID: historyWindowID) { _ in }
@@ -291,7 +290,7 @@ extension RunnerHarness {
     }
 }
 
-private func historyPanelWindow2() -> NSPanel? {
+@MainActor private func historyPanelWindow2() -> NSPanel? {
     NSApp.windows.first { $0 is InputBubbleHistoryPanel && $0.isVisible } as? NSPanel
 }
 
