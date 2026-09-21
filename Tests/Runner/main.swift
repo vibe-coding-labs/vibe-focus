@@ -252,6 +252,7 @@ final class FakeAuditor: RestoreAuditing {
         runHookInstallHomeTests()
         runHookClaudeSettingsHomeTests()
         runSettingsSectionRenderTests()
+        runAgentAccessTests()
         runSettingsSectionDeepRenderTests()
         runSettingsSectionDeepRender2Tests()
         runTGEmptySnapshotRenderTests()

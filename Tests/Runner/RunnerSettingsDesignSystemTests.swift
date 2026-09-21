@@ -110,22 +110,24 @@ extension RunnerHarness {
               && InfoBanner<EmptyView>.Style.success.icon == "checkmark.circle.fill")
 
         // MARK: F. SettingsTab 导航契约
-        check("settingsTab: allCases 六页顺序契约",
+        check("settingsTab: allCases 七页顺序契约",
               SettingsTab.allCases == [.general, .workspace, .orchestration,
-                                       .claudeIntegration, .codexIntegration, .appearance])
+                                       .claudeIntegration, .codexIntegration, .agentAccess, .appearance])
         check("settingsTab: rawValue 中文文案逐页锁定",
               SettingsTab.general.rawValue == "通用"
               && SettingsTab.workspace.rawValue == "工作区"
               && SettingsTab.orchestration.rawValue == "编排"
               && SettingsTab.claudeIntegration.rawValue == "Claude 集成"
               && SettingsTab.codexIntegration.rawValue == "Codex 集成"
+              && SettingsTab.agentAccess.rawValue == "Agent 接入"
               && SettingsTab.appearance.rawValue == "外观与反馈")
-        check("settingsTab: icon 六态 SF Symbol 逐页锁定",
+        check("settingsTab: icon 七态 SF Symbol 逐页锁定",
               SettingsTab.general.icon == "gearshape"
               && SettingsTab.workspace.icon == "macwindow"
               && SettingsTab.orchestration.icon == "rectangle.split.2x2"
               && SettingsTab.claudeIntegration.icon == "link"
               && SettingsTab.codexIntegration.icon == "terminal.fill"
+              && SettingsTab.agentAccess.icon == "cpu"
               && SettingsTab.appearance.icon == "paintbrush")
 
         // MARK: G. 零依赖组件 body 求值（分支参数化）

@@ -88,6 +88,7 @@ let rules: [ConformanceRule] = [
             "WindowManager+Layout.swift",
             "ToggleEngine+Restore.swift",
             "TerminalGridController+SpaceDelivery.swift",
+            "ClaudeHookServer+API.swift", // Agent 命令 API float on/off（query 当前态决定是否 toggle，显式语义收口，2026-09-22）
             "ToggleEngine+Restore+Stages.swift", // B157：restore 四阶段机械拆出 +Stages.swift（调用点搬家非新增，2026-09-11）
             "SessionRestoreExecutor.swift", // 会话恢复 v2 跨 Space 投递（泊靠往返与 TerminalGrid 投递同款刻意旁路，2026-09-13）
         ]

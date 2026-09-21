@@ -124,8 +124,13 @@ enum AgentApiRequestDecoder {
     static func decodeWindowID(_ json: [String: Any]) -> UInt32? {
         guard let value = json["windowId"] else { return nil }
         if let n = value as? UInt32, n > 0 { return n }
-        if let n = value as? Int, n > 0, n <= UInt32.max { return UInt32(n) }
-        if let n = value as? NSNumber { return n.uint32Value == 0 ? nil : n.uint32Value }
+        if let n = value as? Int { return (n > 0 && n <= Int(UInt32.max)) ? UInt32(n) : nil }
+        // JSON number 走 NSNumber 桥接；显式排除 Bool（true 会桥成 1 被误收）与负数
+        // （-5 的 uint32Value 回绕成巨正数）——两者都是 Agent 消息常见手误。
+        if let n = value as? NSNumber, !(value is Bool) {
+            let i = n.intValue
+            return (i > 0 && i <= Int(UInt32.max)) ? UInt32(i) : nil
+        }
         return nil
     }
 

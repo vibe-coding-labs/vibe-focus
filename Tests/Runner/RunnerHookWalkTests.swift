@@ -185,15 +185,19 @@ extension RunnerHarness {
               && SettingsView.CodexInstallPresentation.pillTintName(installed: false) == "warning")
     }
 
-    // MARK: SettingsTab 契约（B205：Codex 独立标签页）
+    // MARK: SettingsTab 契约（B205：Codex 独立标签页；Agent 接入页加入后 7 页）
 
     do {
         let tabs = SettingsTab.allCases
-        check("settingsTab: 共 6 个标签", tabs.count == 6)
+        check("settingsTab: 共 7 个标签", tabs.count == 7)
         check("settingsTab: 含 Codex 集成", tabs.contains(.codexIntegration) && SettingsTab.codexIntegration.rawValue == "Codex 集成")
         check("settingsTab: Codex 图标 terminal.fill", SettingsTab.codexIntegration.icon == "terminal.fill")
         check("settingsTab: Codex 紧随 Claude 集成",
               tabs.firstIndex(of: .codexIntegration)! == tabs.firstIndex(of: .claudeIntegration)! + 1)
+        check("settingsTab: Agent 接入紧随 Codex",
+              tabs.firstIndex(of: .agentAccess)! == tabs.firstIndex(of: .codexIntegration)! + 1
+              && SettingsTab.agentAccess.rawValue == "Agent 接入"
+              && SettingsTab.agentAccess.icon == "cpu")
         check("settingsTab: 无重复 rawValue", Set(tabs.map(\.rawValue)).count == tabs.count)
     }
 
