@@ -249,15 +249,15 @@ public enum AgentCLIConnection {
 
     /// 凭据单一事实源与 hook 一致：① CFPreferences（AppIdentity.bundleID 域，与
     /// RemoteInstallDeploy 同款直读）；② ~/.vibefocus/hook-config.json 兜底。
-    public static func load(home: String = NSHomeDirectory()) -> Config {
-        let prefPort = CFPreferencesCopyAppValue(
-            ClaudeHookPreferences.portKey as CFString,
-            AppIdentity.bundleID as CFString
-        ) as? Int
-        let prefToken = CFPreferencesCopyAppValue(
-            "claudeHookToken" as CFString,
-            AppIdentity.bundleID as CFString
-        ) as? String
+    /// preferCFPreferences=false 供 Runner 回环测试注入（跳过①——CFPreferences 是
+    /// 跨进程共享域，测试进程里直读会打到真实生产端口；生产路径恒走①）。
+    public static func load(home: String = NSHomeDirectory(), preferCFPreferences: Bool = true) -> Config {
+        let prefPort = preferCFPreferences
+            ? CFPreferencesCopyAppValue(ClaudeHookPreferences.portKey as CFString, AppIdentity.bundleID as CFString) as? Int
+            : nil
+        let prefToken = preferCFPreferences
+            ? CFPreferencesCopyAppValue("claudeHookToken" as CFString, AppIdentity.bundleID as CFString) as? String
+            : nil
         if let port = prefPort, port >= 1024 {
             return Config(port: port, token: (prefToken?.isEmpty ?? true) ? nil : prefToken)
         }
@@ -277,14 +277,14 @@ public enum AgentCLIConnection {
 
 public enum AgentCLI {
     /// 即退式执行。返回进程退出码。stdout 只放 JSON（机器读），stderr 放人读消息。
-    public static func run(_ command: AgentCLICommand, home: String = NSHomeDirectory()) -> Int32 {
+    public static func run(_ command: AgentCLICommand, home: String = NSHomeDirectory(), preferCFPreferences: Bool = true) -> Int32 {
         switch command {
         case .windowsList(let includeAll):
             return runWindowsList(includeAll: includeAll)
         case .sessionsList:
             return runSessionsList(home: home)
         default:
-            return runViaAPI(command, home: home)
+            return runViaAPI(command, home: home, preferCFPreferences: preferCFPreferences)
         }
     }
 
@@ -334,12 +334,12 @@ public enum AgentCLI {
     }
 
     // 转发通道：curl → 127.0.0.1:<port>/api/v1/*（token header）。
-    private static func runViaAPI(_ command: AgentCLICommand, home: String) -> Int32 {
+    private static func runViaAPI(_ command: AgentCLICommand, home: String, preferCFPreferences: Bool = true) -> Int32 {
         guard let endpoint = command.apiEndpoint else {
             FileHandle.standardError.write(Data("internal: no endpoint for command\n".utf8))
             return AgentCLIExitCode.usage
         }
-        let config = AgentCLIConnection.load(home: home)
+        let config = AgentCLIConnection.load(home: home, preferCFPreferences: preferCFPreferences)
         var curlArgs = [
             "-s", "--max-time", "30",
             "-X", endpoint.method,
