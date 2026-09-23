@@ -38,6 +38,19 @@ import Foundation
                 if durMs >= 5 { log("[SoundManager] preferences didSet→save slow", level: .warn, fields: ["durationMs": String(durMs)]) }
             }
             #endif
+            // 偏好变更留痕（B192 triggerOnStop 先例）：2026-09-23 用户报「没开播放
+            // 开关却响提示音」，排查发现存储态 soundType=builtin_ding 但无任何变更
+            // 日志可归因（何时/被谁改的永远查不到）。从此发声相关字段的每次变化落
+            // 一行 old→new，日志考古可直接回答「谁在何时改的」。
+            if oldValue.soundType != preferences.soundType
+                || oldValue.quietHoursEnabled != preferences.quietHoursEnabled
+                || oldValue.minPlayIntervalSeconds != preferences.minPlayIntervalSeconds {
+                log("[SoundManager] preferences changed", level: .info, fields: [
+                    "soundType": "\(oldValue.soundType.rawValue)->\(preferences.soundType.rawValue)",
+                    "quietHours": "\(oldValue.quietHoursEnabled)->\(preferences.quietHoursEnabled)",
+                    "minInterval": "\(oldValue.minPlayIntervalSeconds)->\(preferences.minPlayIntervalSeconds)"
+                ])
+            }
             savePreferences()
         }
     }

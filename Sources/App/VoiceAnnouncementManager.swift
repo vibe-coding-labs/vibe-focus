@@ -60,6 +60,13 @@ final class VoiceAnnouncementManager: NSObject, ObservableObject {
                 if durMs >= 5 { log("[VoiceAnnouncementManager] preferences didSet→save slow", level: .warn, fields: ["durationMs": String(durMs)]) }
             }
             #endif
+            // 偏好变更留痕（B192 triggerOnStop 先例）：播报模式 old→new 落一行，
+            // 「没开却播/开了不播」类体感投诉可日志考古归因。
+            if oldValue.mode != preferences.mode {
+                log("[VoiceAnnouncementManager] mode changed", level: .info, fields: [
+                    "mode": "\(oldValue.mode.rawValue)->\(preferences.mode.rawValue)"
+                ])
+            }
             savePreferences()
         }
     }
