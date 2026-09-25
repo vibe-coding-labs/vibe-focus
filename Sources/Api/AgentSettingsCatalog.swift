@@ -150,7 +150,7 @@ enum AgentSettingsCatalog {
                 "historyLimit": InputBubblePreferences.historyLimit
             ]
         }()
-        var data: [String: Any] = [
+        let data: [String: Any] = [
             "writable": specs.map { [
                 "key": $0.key,
                 "type": $0.kind.typeName,

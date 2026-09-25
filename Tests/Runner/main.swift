@@ -276,6 +276,7 @@ final class FakeAuditor: RestoreAuditing {
         runAgentAccessLoopbackTests()
         runMCPRegistrationTests()
         runAgentSettingsWriteTests()
+        runAgentOnboardingTests()
         runSoundVoiceChannelSemanticsTests()
         runSettingsSectionDeepRenderTests()
         runSettingsSectionDeepRender2Tests()

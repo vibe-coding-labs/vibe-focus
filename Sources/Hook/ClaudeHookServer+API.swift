@@ -35,7 +35,8 @@ extension ClaudeHookServer {
                             path: request.path,
                             body: bodyData,
                             query: request.query ?? [:],
-                            headers: request.headers
+                            headers: request.headers,
+                            peerAddress: request.remoteAddressString as String?
                         )
                         let response = GCDWebServerDataResponse(data: result.body, contentType: "application/json")
                         response.statusCode = result.statusCode
@@ -52,8 +53,18 @@ extension ClaudeHookServer {
         path: String,
         body: Data?,
         query: [String: String],
-        headers: [String: String]
+        headers: [String: String],
+        peerAddress: String? = nil
     ) async -> (statusCode: Int, body: Data) {
+        // 命令面仅限本机回环（2026-09-26 安全批）：LAN 模式为远程 hook 事件把监听面
+        // 开到 0.0.0.0，但 /api/v1 是主动控制面（动窗/建窗/改设置），绝不随 LAN 暴露
+        // ——远程 Agent 走 SSH 隧道（design §5）。对端非回环一律 403（nil=进程内回环
+        // 测试通道，放行）。
+        if let peer = peerAddress, !Self.isLoopbackAddress(peer) {
+            return (403, AgentApiResponseBuilder.body(
+                ok: false, code: "loopback_only",
+                message: "命令 API 仅限本机访问（远程请走 SSH 隧道）"))
+        }
         // 与 hook 同一门：query token 或 X-VibeFocus-Token header。
         if Self.tokenGateRejected(query: query, headers: headers, expectedToken: configuredToken) {
             return (401, AgentApiResponseBuilder.body(ok: false, code: "unauthorized", message: "Missing or invalid API token"))

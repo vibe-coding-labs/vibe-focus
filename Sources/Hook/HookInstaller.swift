@@ -51,6 +51,9 @@ extension ClaudeHookPreferences {
             return
         }
         try? data.write(to: URL(fileURLWithPath: configPath), options: .atomic)
+        // 凭证权限收紧（2026-09-26 安全批）：token 落盘文件 0600——装机默认 644，
+        // 本机任何其他用户/进程可读即等同交出窗口控制权。每次写都顺手收紧（幂等）。
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configPath)
         log("ClaudeHookPreferences.writeConfigFile() completed", level: .debug, fields: ["lanMode": String(LANHookPreferences.lanMode), "configPath": configPath])
     }
 

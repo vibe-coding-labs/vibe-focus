@@ -78,6 +78,8 @@ public struct SettingsView: View {
     @AppStorage(AgentAccessPreferences.allowSettingsWriteKey) var agentAllowSettingsWrite = AgentAccessPreferences.defaultAllowSettingsWrite
     @State var mcpActionMessage: String?
     @State var mcpActionOK = true
+    @State var onboardingMessage: String?
+    @State var onboardingOK = true
 
     // Hook 触发开关
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop

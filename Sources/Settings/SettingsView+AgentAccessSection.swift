@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - Agent 接入（design-agent-access.md §5 授权模型的人侧面板）
 // 总开关 + 两级写授权子开关，默认全关——人的一次明确授权动作。
@@ -146,6 +147,66 @@ extension SettingsView {
                 }
 
                 Text("注册后，Claude Code / Codex 里的 Agent 即可原生调用 vibefocus_* 工具族（看窗口、摆窗口、铺网格、快照、通知）。注册只写桥的路径；Agent 能否动窗口仍由上方分级开关决定。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            // MARK: 接入物料（安全+上手批）：复制提示词 / Claude 技能包
+            VStack(alignment: .leading, spacing: 8) {
+                Text("让 AI 连上来")
+                    .font(.system(size: 12, weight: .semibold))
+
+                HStack(spacing: 12) {
+                    Button("复制接入提示词") {
+                        ClaudeHookPreferences.ensureTokenGenerated()
+                        let prompt = AgentOnboarding.generatePrompt(
+                            port: ClaudeHookPreferences.listenPort,
+                            token: ClaudeHookPreferences.authToken ?? "")
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(prompt, forType: .string)
+                        onboardingOK = true
+                        onboardingMessage = "接入提示词已复制（含本机凭证，粘贴给任何 AI 会话即可；请勿外传）"
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button(AgentOnboarding.isSkillInstalled(
+                        port: ClaudeHookPreferences.listenPort,
+                        token: ClaudeHookPreferences.authToken ?? "") ? "更新 Claude 技能包" : "安装 Claude 技能包") {
+                        ClaudeHookPreferences.ensureTokenGenerated()
+                        let r = AgentOnboarding.installSkill(
+                            port: ClaudeHookPreferences.listenPort,
+                            token: ClaudeHookPreferences.authToken ?? "")
+                        onboardingOK = r.ok
+                        onboardingMessage = r.message
+                    }
+                    .buttonStyle(.bordered)
+
+                    if AgentOnboarding.isSkillInstalled(
+                        port: ClaudeHookPreferences.listenPort,
+                        token: ClaudeHookPreferences.authToken ?? "") {
+                        Button("卸载") {
+                            let r = AgentOnboarding.uninstallSkill()
+                            onboardingOK = r.ok
+                            onboardingMessage = r.message
+                        }
+                        .buttonStyle(.bordered)
+                        .foregroundStyle(VibeColors.danger)
+                    }
+
+                    Spacer()
+                }
+
+                if let msg = onboardingMessage {
+                    Text(msg)
+                        .font(.system(size: 12))
+                        .foregroundStyle(onboardingOK ? VibeColors.success : VibeColors.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Text("接入提示词 = 一段含本机凭证的完整说明，粘给任何 AI 即可连接；技能包装进 Claude Code 后每个会话自动自带。凭证文件与技能包均已按 0600 权限落盘，命令接口仅限本机访问。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
