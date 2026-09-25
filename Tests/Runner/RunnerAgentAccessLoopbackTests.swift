@@ -74,11 +74,11 @@ extension RunnerHarness {
             let noToken = http("GET", port, "/api/v1/status", token: nil)
             check("loop: 无 token→401", noToken.status == 401 && noToken.code == "unauthorized")
             let badPath = http("GET", port, "/api/v1/evil", token: "tk-agent-loopback")
-            // 未注册路径由 GCDWebServer 自身 404（HTML 无 JSON 信封）——handler 内
-            // 404 分支是纵深防御，HTTP 面不可达；断言只锁「未知端点=404」。
-            check("loop: 未知端点→404", badPath.status == 404)
+            // 未注册路径由 GCDWebServer 自身应答 501（实证两次，其 unmatched-request
+            // 约定），无我的 JSON 信封——handler 内 404 分支是纵深防御，HTTP 面不可达。
+            check("loop: 未知端点→GCDWebServer 501", badPath.status == 501)
             let wrongMethod = http("GET", port, "/api/v1/windows/move-main", token: "tk-agent-loopback")
-            check("loop: 方法不匹配→404", wrongMethod.status == 404)
+            check("loop: 方法不匹配→GCDWebServer 501", wrongMethod.status == 501)
         }
 
         // MARK: §2 全关：读也被拒，拒绝码分层
@@ -200,7 +200,9 @@ extension RunnerHarness {
             let r5 = runBG([.sessionsList])
             check("loop: CLI sessions list 本地直读→0", r5.first == AgentCLIExitCode.ok)
 
-            // 写命令授权矩阵：全关→5；L1 开幽灵窗→6（404→operationFailed）
+            // 写命令授权矩阵（⚠️先把正确 token 配置写回去——上一场景覆写成了错 token）：
+            // 全关→5；L1 开幽灵窗→6（404→operationFailed）
+            writeConfig(port: port, token: "tk-agent-loopback")
             AgentAccessPreferences.isEnabled = false
             let r6 = runBG([.moveMain(windowID: 1)])
             check("loop: CLI 写命令全关→退出码 5", r6.first == AgentCLIExitCode.forbidden)
