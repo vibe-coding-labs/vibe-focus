@@ -168,11 +168,19 @@ extension RunnerHarness {
                 try! data.write(to: URL(fileURLWithPath: tmp + "/.vibefocus/hook-config.json"))
             }
             // 后台执行 + 主泵等待（server handler 要主线程）。返回各命令退出码。
+            // 锁盒收集：@Sendable 闭包内不裸改捕获变量（零警告门禁）。
+            final class ResultBox: @unchecked Sendable {
+                private var values: [Int32] = []
+                private let lock = NSLock()
+                func append(_ v: Int32) { lock.lock(); values.append(v); lock.unlock() }
+                func snapshot() -> [Int32] { lock.lock(); defer { lock.unlock() }; return values }
+            }
             func runBG(_ commands: [AgentCLICommand]) -> [Int32] {
-                var results: [Int32] = []
+                // 每次调用新盒——跨调用累积会把 first 错位到旧值（实测 6 连红根因）。
+                let box = ResultBox()
                 let sem = DispatchSemaphore(value: 0)
                 DispatchQueue.global(qos: .default).async {
-                    for c in commands { results.append(AgentCLI.run(c, home: tmp, preferCFPreferences: false)) }
+                    for c in commands { box.append(AgentCLI.run(c, home: tmp, preferCFPreferences: false)) }
                     sem.signal()
                 }
                 let deadline = Date().addingTimeInterval(90)
@@ -180,7 +188,7 @@ extension RunnerHarness {
                     if sem.wait(timeout: .now() + 0.05) == .success { break }
                     RunLoop.main.run(until: Date().addingTimeInterval(0.02))
                 }
-                return results
+                return box.snapshot()
             }
 
             // 死端口→3（transport failed；port+1000 落在合法区间且非本服端口）

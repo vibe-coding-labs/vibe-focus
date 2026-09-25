@@ -10,7 +10,7 @@ import ApplicationServices
 
 // MARK: - 命令模型
 
-public enum AgentCLICommand: Equatable {
+public enum AgentCLICommand: Equatable, Sendable {
     case status
     case windowsList(includeAll: Bool)
     case sessionsList
@@ -24,6 +24,8 @@ public enum AgentCLICommand: Equatable {
     case gridCreate(rows: Int?, cols: Int?)
     case snapshotCapture(name: String?)
     case snapshotRestore(id: String?)
+    case settingsGet
+    case settingsSet(key: String, value: String)
 
     /// 转发 App 的 API 端点；nil = 本地直读命令。
     var apiEndpoint: AgentApiEndpoint? {
@@ -50,6 +52,10 @@ public enum AgentCLICommand: Equatable {
             return AgentApiEndpoint.all.first { $0.path.hasSuffix("/snapshots/capture") }
         case .snapshotRestore:
             return AgentApiEndpoint.all.first { $0.path.hasSuffix("/snapshots/restore") }
+        case .settingsGet:
+            return AgentApiEndpoint.all.first { $0.path.hasSuffix("/settings") }
+        case .settingsSet:
+            return AgentApiEndpoint.all.first { $0.path.hasSuffix("/settings") }
         case .windowsList, .sessionsList:
             return nil
         }
@@ -76,7 +82,9 @@ public enum AgentCLICommand: Equatable {
             return name.map { ["name": $0] } ?? [:]
         case .snapshotRestore(let id):
             return id.map { ["id": $0] } ?? [:]
-        case .status, .windowsList, .sessionsList, .snapshotsList:
+        case .settingsSet(let key, let value):
+            return ["key": key, "value": AgentCLIRouter.parseCLIValue(value)]
+        case .status, .windowsList, .sessionsList, .snapshotsList, .settingsGet:
             return [:]
         }
     }
@@ -108,9 +116,11 @@ public enum AgentCLIRouter {
       grid create [--rows N] [--cols N]   创建终端网格（行列缺省=设置页当前值）
       notify --text <文本> [--title <题>]   向人发一条 macOS 通知
       space switch --space <N>            切到 yabai space N（1 起）
+      settings get                        读取全部设置目录（含可写白名单）
+      settings set --key K --value V      修改一项设置（需授权开关，白名单内）
     """
 
-    static let topLevelVerbs: Set<String> = ["status", "windows", "sessions", "snapshots", "grid", "notify", "space"]
+    static let topLevelVerbs: Set<String> = ["status", "windows", "sessions", "snapshots", "grid", "notify", "space", "settings"]
 
     /// args 不含 argv0。首 token 不是已知动词 → notOurs（App 正常启动）。
     public static func parse(_ args: [String]) -> AgentCLIParseOutcome {
@@ -133,6 +143,8 @@ public enum AgentCLIRouter {
             return parseNotify(rest)
         case "space":
             return rest.first == "switch" ? parseSpaceSwitch(Array(rest.dropFirst())) : .invalid("用法: space switch --space N")
+        case "settings":
+            return parseSettings(rest)
         default:
             return .notOurs
         }
@@ -202,6 +214,31 @@ public enum AgentCLIRouter {
             return .invalid("notify 需要 --text <文本>")
         }
         return .command(.notify(text: text, title: flagValue(rest, "--title")))
+    }
+
+    /// settings get | settings set --key K --value V
+    private static func parseSettings(_ rest: [String]) -> AgentCLIParseOutcome {
+        switch rest.first {
+        case "get":
+            return rest.count == 1 ? .command(.settingsGet) : .invalid("用法: settings get")
+        case "set":
+            guard let key = flagValue(Array(rest.dropFirst()), "--key"),
+                  let value = flagValue(Array(rest.dropFirst()), "--value") else {
+                return .invalid("用法: settings set --key <键> --value <值>（值按 true/false/整数/小数/字符串 解析）")
+            }
+            return .command(.settingsSet(key: key, value: value))
+        default:
+            return .invalid("未知 settings 子命令")
+        }
+    }
+
+    /// CLI 值字面量 → JSON 值：true/false→Bool、整数→Int、小数→Double、其余字符串。
+    static func parseCLIValue(_ raw: String) -> Any {
+        if raw == "true" { return true }
+        if raw == "false" { return false }
+        if let n = Int(raw) { return n }
+        if let d = Double(raw) { return d }
+        return raw
     }
 
     private static func parseSpaceSwitch(_ rest: [String]) -> AgentCLIParseOutcome {

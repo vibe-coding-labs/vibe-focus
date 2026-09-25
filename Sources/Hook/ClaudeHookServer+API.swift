@@ -70,8 +70,11 @@ extension ClaudeHookServer {
         switch endpoint.path {
         case "\(AgentApiEndpoint.apiPrefix)/status":
             return (200, Self.buildStatusBody(prefs: prefs))
-        case "\(AgentApiEndpoint.apiPrefix)/settings":
-            return (200, Self.buildSettingsBody())
+        case "\(AgentApiEndpoint.apiPrefix)/settings" where method == "GET":
+            return (200, AgentApiResponseBuilder.body(ok: true, code: "ok", message: "",
+                                                     data: AgentSettingsCatalog.readAll()))
+        case "\(AgentApiEndpoint.apiPrefix)/settings" where method == "POST":
+            return Self.handleSettingsWrite(json: json)
         case "\(AgentApiEndpoint.apiPrefix)/windows":
             return (200, Self.buildWindowsBody())
         case "\(AgentApiEndpoint.apiPrefix)/sessions":
@@ -101,36 +104,58 @@ extension ClaudeHookServer {
         }
     }
 
-    // MARK: - L0 读
+    // MARK: - L0 读 + 设置写
 
-    /// 用户偏好只读快照（A4）：agent 读配置自适应行为（如得知免打扰时段避开打扰）。
-    /// 红线：绝不含 token/apiKey/绝对路径等敏感与可定位字段——只暴露行为开关与量值。
-    static func buildSettingsBody() -> Data {
-        let sound = SoundManager.shared.preferences
-        let voice = VoiceAnnouncementManager.shared.preferences.mode.rawValue
-        let data: [String: Any] = [
-            "hook": [
-                "triggerOnStop": ClaudeHookPreferences.triggerOnStop,
-                "triggerOnSessionEnd": ClaudeHookPreferences.triggerOnSessionEnd,
-                "autoRestoreOnPromptSubmit": ClaudeHookPreferences.autoRestoreOnPromptSubmit,
-                "notifyOnNotification": ClaudeHookPreferences.notifyOnNotification
-            ],
-            "grid": [
-                "rows": TerminalGridPreferences.rows,
-                "cols": TerminalGridPreferences.cols,
-                "autoRestoreEnabled": TerminalGridPreferences.autoRestoreEnabled
-            ],
-            "sound": [
-                "soundType": sound.soundType.rawValue,
-                "quietHoursEnabled": sound.quietHoursEnabled,
-                "quietStartHour": sound.quietStartHour,
-                "quietEndHour": sound.quietEndHour,
-                "minPlayIntervalSeconds": sound.minPlayIntervalSeconds
-            ],
-            "voiceAnnouncementMode": voice,
-            "overlayEnabled": ScreenOverlayManager.shared.preferences.isEnabled
-        ]
-        return AgentApiResponseBuilder.body(ok: true, code: "ok", message: "", data: data)
+    /// GET 全量读已上收 AgentSettingsCatalog.readAll()（目录=唯一事实源）。
+
+    /// POST /api/v1/settings —— 白名单设置写（独立授权 agentAllowSettingsWrite，默认关）。
+    /// body：{"key":"...","value":...} 或 {"updates":[{...}, ...]}（1...50 项）。
+    /// 每项独立成败：目录外键 400 settings_key_unknown、人属键 403 settings_key_readonly、
+    /// 值非法 400 settings_value_invalid、未授权 403 settings_write_disabled。
+    /// 应用统一走 AgentSettingsCatalog.apply（复用既有 update 链 + agent 归因日志）。
+    static func handleSettingsWrite(json: [String: Any]) -> (statusCode: Int, body: Data) {
+        guard AgentAccessPreferences.allowSettingsWrite else {
+            return (403, AgentApiResponseBuilder.body(
+                ok: false, code: "settings_write_disabled",
+                message: "「允许 Agent 修改设置」开关未开启（设置页 Agent 接入）"))
+        }
+        var items: [[String: Any]] = []
+        if let updates = json["updates"] as? [[String: Any]] {
+            items = updates
+        } else if let key = json["key"] as? String, let value = json["value"] {
+            items = [["key": key, "value": value]]
+        } else {
+            return (400, AgentApiResponseBuilder.body(
+                ok: false, code: "bad_request", message: "需要 key/value 或 updates 数组"))
+        }
+        guard !items.isEmpty, items.count <= 50 else {
+            return (400, AgentApiResponseBuilder.body(
+                ok: false, code: "bad_request", message: "updates 需 1...50 项"))
+        }
+        var results: [[String: Any]] = []
+        var allOK = true
+        var sawReadonly = false
+        for item in items {
+            guard let key = item["key"] as? String, item["value"] != nil else {
+                allOK = false
+                results.append(["key": "?", "ok": false, "error": "bad_request"])
+                continue
+            }
+            var row: [String: Any] = ["key": key]
+            if let error = AgentSettingsCatalog.apply(key: key, raw: item["value"]!) {
+                allOK = false
+                if error == "settings_key_readonly" { sawReadonly = true }
+                row["ok"] = false
+                row["error"] = error
+            } else {
+                row["ok"] = true
+            }
+            results.append(row)
+        }
+        let status = allOK ? 200 : (sawReadonly ? 403 : 400)
+        let data: [String: Any] = ["results": results]
+        return (status, AgentApiResponseBuilder.body(ok: allOK, code: allOK ? "applied" : "rejected",
+                                                     message: "", data: data))
     }
 
     static func buildStatusBody(prefs: AgentAccessPreferences.Snapshot) -> Data {

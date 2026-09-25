@@ -68,6 +68,18 @@ extension SettingsView {
 
             Divider()
 
+            SettingsRow(
+                title: "允许 Agent 修改设置",
+                detail: "白名单内的行为设置（提示音/语音/气泡/网格/浮层/触发开关等约 30 项）可被 Agent 修改，全部留痕可追溯。安全/凭据/热键/授权类永远只归你。"
+            ) {
+                Toggle("", isOn: $agentAllowSettingsWrite)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .disabled(!agentAccessEnabled)
+            }
+
+            Divider()
+
             // MARK: MCP 一键注册（A4）：把 VibeFocusMCP 桥写进 agent host 的 MCP 配置。
             // 与 hook 一键安装同交互模式；点按钮是人的一次显式授权动作。
             VStack(alignment: .leading, spacing: 8) {

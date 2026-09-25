@@ -35,7 +35,7 @@ extension RunnerHarness {
 
         // ===== B. 端点路由表与分级语义 =====
         do {
-            check("routes: 共 14 端点", AgentApiEndpoint.all.count == 14)
+            check("routes: 共 15 端点", AgentApiEndpoint.all.count == 15)
             let combos = AgentApiEndpoint.all.map { "\($0.method) \($0.path)" }
             check("routes: 无重复 method+path", Set(combos).count == combos.count)
             check("routes: 全部走 /api/v1 前缀", AgentApiEndpoint.all.allSatisfy { $0.path.hasPrefix("/api/v1/") })
@@ -44,6 +44,8 @@ extension RunnerHarness {
             let l2paths = AgentApiEndpoint.all.filter { $0.tier == .createWindows }.map(\.path)
             check("routes: L2 恰为 grid/create 与 snapshots/restore", Set(l2paths) == ["/api/v1/grid/create", "/api/v1/snapshots/restore"])
             check("routes: 其余 POST 全为 L1", AgentApiEndpoint.all.filter { $0.method == "POST" && $0.tier == .windowOps }.count == 7)
+            check("routes: POST settings 独立授权（tier=read 走总开关门，写授权在 handler）",
+                  AgentApiEndpoint.match(method: "POST", path: "/api/v1/settings")?.tier == .read)
 
             check("routes: match 命中", AgentApiEndpoint.match(method: "POST", path: "/api/v1/windows/move-main")?.tier == .windowOps)
             check("routes: 方法不匹配不命中", AgentApiEndpoint.match(method: "GET", path: "/api/v1/windows/move-main") == nil)
@@ -169,7 +171,7 @@ extension RunnerHarness {
             check("mcp: initialized 通知不回包", MCPProtocol.handleMessage(Data("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}".utf8), performAPI: fakeAPI) == nil)
             let listResp = jsonDict(MCPProtocol.handleMessage(Data("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}".utf8), performAPI: fakeAPI))
             let tools = (listResp["result"] as? [String: Any])?["tools"] as? [[String: Any]] ?? []
-            check("mcp: tools/list 14 个工具", tools.count == 14)
+            check("mcp: tools/list 15 个工具", tools.count == 15)
             check("mcp: 工具 schema 含 name/description/inputSchema", tools.allSatisfy { $0["name"] != nil && $0["description"] != nil && $0["inputSchema"] != nil })
             check("mcp: ping 回空 result", jsonDict(MCPProtocol.handleMessage(Data("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}".utf8), performAPI: fakeAPI))["result"] != nil)
             check("mcp: 未知方法→methodNotFound", (jsonDict(MCPProtocol.handleMessage(Data("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"evil\"}".utf8), performAPI: fakeAPI))["error"] as? [String: Any])?["code"] as? Int == -32601)

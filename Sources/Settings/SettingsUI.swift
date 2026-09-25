@@ -75,6 +75,7 @@ public struct SettingsView: View {
     @AppStorage(AgentAccessPreferences.enabledKey) var agentAccessEnabled = AgentAccessPreferences.defaultEnabled
     @AppStorage(AgentAccessPreferences.allowWindowOpsKey) var agentAllowWindowOps = AgentAccessPreferences.defaultAllowWindowOps
     @AppStorage(AgentAccessPreferences.allowCreateWindowsKey) var agentAllowCreateWindows = AgentAccessPreferences.defaultAllowCreateWindows
+    @AppStorage(AgentAccessPreferences.allowSettingsWriteKey) var agentAllowSettingsWrite = AgentAccessPreferences.defaultAllowSettingsWrite
     @State var mcpActionMessage: String?
     @State var mcpActionOK = true
 

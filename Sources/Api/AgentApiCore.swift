@@ -13,10 +13,12 @@ enum AgentAccessPreferences {
     static let enabledKey = "agentAccessEnabled"
     static let allowWindowOpsKey = "agentAllowWindowOps"
     static let allowCreateWindowsKey = "agentAllowCreateWindows"
+    static let allowSettingsWriteKey = "agentAllowSettingsWrite"
 
     static let defaultEnabled = false
     static let defaultAllowWindowOps = false
     static let defaultAllowCreateWindows = false
+    static let defaultAllowSettingsWrite = false
 
     static var isEnabled: Bool {
         get { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? defaultEnabled }
@@ -31,6 +33,11 @@ enum AgentAccessPreferences {
     static var allowCreateWindows: Bool {
         get { UserDefaults.standard.object(forKey: allowCreateWindowsKey) as? Bool ?? defaultAllowCreateWindows }
         set { UserDefaults.standard.set(newValue, forKey: allowCreateWindowsKey) }
+    }
+
+    static var allowSettingsWrite: Bool {
+        get { UserDefaults.standard.object(forKey: allowSettingsWriteKey) as? Bool ?? defaultAllowSettingsWrite }
+        set { UserDefaults.standard.set(newValue, forKey: allowSettingsWriteKey) }
     }
 
     struct Snapshot: Equatable {
@@ -105,7 +112,10 @@ struct AgentApiEndpoint: Equatable {
         AgentApiEndpoint(method: "POST", path: "\(apiPrefix)/space/switch", tier: .windowOps),
         AgentApiEndpoint(method: "POST", path: "\(apiPrefix)/snapshots/capture", tier: .windowOps),
         AgentApiEndpoint(method: "POST", path: "\(apiPrefix)/grid/create", tier: .createWindows),
-        AgentApiEndpoint(method: "POST", path: "\(apiPrefix)/snapshots/restore", tier: .createWindows)
+        AgentApiEndpoint(method: "POST", path: "\(apiPrefix)/snapshots/restore", tier: .createWindows),
+        // settings 写：过总开关门（.read tier 语义）后由 handler 独立校验
+        // allowSettingsWrite——支持「只开设置写、不开窗口操作」的授权组合。
+        AgentApiEndpoint(method: "POST", path: "\(apiPrefix)/settings", tier: .read)
     ]
 
     static func match(method: String, path: String) -> AgentApiEndpoint? {
