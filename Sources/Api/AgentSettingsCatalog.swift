@@ -171,12 +171,19 @@ enum AgentSettingsCatalog {
             ],
             "sound": [
                 "soundType": sound.soundType.rawValue,
+                "volume": sound.volume,
                 "quietHoursEnabled": sound.quietHoursEnabled,
                 "quietStartHour": sound.quietStartHour,
                 "quietEndHour": sound.quietEndHour,
                 "minPlayIntervalSeconds": sound.minPlayIntervalSeconds
             ],
-            "voiceAnnouncementMode": voice.mode.rawValue,
+            "voice": [
+                "mode": voice.mode.rawValue,
+                "templateText": voice.templateText,
+                "volume": voice.volume,
+                "speechRate": voice.speechRate,
+                "llmMaxChars": voice.llmMaxChars
+            ],
             "bubble": bubble,
             "overlayEnabled": ScreenOverlayManager.shared.preferences.isEnabled
         ]
