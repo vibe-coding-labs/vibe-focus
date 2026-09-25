@@ -106,6 +106,8 @@ extension RunnerHarness {
             check("loop: L0→sessions 200", sess.status == 200 && sess.ok == true)
             let snaps = http("GET", port, "/api/v1/snapshots", token: "tk-agent-loopback")
             check("loop: L0→snapshots 200", snaps.status == 200 && snaps.ok == true)
+            let settings = http("GET", port, "/api/v1/settings", token: "tk-agent-loopback")
+            check("loop: L0→settings 200", settings.status == 200 && settings.ok == true)
 
             let mv = http("POST", port, "/api/v1/windows/move-main", token: "tk-agent-loopback", body: "{\"windowId\":1}")
             check("loop: 只开读→写 403 agent_writes_disabled", mv.status == 403 && mv.code == "agent_writes_disabled")

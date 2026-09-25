@@ -93,6 +93,7 @@ struct AgentApiEndpoint: Equatable {
 
     static let all: [AgentApiEndpoint] = [
         AgentApiEndpoint(method: "GET", path: "\(apiPrefix)/status", tier: .read),
+        AgentApiEndpoint(method: "GET", path: "\(apiPrefix)/settings", tier: .read),
         AgentApiEndpoint(method: "GET", path: "\(apiPrefix)/windows", tier: .read),
         AgentApiEndpoint(method: "GET", path: "\(apiPrefix)/sessions", tier: .read),
         AgentApiEndpoint(method: "GET", path: "\(apiPrefix)/snapshots", tier: .read),

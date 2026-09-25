@@ -70,6 +70,8 @@ extension ClaudeHookServer {
         switch endpoint.path {
         case "\(AgentApiEndpoint.apiPrefix)/status":
             return (200, Self.buildStatusBody(prefs: prefs))
+        case "\(AgentApiEndpoint.apiPrefix)/settings":
+            return (200, Self.buildSettingsBody())
         case "\(AgentApiEndpoint.apiPrefix)/windows":
             return (200, Self.buildWindowsBody())
         case "\(AgentApiEndpoint.apiPrefix)/sessions":
@@ -100,6 +102,36 @@ extension ClaudeHookServer {
     }
 
     // MARK: - L0 读
+
+    /// 用户偏好只读快照（A4）：agent 读配置自适应行为（如得知免打扰时段避开打扰）。
+    /// 红线：绝不含 token/apiKey/绝对路径等敏感与可定位字段——只暴露行为开关与量值。
+    static func buildSettingsBody() -> Data {
+        let sound = SoundManager.shared.preferences
+        let voice = VoiceAnnouncementManager.shared.preferences.mode.rawValue
+        let data: [String: Any] = [
+            "hook": [
+                "triggerOnStop": ClaudeHookPreferences.triggerOnStop,
+                "triggerOnSessionEnd": ClaudeHookPreferences.triggerOnSessionEnd,
+                "autoRestoreOnPromptSubmit": ClaudeHookPreferences.autoRestoreOnPromptSubmit,
+                "notifyOnNotification": ClaudeHookPreferences.notifyOnNotification
+            ],
+            "grid": [
+                "rows": TerminalGridPreferences.rows,
+                "cols": TerminalGridPreferences.cols,
+                "autoRestoreEnabled": TerminalGridPreferences.autoRestoreEnabled
+            ],
+            "sound": [
+                "soundType": sound.soundType.rawValue,
+                "quietHoursEnabled": sound.quietHoursEnabled,
+                "quietStartHour": sound.quietStartHour,
+                "quietEndHour": sound.quietEndHour,
+                "minPlayIntervalSeconds": sound.minPlayIntervalSeconds
+            ],
+            "voiceAnnouncementMode": voice,
+            "overlayEnabled": ScreenOverlayManager.shared.preferences.isEnabled
+        ]
+        return AgentApiResponseBuilder.body(ok: true, code: "ok", message: "", data: data)
+    }
 
     static func buildStatusBody(prefs: AgentAccessPreferences.Snapshot) -> Data {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String

@@ -212,7 +212,27 @@ final class FakeAuditor: RestoreAuditing {
         return SpaceController.shared.isEnabled
     }
 
+    /// 弹真实 UI 的测试域统一门（2026-09-26 用户明令）：这台机器多人/多 Agent 共用，
+    /// 默认套件绝不允许弹任何面板/弹窗/置前窗口——历史上一跑套件气泡历史面板、
+    /// 标题编辑弹窗就会打到用户真实前台窗上（实测实录）。要跑这些域必须显式
+    /// 设 VIBEFOCUS_UI_E2E=1（只应在机器空闲时人工执行）。
+    func runUIGated(_ name: String, _ body: () -> Void) {
+        if ProcessInfo.processInfo.environment["VIBEFOCUS_UI_E2E"] == "1" {
+            body()
+        } else {
+            check("uiGate: \(name) 跳过（默认零弹窗；要跑请设 VIBEFOCUS_UI_E2E=1）", true)
+        }
+    }
+
     func runAllTests() {
+        // 全局静音保险丝（2026-09-26 用户明令）：非 UI E2E 模式拔掉气泡自动唤起三开关
+        // ——防任何单例 tick/观察者把气泡打到共享机器用户的前台窗（Runner 域偏好，
+        // 不影响装机 App）。uiGate 门控之外的纵深防御。
+        if ProcessInfo.processInfo.environment["VIBEFOCUS_UI_E2E"] != "1" {
+            InputBubblePreferences.isEnabled = false
+            InputBubblePreferences.autoShowOnFocus = false
+            InputBubblePreferences.autoShowOnMoveToMain = false
+        }
         runRestoreOrchestrationTests()
         runRestoreStageTests()
         runRestoreStageClampTests()
@@ -254,6 +274,7 @@ final class FakeAuditor: RestoreAuditing {
         runSettingsSectionRenderTests()
         runAgentAccessTests()
         runAgentAccessLoopbackTests()
+        runMCPRegistrationTests()
         runSoundVoiceChannelSemanticsTests()
         runSettingsSectionDeepRenderTests()
         runSettingsSectionDeepRender2Tests()
@@ -359,13 +380,25 @@ final class FakeAuditor: RestoreAuditing {
         runVoiceQueueAdvanceTests()
         runKeyEventPosterTests()
         runBubbleIdleGuardTests()
-        runBubbleSubmitPipelineTests()
-        runBubbleLifecyclePanelTests()
-        runBubbleCoverageSweepTests()
-        runBubbleCoverageTailTests()
-        runBubbleCoverageFinaleTests()
+        runUIGated("BubbleSubmitPipeline") {
+            runBubbleSubmitPipelineTests()
+        }
+        runUIGated("BubbleLifecyclePanel") {
+            runBubbleLifecyclePanelTests()
+        }
+        runUIGated("BubbleCoverageSweep") {
+            runBubbleCoverageSweepTests()
+        }
+        runUIGated("BubbleCoverageTail") {
+            runBubbleCoverageTailTests()
+        }
+        runUIGated("BubbleCoverageFinale") {
+            runBubbleCoverageFinaleTests()
+        }
         runYabaiAsyncAndVoicePersistTests()
-        runAutoShowStartTests()
+        runUIGated("AutoShowStart") {
+            runAutoShowStartTests()
+        }
         runVoiceDelegateCallbackTests()
         runAXWriteRetryTests()
         runSpaceMoveSkipTests()
@@ -389,7 +422,9 @@ final class FakeAuditor: RestoreAuditing {
         runBubbleButtonCursorTests()
         runSelectionRefreshTests()
         runHotKeyManagerStateTests()
-        runBubbleHistoryPanelGuardTests()
+        runUIGated("BubbleHistoryPanelGuard") {
+            runBubbleHistoryPanelGuardTests()
+        }
         runToggleEngineStoreTests()
         runBubblePreferencesBranchTests()
         runBindingVerifierTests()
@@ -468,7 +503,9 @@ final class FakeAuditor: RestoreAuditing {
         runWorkspaceSectionBranchTests()
         runGridSectionPanelTests()
         runSettingsRenderPilotTests()
-        runSettingsWindowControllerTests()
+        runUIGated("SettingsWindowController") {
+            runSettingsWindowControllerTests()
+        }
         runSettingsSnapshotRenderTests()
         runHookPayloadBuilderTests()
         runHookTestFailurePathTests()

@@ -9,6 +9,15 @@ import SwiftUI
 
 extension SettingsView {
 
+    /// MCP 注册态（每次渲染现读配置文件——两个小文件读，渲染频率下成本可忽略）。
+    private var mcpClaudeRegistered: Bool {
+        MCPRegistration.status(.claudeCode)
+    }
+
+    private var mcpCodexRegistered: Bool {
+        MCPRegistration.status(.codex)
+    }
+
     var agentAccessSection: some View {
         SettingsCard(
             title: "Agent 接入",
@@ -59,10 +68,83 @@ extension SettingsView {
 
             Divider()
 
+            // MARK: MCP 一键注册（A4）：把 VibeFocusMCP 桥写进 agent host 的 MCP 配置。
+            // 与 hook 一键安装同交互模式；点按钮是人的一次显式授权动作。
+            VStack(alignment: .leading, spacing: 8) {
+                Text("MCP 工具注册")
+                    .font(.system(size: 12, weight: .semibold))
+
+                HStack(spacing: 12) {
+                    Button(mcpClaudeRegistered ? "更新 Claude Code 注册" : "注册到 Claude Code") {
+                        let r = MCPRegistration.register(.claudeCode)
+                        mcpActionOK = r.ok
+                        mcpActionMessage = "\(r.host.displayName)：\(r.message)"
+                    }
+                    .buttonStyle(.bordered)
+
+                    if mcpClaudeRegistered {
+                        Button("注销") {
+                            let r = MCPRegistration.unregister(.claudeCode)
+                            mcpActionOK = r.ok
+                            mcpActionMessage = "\(r.host.displayName)：\(r.changed ? "已移除" : r.message)"
+                        }
+                        .buttonStyle(.bordered)
+                        .foregroundStyle(VibeColors.danger)
+                    }
+
+                    Spacer()
+
+                    SettingsStatusPill(
+                        title: mcpClaudeRegistered ? "已注册" : "未注册",
+                        tint: mcpClaudeRegistered ? VibeColors.success : VibeColors.warning
+                    )
+                }
+
+                HStack(spacing: 12) {
+                    Button(mcpCodexRegistered ? "更新 Codex 注册" : "注册到 Codex CLI") {
+                        let r = MCPRegistration.register(.codex)
+                        mcpActionOK = r.ok
+                        mcpActionMessage = "\(r.host.displayName)：\(r.message)"
+                    }
+                    .buttonStyle(.bordered)
+
+                    if mcpCodexRegistered {
+                        Button("注销") {
+                            let r = MCPRegistration.unregister(.codex)
+                            mcpActionOK = r.ok
+                            mcpActionMessage = "\(r.host.displayName)：\(r.changed ? "已移除" : r.message)"
+                        }
+                        .buttonStyle(.bordered)
+                        .foregroundStyle(VibeColors.danger)
+                    }
+
+                    Spacer()
+
+                    SettingsStatusPill(
+                        title: mcpCodexRegistered ? "已注册" : "未注册",
+                        tint: mcpCodexRegistered ? VibeColors.success : VibeColors.warning
+                    )
+                }
+
+                if let msg = mcpActionMessage {
+                    Text(msg)
+                        .font(.system(size: 12))
+                        .foregroundStyle(mcpActionOK ? VibeColors.success : VibeColors.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Text("注册后，Claude Code / Codex 里的 Agent 即可原生调用 vibefocus_* 工具族（看窗口、摆窗口、铺网格、快照、通知）。注册只写桥的路径；Agent 能否动窗口仍由上方分级开关决定。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("Agent 怎么用")
                     .font(.system(size: 12, weight: .semibold))
-                Text("终端（CLI）：VibeFocusHotkeys windows list / move-main --id <N> / grid create。MCP 工具（claude code 等）：把 VibeFocusMCP 注册为 MCP server 后即可调用 vibefocus_* 工具族。")
+                Text("终端（CLI）：VibeFocusHotkeys windows list / move-main --id <N> / grid create。MCP 工具（claude code 等）：点上方「注册」后即可调用 vibefocus_* 工具族。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -75,6 +75,8 @@ public struct SettingsView: View {
     @AppStorage(AgentAccessPreferences.enabledKey) var agentAccessEnabled = AgentAccessPreferences.defaultEnabled
     @AppStorage(AgentAccessPreferences.allowWindowOpsKey) var agentAllowWindowOps = AgentAccessPreferences.defaultAllowWindowOps
     @AppStorage(AgentAccessPreferences.allowCreateWindowsKey) var agentAllowCreateWindows = AgentAccessPreferences.defaultAllowCreateWindows
+    @State var mcpActionMessage: String?
+    @State var mcpActionOK = true
 
     // Hook 触发开关
     @AppStorage(ClaudeHookPreferences.triggerOnStopKey) var triggerOnStop = ClaudeHookPreferences.defaultTriggerOnStop

@@ -120,6 +120,10 @@ audit_install() {
 
 echo "构建 release 二进制..."
 swift build -c release --product VibeFocusHotkeys
+# VibeFocusMCP 桥（Agent 接入通道③）随包分发：设置页「Agent 接入」一键注册把
+# 这个二进制写进 agent host 的 MCP 配置。桥构建失败不阻断主程序安装（降级为
+# 无桥可用，注册按钮会在按钮文案处如实报缺），但正常路径两件都要出。
+swift build -c release --product VibeFocusMCP
 
 echo "停止旧进程..."
 # 哈希比对：构建产物与上次安装的构建产物一致时不动 bundle、不重启进程。
@@ -161,6 +165,13 @@ rm -rf "$INSTALL_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$NEW_BIN" "$MACOS_DIR/$EXECUTABLE_NAME"
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
+MCP_BIN="$SCRIPT_DIR/.build/release/VibeFocusMCP"
+if [ -f "$MCP_BIN" ]; then
+  cp "$MCP_BIN" "$MACOS_DIR/VibeFocusMCP"
+  chmod +x "$MACOS_DIR/VibeFocusMCP"
+else
+  echo -e "${YELLOW}⚠️ VibeFocusMCP 桥未构建成功——Agent MCP 注册将不可用${NC}"
+fi
 
 # Copy icon resources
 if [ -f "$ASSETS_DIR/AppIcon.icns" ]; then
