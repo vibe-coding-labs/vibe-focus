@@ -239,8 +239,35 @@ extension WindowStateStore {
 
         let copiedRows = sqlite3_changes(db)
 
-        sqlite3_exec(db, "DROP TABLE windows;", nil, nil, nil)
-        sqlite3_exec(db, "ALTER TABLE \(newTable) RENAME TO windows;", nil, nil, nil)
+        // 审计批（2026-09-26）事务化：DROP→RENAME 原是两条独立 DDL，进程若恰死于
+        // 两者之间，windows 表整个消失（绑定+toggle 单一事实源丢表=数据丢失级）。
+        // 包进显式事务后任一步失败即 ROLLBACK，旧表原地保留。
+        func execOrRollback(_ sql: String, step: String) -> Bool {
+            if sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK { return true }
+            let msg = String(cString: sqlite3_errmsg(db))
+            log("[WindowStateStore] migrate: \(step) failed: \(msg) (rolled back)", level: .error)
+            sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            sqlite3_exec(db, "DROP TABLE IF EXISTS \(newTable);", nil, nil, nil)
+            return false
+        }
+        guard sqlite3_exec(db, "BEGIN IMMEDIATE;", nil, nil, nil) == SQLITE_OK else {
+            log("[WindowStateStore] migrate: BEGIN failed, keeping old table", level: .error)
+            sqlite3_exec(db, "DROP TABLE IF EXISTS \(newTable);", nil, nil, nil)
+            return
+        }
+        // 事务内清掉历史失败迁移可能残留的 windows_v2，避免 CREATE 撞名
+        sqlite3_exec(db, "DROP TABLE IF EXISTS \(newTable);", nil, nil, nil)
+        guard execOrRollback(createSQL, step: "create new table"),
+              execOrRollback(copySQL, step: "copy data"),
+              execOrRollback("DROP TABLE windows;", step: "drop old table"),
+              execOrRollback("ALTER TABLE \(newTable) RENAME TO windows;", step: "rename") else { return }
+        guard sqlite3_exec(db, "COMMIT;", nil, nil, nil) == SQLITE_OK else {
+            log("[WindowStateStore] migrate: COMMIT failed (rolled back)", level: .error)
+            sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            return
+        }
+        sqlite3_finalize(stmt)
+        stmt = nil
 
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_session_id ON windows(session_id);")
         runSchema("CREATE INDEX IF NOT EXISTS idx_windows_pid_tty ON windows(pid, tty);")
