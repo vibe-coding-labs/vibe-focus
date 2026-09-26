@@ -79,7 +79,10 @@ final class SessionRestoreExecutor {
         var deliveryFailures = 0
         var injectFailures = 0
         let originalVisibleSpaces = visibleSpaceByYabaiDisplay
-        var switchedSpaces = false
+        // 审计批修复（2026-09-26）：记录每个被切走视角的屏的「原可见空间」——
+        // 旧实现结束时只还显示器序号最小的一块屏，用户原本在副屏工作时会被丢到
+        // 主屏的空间（真机多屏恢复可复现的体验缺陷）。
+        var switchedOriginalSpaces: [Int] = []
 
         let createItems = plan.items.filter { item in
             if case .create = item.action { return true }
@@ -94,9 +97,10 @@ final class SessionRestoreExecutor {
             // 切视角：目标工作区可见是投递通道的前置（写回时目标屏正显示目标 space）
             if let space = first.targetYabaiSpace,
                let displayIndex = first.targetYabaiDisplay,
-               originalVisibleSpaces[displayIndex] != space {
+               let originalSpace = originalVisibleSpaces[displayIndex],
+               originalSpace != space {
                 let focused = SpaceController.shared.focusSpace(.yabai(space), operationID: op)
-                if focused { switchedSpaces = true }
+                if focused { switchedOriginalSpaces.append(originalSpace) }
                 await settleVisibleSpace(space, budgetSeconds: 2.0)
             }
             for item in items {
@@ -164,12 +168,10 @@ final class SessionRestoreExecutor {
             }
         }
 
-        // 5. 归还原视角（有切换才还）
-        if switchedSpaces {
-            if let (_, space) = originalVisibleSpaces.sorted(by: { $0.key < $1.key }).first {
-                _ = SpaceController.shared.focusSpace(.yabai(space), operationID: op)
-                // 只还主活动屏的原视角即可，逐屏切换反而折腾
-            }
+        // 5. 归还原视角：每个被切走的空间按切换逆序逐一还原——恢复结束时每块屏
+        // 都回到自己恢复前的可见工作区（旧实现只还最小屏号一块，用户会被丢到主屏）。
+        for originalSpace in switchedOriginalSpaces.reversed() {
+            _ = SpaceController.shared.focusSpace(.yabai(originalSpace), operationID: op)
         }
 
         var message = SessionRestorePlanner.summaryMessage(plan: plan, snapshotWindowCount: snapshot.windows.count)
