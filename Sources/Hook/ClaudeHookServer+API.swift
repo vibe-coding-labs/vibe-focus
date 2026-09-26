@@ -76,6 +76,15 @@ extension ClaudeHookServer {
         guard AgentAccessGate.isTierAllowed(endpoint.tier, prefs: prefs) else {
             return (403, AgentApiResponseBuilder.body(ok: false, code: AgentAccessGate.denialCode(prefs: prefs), message: "Agent access tier not enabled"))
         }
+        // 写操作限流（审计收官台账核销项）：60s 滑动窗 30 次，防 token 泄露/失控
+        // 循环把窗口折腾到天荒地老。放在分级授权之后——未授权的请求不消耗配额。
+        if endpoint.method == "POST" {
+            guard AgentWriteRateLimiter.registerWrite() else {
+                return (429, AgentApiResponseBuilder.body(
+                    ok: false, code: "rate_limited",
+                    message: "写操作过于频繁（60 秒窗口内上限 \(AgentWriteRateLimiter.maxWrites) 次），稍后重试"))
+            }
+        }
         let json = AgentApiRequestDecoder.parseJSONObject(body) ?? [:]
 
         switch endpoint.path {

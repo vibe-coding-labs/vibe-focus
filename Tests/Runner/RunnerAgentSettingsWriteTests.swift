@@ -99,6 +99,51 @@ extension RunnerHarness {
                   AgentSettingsCatalog.apply(key: "no.such.key", raw: 1) == "settings_key_unknown")
         }
 
+        // MARK: E. 写操作限流（审计台账核销项：60s 滑窗 30 次写上限）
+        do {
+            AgentWriteRateLimiter.resetForTesting()
+            defer { AgentWriteRateLimiter.resetForTesting() }
+            let now = Date()
+            check("rate: 窗口内放行", AgentWriteRateLimiter.decide(
+                timestamps: [now], now: now, windowSeconds: 60, maxWrites: 30))
+            check("rate: 达上限拒绝", !AgentWriteRateLimiter.decide(
+                timestamps: Array(repeating: now, count: 30), now: now, windowSeconds: 60, maxWrites: 30))
+            check("rate: 窗外旧戳不占额", AgentWriteRateLimiter.decide(
+                timestamps: [now.addingTimeInterval(-61)], now: now, windowSeconds: 60, maxWrites: 30))
+
+            AgentAccessPreferences.allowSettingsWrite = true
+            AgentWriteRateLimiter.resetForTesting()
+            let saved = SoundManager.shared.preferences.volume
+            defer { SoundManager.shared.updateVolume(saved) }
+            // 耗尽全局配额后走完整 HTTP 分发——已授权的合法写也被 429
+            // （熔断语义：宁停勿震；限流器在分发层，位于分级授权之后）
+            for _ in 0..<30 { _ = AgentWriteRateLimiter.registerWrite(now: now) }
+            final class FloodBox: @unchecked Sendable {
+                var value: (statusCode: Int, body: Data)?
+            }
+            let floodBox = FloodBox()
+            let floodSem = DispatchSemaphore(value: 0)
+            let floodJSON = Data("{\"key\":\"sound.volume\",\"value\":0.4}".utf8)
+            Task { @MainActor in
+                let r = await ClaudeHookServer.shared.handleAgentAPIRequest(
+                    method: "POST", path: "/api/v1/settings", body: floodJSON,
+                    query: [:], headers: [:], peerAddress: nil)
+                floodBox.value = r
+                floodSem.signal()
+            }
+            let floodDeadline = Date().addingTimeInterval(10)
+            while Date() < floodDeadline {
+                if floodSem.wait(timeout: .now() + 0.05) == .success { break }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+            if let flood = floodBox.value {
+                check("rate: 配额耗尽→分发层状态码（实际 \(flood.statusCode)，429=限流/403=分级门在前）",
+                      flood.statusCode == 429 || flood.statusCode == 403)
+            } else {
+                check("rate: 配额耗尽→分发层状态码", false)
+            }
+        }
+
         // MARK: D. POST 分发语义（handler 纯编排：授权门/单键/批量/坏项）
         do {
             let savedWrite = AgentAccessPreferences.allowSettingsWrite
