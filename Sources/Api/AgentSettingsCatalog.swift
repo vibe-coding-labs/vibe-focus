@@ -36,32 +36,70 @@ struct AgentSettingSpec {
     let sample: Any
 }
 
-// MARK: - 校验（纯函数）
+// MARK: - 校验与归一化（纯函数）
+
+/// 归一化后的类型安全设置值：validate 与 apply 共用同一条解析路径——
+/// 结构上杜绝「校验通过但施用强转失败」的漂移（审计批消灭 29 处 as!）。
+enum AgentSettingValue: Equatable {
+    case bool(Bool)
+    case int(Int)
+    case double(Double)
+    case option(String)
+    case text(String)
+
+    var displayValue: String {
+        switch self {
+        case .bool(let v): return String(v)
+        case .int(let v): return String(v)
+        case .double(let v): return String(v)
+        case .option(let v): return v
+        case .text(let v): return v
+        }
+    }
+}
 
 enum AgentSettingsValidator {
     enum Outcome: Equatable {
-        case ok
+        case ok(AgentSettingValue)
         case badType
         case outOfRange
+
+        static func == (lhs: Outcome, rhs: Outcome) -> Bool {
+            switch (lhs, rhs) {
+            case (.ok, .ok): return true
+            case (.badType, .badType): return true
+            case (.outOfRange, .outOfRange): return true
+            default: return false
+            }
+        }
     }
 
-    static func validate(kind: AgentSettingValueKind, raw: Any) -> Outcome {
+    /// 类型校验 + 归一化一步到位。JSON 桥接值（NSNumber）与 Swift 字面量统一处理；
+    /// Bool 不冒充数字（NSNumber 桥接陷阱，decodeWindowID 同款教训）。
+    static func normalize(kind: AgentSettingValueKind, raw: Any) -> Outcome {
         switch kind {
         case .bool:
-            return raw is Bool ? .ok : .badType
+            guard let b = raw as? Bool else { return .badType }
+            return .ok(.bool(b))
         case .int(let range):
-            guard let n = raw as? Int else { return .badType }
-            return range.contains(n) ? .ok : .outOfRange
+            guard let n = raw as? NSNumber, !(raw is Bool) else { return .badType }
+            // 整性检查：JSON 2.5 也是 NSNumber，intValue 会截断成 2 被误收（审计实锤）
+            let d = n.doubleValue
+            guard d == d.rounded() else { return .badType }
+            let i = n.intValue
+            guard range.contains(i) else { return .outOfRange }
+            return .ok(.int(i))
         case .double(let range):
-            if let n = raw as? Double { return range.contains(n) ? .ok : .outOfRange }
-            if let n = raw as? Int { return range.contains(Double(n)) ? .ok : .outOfRange }
-            return .badType
+            guard let n = raw as? NSNumber, !(raw is Bool) else { return .badType }
+            let d = n.doubleValue
+            guard range.contains(d) else { return .outOfRange }
+            return .ok(.double(d))
         case .option(let cases):
             guard let s = raw as? String else { return .badType }
-            return cases.contains(s) ? .ok : .outOfRange
+            return cases.contains(s) ? .ok(.option(s)) : .outOfRange
         case .text(let maxLength):
             guard let s = raw as? String else { return .badType }
-            return (1...maxLength).contains(s.count) ? .ok : .outOfRange
+            return (1...maxLength).contains(s.count) ? .ok(.text(s)) : .outOfRange
         }
     }
 }
@@ -196,67 +234,81 @@ enum AgentSettingsCatalog {
         guard let spec = writable[key] else {
             return readonlyKeys.contains(key) ? "settings_key_readonly" : "settings_key_unknown"
         }
-        guard AgentSettingsValidator.validate(kind: spec.kind, raw: raw) == .ok else {
-            return "settings_value_invalid"
+        let value: AgentSettingValue
+        switch AgentSettingsValidator.normalize(kind: spec.kind, raw: raw) {
+        case .ok(let v): value = v
+        case .badType: return "settings_value_invalid"
+        case .outOfRange: return "settings_value_invalid"
+        }
+        let boolV: Bool
+        let intV: Int
+        let doubleV: Double
+        let stringV: String
+        switch value {
+        case .bool(let v): boolV = v; intV = v ? 1 : 0; doubleV = v ? 1 : 0; stringV = v ? "true" : "false"
+        case .int(let v): boolV = v != 0; intV = v; doubleV = Double(v); stringV = String(v)
+        case .double(let v): boolV = v != 0; intV = Int(v); doubleV = v; stringV = String(v)
+        case .option(let v): boolV = false; intV = 0; doubleV = 0; stringV = v
+        case .text(let v): boolV = false; intV = 0; doubleV = 0; stringV = v
         }
         switch key {
         // 提示音
         case "sound.type":
-            SoundManager.shared.updateSoundType(CompletionSoundType(rawValue: raw as! String)!)
+            SoundManager.shared.updateSoundType(CompletionSoundType(rawValue: stringV)!)
         case "sound.volume":
-            SoundManager.shared.updateVolume(Float(truncating: raw as! NSNumber))
+            SoundManager.shared.updateVolume(Float(doubleV))
         case "sound.minPlayIntervalSeconds":
-            SoundManager.shared.updateMinPlayInterval(raw as! Int)
+            SoundManager.shared.updateMinPlayInterval(intV)
         case "sound.quietHoursEnabled":
-            SoundManager.shared.updateQuietHours(enabled: raw as! Bool, startHour: SoundManager.shared.preferences.quietStartHour, endHour: SoundManager.shared.preferences.quietEndHour)
+            SoundManager.shared.updateQuietHours(enabled: boolV, startHour: SoundManager.shared.preferences.quietStartHour, endHour: SoundManager.shared.preferences.quietEndHour)
         case "sound.quietStartHour":
-            SoundManager.shared.updateQuietHours(enabled: SoundManager.shared.preferences.quietHoursEnabled, startHour: raw as! Int, endHour: SoundManager.shared.preferences.quietEndHour)
+            SoundManager.shared.updateQuietHours(enabled: SoundManager.shared.preferences.quietHoursEnabled, startHour: intV, endHour: SoundManager.shared.preferences.quietEndHour)
         case "sound.quietEndHour":
-            SoundManager.shared.updateQuietHours(enabled: SoundManager.shared.preferences.quietHoursEnabled, startHour: SoundManager.shared.preferences.quietStartHour, endHour: raw as! Int)
+            SoundManager.shared.updateQuietHours(enabled: SoundManager.shared.preferences.quietHoursEnabled, startHour: SoundManager.shared.preferences.quietStartHour, endHour: intV)
         // 语音
         case "voice.mode":
-            VoiceAnnouncementManager.shared.updateMode(VoiceAnnouncementMode(rawValue: raw as! String)!)
+            VoiceAnnouncementManager.shared.updateMode(VoiceAnnouncementMode(rawValue: stringV)!)
         case "voice.templateText":
-            VoiceAnnouncementManager.shared.updateTemplateText(raw as! String)
+            VoiceAnnouncementManager.shared.updateTemplateText(stringV)
         case "voice.volume":
-            VoiceAnnouncementManager.shared.updateVolume(Float(truncating: raw as! NSNumber))
+            VoiceAnnouncementManager.shared.updateVolume(Float(doubleV))
         case "voice.speechRate":
-            VoiceAnnouncementManager.shared.updateSpeechRate(Float(truncating: raw as! NSNumber))
+            VoiceAnnouncementManager.shared.updateSpeechRate(Float(doubleV))
         case "voice.llmMaxChars":
-            VoiceAnnouncementManager.shared.updateLLMMaxChars(raw as! Int)
+            VoiceAnnouncementManager.shared.updateLLMMaxChars(intV)
         // 气泡
-        case "bubble.enabled": InputBubblePreferences.isEnabled = raw as! Bool
-        case "bubble.autoShowOnFocus": InputBubblePreferences.autoShowOnFocus = raw as! Bool
-        case "bubble.autoShowOnMoveToMain": InputBubblePreferences.autoShowOnMoveToMain = raw as! Bool
-        case "bubble.autoHide": InputBubblePreferences.autoHide = raw as! Bool
-        case "bubble.autoRestoreOnSubmit": InputBubblePreferences.autoRestoreOnSubmit = raw as! Bool
-        case "bubble.submitOnEnter": InputBubblePreferences.submitOnEnter = raw as! Bool
-        case "bubble.historyLimit": InputBubblePreferences.historyLimit = raw as! Int
+        case "bubble.enabled": InputBubblePreferences.isEnabled = boolV
+        case "bubble.autoShowOnFocus": InputBubblePreferences.autoShowOnFocus = boolV
+        case "bubble.autoShowOnMoveToMain": InputBubblePreferences.autoShowOnMoveToMain = boolV
+        case "bubble.autoHide": InputBubblePreferences.autoHide = boolV
+        case "bubble.autoRestoreOnSubmit": InputBubblePreferences.autoRestoreOnSubmit = boolV
+        case "bubble.submitOnEnter": InputBubblePreferences.submitOnEnter = boolV
+        case "bubble.historyLimit": InputBubblePreferences.historyLimit = intV
         // 网格
-        case "grid.rows": TerminalGridPreferences.rows = raw as! Int
-        case "grid.cols": TerminalGridPreferences.cols = raw as! Int
-        case "grid.gap": TerminalGridPreferences.gap = Double(truncating: raw as! NSNumber)
-        case "grid.autoRestoreEnabled": TerminalGridPreferences.autoRestoreEnabled = raw as! Bool
+        case "grid.rows": TerminalGridPreferences.rows = intV
+        case "grid.cols": TerminalGridPreferences.cols = intV
+        case "grid.gap": TerminalGridPreferences.gap = doubleV
+        case "grid.autoRestoreEnabled": TerminalGridPreferences.autoRestoreEnabled = boolV
         // 浮层
-        case "overlay.enabled": ScreenOverlayManager.shared.setEnabled(raw as! Bool)
+        case "overlay.enabled": ScreenOverlayManager.shared.setEnabled(boolV)
         case "overlay.position":
-            if let pos = IndexPosition(rawValue: raw as! String) {
+            if let pos = IndexPosition(rawValue: stringV) {
                 ScreenOverlayManager.shared.updatePosition(pos)
             }
         // 标题编辑
-        case "titleEditor.enabled": TitleEditorPreferences.isEnabled = raw as! Bool
+        case "titleEditor.enabled": TitleEditorPreferences.isEnabled = boolV
         // Hook 触发（各自带变更留痕）
-        case "hook.triggerOnStop": ClaudeHookPreferences.triggerOnStop = raw as! Bool
-        case "hook.triggerOnSessionEnd": ClaudeHookPreferences.triggerOnSessionEnd = raw as! Bool
-        case "hook.autoRestoreOnPromptSubmit": ClaudeHookPreferences.autoRestoreOnPromptSubmit = raw as! Bool
-        case "hook.notifyOnNotification": ClaudeHookPreferences.notifyOnNotification = raw as! Bool
+        case "hook.triggerOnStop": ClaudeHookPreferences.triggerOnStop = boolV
+        case "hook.triggerOnSessionEnd": ClaudeHookPreferences.triggerOnSessionEnd = boolV
+        case "hook.autoRestoreOnPromptSubmit": ClaudeHookPreferences.autoRestoreOnPromptSubmit = boolV
+        case "hook.notifyOnNotification": ClaudeHookPreferences.notifyOnNotification = boolV
         default:
             return "settings_key_unknown"
         }
         // 统一留痕：agent 触发的设置变更落 INFO 行（可日志考古归因）
         log("[AgentSettings] setting changed by agent", level: .info, fields: [
             "key": key,
-            "value": "\(raw)"
+            "value": stringV
         ])
         return nil
     }

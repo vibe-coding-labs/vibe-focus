@@ -221,6 +221,14 @@ extension RunnerHarness {
             AgentAccessPreferences.allowWindowOps = true
             let r7 = runBG([.moveMain(windowID: 4000000000)])
             check("loop: CLI L1 幽灵窗→退出码 6", r7.first == AgentCLIExitCode.operationFailed)
+
+            // settings set CLI 真实写入（Bug#1 回归锁；授权开关快照-恢复）
+            let savedSettingsWrite = AgentAccessPreferences.allowSettingsWrite
+            AgentAccessPreferences.allowSettingsWrite = true
+            writeConfig(port: port, token: "tk-agent-loopback")
+            let r8 = runBG([.settingsSet(key: "sound.volume", value: "0.5")])
+            AgentAccessPreferences.allowSettingsWrite = savedSettingsWrite
+            check("loop: CLI settings set→退出码 0（POST 真生效）", r8.first == AgentCLIExitCode.ok)
         }
     }
 }

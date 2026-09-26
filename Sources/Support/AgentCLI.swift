@@ -53,9 +53,11 @@ public enum AgentCLICommand: Equatable, Sendable {
         case .snapshotRestore:
             return AgentApiEndpoint.all.first { $0.path.hasSuffix("/snapshots/restore") }
         case .settingsGet:
-            return AgentApiEndpoint.all.first { $0.path.hasSuffix("/settings") }
+            // /settings 同时有 GET+POST 两条——suffix-first 会恒匹配到 GET
+            // （实测：CLI 改设置静默无效果），必须按方法精确定位。
+            return AgentApiEndpoint.match(method: "GET", path: "/api/v1/settings")
         case .settingsSet:
-            return AgentApiEndpoint.all.first { $0.path.hasSuffix("/settings") }
+            return AgentApiEndpoint.match(method: "POST", path: "/api/v1/settings")
         case .windowsList, .sessionsList:
             return nil
         }

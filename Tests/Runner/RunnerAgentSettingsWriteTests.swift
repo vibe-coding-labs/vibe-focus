@@ -25,16 +25,23 @@ extension RunnerHarness {
                       && AgentSettingsCatalog.readonlyKeys.contains("permissions.accessibility"))
         }
 
-        // MARK: B. 校验器矩阵（纯函数）
+        // MARK: B. 校验器矩阵（纯函数；normalize=校验+归一化同路径）
         do {
-            check("v: bool 接受", AgentSettingsValidator.validate(kind: .bool, raw: true) == .ok)
-            check("v: bool 拒字符串", AgentSettingsValidator.validate(kind: .bool, raw: "true") == .badType)
-            check("v: int 范围内", AgentSettingsValidator.validate(kind: .int(range: 1...8), raw: 3) == .ok)
-            check("v: int 越界", AgentSettingsValidator.validate(kind: .int(range: 1...8), raw: 9) == .outOfRange)
-            check("v: int 拒小数", AgentSettingsValidator.validate(kind: .int(range: 1...8), raw: 2.5) == .badType)
-            check("v: double 收整数", AgentSettingsValidator.validate(kind: .double(range: 0...1), raw: 0) == .ok)
-            check("v: option 拒非法", AgentSettingsValidator.validate(kind: .option(cases: ["a"]), raw: "b") == .outOfRange)
-            check("v: text 长度窗", AgentSettingsValidator.validate(kind: .text(maxLength: 5), raw: "123456") == .outOfRange)
+            if case .ok(.bool(true)) = AgentSettingsValidator.normalize(kind: .bool, raw: true) {
+                check("v: bool 归一化", true)
+            } else { check("v: bool 归一化", false) }
+            check("v: bool 拒字符串", AgentSettingsValidator.normalize(kind: .bool, raw: "true") == .badType)
+            if case .ok(.int(3)) = AgentSettingsValidator.normalize(kind: .int(range: 1...8), raw: 3) {
+                check("v: int 归一化 3", true)
+            } else { check("v: int 归一化 3", false) }
+            check("v: int 越界", AgentSettingsValidator.normalize(kind: .int(range: 1...8), raw: 9) == .outOfRange)
+            check("v: int 拒小数", AgentSettingsValidator.normalize(kind: .int(range: 1...8), raw: 2.5) == .badType)
+            check("v: int 拒 Bool 冒充", AgentSettingsValidator.normalize(kind: .int(range: 1...8), raw: true) == .badType)
+            if case .ok(.double(0)) = AgentSettingsValidator.normalize(kind: .double(range: 0...1), raw: 0) {
+                check("v: double 收整数", true)
+            } else { check("v: double 收整数", false) }
+            check("v: option 拒非法", AgentSettingsValidator.normalize(kind: .option(cases: ["a"]), raw: "b") == .outOfRange)
+            check("v: text 长度窗", AgentSettingsValidator.normalize(kind: .text(maxLength: 5), raw: "123456") == .outOfRange)
         }
 
         // MARK: C. 全表样值回环（apply→可读回；快照-改写-恢复协议）

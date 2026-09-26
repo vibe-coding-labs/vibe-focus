@@ -46,6 +46,12 @@ extension RunnerHarness {
             check("routes: 其余 POST 全为 L1", AgentApiEndpoint.all.filter { $0.method == "POST" && $0.tier == .windowOps }.count == 7)
             check("routes: POST settings 独立授权（tier=read 走总开关门，写授权在 handler）",
                   AgentApiEndpoint.match(method: "POST", path: "/api/v1/settings")?.tier == .read)
+            // Bug#1 回归锁：/settings 有 GET+POST 两条，suffix-first 曾恒匹配 GET
+            // 致 CLI 改设置静默无效果（返回目录、退出码 0）
+            check("routes: CLI settings set→POST（回归锁）",
+                  AgentCLICommand.settingsSet(key: "sound.volume", value: "0.5").apiEndpoint?.method == "POST")
+            check("routes: CLI settings get→GET（回归锁）",
+                  AgentCLICommand.settingsGet.apiEndpoint?.method == "GET")
 
             check("routes: match 命中", AgentApiEndpoint.match(method: "POST", path: "/api/v1/windows/move-main")?.tier == .windowOps)
             check("routes: 方法不匹配不命中", AgentApiEndpoint.match(method: "GET", path: "/api/v1/windows/move-main") == nil)
