@@ -31,7 +31,9 @@ enum SSHCommandParser {
     }
 
     /// 命令行 → 目的地。argv[0] 之后按 OpenSSH 语义逐 token 消化：
-    /// - 带值短选项集合：p l i F c D E J L O Q R V w b e
+    /// - 带值短选项集合：p l i m S c F D E J L O R V w b e
+    ///   （审计批 2026-09-26 补 -m MACs规格 / -S ctl：此前漏项会把 `ssh -m mymacs
+    ///   host` 的 mymacs 误认成目的地=错连风险，而非诚实降级）
     /// - 无值短选项集合：其余单字母（-t -T -A -C -f -g -G -K -k -M -N -n -q -s -S -v -W -x -X -Y -4 -6 ...）
     ///   （多字母如 -46 按「整段无值」处理）
     /// - `-o`/`-oVALUE`、`--` 终结选项
@@ -41,7 +43,7 @@ enum SSHCommandParser {
         var tokens = Array(commandLine.split(separator: " ").dropFirst()).map(String.init)
         var user: String?
         var port: String?
-        let optionsWithValue = Set("plicoFcDEJLORVwbe".map { String($0) })
+        let optionsWithValue = Set("plicmoSFcDEJLORVwbe".map { String($0) })
 
         while !tokens.isEmpty {
             let token = tokens.removeFirst()

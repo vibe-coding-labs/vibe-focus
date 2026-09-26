@@ -72,13 +72,16 @@ enum PaneEnumeration {
             var tty = fields[3]
             guard !tty.isEmpty else { continue }
             if !tty.hasPrefix("/dev/") { tty = "/dev/" + tty }
-            let boundsParts = fields[4].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            guard boundsParts.count == 4 else { continue }
+            // 审计批契约对齐：四段各自必须全为整数——compactMap 静默丢段会把
+            // 「10,20,abc,40」错凑成合法四元组（文档契约=解析失败整行跳过）
+            let boundParts = fields[4].split(separator: ",").map { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard boundParts.count == 4, let l = boundParts[0], let t = boundParts[1],
+                  let r = boundParts[2], let b = boundParts[3] else { continue }
             let bounds = CGRect(
-                x: boundsParts[0],
-                y: boundsParts[1],
-                width: boundsParts[2] - boundsParts[0],
-                height: boundsParts[3] - boundsParts[1]
+                x: l,
+                y: t,
+                width: r - l,
+                height: b - t
             )
             result.append(ITermSessionEntry(
                 windowASID: fields[0],
