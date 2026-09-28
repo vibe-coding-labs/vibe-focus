@@ -209,8 +209,8 @@ enum InputBubbleClipboardPlan {
 /// （UPS 侧 userPlacedSkip 已退役，两链路语义一致）；「提交后自动归位」偏好关闭时
 /// 气泡路径不动作，UPS 路径由 claudeHookAutoRestoreOnPromptSubmit 独立把关。
 /// 2026-09-28 审计批修订：门的入参从「有无记录」升级为「有无**可归位**记录」
-/// （AutoRestoreRecordGate 资格门——手动 ⌃Q 摆位粘滞、超 30min 记录不归位，
-/// 与 UPS 链路一致跳过）；双通道并发由 RestoreInFlightRegistry 在途标记互斥。
+/// （AutoRestoreRecordGate 资格门——超 30min 记录不归位、来源无关，与 UPS 链路
+/// 同一裁决）；双通道并发由 RestoreInFlightRegistry 在途标记互斥。
 /// 判序：偏好关 → 非提交（⌘Enter 仅粘贴/Esc）→ 无可归位记录（无从知原位或
 /// 记录不具资格，诚实不动作）→ 窗不在主屏（本就在家/别处）→ 归位。
 enum InputBubbleAutoRestoreGate {

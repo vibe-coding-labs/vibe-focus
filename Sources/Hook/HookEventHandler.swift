@@ -30,7 +30,7 @@ final class HookEventHandler {
     ///
     /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺；2026-09-28
     /// 日志审计批修订资格门）**：窗口带可归位 toggle 记录（自动化来源 + 30min
-    /// 时效内 + 不在原位；手动 ⌃Q 摆位粘滞不自动 Undo）→ 经 ToggleEngine.restore
+    /// 时效内 + 不在原位；来源无关）→ 经 ToggleEngine.restore
     /// 回原位；无记录保持单向兜底（不在主屏→拉主屏，已在主屏→跳过）。
     ///
     /// **历史教训（0f0a3bc 曾把本路径退化成单向移主屏）**：旧 restore 实现
@@ -103,9 +103,8 @@ final class HookEventHandler {
         sessionUPSLimiters[payload.sessionID] = limiter
 
         // 门 3/4/5 输入采集：toggle 记录资格归类 / 还原在途标记 / 主屏归属 / 冷却。
-        // 2026-09-28 修订（日志审计批）：手动 ⌃Q 摆位记录粘滞（自动链不 Undo，
-        // ⌃Q 再按仍可手动还原）；超 30min 记录不再驱动自动归位；已在原位的陈旧
-        // 记录仅清理不移动；气泡/UPS 双通道用在途标记去重——语义见
+        // 资格门（2026-09-29 终版）：来源无关，时效 ≤30min 且不在原位即可归位；
+        // 已在原位的陈旧记录仅清理不移动；气泡/UPS 双通道用在途标记去重——语义见
         // AutoRestoreRecordGate 头注与 docs/log-audit-2026-09-29.md。
         let toggleRecord = ToggleEngine.shared.load(windowID: identity.windowID)
         // 仅在有记录时做一次 CG 读回（已在原位检测）；无记录零额外查询。
@@ -240,21 +239,6 @@ final class HookEventHandler {
                     "sessionID": payload.sessionID
                 ]
             )
-            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
-
-        case .manualPlacementSticky:
-            // 2026-09-28 审计批：手动 ⌃Q 摆位粘滞——用户手动放置的窗口不被自动链
-            // Undo（⌃Q 再按一次仍可手动还原）。记录保留（仍是用户手动 toggle 的凭证）。
-            log(
-                "[HookEventHandler] UserPromptSubmit: manually placed window stays put (sticky placement)",
-                level: .info,
-                fields: [
-                    "traceID": traceID,
-                    "windowID": String(identity.windowID),
-                    "sessionID": payload.sessionID
-                ]
-            )
-            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
             return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .recordExpired:

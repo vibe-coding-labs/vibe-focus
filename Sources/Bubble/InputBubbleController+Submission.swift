@@ -197,9 +197,9 @@ extension InputBubbleController {
             "input_bubble_return landedBy=\(landedBy.rawValue) waitedMs=\(waitedMs) windowID=\(target.windowID)"
         )
         postKeyCombo(keyCode: CGKeyCode(kVK_Return), flags: [])
-        // 2026-09-28 审计批：归位资格走 AutoRestoreRecordGate（手动 ⌃Q 摆位粘滞、
-        // 超 30min 记录不归位）——与 UPS 侧同一把门，9-15 的一致性诉求以「一致跳过」
-        // 保留；测试注入 provider 优先（行为锁定用），生产走资格门。
+        // 归位资格走 AutoRestoreRecordGate（时效内 + 不在原位，来源无关；2026-09-29
+        // 凌晨裁决：手动 ⌃Q 拉上去回车同样归位）——与 UPS 侧同一把门；测试注入
+        // provider 优先（行为锁定用），生产走资格门。
         let hasEligibleToggleRecord = submitHasToggleRecordProvider.map { $0() }
             ?? (AutoRestoreRecordGate.evaluate(
                 record: ToggleEngine.shared.load(windowID: target.windowID),

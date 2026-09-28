@@ -6,25 +6,23 @@ import Foundation
 // 决策序 = 生产守护顺序（handleUserPromptSubmit 消费）：
 //   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 还原已在途（气泡/UPS 双通道
 //   去重，RestoreInFlightRegistry）→ toggle 记录资格门（AutoRestoreRecordGate：
-//   eligible 回原位；manualPlacement 手动 ⌃Q 摆位粘滞不自动 Undo；expired 超
-//   30min 时效不归位；alreadyAtOriginalFrame 已在原位仅清理）→ 留在当前屏
-//   （UPS 永不搬窗：用户正在副屏/其它屏交互时拉去主屏 = 2026-09-11 用户明令
-//   禁止的复现行为；「拉主屏」只归 Stop）。
+//   eligible 回原位[来源无关]；expired 超 30min 时效不归位；alreadyAtOriginalFrame
+//   已在原位仅清理）→ 留在当前屏（UPS 永不搬窗：用户正在副屏/其它屏交互时拉去
+//   主屏 = 2026-09-11 用户明令禁止的复现行为；「拉主屏」只归 Stop）。
 // 每个决策的响应码唯一且稳定。
 //
-// 「回原位」语义（2026-09-10 用户定案，恢复 0f0a3bc 移除的承诺）：存在可归位
-// toggle 记录（自动化来源 + 时效内）→ UserPromptSubmit 时经 ToggleEngine.restore
-// 回到原位（本地会话与远程 machine_label 会话通用——都在窗口身份解析之后）。
-// 震荡天然有界：记录只由真实移动创建、restore 成功即清除，每次回跳都需要一次
-// 新的移动作凭证；UPS 限流闸在其前兜底。
+// 「回原位」语义（2026-09-10 用户定案，恢复 0f0a3bc 移除的承诺；2026-09-29 凌晨
+// 用户再次裁决：**与记录来源无关**——手动 ⌃Q 拉上去 → 回车 → 窗回副屏 是既定
+// 承诺）：存在可归位 toggle 记录（时效内 + 不在原位）→ UserPromptSubmit 时经
+// ToggleEngine.restore 回到原位（本地会话与远程 machine_label 会话通用——都在
+// 窗口身份解析之后）。震荡天然有界：记录只由真实移动创建、restore 成功即清除，
+// 每次回跳都需要一次新的移动作凭证；UPS 限流闸在其前兜底。
 //
-// ## 2026-09-28 修订（日志审计批，docs/log-audit-2026-09-29.md）
-// 65a1ad2（9-16）的「有记录即归位」在四天 43 次 UPS 拽回实测中过半是「手动 ⌃Q
-// 摆位后正常提交被拽」（15:12~15:16 连续两轮拉回-拽回实录），另有陈旧记录驱动
-// 全量 restore 空转（12:35 实录：6 秒逐窗 focus 带动切空间全败 + 视图被带跳）。
-// 修订：手动摆位粘滞（manualPlacementSticky）+ 记录 30min 时效（recordExpired）
-// + 已在原位短路（alreadyAtOriginal，陈旧记录仅清理）+ 双通道在途去重
-// （restoreInProgress）。9-15 的一致性诉求以「气泡/回车一致跳过」保留。
+// ## 修订史（供后续会话理解，勿再单方向推翻；全量取证 docs/log-audit-2026-09-29.md）
+// B126(9-11 userPlacedSkip) → 65a1ad2(9-16 有记录即归位) → 0.0.90(9-28 手动摆位
+// 粘滞——**实测回归**：装机 40 分钟拦掉 9 次真实提交归位，17:00~17:39Z 日志铁证)
+// → 0.0.91(本版：回退粘滞，9-28 主诉的真凶由时效门[recordExpired]/已在原位短路
+// [alreadyAtOriginal]/双通道在途去重[restoreInProgress]承担，这三门保留)。
 
 @MainActor
 extension HookEventHandler {
@@ -37,8 +35,6 @@ extension HookEventHandler {
         /// 气泡/UPS 双通道去重：该窗口已有归位在途（RestoreInFlightRegistry）。
         case restoreInProgress
         case restoreToOriginal
-        /// 手动 ⌃Q 摆位记录 → 粘滞：自动链不 Undo 用户放置（⌃Q 再按仍可手动还原）。
-        case manualPlacementSticky
         /// 记录超时效（AutoRestoreRecordGate.maxRecordAgeSeconds）→ 不再驱动自动归位。
         case recordExpired
         /// 窗口已在记录原位 → 无需移动（陈旧记录由调用方清理）。
@@ -73,8 +69,6 @@ extension HookEventHandler {
         switch recordGate {
         case .eligible:
             return .restoreToOriginal
-        case .manualPlacement:
-            return .manualPlacementSticky
         case .expired:
             return .recordExpired
         case .alreadyAtOriginalFrame:
@@ -134,15 +128,6 @@ extension HookEventHandler {
                 ClaudeHookResponse(
                     ok: true, code: "restore_to_original",
                     message: "Toggle record present, restoring window to original screen/space/position",
-                    sessionID: sessionID, handled: false
-                )
-            )
-        case .manualPlacementSticky:
-            return (
-                200,
-                ClaudeHookResponse(
-                    ok: true, code: "manual_placement_stays",
-                    message: "Window was placed manually (⌃Q); auto-restore leaves it where you put it",
                     sessionID: sessionID, handled: false
                 )
             )
