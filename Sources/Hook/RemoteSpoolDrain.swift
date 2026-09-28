@@ -44,6 +44,22 @@ enum RemoteSpoolDrainLogic {
         return raw
     }
 
+    /// 主机不可达退避间隔（2026-09-28 审计批，纯函数）：
+    /// 连续失败 streak 次后，下次拉取推迟 min(base·2^(streak-1), cap) 秒；
+    /// streak=0（成功后/从未失败）返回 0（立即重试）。指数退避防「单主机持续
+    /// 不可达时每 2s 轮询 × 10s ssh 超时 + 8s mux 重置空转四天 1.7 万次 fork」
+    ///（192.168.1.90 实录，2026-09-25 起全程 timeout/spawn）。
+    static func backoffDelay(failureStreak: Int, base: TimeInterval, cap: TimeInterval) -> TimeInterval {
+        guard failureStreak > 0 else { return 0 }
+        return min(base * pow(2.0, Double(failureStreak - 1)), cap)
+    }
+
+    /// 主机本次 tick 是否到期（纯函数）：无退避记录恒到期；退避到期时间已过即到期。
+    static func isHostDue(nextAttemptAt: Date?, now: Date) -> Bool {
+        guard let nextAttemptAt else { return true }
+        return now >= nextAttemptAt
+    }
+
     /// 直投事件顺路自注册 drain 主机的决策（纯函数）：
     /// 仅当「远程事件（有 machine_label）+ forwarder 上报的 ssh 用户与服务器 IP
     /// 齐全 + 事件 TCP 对端 == 上报的服务器 IP（防伪造/代理错位）」时，
@@ -169,12 +185,20 @@ final class RemoteSpoolDrainer: ObservableObject {
         var lastDrainAt: Date?
         var lastEventCount: Int = 0
         var lastError: String?
+        /// 连续失败连击（成功清零）——退避依据（2026-09-28 审计批）
+        var failureStreak: Int = 0
+        /// 退避到期时刻；nil = 立即可拉
+        var nextAttemptAt: Date?
     }
 
     @Published private(set) var statuses: [String: HostStatus] = [:]
 
     static let pollInterval: TimeInterval = 2.0
     static let drainTimeout: TimeInterval = 10.0
+    /// 退避参数（2026-09-28 审计批）：base=单次拉取的超时成本，cap=10 分钟。
+    /// .90 类持续不可达主机稳态重试间隔收敛到 10 分钟（此前 ~12-20s 一轮 × 四天 1.7 万次）。
+    static let backoffBaseSeconds: TimeInterval = drainTimeout
+    static let backoffCapSeconds: TimeInterval = 600
     /// spool 陈旧阈值：容忍服务器时钟偏差与 Mac 离线数十分钚——事件仍有恢复
     /// 语义；再老（>1h）恢复目标大概率已失效，删。
     static let stalenessMinutes = 60
@@ -213,13 +237,14 @@ final class RemoteSpoolDrainer: ObservableObject {
         }
     }
 
-    /// 设置页「立即拉取」：确保在跑 + 立即 tick 一轮。
+    /// 设置页「立即拉取」：确保在跑 + 立即 tick 一轮（force 绕过退避——用户显式
+    /// 动作不该被后台退避挡住）。
     func drainNow() {
         applyPreferences()
-        tick()
+        tick(force: true)
     }
 
-    func tick() {
+    func tick(force: Bool = false) {
         // B178：上一批取回的事件还有积压时，本 tick 优先消化积压、不再发起新的
         // ssh 拉取——主线程每 tick 只背一份窗口作业，事件不丢（顺延处理）。
         if !pendingReplay.isEmpty {
@@ -234,7 +259,11 @@ final class RemoteSpoolDrainer: ObservableObject {
             }
             return
         }
+        let now = Date()
         for host in RemoteSpoolHosts.loadHosts() where !inFlight.contains(host) {
+            // 退避期主机跳过（force=设置页「立即拉取」旁路）；静默跳过不打日志
+            // 噪音，退避进入/到期时刻已在 finishDrain 落账。
+            guard force || RemoteSpoolDrainLogic.isHostDue(nextAttemptAt: statuses[host]?.nextAttemptAt, now: now) else { continue }
             startDrain(host: host)
         }
     }
@@ -300,7 +329,18 @@ final class RemoteSpoolDrainer: ObservableObject {
         guard let result else {
             status.lastDrainAt = Date()
             status.lastError = "ssh 超时或启动失败"
-            log("[RemoteSpoolDrainer] drain failed (timeout/spawn)", level: .warn, fields: ["host": host])
+            status.failureStreak += 1
+            let delay = RemoteSpoolDrainLogic.backoffDelay(
+                failureStreak: status.failureStreak,
+                base: Self.backoffBaseSeconds,
+                cap: Self.backoffCapSeconds
+            )
+            status.nextAttemptAt = Date().addingTimeInterval(delay)
+            log("[RemoteSpoolDrainer] drain failed (timeout/spawn)", level: .warn, fields: [
+                "host": host,
+                "failureStreak": String(status.failureStreak),
+                "backoffSeconds": String(Int(delay))
+            ])
             return
         }
         status.lastDrainAt = Date()
@@ -308,13 +348,24 @@ final class RemoteSpoolDrainer: ObservableObject {
         if result.exitCode == 255 {
             status.lastError = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             if status.lastError?.isEmpty == true { status.lastError = "ssh exit 255" }
+            status.failureStreak += 1
+            let delay = RemoteSpoolDrainLogic.backoffDelay(
+                failureStreak: status.failureStreak,
+                base: Self.backoffBaseSeconds,
+                cap: Self.backoffCapSeconds
+            )
+            status.nextAttemptAt = Date().addingTimeInterval(delay)
             log("[RemoteSpoolDrainer] drain unreachable", level: .debug, fields: [
                 "host": host,
+                "failureStreak": String(status.failureStreak),
+                "backoffSeconds": String(Int(delay)),
                 "stderr": String((status.lastError ?? "").prefix(200))
             ])
             return
         }
         status.lastError = nil
+        status.failureStreak = 0
+        status.nextAttemptAt = nil
 
         let events = RemoteSpoolDrainLogic.parseDrainedLines(result.stdout)
         status.lastEventCount = events.count

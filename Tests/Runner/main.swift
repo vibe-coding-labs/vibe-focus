@@ -267,6 +267,7 @@ final class FakeAuditor: RestoreAuditing {
         runCGWindowEntryEdgeTests()
         runRegistryPurgeTests()
         runHookWalkTests()
+        runRestoreInFlightTests()
         runRegistryFindPIDTests()
         runWindowMoveExecuteTests()
         runHookInstallHomeTests()

@@ -205,88 +205,156 @@ extension RunnerHarness {
 
     do {
         // A. 守护顺序穷举：每道门 + 前门不满足时才看后门。
-        //    （2026-09-10 新增记录门：有 toggle 记录优先回原位——拉主屏后
-        //    提交提示词回原位即本门；窗口已在主屏也照样回，因为记录指向的就是原始位置。
-        //    2026-09-16 用户定案：记录不论来源（手动热键/Stop）一律回原位，
-        //    与气泡提交 InputBubbleAutoRestoreGate 语义一致；userPlacedSkip 退役。）
+        //    （2026-09-10 新增记录门：有可归位 toggle 记录优先回原位——拉主屏后
+        //    提交提示词回原位即本门。2026-09-16 曾定案「记录不论来源一律回原位」；
+        //    2026-09-28 日志审计批修订（docs/log-audit-2026-09-29.md）：四天 43 次
+        //    UPS 拽回过半是「手动 ⌃Q 摆位后正常提交被拽」（15:12~15:16 连续两轮
+        //    拉回-拽回实录）+ 陈旧记录驱动全量 restore 空转（12:35 实录）——修订为
+        //    手动摆位粘滞 + 30min 时效 + 已在原位短路 + 双通道在途去重。
+        //    9-15 的一致性诉求保留：气泡/回车对同一资格门一致裁决。）
+        func decide(autoRestoreEnabled: Bool = true, hasWindowIdentity: Bool = true, rateLimited: Bool = false,
+                    recentUPSCount: Int = 1, maxUPSEvents: Int = 20, isRestoreAlreadyActive: Bool = false,
+                    recordGate: AutoRestoreRecordGate = .none, isOnMainScreen: Bool = false,
+                    isInCooldown: Bool = false, cooldownRemainingSeconds: Int = 0) -> HookEventHandler.PromptMoveDecision {
+            HookEventHandler.decidePromptMove(
+                autoRestoreEnabled: autoRestoreEnabled, hasWindowIdentity: hasWindowIdentity,
+                rateLimited: rateLimited, recentUPSCount: recentUPSCount, maxUPSEvents: maxUPSEvents,
+                isRestoreAlreadyActive: isRestoreAlreadyActive, recordGate: recordGate,
+                isOnMainScreen: isOnMainScreen, isInCooldown: isInCooldown,
+                cooldownRemainingSeconds: cooldownRemainingSeconds
+            )
+        }
         check("ups A1: 自动恢复关闭 → autoRestoreDisabled（最优先）",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: false, hasWindowIdentity: false, rateLimited: true,
-                                                recentUPSCount: 99, maxUPSEvents: 20, hasToggleRecord: true,
-                                                isOnMainScreen: false,
-                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .autoRestoreDisabled)
+              decide(autoRestoreEnabled: false, rateLimited: true,
+                     recordGate: .eligible, isInCooldown: true, cooldownRemainingSeconds: 5) == .autoRestoreDisabled)
         check("ups A2: 无窗口身份 → noBinding",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: false, rateLimited: true,
-                                                recentUPSCount: 99, maxUPSEvents: 20, hasToggleRecord: false,
-                                                isOnMainScreen: false,
-                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .noBinding)
+              decide(hasWindowIdentity: false, rateLimited: true, recordGate: .none,
+                     isInCooldown: true, cooldownRemainingSeconds: 5) == .noBinding)
         check("ups A3: 限流 → rateLimited(计数/阈值)（有记录也先限流）",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: true,
-                                                recentUPSCount: 20, maxUPSEvents: 20, hasToggleRecord: true,
-                                                isOnMainScreen: false,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0)
-              == .rateLimited(recentCount: 20, maxEvents: 20))
-        check("ups A4: 有 toggle 记录 → restoreToOriginal（先于主屏/冷却判定；拉主屏后提交即回原位）",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                isOnMainScreen: true,
-                                                isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreToOriginal)
-        check("ups A4b: 有记录且窗口已被手动挪走 → 仍回原位",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                isOnMainScreen: false,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .restoreToOriginal)
-        // 2026-09-16 回归锁：手动 ⌃Q 创建的记录（reason=manual_hotkey）在 UPS 上同样归位
-        //（用户报告：关掉气泡后直接在 Claude Code 输入框回车不归位；2026-09-15 生产日志
-        // 实锤同一手动放置窗口气泡提交归位、UPS userPlacedSkip 分叉——该分支已退役）。
-        check("ups A4c: 手动热键记录（在主屏）→ restoreToOriginal（与气泡提交语义一致）",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                isOnMainScreen: true,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .restoreToOriginal)
-        check("ups A4d: 手动热键记录且窗口被挪走 → 仍 restoreToOriginal",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: true,
-                                                isOnMainScreen: false,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .restoreToOriginal)
+              decide(rateLimited: true, recentUPSCount: 20, maxUPSEvents: 20,
+                     recordGate: .eligible, isInCooldown: false) == .rateLimited(recentCount: 20, maxEvents: 20))
+        check("ups A3b: 还原已在途 → restoreInProgress（双通道去重，先于记录门）",
+              decide(isRestoreAlreadyActive: true, recordGate: .eligible,
+                     isOnMainScreen: true, isInCooldown: false) == .restoreInProgress)
+        check("ups A4: 可归位记录（自动化来源+时效内）→ restoreToOriginal（先于主屏/冷却判定）",
+              decide(recordGate: .eligible, isOnMainScreen: true,
+                     isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreToOriginal)
+        check("ups A4b: 可归位记录且窗口已被挪走 → 仍回原位",
+              decide(recordGate: .eligible, isOnMainScreen: false, isInCooldown: false) == .restoreToOriginal)
+        // 2026-09-28 修订回归锁（替代 65a1ad2 的 A4c/A4d 旧语义锁）：手动 ⌃Q 摆位
+        // 记录粘滞——自动链（气泡提交/直接回车）不 Undo 用户放置；⌃Q 再按一次仍可
+        // 手动还原。9-15 的一致性 = 气泡/回车一致跳过（见 AutoRestoreRecordGate 头注）。
+        check("ups A4c: 手动 ⌃Q 摆位记录（在主屏）→ manualPlacementSticky（不自动拽回）",
+              decide(recordGate: .manualPlacement, isOnMainScreen: true,
+                     isInCooldown: false, cooldownRemainingSeconds: 0) == .manualPlacementSticky)
+        check("ups A4d: 手动 ⌃Q 摆位记录且窗口被挪走 → 仍 manualPlacementSticky",
+              decide(recordGate: .manualPlacement, isOnMainScreen: false,
+                     isInCooldown: false, cooldownRemainingSeconds: 0) == .manualPlacementSticky)
+        check("ups A4e: 超时效记录 → recordExpired（不再驱动自动归位）",
+              decide(recordGate: .expired, isOnMainScreen: false, isInCooldown: false) == .recordExpired)
+        check("ups A4f: 窗口已在记录原位 → alreadyAtOriginal（陈旧记录仅清理）",
+              decide(recordGate: .alreadyAtOriginalFrame, isOnMainScreen: false, isInCooldown: false) == .alreadyAtOriginal)
         check("ups A5: 无记录冷却中 → cooldownActive(剩余秒)",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
-                                                isOnMainScreen: false,
-                                                isInCooldown: true, cooldownRemainingSeconds: 7) == .cooldownActive(remainingSeconds: 7))
+              decide(recordGate: .none, isOnMainScreen: false,
+                     isInCooldown: true, cooldownRemainingSeconds: 7) == .cooldownActive(remainingSeconds: 7))
         check("ups A6: 无记录非主屏 → stayOnCurrentScreen（UPS 永不搬窗，拉主屏只归 Stop）",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
-                                                isOnMainScreen: false,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .stayOnCurrentScreen)
+              decide(recordGate: .none, isOnMainScreen: false, isInCooldown: false) == .stayOnCurrentScreen)
         check("ups A7: 无记录已在主屏 → alreadyOnMain",
-              HookEventHandler.decidePromptMove(autoRestoreEnabled: true, hasWindowIdentity: true, rateLimited: false,
-                                                recentUPSCount: 1, maxUPSEvents: 20, hasToggleRecord: false,
-                                                isOnMainScreen: true,
-                                                isInCooldown: false, cooldownRemainingSeconds: 0) == .alreadyOnMain)
+              decide(recordGate: .none, isOnMainScreen: true, isInCooldown: false) == .alreadyOnMain)
+
+        // A+. AutoRestoreRecordGate 资格门纯判定（2026-09-28 审计批）。
+        let origFrame = CGRect(x: -814, y: -1415, width: 1146, height: 707)
+        func record(reason: String, ageSeconds: TimeInterval, now: Date) -> ToggleRecord {
+            ToggleRecord(windowID: 42, pid: 100, bundleIdentifier: nil, appName: "T",
+                         origFrame: origFrame, sourceSpace: 4, sourceDisplay: 2, sourceYabaiDisp: 2,
+                         sourceDispSpace: 3, targetFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
+                         targetDisplay: 1, toggledAt: now.addingTimeInterval(-ageSeconds),
+                         sessionID: nil, reason: reason)
+        }
+        let gateNow = Date(timeIntervalSince1970: 1_000_000)
+        let tol: CGFloat = 20
+        check("gate E1: 无记录 → none",
+              AutoRestoreRecordGate.evaluate(record: nil, now: gateNow, currentFrame: nil, tolerance: tol) == .none)
+        check("gate E2: 自动化来源（Stop）+ 时效内 + 不在原位 → eligible",
+              AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 60, now: gateNow),
+                                             now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
+                                             tolerance: tol) == .eligible)
+        check("gate E3: 手动 ⌃Q 记录（新鲜、不在原位）→ manualPlacement",
+              AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 10, now: gateNow),
+                                             now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
+                                             tolerance: tol) == .manualPlacement)
+        check("gate E4: 自动化来源超 30min → expired（严格 >，恰 30min 仍 eligible）",
+              AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 30 * 60, now: gateNow),
+                                             now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
+                                             tolerance: tol) == .eligible
+              && AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 30 * 60 + 1, now: gateNow),
+                                                now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
+                                                tolerance: tol) == .expired)
+        check("gate E5: 窗口已在记录原位（帧收敛容差内）→ alreadyAtOriginalFrame",
+              AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 60, now: gateNow),
+                                             now: gateNow, currentFrame: origFrame, tolerance: tol) == .alreadyAtOriginalFrame
+              && AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 60, now: gateNow),
+                                                now: gateNow,
+                                                currentFrame: CGRect(x: origFrame.minX + 5, y: origFrame.minY - 5,
+                                                                     width: origFrame.width + 8, height: origFrame.height - 4),
+                                                tolerance: tol) == .alreadyAtOriginalFrame)
+        check("gate E6: 帧查询失败（nil）不扩大豁免——按来源/时效裁决",
+              AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 60, now: gateNow),
+                                             now: gateNow, currentFrame: nil, tolerance: tol) == .eligible)
+        check("gate E7: 命令 API 来源（agent_command）时效内 → eligible",
+              AutoRestoreRecordGate.evaluate(record: record(reason: "agent_command", ageSeconds: 120, now: gateNow),
+                                             now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
+                                             tolerance: tol) == .eligible)
 
         // B. 响应映射表：码/状态逐项锁定。
         func code(_ r: (statusCode: Int, response: ClaudeHookResponse)) -> String { r.response.code }
-        check("ups B: 七决策响应码唯一且稳定",
+        check("ups B: 十一决策响应码唯一且稳定",
               code(HookEventHandler.promptHttpResponse(for: .autoRestoreDisabled, sessionID: "s")) == "auto_restore_disabled"
               && code(HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s")) == "no_binding_skip"
               && code(HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")) == "session_rate_limited"
+              && code(HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s")) == "restore_already_active"
               && code(HookEventHandler.promptHttpResponse(for: .restoreToOriginal, sessionID: "s")) == "restore_to_original"
+              && code(HookEventHandler.promptHttpResponse(for: .manualPlacementSticky, sessionID: "s")) == "manual_placement_stays"
+              && code(HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s")) == "toggle_record_expired"
+              && code(HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s")) == "already_at_original"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s")) == "already_on_main_screen"
               && code(HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 3), sessionID: "s")) == "cooldown_active"
               && code(HookEventHandler.promptHttpResponse(for: .stayOnCurrentScreen, sessionID: "s")) == "stay_on_current_screen")
+        // 响应码两两互异（码是 hook 消费方的唯一分诊键）。
+        let allCodes = [
+            HookEventHandler.promptHttpResponse(for: .autoRestoreDisabled, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .restoreToOriginal, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .manualPlacementSticky, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 3), sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .stayOnCurrentScreen, sessionID: "s").response.code,
+        ]
+        check("ups B: 十一决策响应码两两互异", Set(allCodes).count == allCodes.count)
         let rr = HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")
         check("ups B: 限流文案含计数与阈值、handled=false、状态码 200",
               rr.statusCode == 200 && rr.response.handled == false
               && rr.response.message == "Session UPS rate limited (20/20 in 10min), skipping move")
         let cr = HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 9), sessionID: "s")
         check("ups B: 冷却文案含剩余秒", cr.response.message == "Auto-restore cooldown active (9s remaining)")
+        check("ups B: 新决策文案逐字锁定（2026-09-28 审计批）",
+              HookEventHandler.promptHttpResponse(for: .manualPlacementSticky, sessionID: "s").response.message == "Window was placed manually (⌃Q); auto-restore leaves it where you put it"
+              && HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s").response.message == "Toggle record older than 30min; leaving window in place"
+              && HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s").response.message == "Window already at original position; stale record cleared"
+              && HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s").response.message == "A restore for this window is already in progress; skipping duplicate")
 
-        // B+. 字段级收口（B65）：六决策全部 ok=true/200/sessionID 透传 + 常量分支文案逐字锁定。
+        // B+. 字段级收口（B65）：全部决策 ok=true/200/sessionID 透传 + 常量分支文案逐字锁定。
         let allDecisions: [HookEventHandler.PromptMoveDecision] = [
             .autoRestoreDisabled, .noBinding, .rateLimited(recentCount: 2, maxEvents: 20),
-            .alreadyOnMain, .cooldownActive(remainingSeconds: 4), .stayOnCurrentScreen,
+            .restoreInProgress, .restoreToOriginal, .manualPlacementSticky,
+            .recordExpired, .alreadyAtOriginal, .alreadyOnMain,
+            .cooldownActive(remainingSeconds: 4), .stayOnCurrentScreen,
         ]
-        check("ups B+: 六决策响应 ok=true、状态码 200、sessionID 逐项透传",
+        check("ups B+: 十一决策响应 ok=true、状态码 200、sessionID 逐项透传",
               allDecisions.allSatisfy { d in
                   let r = HookEventHandler.promptHttpResponse(for: d, sessionID: "sess-77")
                   return r.statusCode == 200 && r.response.ok && r.response.sessionID == "sess-77"

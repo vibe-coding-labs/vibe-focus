@@ -4,20 +4,27 @@ import Foundation
 // WindowMove 决策树同款模式：纯决策 + 响应表，Runner 直测穷尽锁定）。
 //
 // 决策序 = 生产守护顺序（handleUserPromptSubmit 消费）：
-//   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 有 toggle 记录（回原位，
-//   不论记录来自手动热键还是 Stop——2026-09-16 用户定案：气泡提交与直接在
-//   Claude Code 输入框回车的归位语义必须一致；2026-09-15 生产日志实锤同一
-//   手动放置窗口气泡提交归位、UPS userPlacedSkip 分叉，该分支已退役。B126
-//   的 ambient 提交顾虑由「提交后自动恢复」偏好承担：关掉即整体不归位）
-//   → 留在当前屏（UPS 永不搬窗：用户正在副屏/其它屏交互时拉去主屏 =
-//   2026-09-11 用户明令禁止的复现行为；「拉主屏」只归 Stop）。
+//   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 还原已在途（气泡/UPS 双通道
+//   去重，RestoreInFlightRegistry）→ toggle 记录资格门（AutoRestoreRecordGate：
+//   eligible 回原位；manualPlacement 手动 ⌃Q 摆位粘滞不自动 Undo；expired 超
+//   30min 时效不归位；alreadyAtOriginalFrame 已在原位仅清理）→ 留在当前屏
+//   （UPS 永不搬窗：用户正在副屏/其它屏交互时拉去主屏 = 2026-09-11 用户明令
+//   禁止的复现行为；「拉主屏」只归 Stop）。
 // 每个决策的响应码唯一且稳定。
 //
-// 「回原位」语义（2026-09-10 用户定案，恢复 0f0a3bc 移除的承诺）：存在 toggle
-// 记录 = 拉主屏时保存过原始屏幕/工作区/位置 → UserPromptSubmit 时经
-// ToggleEngine.restore 回到原位（本地会话与远程 machine_label 会话通用——
-// 都在窗口身份解析之后）。震荡天然有界：记录只由真实移动创建、restore 成功
-// 即清除，每次回跳都需要一次新的移动作凭证；UPS 限流闸在其前兜底。
+// 「回原位」语义（2026-09-10 用户定案，恢复 0f0a3bc 移除的承诺）：存在可归位
+// toggle 记录（自动化来源 + 时效内）→ UserPromptSubmit 时经 ToggleEngine.restore
+// 回到原位（本地会话与远程 machine_label 会话通用——都在窗口身份解析之后）。
+// 震荡天然有界：记录只由真实移动创建、restore 成功即清除，每次回跳都需要一次
+// 新的移动作凭证；UPS 限流闸在其前兜底。
+//
+// ## 2026-09-28 修订（日志审计批，docs/log-audit-2026-09-29.md）
+// 65a1ad2（9-16）的「有记录即归位」在四天 43 次 UPS 拽回实测中过半是「手动 ⌃Q
+// 摆位后正常提交被拽」（15:12~15:16 连续两轮拉回-拽回实录），另有陈旧记录驱动
+// 全量 restore 空转（12:35 实录：6 秒逐窗 focus 带动切空间全败 + 视图被带跳）。
+// 修订：手动摆位粘滞（manualPlacementSticky）+ 记录 30min 时效（recordExpired）
+// + 已在原位短路（alreadyAtOriginal，陈旧记录仅清理）+ 双通道在途去重
+// （restoreInProgress）。9-15 的一致性诉求以「气泡/回车一致跳过」保留。
 
 @MainActor
 extension HookEventHandler {
@@ -27,7 +34,15 @@ extension HookEventHandler {
         case autoRestoreDisabled
         case noBinding
         case rateLimited(recentCount: Int, maxEvents: Int)
+        /// 气泡/UPS 双通道去重：该窗口已有归位在途（RestoreInFlightRegistry）。
+        case restoreInProgress
         case restoreToOriginal
+        /// 手动 ⌃Q 摆位记录 → 粘滞：自动链不 Undo 用户放置（⌃Q 再按仍可手动还原）。
+        case manualPlacementSticky
+        /// 记录超时效（AutoRestoreRecordGate.maxRecordAgeSeconds）→ 不再驱动自动归位。
+        case recordExpired
+        /// 窗口已在记录原位 → 无需移动（陈旧记录由调用方清理）。
+        case alreadyAtOriginal
         case alreadyOnMain
         case cooldownActive(remainingSeconds: Int)
         /// 用户正在当前屏交互（提交即证明），窗口原地不动；「拉主屏」只归 Stop。
@@ -41,7 +56,8 @@ extension HookEventHandler {
         rateLimited: Bool,
         recentUPSCount: Int,
         maxUPSEvents: Int,
-        hasToggleRecord: Bool,
+        isRestoreAlreadyActive: Bool,
+        recordGate: AutoRestoreRecordGate,
         isOnMainScreen: Bool,
         isInCooldown: Bool,
         cooldownRemainingSeconds: Int
@@ -51,8 +67,20 @@ extension HookEventHandler {
         if rateLimited {
             return .rateLimited(recentCount: recentUPSCount, maxEvents: maxUPSEvents)
         }
-        if hasToggleRecord {
+        if isRestoreAlreadyActive {
+            return .restoreInProgress
+        }
+        switch recordGate {
+        case .eligible:
             return .restoreToOriginal
+        case .manualPlacement:
+            return .manualPlacementSticky
+        case .expired:
+            return .recordExpired
+        case .alreadyAtOriginalFrame:
+            return .alreadyAtOriginal
+        case .none:
+            break
         }
         if isOnMainScreen { return .alreadyOnMain }
         if isInCooldown {
@@ -91,12 +119,48 @@ extension HookEventHandler {
                     sessionID: sessionID, handled: false
                 )
             )
+        case .restoreInProgress:
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "restore_already_active",
+                    message: "A restore for this window is already in progress; skipping duplicate",
+                    sessionID: sessionID, handled: false
+                )
+            )
         case .restoreToOriginal:
             return (
                 200,
                 ClaudeHookResponse(
                     ok: true, code: "restore_to_original",
                     message: "Toggle record present, restoring window to original screen/space/position",
+                    sessionID: sessionID, handled: false
+                )
+            )
+        case .manualPlacementSticky:
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "manual_placement_stays",
+                    message: "Window was placed manually (⌃Q); auto-restore leaves it where you put it",
+                    sessionID: sessionID, handled: false
+                )
+            )
+        case .recordExpired:
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "toggle_record_expired",
+                    message: "Toggle record older than 30min; leaving window in place",
+                    sessionID: sessionID, handled: false
+                )
+            )
+        case .alreadyAtOriginal:
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "already_at_original",
+                    message: "Window already at original position; stale record cleared",
                     sessionID: sessionID, handled: false
                 )
             )

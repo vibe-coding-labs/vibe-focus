@@ -182,6 +182,23 @@ extension RunnerHarness {
           SpaceController.selectRefocusCandidates(
               windows: [window(id: 1, space: 2)], spaceIndex: 3, excludingWindowID: nil).isEmpty)
 
+    // MARK: refocusCandidateAttempts（2026-09-28 审计批：候选尝试上限）
+    // 12:35 生产实录：6 候选逐窗 focus 全败，每个候选都是一次真实抢用户焦点 +
+    // 700ms 落位轮询（合计 6 秒视图被拖着跳）。上限后前 2 个带不动即如实放弃。
+
+    check("候选上限: 6 候选只试前 refocusMaxCandidates 个（偏好序保留、首候选即最优）",
+          SpaceController.refocusCandidateAttempts(from: (1...6).map { window(id: $0, space: 3) }).count == SpaceController.refocusMaxCandidates
+          && SpaceController.refocusCandidateAttempts(from: (1...6).map { window(id: $0, space: 3) }).first?.id == 1)
+    check("候选上限: 候选数低于上限时全量保留、空候选为空",
+          SpaceController.refocusCandidateAttempts(from: [window(id: 9, space: 3)]).count == 1
+          && SpaceController.refocusCandidateAttempts(from: []).isEmpty)
+    check("候选上限: 截断保留偏好序头部（非最小化在前语义不变）",
+          SpaceController.refocusCandidateAttempts(
+              from: SpaceController.selectRefocusCandidates(
+                  windows: [window(id: 1, space: 3, minimized: true), window(id: 2, space: 3),
+                            window(id: 3, space: 3, minimized: true), window(id: 4, space: 3)],
+                  spaceIndex: 3, excludingWindowID: nil)).map { $0.id } == [2, 4])
+
     // MARK: FloatToggleOutcome（float 脱管结局，真实实现）
 
     check("float 结局: toggled → didToggle=true",

@@ -88,8 +88,21 @@ extension SpaceController {
             ])
             return false
         }
+        // 候选尝试上限（2026-09-28 审计批）：12:35 生产实录 6 候选逐窗 focus 全败，
+        // 每个候选都是一次真实抢用户焦点 + 落位轮询（合计 6 秒视图被拖着跳）。
+        // 首个候选即最优（非最小化优先、列表序=焦点序），前 refocusMaxCandidates 个
+        // 都带不动视角 = 剩余候选大概率同样失败，如实放弃（调用方 spaceExact=false /
+        // .failed 链路已有诚实上报），不再逐窗扫射。
+        let attempts = Self.refocusCandidateAttempts(from: candidates)
+        if attempts.count < candidates.count {
+            log("[SpaceController] refocusWindowOnSpace: candidate attempts capped", level: .debug, fields: [
+                "op": op, "spaceIndex": String(spaceIndex),
+                "candidates": String(candidates.count),
+                "attempts": String(attempts.count)
+            ])
+        }
 
-        for candidate in candidates {
+        for candidate in attempts {
             guard let candidateID = candidate.id.map({ UInt32($0) }) else { continue }
             let focusResult = runYabai(
                 arguments: ["-m", "window", "\(candidateID)", "--focus"],
@@ -182,6 +195,15 @@ extension SpaceController {
         excludingWindowID excluded: UInt32?
     ) -> YabaiWindowInfo? {
         selectRefocusCandidates(windows: windows, spaceIndex: spaceIndex, excludingWindowID: excluded).first
+    }
+
+    /// 聚焦带动候选尝试上限（2026-09-28 审计批，纯函数可注入锁）。
+    static let refocusMaxCandidates = 2
+
+    /// 实际尝试聚焦的候选切片：按偏好序只试前 refocusMaxCandidates 个。
+    /// 每个被跳过的候选 = 少一次对用户焦点的真实抢夺 + 一次落位轮询。
+    static func refocusCandidateAttempts(from candidates: [YabaiWindowInfo]) -> ArraySlice<YabaiWindowInfo> {
+        candidates.prefix(refocusMaxCandidates)
     }
 
     /// Minimap 胶囊点击 live 切换（2026-09-07，用户报告「点胶囊切不过去」）：

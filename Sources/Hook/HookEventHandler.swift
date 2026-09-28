@@ -28,15 +28,16 @@ final class HookEventHandler {
 
     /// UserPromptSubmit 事件处理：双向编排的「回程」——提交新提示词时回原位。
     ///
-    /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺）**：
-    /// 窗口带 toggle 记录（Stop 拉主屏时保存的原始屏幕/工作区/位置）→ 经
-    /// ToggleEngine.restore 回原位；无记录保持单向兜底（不在主屏→拉主屏，
-    /// 已在主屏→跳过）。
+    /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺；2026-09-28
+    /// 日志审计批修订资格门）**：窗口带可归位 toggle 记录（自动化来源 + 30min
+    /// 时效内 + 不在原位；手动 ⌃Q 摆位粘滞不自动 Undo）→ 经 ToggleEngine.restore
+    /// 回原位；无记录保持单向兜底（不在主屏→拉主屏，已在主屏→跳过）。
     ///
     /// **历史教训（0f0a3bc 曾把本路径退化成单向移主屏）**：旧 restore 实现
     /// 因 Stop→UPS 无限循环被移除，但设置页承诺未改——UI 与行为脱节数月。
-    /// 新实现的可界性：restore 仅在 toggle 记录存在时触发（记录只由真实移动
-    /// 创建、成功即清除，每次回跳需一次新的 Stop 移动作凭证）+ UPS 限流闸前置。
+    /// 新实现的可界性：restore 仅在可归位 toggle 记录存在时触发（记录只由真实
+    /// 移动创建、成功即清除，每次回跳需一次新的移动作凭证）+ UPS 限流闸前置
+    /// + 双通道在途去重。
     func handleUserPromptSubmit(
         payload: ClaudeHookPayload
     ) async -> (statusCode: Int, response: ClaudeHookResponse) {
@@ -101,11 +102,33 @@ final class HookEventHandler {
         let rate = limiter.registerAndEvaluate(now: now)
         sessionUPSLimiters[payload.sessionID] = limiter
 
-        // 门 3/4/5 输入采集：toggle 记录（拉主屏时保存的原始位置）/ 主屏归属 / 冷却。
-        // 2026-09-16 用户定案：归位不论记录来源（手动热键/Stop 一律回原位），
-        // 与气泡提交的 InputBubbleAutoRestoreGate 语义一致——见 +PromptSubmit+Decision.swift 头注。
+        // 门 3/4/5 输入采集：toggle 记录资格归类 / 还原在途标记 / 主屏归属 / 冷却。
+        // 2026-09-28 修订（日志审计批）：手动 ⌃Q 摆位记录粘滞（自动链不 Undo，
+        // ⌃Q 再按仍可手动还原）；超 30min 记录不再驱动自动归位；已在原位的陈旧
+        // 记录仅清理不移动；气泡/UPS 双通道用在途标记去重——语义见
+        // AutoRestoreRecordGate 头注与 docs/log-audit-2026-09-29.md。
         let toggleRecord = ToggleEngine.shared.load(windowID: identity.windowID)
-        let hasToggleRecord = toggleRecord != nil
+        // 仅在有记录时做一次 CG 读回（已在原位检测）；无记录零额外查询。
+        let currentFrameForGate: CGRect? = toggleRecord != nil ? cgWindowBounds(for: identity.windowID) : nil
+        let recordGate = AutoRestoreRecordGate.evaluate(
+            record: toggleRecord,
+            now: now,
+            currentFrame: currentFrameForGate,
+            tolerance: WindowManager.shared.frameTolerance
+        )
+        if recordGate == .alreadyAtOriginalFrame, let staleRecord = toggleRecord {
+            ToggleEngine.shared.clear(windowID: identity.windowID)
+            log(
+                "[HookEventHandler] UserPromptSubmit: window already at original position, clearing stale toggle record",
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "origFrame": QuartzRect(staleRecord.origFrame).description,
+                    "sessionID": payload.sessionID
+                ]
+            )
+        }
+        let restoreAlreadyActive = RestoreInFlightRegistry.shared.isRecent(windowID: identity.windowID)
         let onMain = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
         let inCooldown = MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID)
         let cooldownRemaining = inCooldown ? MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID) : 0
@@ -118,7 +141,8 @@ final class HookEventHandler {
             rateLimited: rate.limited,
             recentUPSCount: rate.recentCount,
             maxUPSEvents: Self.upsRateMaxEvents,
-            hasToggleRecord: hasToggleRecord,
+            isRestoreAlreadyActive: restoreAlreadyActive,
+            recordGate: recordGate,
             isOnMainScreen: onMain,
             isInCooldown: inCooldown,
             cooldownRemainingSeconds: cooldownRemaining
@@ -129,10 +153,12 @@ final class HookEventHandler {
             return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .restoreToOriginal:
-            // 有 toggle 记录 = Stop 拉主屏时保存过原始屏幕/工作区/位置 → 经
+            // 有可归位 toggle 记录（自动化来源 + 时效内 + 不在原位）→ 经
             // ToggleEngine.restore 回原位（本地会话与远程 machine_label 会话通用）。
-            // 记录在 restore 成功后由引擎清除：每次回跳都需要一次新的 Stop 移动作
+            // 记录在 restore 成功后由引擎清除：每次回跳都需要一次新的移动作
             // 凭证，配合前置 UPS 限流闸，震荡天然有界。
+            // 决策点即占位：注入的回车会让气泡链路的归位与本次互斥（先到先执行）。
+            RestoreInFlightRegistry.shared.mark(windowID: identity.windowID)
             log(
                 "[HookEventHandler] UserPromptSubmit: toggle record present, restoring to original screen/space/position",
                 level: .info,
@@ -200,6 +226,65 @@ final class HookEventHandler {
                 sessionID: payload.sessionID,
                 message: "UserPromptSubmit 被限流（session 自动化检测）"
             )
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
+
+        case .restoreInProgress:
+            // 双通道去重：气泡/先前通道已对该窗口占位归位（RestoreInFlightRegistry），
+            // 本次诚实跳过，不重复跑全量 restore 管线。占位方成功后会做 reactivate。
+            log(
+                "[HookEventHandler] UserPromptSubmit: restore already in flight, skipping duplicate",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sessionID": payload.sessionID
+                ]
+            )
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
+
+        case .manualPlacementSticky:
+            // 2026-09-28 审计批：手动 ⌃Q 摆位粘滞——用户手动放置的窗口不被自动链
+            // Undo（⌃Q 再按一次仍可手动还原）。记录保留（仍是用户手动 toggle 的凭证）。
+            log(
+                "[HookEventHandler] UserPromptSubmit: manually placed window stays put (sticky placement)",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sessionID": payload.sessionID
+                ]
+            )
+            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
+
+        case .recordExpired:
+            // 超 30min 时效的记录不再驱动自动归位（窗口多半早已回家/用户已长期使用
+            // 当前位置）；记录保留——⌃Q 手动还原不受时效影响。
+            log(
+                "[HookEventHandler] UserPromptSubmit: toggle record expired, skipping auto-restore",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sessionID": payload.sessionID
+                ]
+            )
+            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
+
+        case .alreadyAtOriginal:
+            // 窗口已在记录原位 = 陈旧记录（消费完成未清理），已在门内清理；
+            // 不做任何移动，不触发 restore 管线（12:35 空转案根治点）。
+            log(
+                "[HookEventHandler] UserPromptSubmit: window already at original position, nothing to do",
+                level: .info,
+                fields: [
+                    "traceID": traceID,
+                    "windowID": String(identity.windowID),
+                    "sessionID": payload.sessionID
+                ]
+            )
+            SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
             return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .alreadyOnMain:

@@ -33,6 +33,28 @@ extension RunnerHarness {
               RemoteSpoolDrainLogic.peerIP(fromRemoteAddress: "") == nil
               && RemoteSpoolDrainLogic.peerIP(fromRemoteAddress: nil) == nil)
 
+        // ===== 1b+. 主机不可达指数退避（2026-09-28 审计批）=====
+        // 背景：192.168.1.90 自 2026-09-25 起持续不可达，2s 轮询 × 10s ssh 超时 +
+        // 8s mux 重置 ≈ 每 12-20s 一轮空转 fork，四天累计 1.7 万次（日志 grep 实录）。
+        check("spoolDrain: backoff streak=0 → 立即（0s）",
+              RemoteSpoolDrainLogic.backoffDelay(failureStreak: 0, base: 10, cap: 600) == 0)
+        check("spoolDrain: backoff 指数表 1/2/3 连击 → 10/20/40s",
+              RemoteSpoolDrainLogic.backoffDelay(failureStreak: 1, base: 10, cap: 600) == 10
+              && RemoteSpoolDrainLogic.backoffDelay(failureStreak: 2, base: 10, cap: 600) == 20
+              && RemoteSpoolDrainLogic.backoffDelay(failureStreak: 3, base: 10, cap: 600) == 40)
+        check("spoolDrain: backoff 封顶 cap（持续不可达稳态=cap 间隔）",
+              RemoteSpoolDrainLogic.backoffDelay(failureStreak: 5, base: 10, cap: 600) == 160
+              && RemoteSpoolDrainLogic.backoffDelay(failureStreak: 7, base: 10, cap: 600) == 600
+              && RemoteSpoolDrainLogic.backoffDelay(failureStreak: 30, base: 10, cap: 600) == 600)
+        check("spoolDrain: 生产参数 base=drainTimeout、cap=600",
+              RemoteSpoolDrainer.backoffBaseSeconds == RemoteSpoolDrainer.drainTimeout
+              && RemoteSpoolDrainer.backoffCapSeconds == 600)
+        check("spoolDrain: isHostDue 无退避记录恒到期",
+              RemoteSpoolDrainLogic.isHostDue(nextAttemptAt: nil, now: Date(timeIntervalSince1970: 100)))
+        check("spoolDrain: isHostDue 退避期内不到期、到期即恢复（含边界 >=）",
+              !RemoteSpoolDrainLogic.isHostDue(nextAttemptAt: Date(timeIntervalSince1970: 200), now: Date(timeIntervalSince1970: 100))
+              && RemoteSpoolDrainLogic.isHostDue(nextAttemptAt: Date(timeIntervalSince1970: 200), now: Date(timeIntervalSince1970: 200)))
+
         // ===== 1c. 自注册决策：对端必须与上报服务器 IP 一致 =====
         check("spoolDrain: registrationTarget 对端一致 → user@ip",
               RemoteSpoolDrainLogic.registrationTarget(
