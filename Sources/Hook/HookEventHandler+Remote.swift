@@ -32,9 +32,14 @@ extension HookEventHandler {
 
         guard let boundWindowID = bindings[label] else {
             rrbOutcome = "label_not_found"
+            // 2026-09-29 降级 INFO：claudeHookRemoteBindings 自 B125 止血清空后恒为
+            // 空表，远程会话每条 prompt 都走到这里——WARN 级实测量 ~290 条/天，
+            // 淹没真信号。label 未映射属既定设计态（自动化走 UPS 焦点自愈），
+            // 下游已有 identity-resolution 失败 WARN 与注入到 claude 的诚实上下文，
+            // 本行保留诊断文本仅降级级别（grep 兼容）。
             log(
                 "[HookEventHandler] resolveRemoteBinding: label not found in remote bindings",
-                level: .warn,
+                level: .info,
                 fields: [
                     "label": label,
                     "availableLabels": bindings.keys.sorted().joined(separator: ","),
