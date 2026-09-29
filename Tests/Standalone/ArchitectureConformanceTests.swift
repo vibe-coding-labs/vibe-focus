@@ -141,10 +141,10 @@ let rules: [ConformanceRule] = [
     ),
     ConformanceRule(
         id: "R10",
-        description: "FrameWriteExecutor( 唯一实例化点（Batch 3 执行器）",
+        description: "FrameWriteExecutor( 唯一实例化点（Batch 3 执行器；2026-09-29 Terminal.app 拍新增 AX 直写通道接线）",
         patterns: ["FrameWriteExecutor("],
         contextAnyPatterns: [],
-        allowedFiles: ["FrameWriteExecutor.swift", "WindowManager+MoveWindow.swift"]
+        allowedFiles: ["FrameWriteExecutor.swift", "WindowManager+MoveWindow.swift", "WindowManager+MoveWindow+AXDirect.swift"]
     ),
     ConformanceRule(
         id: "R11",

@@ -67,6 +67,23 @@ extension WindowManager {
         var axResizeWriteMs = 0
         var axResizeSendCount = 0
         var yabaiSendCount = 0
+        // AX 直写分流（2026-09-29 Terminal.app 支持拍）：yabai 窗口表查无此窗（SA 无法
+        // 注入 Apple 自家 app）时 --move/--resize 全部无效，改走 AX 直写通道（收敛读回
+        // 语义与本函数一致）。管理窗一次 queryWindow 命中缓存 ~0ms，行为零改动。
+        // 查询结果顺手复用给 resize 的 AX 解析（省一次 fork）。
+        let yabaiWindowInfo = spaceController.queryWindow(windowID: windowID, ignoreCache: false)
+        if MoveChannelPolicy.channel(yabaiKnowsWindow: yabaiWindowInfo != nil) == .axDirect {
+            log("[WindowManager] moveWindowToFrameViaYabai: yabai-blind window, AX direct channel", level: .info, fields: [
+                "op": op, "stage": stage, "windowID": String(windowID),
+                "target": QuartzRect(frame).description
+            ])
+            return moveWindowToFrameViaAX(
+                windowID: windowID,
+                frame: frame,
+                op: op,
+                stage: stage,
+                sourceVisibleFrame: sourceVisibleFrame)
+        }
         // 写前 frame 快照：顺序判定依据（查询失败走历史顺序，见 FrameConvergence.writeOrder）。
         let preWriteBounds = cgWindowBounds(for: windowID)
         let writeOrder = FrameConvergence.writeOrder(
@@ -101,8 +118,7 @@ extension WindowManager {
         // AX resize 通道（同屏 resize 无 fork）：窗口 AX 解析失败/属性不可写时 fallback yabai。
         // 解析顺序：yabai queryWindow(pid) → findWindowByPID（queryWindow 走流程内缓存常命中）。
         func resolveAXForResize() -> AXUIElement? {
-            guard let info = spaceController.queryWindow(windowID: windowID, ignoreCache: false),
-                  let pid = info.pid.map({ pid_t($0) }) else { return nil }
+            guard let pid = yabaiWindowInfo?.pid.map({ pid_t($0) }) else { return nil }
             return findWindowByPID(pid, windowID: windowID)
         }
         let axWindow = resolveAXForResize().flatMap { ax -> AXUIElement? in
@@ -290,7 +306,21 @@ extension WindowManager {
                         .map { CoordinateKit.quartzVisibleFrame(of: $0) }
                 },
                 applyFrameDirect: { self.moveWindowToFrameViaYabai(windowID: $0, frame: $1, op: $2, stage: "move_to_main", sourceVisibleFrame: $3) },
-                applyAX: { self.apply(frame: $1, to: $0, operationID: $2, stage: "move_to_main", maxAttempts: 3, windowID: $3) },
+                applyAX: { ax, frame, applyOp, axWindowID in
+                    // yabai-blind 窗口（Terminal.app 等）：跨屏 position 写走 AX 直写通道
+                    //（带 CGWindowList 读回收敛——历史 apply 两阶段写无 position 读回，
+                    // AX 写异步落地慢时管线假成功、toggle 方向失同步）；管理窗保持历史
+                    // 两阶段写（行为不变）。
+                    if MoveChannelPolicy.channel(
+                        yabaiKnowsWindow: self.spaceController.queryWindow(windowID: axWindowID, ignoreCache: false) != nil
+                    ) == .axDirect {
+                        self.moveWindowToFrameViaAX(
+                            windowID: axWindowID, frame: frame, op: applyOp,
+                            stage: "move_to_main", sourceVisibleFrame: nil)
+                    } else {
+                        self.apply(frame: frame, to: ax, operationID: applyOp, stage: "move_to_main", maxAttempts: 3, windowID: axWindowID)
+                    }
+                },
                 postCheck: { self.verifyAndCorrectPostMoveSize(windowAX: $0, windowID: $1, targetFrame: $2, origFrame: $3, mainScreen: $4, op: $5) },
                 save: { self.saveToggleRecordForMainMove(identity: $0, windowID: $1, origFrame: $2, spaceContext: $3, targetFrame: $4, targetDisplayIndex: $5, reason: reason, sessionID: sessionID, op: $6) }
             )
