@@ -64,7 +64,7 @@ extension RunnerHarness {
             let win = FakeWindows(findResult: nil, moveResult: true)
             let aud = FakeAuditor()
             let pre = ToggleEngine.RestorePreMoveContext(
-                preMoveSpace: nil, spaceExact: nil, guardPrefetchedWindows: nil)
+                preMoveSpace: nil, preMoveFocusedDisplay: 1, spaceExact: nil, guardPrefetchedWindows: nil)
             let outcome = ToggleEngine.performSuccessTail(
                 record: record, windowID: 42, triggerSource: "b280", trace: "b280-tail",
                 spaceExact: nil, frameOK: true, moveMs: 5, lookupMs: 1, queryMs: 1,
@@ -82,7 +82,7 @@ extension RunnerHarness {
             let win = FakeWindows(findResult: nil, moveResult: false)
             let aud = FakeAuditor()
             let pre = ToggleEngine.RestorePreMoveContext(
-                preMoveSpace: 2, spaceExact: nil, guardPrefetchedWindows: nil)
+                preMoveSpace: 2, preMoveFocusedDisplay: 1, spaceExact: nil, guardPrefetchedWindows: nil)
             let outcome = ToggleEngine.performMoveFailureStage(
                 record: record, windowID: 42, triggerSource: "b280", trace: "b280-fail",
                 spaceExact: nil, preMove: pre, windows: win, channels: ch, records: rec, auditor: aud)
@@ -125,7 +125,7 @@ extension RunnerHarness {
             win.displayContextResult = (yabaiIndex: nil, displayID: nil) // origFrame 落所有屏之外
             let aud = FakeAuditor()
             let pre = ToggleEngine.RestorePreMoveContext(
-                preMoveSpace: 1, spaceExact: true, guardPrefetchedWindows: [])
+                preMoveSpace: 1, preMoveFocusedDisplay: 1, spaceExact: true, guardPrefetchedWindows: [])
             let outcome = ToggleEngine.performMoveFailureStage(
                 record: record, windowID: 42, triggerSource: "b299", trace: "b299-clamp",
                 spaceExact: true, preMove: pre, windows: win, channels: ch, records: rec, auditor: aud)

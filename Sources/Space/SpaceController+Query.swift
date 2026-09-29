@@ -208,6 +208,18 @@ extension SpaceController {
         return space.index
     }
 
+    /// 焦点所在 display 的 yabai 索引（restore 视角守卫的「焦点换屏」判据数据源）。
+    /// 跨屏 restore 后键盘焦点自然跟随窗口到目标屏——守卫必须区分「焦点换屏」（正常
+    /// 跟随，不纠正）与「同屏 space 被拖走」（真漂移，需切回），2026-09-30 实证：
+    /// 跨屏 restore 被误判漂移 → focusSpace 把用户从副屏窗拽回主屏摔进 ZCode。
+    func focusedDisplayIndex() -> Int? {
+        refreshAvailabilityIfNeeded()
+        guard isEnabled, let space = queryFocusedSpace() else {
+            return nil
+        }
+        return space.display
+    }
+
     /// yabai displays 全量查询（index + frame，frame 为 Quartz TopLeft 全局坐标）。
     /// Minimap「NSScreen ↔ yabai 显示器」几何精确匹配的数据源——禁止用 NSScreen
     /// 顺序猜 yabai 索引（两块同尺寸副屏排序反转即挂错胶囊/切错屏，2026-09-08 用户实测）。

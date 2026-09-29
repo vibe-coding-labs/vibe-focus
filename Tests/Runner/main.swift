@@ -78,6 +78,15 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
         return currentSpaceQueue.removeFirst()
     }
 
+    /// 焦点 display 队列（守卫「焦点换屏=跨屏跟随」判据；空队列=查询失败→守卫走旧行为）
+    var focusedDisplayQueue: [Int?] = []
+
+    func focusedDisplayIndex() -> Int? {
+        calls.append("focusedDisplay")
+        guard !focusedDisplayQueue.isEmpty else { return nil }
+        return focusedDisplayQueue.removeFirst()
+    }
+
     func clearQueryCache() {
         calls.append("clearCache")
         seq?.add("clearCache")

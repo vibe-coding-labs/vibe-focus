@@ -62,6 +62,50 @@ extension RunnerHarness {
         check("守卫编排: focused space 查询失败 → noDrift，只做一次查询、不触发任何切回通道",
               outcome == .noDrift && ch.calls == ["current"])
     }
+    // MARK: runPerspectiveGuard 焦点换屏判据（2026-09-30 实证修复）
+    // 跨屏 restore 后键盘焦点自然跟随窗口到目标屏——旧逻辑把「主屏1 vs 副屏3」误判
+    // 成漂移，focusSpace 把用户拽回主屏摔进 ZCode。守卫前置判据：焦点屏变了=跨屏
+    // 跟随，直接返回 0 不触发任何切回通道。
+    do {
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 5)
+        ch.focusedDisplayQueue = [2]
+        let outcome = ToggleEngine.runPerspectiveGuard(
+            channels: ch, preMoveSpace: 1, excludingWindowID: 9, traceID: "t",
+            preMoveFocusedDisplay: 1)
+        check("守卫换屏: 焦点屏 1→2（跨屏跟随）→ 返回 0，不触发 focus/refocus",
+              outcome == 0 && ch.calls == ["focusedDisplay"])
+    }
+    do {
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
+        ch.focusedDisplayQueue = [1]
+        let outcome = ToggleEngine.runPerspectiveGuard(
+            channels: ch, preMoveSpace: 1, excludingWindowID: 9, traceID: "t",
+            preMoveFocusedDisplay: 1)
+        check("守卫换屏: 焦点屏未变+无 space 漂移 → noDrift 0 耗时",
+              outcome == 0 && ch.calls == ["focusedDisplay", "current"])
+    }
+    do {
+        // 同屏真漂移：焦点屏未变、space 被拖走 → 照旧切回（历史行为保留）
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 5)
+        ch.focusResult = true
+        ch.focusedDisplayQueue = [1]
+        let outcome = ToggleEngine.runPerspectiveGuard(
+            channels: ch, preMoveSpace: 1, excludingWindowID: 9, traceID: "t",
+            preMoveFocusedDisplay: 1)
+        check("守卫换屏: 同屏漂移 → 照旧 refocused 切回",
+              outcome >= 0 && ch.calls == ["focusedDisplay", "current", "focus", "clearCache"]
+              && ch.focusReceived == .yabaiIndex(1))
+    }
+    do {
+        // 焦点 display 查询失败 → 保守沿用旧行为（漂移即切回）
+        let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 5)
+        ch.focusResult = true
+        let outcome = ToggleEngine.runPerspectiveGuard(
+            channels: ch, preMoveSpace: 1, excludingWindowID: 9, traceID: "t",
+            preMoveFocusedDisplay: 1)
+        check("守卫换屏: display 查询失败 → 旧行为（漂移切回）",
+              outcome >= 0 && ch.calls == ["focusedDisplay", "current", "focus", "clearCache"])
+    }
     do {
         let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
         let outcome = RestoreSwitchOrchestration.refocusPerspective(channels: ch, preMoveSpace: 1, excludingWindowID: 9, operationID: "t")

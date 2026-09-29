@@ -23,6 +23,8 @@ protocol RestoreSpaceChanneling: AnyObject {
     func refocusWindowOnSpace(_ spaceIndex: Int, excludingWindowID: UInt32?, operationID: String?, prefetchedWindows: [YabaiWindowInfo]?) -> Bool
     /// 当前 focused space（yabai 全局索引）
     func currentSpaceIndex() -> Int?
+    /// 焦点所在 display 的 yabai 索引（守卫「焦点换屏=跨屏跟随」判据数据源）
+    func focusedDisplayIndex() -> Int?
     /// space 切换后清查询缓存（窗口位置可能已变）
     func clearQueryCache()
     /// 窗口信息查询（最小化快检 + float 决策共用一次 fork）

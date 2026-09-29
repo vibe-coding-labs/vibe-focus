@@ -25,7 +25,7 @@ extension ToggleEngine {
         auditor: any RestoreAuditing
     ) -> RestoreOutcome {
         // 6. 视角守卫（与失败路径共用 runPerspectiveGuard，见其文档）。
-        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows)
+        let focusSpaceMs = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows, preMoveFocusedDisplay: preMove.preMoveFocusedDisplay)
 
         // 7. Clear record
         records.clear(windowID: record.windowID)
@@ -65,6 +65,8 @@ extension ToggleEngine {
     struct RestorePreMoveContext {
         /// 移动前的 focused space（视角基准，必须在预切回之前采集）
         let preMoveSpace: Int?
+        /// 移动前的焦点 display（守卫「焦点换屏=跨屏跟随不纠正」判据；nil=查询失败走旧行为）
+        let preMoveFocusedDisplay: Int?
         /// 源屏精确恢复结论（nil=无 space 上下文）
         let spaceExact: Bool?
         /// 守卫候选预取（preMoveSpace 未知时为 nil）
@@ -82,6 +84,7 @@ extension ToggleEngine {
         // 视角基准：必须在 4-pre 切换源屏之前采集（否则守卫看到的是切换后的 space，漏切回）。
         // 记录移动前的 focused space — 用于检测 macOS 是否自动切换了 space
         let preMoveSpace = channels.currentSpaceIndex()
+        let preMoveFocusedDisplay = channels.focusedDisplayIndex()
 
         // 4-pre. space 精确恢复前置（ToggleRecord 的 source_space/source_display 列启用）：
         // record 记录了窗口原始所属的 space（record.sourceSpace）与 display（record.sourceYabaiDisp）。
@@ -158,6 +161,7 @@ extension ToggleEngine {
 
         return RestorePreMoveContext(
             preMoveSpace: preMoveSpace,
+            preMoveFocusedDisplay: preMoveFocusedDisplay,
             spaceExact: spaceExact,
             guardPrefetchedWindows: guardPrefetchedWindows
         )
@@ -231,7 +235,7 @@ extension ToggleEngine {
     ) -> RestoreOutcome {
         // frame 写失败但源屏预切回可能已把视角拖走——失败路径同样执行视角守卫，
         // 把用户带回原处（窗口仍在主屏）。
-        _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows)
+        _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows, preMoveFocusedDisplay: preMove.preMoveFocusedDisplay)
         let origFrameOnAnyDisplay = windows.displayContext(for: record.origFrame).yabaiIndex != nil
         if Self.isMoveFailureRetryable(origFrameOnAnyDisplay: origFrameOnAnyDisplay) {
             log("[ToggleEngine] restore: frame move failed, keeping record for retry", level: .error, fields: [
@@ -273,7 +277,7 @@ extension ToggleEngine {
                 stage: "restore_clamped",
                 sourceVisibleFrame: nil
             )
-            _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows)
+            _ = Self.runPerspectiveGuard(channels: channels, preMoveSpace: preMove.preMoveSpace, excludingWindowID: windowID, traceID: trace, prefetchedWindows: preMove.guardPrefetchedWindows, preMoveFocusedDisplay: preMove.preMoveFocusedDisplay)
             if retryOK {
                 records.clear(windowID: record.windowID)
                 auditor.record(

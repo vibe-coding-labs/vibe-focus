@@ -31,12 +31,13 @@ extension RunnerHarness {
     func runAXDirectMoveTests() {
         print("\n=== AXDirectMove (Terminal.app ⌃Q 支持拍) ===")
 
-        // ===== A. MoveChannelPolicy 真值表 =====
+        // ===== A. MoveChannelPolicy 真值表（判据=has-ax-reference 可管理，非「查得到」
+        // ——yabai 全量兜底查询能列出无 AX 引用的窗但 --move 全败，8064 九发实证）=====
         do {
-            check("axdirect: yabai 认识窗口 → yabai 通道",
-                  MoveChannelPolicy.channel(yabaiKnowsWindow: true) == .yabai)
-            check("axdirect: yabai-blind → axDirect 通道",
-                  MoveChannelPolicy.channel(yabaiKnowsWindow: false) == .axDirect)
+            check("axdirect: yabai 持有 AX 引用（可管理）→ yabai 通道",
+                  MoveChannelPolicy.channel(yabaiManageable: true) == .yabai)
+            check("axdirect: 无 AX 引用/查无此窗 → axDirect 通道",
+                  MoveChannelPolicy.channel(yabaiManageable: false) == .axDirect)
         }
 
         // ===== B. ownerPID 快照解析 =====

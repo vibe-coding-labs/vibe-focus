@@ -33,17 +33,24 @@ import Foundation
 // 路径补上跨屏写收敛，与通道启用无关，凡 yabai-blind 都走收敛读回）。
 
 /// 写入通道选择策略（纯函数，Runner 锁真值表）。
+///
+/// 判据 = `YabaiWindowInfo.isManageableByYabai`（has-ax-reference）：yabai 的全量
+/// 兜底查询能**列出**无 AX 引用的窗（看得见），但 `--move/--resize/--toggle float`
+/// 都需要 AX 引用（动不了，"could not locate the window to act on!"）——2026-09-30
+/// 凌晨窗 8064 九发 --move 全败、restore 不收敛、⌃Q 翻烙饼的根因。判据必须是
+/// 「可管理」而非「查得到」。
 enum MoveChannelPolicy {
 
     enum Channel: Equatable {
-        /// yabai 窗口表认识该窗口：走原 yabai 写通道（行为不变）。
+        /// yabai 持有 AX 引用可管理：走原 yabai 写通道（行为不变）。
         case yabai
-        /// yabai-blind（SA 无法注入的 Apple 自家 app 等）：AX 直写通道。
+        /// yabai 无 AX 引用（SA 无法注入的 Apple 自家 app / 不可管理状态）：
+        /// AX 直写通道。
         case axDirect
     }
 
-    static func channel(yabaiKnowsWindow: Bool) -> Channel {
-        yabaiKnowsWindow ? .yabai : .axDirect
+    static func channel(yabaiManageable: Bool) -> Channel {
+        yabaiManageable ? .yabai : .axDirect
     }
 }
 

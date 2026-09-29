@@ -28,6 +28,15 @@ extension ToggleEngine {
     /// 拖到源 display，此处切回 preMoveSpace。通道双层编排收敛在
     /// RestoreSwitchOrchestration.refocusPerspective（通道 protocol 化可注入，测试分支穷尽
     /// 锁定），本方法只做日志与计时。
+    ///
+    /// ## 焦点换屏=跨屏跟随，不纠正（2026-09-30 实证修复）
+    /// preMoveSpace = 焦点所在屏的 space；跨屏 restore（窗落另一块屏）后键盘焦点自然
+    /// 跟随窗口过去，currentSpaceIndex() 因此「变了」——这是正常跟随不是漂移。旧逻辑
+    /// 误判后 focusSpace 把用户从副屏窗拽回主屏、焦点摔进主屏的下一个窗（ZCode），
+    /// 用户体感「⌃Q 送回去之后焦点乱跳=切换功能没法用」。故守卫前置判据：焦点屏
+    /// 变了（preMoveFocusedDisplay ≠ postFocusedDisplay）直接返回 0 不纠正；同屏
+    /// space 被拖走（真漂移）才切回。display 查询失败时保守沿用旧行为。
+    ///
     /// - Returns: 守卫耗时（ms），供 completed 汇总日志（focusSpaceMs）。
     /// （原 private，四阶段拆出 +Stages.swift 后跨文件调用，B157）
     static func runPerspectiveGuard(
@@ -35,9 +44,20 @@ extension ToggleEngine {
         preMoveSpace: Int?,
         excludingWindowID excluded: UInt32,
         traceID trace: String,
-        prefetchedWindows: [YabaiWindowInfo]? = nil
+        prefetchedWindows: [YabaiWindowInfo]? = nil,
+        preMoveFocusedDisplay: Int? = nil
     ) -> Int {
         guard let preMoveSpace else { return 0 }
+        if let preMoveFocusedDisplay,
+           let postFocusedDisplay = channels.focusedDisplayIndex(),
+           postFocusedDisplay != preMoveFocusedDisplay {
+            log("[ToggleEngine] restore: focus followed window to another display, keeping it there", level: .info, fields: [
+                "traceID": trace,
+                "preFocusedDisplay": String(preMoveFocusedDisplay),
+                "postFocusedDisplay": String(postFocusedDisplay)
+            ])
+            return 0
+        }
         let guardStart = Date()
         // B190 子阶段区间：守卫内部是 refocus 串行 fork（含预取命中免 fork 路径），
         // restore 尾段耗时主导时由此直方图定位。

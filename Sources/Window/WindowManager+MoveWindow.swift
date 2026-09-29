@@ -67,12 +67,14 @@ extension WindowManager {
         var axResizeWriteMs = 0
         var axResizeSendCount = 0
         var yabaiSendCount = 0
-        // AX 直写分流（2026-09-29 Terminal.app 支持拍）：yabai 窗口表查无此窗（SA 无法
-        // 注入 Apple 自家 app）时 --move/--resize 全部无效，改走 AX 直写通道（收敛读回
-        // 语义与本函数一致）。管理窗一次 queryWindow 命中缓存 ~0ms，行为零改动。
-        // 查询结果顺手复用给 resize 的 AX 解析（省一次 fork）。
+        // AX 直写分流（2026-09-29 Terminal.app 支持拍；2026-09-30 判据升级为
+        // isManageableByYabai）：yabai 全量兜底查询能列出无 AX 引用的窗（看得见），
+        // 但 --move/--resize 全部失败（动不了，8064 九发全败实证）——判据必须是
+        // 「持有 AX 引用可管理」。不可管理 → AX 直写通道（收敛读回语义与本函数一致）。
+        // 管理窗一次 queryWindow 命中缓存 ~0ms，行为零改动。查询结果顺手复用给
+        // resize 的 AX 解析（省一次 fork）。
         let yabaiWindowInfo = spaceController.queryWindow(windowID: windowID, ignoreCache: false)
-        if MoveChannelPolicy.channel(yabaiKnowsWindow: yabaiWindowInfo != nil) == .axDirect {
+        if MoveChannelPolicy.channel(yabaiManageable: yabaiWindowInfo?.isManageableByYabai == true) == .axDirect {
             log("[WindowManager] moveWindowToFrameViaYabai: yabai-blind window, AX direct channel", level: .info, fields: [
                 "op": op, "stage": stage, "windowID": String(windowID),
                 "target": QuartzRect(frame).description
@@ -312,7 +314,7 @@ extension WindowManager {
                     // AX 写异步落地慢时管线假成功、toggle 方向失同步）；管理窗保持历史
                     // 两阶段写（行为不变）。
                     if MoveChannelPolicy.channel(
-                        yabaiKnowsWindow: self.spaceController.queryWindow(windowID: axWindowID, ignoreCache: false) != nil
+                        yabaiManageable: self.spaceController.queryWindow(windowID: axWindowID, ignoreCache: false)?.isManageableByYabai == true
                     ) == .axDirect {
                         self.moveWindowToFrameViaAX(
                             windowID: axWindowID, frame: frame, op: applyOp,
