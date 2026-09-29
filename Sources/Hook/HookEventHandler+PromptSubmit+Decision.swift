@@ -27,9 +27,13 @@ import Foundation
 //   [+3s/+6s/+13s]，裁「提交之后不会自动恢复了」=违背开关承诺)
 // → 0.0.93(延迟 3 秒+气泡输入顺延——被否：用户裁「等 3 秒会让我觉得非常的卡，
 //   不能马上吗」)
-// → **0.0.94(本版·终局：提交瞬间归位=恢复 0.0.91 执行形态。一天内四次裁决的
-//   终点：用户要的就是回车后立刻回家；「正在输入被拽走」的主诉由资格门三门
-//   [时效/已在原位/在途去重]+记录只由真实移动创建承担，与执行时机无关)。**
+// → 0.0.94(9-29 深夜：提交瞬间归位=恢复 0.0.91 执行形态)
+// → 0.0.95(9-30 凌晨：Terminal.app ⌃Q 支持拍，归位语义未动)
+// → **0.0.96(本版·第八次收敛：按记录来源分流——agent 拉来的窗[claude_session_end/
+//   agent_command]提交归位承诺保留；用户 ⌃Q 亲手摆的窗[manual_hotkey]提交**不拽**
+//   [manualPlacement→manual_placement_stay]。裁决依据：00:49-00:57Z 用户三循环
+//   ⌃Q↔拽回对抗后怒斥「莫名其妙的跳」；与 0.0.90 的本质区别=零粘性状态，只读
+//   当前记录自己的 reason 字段)。**
 
 @MainActor
 extension HookEventHandler {
@@ -42,6 +46,8 @@ extension HookEventHandler {
         /// 气泡/UPS 双通道去重：该窗口已有归位在途（RestoreInFlightRegistry）。
         case restoreInProgress
         case restoreToOriginal
+        /// 记录来源=用户 ⌃Q 亲手摆位（manual_hotkey）→ 提交不拽（2026-09-30 裁决）。
+        case manualPlacementStay
         /// 记录超时效（AutoRestoreRecordGate.maxRecordAgeSeconds）→ 不再驱动自动归位。
         case recordExpired
         /// 窗口已在记录原位 → 无需移动（陈旧记录由调用方清理）。
@@ -76,6 +82,8 @@ extension HookEventHandler {
         switch recordGate {
         case .eligible:
             return .restoreToOriginal
+        case .manualPlacement:
+            return .manualPlacementStay
         case .expired:
             return .recordExpired
         case .alreadyAtOriginalFrame:
@@ -135,6 +143,15 @@ extension HookEventHandler {
                 ClaudeHookResponse(
                     ok: true, code: "restore_to_original",
                     message: "Toggle record present, restoring window to original screen/space/position",
+                    sessionID: sessionID, handled: false
+                )
+            )
+        case .manualPlacementStay:
+            return (
+                200,
+                ClaudeHookResponse(
+                    ok: true, code: "manual_placement_stay",
+                    message: "Window was placed by user (⌃Q hotkey); submit will not move it",
                     sessionID: sessionID, handled: false
                 )
             )
