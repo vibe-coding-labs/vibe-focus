@@ -251,21 +251,20 @@ extension RunnerHarness {
                      isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreToOriginal)
         check("ups A4b: 可归位记录且窗口已被挪走 → 仍回原位",
               decide(recordGate: .eligible, isOnMainScreen: false, isInCooldown: false) == .restoreToOriginal)
-        // 2026-09-30 凌晨裁决（第八次收敛，勿再单方向推翻；今晨 00:49-00:57Z 铁证：
-        // 用户 ⌃Q 拉窗→提交→被拽回→2 秒后再 ⌃Q→再被拽回，三循环对抗后怒斥「莫名其妙的跳」）：
-        // 归位按**记录来源分流**——agent 拉来的（claude_session_end/agent_command）提交归位
-        // （审查完回副屏承诺不变）；用户 ⌃Q 亲手摆的（manual_hotkey）提交**不拽**（0.0.90
-        // 的方向、无粘滞的实现：只看最后一次移动的 reason，无任何粘性状态）。
-        check("ups A4c: 手动 ⌃Q 记录（新鲜）→ manualPlacement → manualPlacementStay（用户摆的窗不拽）",
+        // 2026-09-30 第十次收敛（勿再单方向推翻）：0.0.96 的来源豁免只活了 4 小时——
+        // 用户真实节奏=⌃Q 拉上→气泡发送→2 秒后自己 ⌃Q 送回（04:29-04:32Z 铁证），
+        // 豁免把「送回」还给手脚被裁「不归位=BUG」。半夜式断崖真凶=归位时焦点被摔给
+        // 随机 app（0.0.98 焦点跟随已根治）。归位承诺恢复普适，不论记录来源。
+        check("ups A4c: 手动 ⌃Q 记录（新鲜）→ eligible → restoreToOriginal（普适归位恢复）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 10, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
-                                             tolerance: tol) == .manualPlacement
-              && decide(recordGate: .manualPlacement, isOnMainScreen: true, isInCooldown: false) == .manualPlacementStay)
-        check("ups A4d: 手动 ⌃Q 记录超 30min → 仍 manualPlacement（来源主导；时效门管 agent 来源）",
+                                             tolerance: tol) == .eligible
+              && decide(recordGate: .eligible, isOnMainScreen: true, isInCooldown: false) == .restoreToOriginal)
+        check("ups A4d: 手动 ⌃Q 记录超 30min → expired → recordExpired（时效门不论来源仍守）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 30 * 60 + 1, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
-                                             tolerance: tol) == .manualPlacement
-              && decide(recordGate: .manualPlacement, isOnMainScreen: false, isInCooldown: false) == .manualPlacementStay)
+                                             tolerance: tol) == .expired
+              && decide(recordGate: .expired, isOnMainScreen: false, isInCooldown: false) == .recordExpired)
         check("ups A4e: 超时效记录 → recordExpired（不再驱动自动归位）",
               decide(recordGate: .expired, isOnMainScreen: false, isInCooldown: false) == .recordExpired)
         check("ups A4f: 窗口已在记录原位 → alreadyAtOriginal（陈旧记录仅清理）",
@@ -285,19 +284,22 @@ extension RunnerHarness {
               AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 60, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
                                              tolerance: tol) == .eligible)
-        check("gate E3: 手动 ⌃Q 记录（新鲜、不在原位）→ manualPlacement（2026-09-30 裁决：用户摆的窗提交不拽）",
+        check("gate E3: 手动 ⌃Q 记录（新鲜、不在原位）→ eligible（第十次收敛：普适归位恢复）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 10, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
-                                             tolerance: tol) == .manualPlacement)
+                                             tolerance: tol) == .eligible)
         check("gate E3b: 手动 ⌃Q 记录已在原位 → alreadyAtOriginalFrame（清理语义不变）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 10, now: gateNow),
                                              now: gateNow, currentFrame: origFrame,
                                              tolerance: tol) == .alreadyAtOriginalFrame)
-        check("gate E4: agent 来源超 30min → expired（严格 >，恰 30min 仍 eligible；手动来源见 A4d=manualPlacement 主导）",
+        check("gate E4: 超 30min → expired 不论来源（严格 >，恰 30min 仍 eligible）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 30 * 60, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
                                              tolerance: tol) == .eligible
               && AutoRestoreRecordGate.evaluate(record: record(reason: "claude_session_end", ageSeconds: 30 * 60 + 1, now: gateNow),
+                                                now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
+                                                tolerance: tol) == .expired
+              && AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 30 * 60 + 1, now: gateNow),
                                                 now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
                                                 tolerance: tol) == .expired)
         check("gate E5: 窗口已在记录原位（帧收敛容差内）→ alreadyAtOriginalFrame",

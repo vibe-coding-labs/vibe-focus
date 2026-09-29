@@ -103,11 +103,10 @@ final class HookEventHandler {
         sessionUPSLimiters[payload.sessionID] = limiter
 
         // 门 3/4/5 输入采集：toggle 记录资格归类 / 还原在途标记 / 主屏归属 / 冷却。
-        // 资格门（2026-09-30 第八次收敛）：按记录来源分流——agent 拉来的
-        // （claude_session_end/agent_command）时效内不在原位→归位；用户 ⌃Q 亲手摆的
-        // （manual_hotkey）→ manualPlacement 不拽；已在原位的陈旧记录仅清理不移动；
-        // 气泡/UPS 双通道用在途标记去重——语义见 AutoRestoreRecordGate 头注与
-        // docs/log-audit-2026-09-29.md 第八轮。
+        // 资格门（2026-09-30 第十次收敛）：普适归位（不论来源，时效 ≤30min 且不在
+        // 原位→归位；归位时焦点跟随窗口回副屏=0.0.98）；已在原位的陈旧记录仅清理
+        // 不移动；气泡/UPS 双通道用在途标记去重——语义见 AutoRestoreRecordGate 头注
+        // 与 docs/log-audit-2026-09-29.md 第十轮。
         let toggleRecord = ToggleEngine.shared.load(windowID: identity.windowID)
         // 仅在有记录时做一次 CG 读回（已在原位检测）；无记录零额外查询。
         let currentFrameForGate: CGRect? = toggleRecord != nil ? cgWindowBounds(for: identity.windowID) : nil
@@ -234,20 +233,6 @@ final class HookEventHandler {
             // 本次诚实跳过，不重复跑全量 restore 管线。占位方成功后会做 reactivate。
             log(
                 "[HookEventHandler] UserPromptSubmit: restore already in flight, skipping duplicate",
-                level: .info,
-                fields: [
-                    "traceID": traceID,
-                    "windowID": String(identity.windowID),
-                    "sessionID": payload.sessionID
-                ]
-            )
-            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
-
-        case .manualPlacementStay:
-            // 用户 ⌃Q 亲手摆的窗：提交不拽（2026-09-30 裁决）。记录保留——⌃Q 手动
-            // 还原与后续 agent 召唤（会覆盖记录来源）都不受影响。
-            log(
-                "[HookEventHandler] UserPromptSubmit: window placed by user hotkey, staying put",
                 level: .info,
                 fields: [
                     "traceID": traceID,
