@@ -2,7 +2,7 @@ import Foundation
 
 /// 提交归位在途标记（2026-09-28 日志审计批；0.0.92 起语义微调）。
 ///
-/// 0.0.92 失焦归位后，气泡/UPS 提交决策点只登记 SubmitRestoreDeferral（幂等），
+/// 0.0.92 起气泡/UPS 提交决策点只登记 SubmitRestoreDeferral（幂等），
 /// 不再在决策点占位；本注册表的 mark 仅由**执行点**（SubmitRestoreDeferral.
 /// executePending 及其它真实开跑 restore 管线的入口）打——新鲜期内后到的重复
 /// 触发（同窗二次提交/气泡登记撞上节拍开跑）诚实跳过，不重复跑全量 restore

@@ -213,10 +213,10 @@ extension InputBubbleController {
             hasToggleRecord: hasEligibleToggleRecord,
             isOnMainScreen: WindowManager.shared.isWindowOnMainScreen(windowID: target.windowID)
         )
-        // 失焦归位（0.0.92）：提交瞬间窗口必然持焦（用户刚在气泡里回车），立即
-        // 执行 restore = 正在读回复/续输时被拽走。登记 SubmitRestoreDeferral，
-        // 节拍在连续失焦 ≥10s 后复核资格门执行（与 UPS 侧同一执行入口）。
-        // 执行在途（RestoreInFlightRegistry 新鲜期，如节拍恰好开跑）时不重复登记。
+        // 延迟归位（0.0.93）：提交后 ~3 秒执行（不在提交瞬间拽走，也不像 0.0.92
+        // 那样要求用户切走才归位）；气泡正开着输入则顺延。登记 SubmitRestoreDeferral
+        // （与 UPS 侧同一执行入口）。执行在途（RestoreInFlightRegistry 新鲜期）时
+        // 不重复登记。
         if autoRestoreDecision == .restore {
             if RestoreInFlightRegistry.shared.isRecent(windowID: target.windowID) {
                 log("[InputBubble] submit auto-restore skipped: another restore already in flight", fields: [
@@ -228,7 +228,7 @@ extension InputBubbleController {
                     triggerSource: "input_bubble_submit",
                     sessionID: nil
                 )
-                log("[InputBubble] submit auto-restore deferred until blur", fields: [
+                log("[InputBubble] submit auto-restore deferred (fires in a few seconds)", fields: [
                     "windowID": String(target.windowID)
                 ])
             }

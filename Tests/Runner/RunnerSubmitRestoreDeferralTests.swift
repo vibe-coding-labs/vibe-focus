@@ -2,46 +2,39 @@ import Foundation
 import CoreGraphics
 @testable import VibeFocusKit
 
-// 0.0.92 失焦归位（第五次收敛）：提交归位不再「提交瞬间拽窗」——登记
-// SubmitRestoreDeferral，窗口连续失焦 ≥10s 后节拍复核资格门归位。
-// 本文件锁定：BlurDecision 纯判定矩阵 / arm 幂等刷新 / 节拍状态机
-// （重聚焦重置计时、连续失焦到点才 fire、探测失败保守不计时、fire 消费登记）。
+// 0.0.93 延迟归位（第六次收敛）：提交归位「提交后 ~3 秒执行，气泡正在输入则
+// 顺延」。0.0.91 瞬间拽走与 0.0.92 失焦保持均被用户裁决否弃后的终局时机语义。
+// 本文件锁定：DelayDecision 纯判定矩阵 / arm 幂等刷新（sessionID 保真）/
+// 节拍状态机（到点 fire、气泡占用顺延、占用释放后下一拍即 fire、fire 消费登记）。
 // executePending 的资格门复核复用 AutoRestoreRecordGate（E1~E7 已锁）+
 // ToggleEngine.restore（restore 链路直测已锁），此处只锁分派缝。
 
 extension RunnerHarness {
     func runSubmitRestoreDeferralTests() {
-        print("\n=== SubmitRestoreDeferral (0.0.92 失焦归位) ===")
+        print("\n=== SubmitRestoreDeferral (0.0.93 延迟归位) ===")
 
-        // --- BlurDecision 纯判定矩阵 ---
+        // --- DelayDecision 纯判定矩阵 ---
         let armedAt = Date(timeIntervalSince1970: 1_000_000)
-        func blur(lastFocusedAt: Date?, isFocused: Bool, now: Date, grace: TimeInterval = 10) -> SubmitRestoreDeferral.BlurDecision {
-            SubmitRestoreDeferral.evaluateBlur(
-                lastFocusedAt: lastFocusedAt, armedAt: armedAt,
-                isFocused: isFocused, now: now, graceSeconds: grace
+        func delay(now: Date, busy: Bool = false, delaySecs: TimeInterval = 3) -> SubmitRestoreDeferral.DelayDecision {
+            SubmitRestoreDeferral.evaluateDelay(
+                armedAt: armedAt, now: now, delaySeconds: delaySecs, isBusy: busy
             )
         }
-        check("blur B1: 持焦 → resetClock（无论失焦了多久）",
-              blur(lastFocusedAt: nil, isFocused: true, now: armedAt.addingTimeInterval(999)) == .resetClock
-              && blur(lastFocusedAt: armedAt.addingTimeInterval(5), isFocused: true, now: armedAt.addingTimeInterval(999)) == .resetClock)
-        check("blur B2: 刚失焦（<宽限）→ keepWaiting（9.5=二进制精确值，防浮点比较假红）",
-              blur(lastFocusedAt: nil, isFocused: false, now: armedAt.addingTimeInterval(9.5))
-              == .keepWaiting(blurSeconds: 9.5))
-        check("blur B3: 连续失焦满宽限 → fire",
-              blur(lastFocusedAt: nil, isFocused: false, now: armedAt.addingTimeInterval(10))
-              == .fire(blurSeconds: 10))
-        check("blur B4: 重聚焦后再失焦——计时从最近一次持焦点重算",
-              blur(lastFocusedAt: armedAt.addingTimeInterval(100), isFocused: false, now: armedAt.addingTimeInterval(105))
-              == .keepWaiting(blurSeconds: 5)
-              && blur(lastFocusedAt: armedAt.addingTimeInterval(100), isFocused: false, now: armedAt.addingTimeInterval(110))
-              == .fire(blurSeconds: 10))
-        check("blur B5: lastFocusedAt=nil 时计时原点=armedAt（登记即失焦的兜底原点）",
-              blur(lastFocusedAt: nil, isFocused: false, now: armedAt) == .keepWaiting(blurSeconds: 0))
-        check("blur B6: 时钟回拨（负失焦）不 fire",
-              blur(lastFocusedAt: armedAt.addingTimeInterval(50), isFocused: false, now: armedAt.addingTimeInterval(40))
-              == .keepWaiting(blurSeconds: -10))
-        check("blur B7: 宽限=0 时失焦即 fire",
-              blur(lastFocusedAt: nil, isFocused: false, now: armedAt, grace: 0) == .fire(blurSeconds: 0))
+        check("delay D1: 未到延迟 → keepWaiting(剩余秒)",
+              delay(now: armedAt.addingTimeInterval(2)) == .keepWaiting(remainingSeconds: 1))
+        check("delay D2: 恰到延迟且空闲 → fire",
+              delay(now: armedAt.addingTimeInterval(3)) == .fire(elapsedSeconds: 3))
+        check("delay D3: 过延迟且空闲 → fire",
+              delay(now: armedAt.addingTimeInterval(3.5)) == .fire(elapsedSeconds: 3.5))
+        check("delay D4: 到点但气泡正在输入 → postponedBusy（不 fire）",
+              delay(now: armedAt.addingTimeInterval(30), busy: true) == .postponedBusy)
+        check("delay D5: 未到点即使空闲也 keepWaiting（busy 与否不影响等待段）",
+              delay(now: armedAt.addingTimeInterval(1), busy: true) == .keepWaiting(remainingSeconds: 2))
+        check("delay D6: 自定义延迟窗生效",
+              delay(now: armedAt.addingTimeInterval(5), busy: false, delaySecs: 10)
+              == .keepWaiting(remainingSeconds: 5))
+        check("delay D7: 时钟回拨（负耗时）不 fire",
+              delay(now: armedAt.addingTimeInterval(-1)) == .keepWaiting(remainingSeconds: 4))
 
         // --- arm/cancel/节拍状态机（独立实例，scheduling 关闭防 Timer 泄漏）---
         do {
@@ -68,51 +61,39 @@ extension RunnerHarness {
                   && deferral.pendingEntry(for: 42)?.triggerSource == "input_bubble_submit"
                   && deferral.pendingEntry(for: 42)?.sessionID == "sess-a")
 
-            // 持焦 N 拍：计时反复重置，永不 fire
-            var beat = t1
-            for _ in 0..<5 {
-                beat = beat.addingTimeInterval(1)
-                deferral.evaluateBeat(now: beat, focusByWindow: [42: true])
-            }
-            check("beat C3: 持焦期只重置计时，不 fire", fired.isEmpty
-                  && deferral.pendingEntry(for: 42)?.lastFocusedAt == beat)
-
-            // 切走：连续失焦到点才 fire；fire 消费登记
-            beat = beat.addingTimeInterval(9)
-            deferral.evaluateBeat(now: beat, focusByWindow: [42: false])
-            check("beat C4: 失焦 9s（<宽限）keepWaiting，登记保留", fired.isEmpty
+            // 前 2 拍未到点：keepWaiting 不 fire
+            var busyTable: [UInt32: Bool] = [:]
+            deferral.activityHoldProbe = { busyTable[$0] ?? false }
+            deferral.evaluateBeat(now: t1.addingTimeInterval(1))
+            deferral.evaluateBeat(now: t1.addingTimeInterval(2))
+            check("beat C3: 延迟窗内不 fire，登记保留", fired.isEmpty
                   && deferral.pendingEntry(for: 42) != nil)
-            beat = beat.addingTimeInterval(1)
-            deferral.evaluateBeat(now: beat, focusByWindow: [42: false])
-            check("beat C5: 连续失焦累计 10s → fire 一次并消费登记",
+
+            // 第 3 秒到点：fire 并消费登记
+            deferral.evaluateBeat(now: t1.addingTimeInterval(3))
+            check("beat C4: 到点 fire 一次并消费登记",
                   fired.count == 1 && fired[0].windowID == 42
                   && fired[0].triggerSource == "input_bubble_submit"
                   && deferral.pendingWindowIDs.isEmpty)
 
-            // 重聚焦（回来继续用）→ 重置计时；再失焦满宽限才 fire
+            // 气泡占用顺延：到点但气泡开着 → 不 fire；关闭后下一拍即 fire
             deferral.arm(windowID: 7, triggerSource: "input_bubble_submit", sessionID: nil)
-            let tFocus = t1.addingTimeInterval(10)
-            deferral.evaluateBeat(now: tFocus, focusByWindow: [7: true])
-            let tBlur1 = tFocus.addingTimeInterval(3)
-            deferral.evaluateBeat(now: tBlur1, focusByWindow: [7: false])
-            let tBack = tFocus.addingTimeInterval(6)
-            deferral.evaluateBeat(now: tBack, focusByWindow: [7: true])
-            let tBlur2 = tBack.addingTimeInterval(4)
-            deferral.evaluateBeat(now: tBlur2, focusByWindow: [7: false])
-            check("beat C6: 失焦中途回焦重置计时（3s 失焦+4s 失焦不累计）",
-                  fired.count == 1 && deferral.pendingEntry(for: 7)?.lastFocusedAt == tBack)
-            let tFire = tBack.addingTimeInterval(10)
-            deferral.evaluateBeat(now: tFire, focusByWindow: [7: false])
-            check("beat C7: 回焦后再次连续失焦满 10s → fire", fired.count == 2 && fired[1].windowID == 7)
+            let tBase = t1.addingTimeInterval(10)
+            busyTable[7] = true
+            deferral.evaluateBeat(now: tBase.addingTimeInterval(5))
+            check("beat C5: 到点但气泡正在输入 → 顺延不 fire", fired.count == 1
+                  && deferral.pendingEntry(for: 7) != nil)
+            deferral.evaluateBeat(now: tBase.addingTimeInterval(20))
+            check("beat C6: 占用持续仍不 fire（无最长持有上限=用户控制）", fired.count == 1)
+            busyTable[7] = false
+            deferral.evaluateBeat(now: tBase.addingTimeInterval(21))
+            check("beat C7: 气泡关闭后下一拍即 fire", fired.count == 2 && fired[1].windowID == 7)
 
-            // 节拍安全：持焦拍不 fire；登记被外部消费（⌃Q 手动还原）后失焦拍空转
+            // 登记被外部消费（⌃Q 手动还原）后节拍空转不误 fire
             deferral.arm(windowID: 9, triggerSource: "hook_user_prompt_submit", sessionID: nil)
-            let tNil = tFire.addingTimeInterval(30)
-            deferral.evaluateBeat(now: tNil, focusByWindow: [9: true])
             deferral.cancel(windowID: 9)
-            deferral.evaluateBeat(now: tNil.addingTimeInterval(60), focusByWindow: [9: false])
-            check("beat C8: 持焦拍保留登记；登记已被消费时节拍空转不误 fire",
-                  fired.count == 2)
+            deferral.evaluateBeat(now: tBase.addingTimeInterval(60))
+            check("beat C8: 登记已被消费时节拍空转不误 fire", fired.count == 2)
 
             check("arm C9: 独立实例与生产 shared 互不串扰（Runner 内 shared 未被 arm）",
                   SubmitRestoreDeferral.shared.pendingWindowIDs.isEmpty)
@@ -120,8 +101,8 @@ extension RunnerHarness {
         }
 
         // --- 常量契约 ---
-        check("const C10: 失焦宽限=10s、节拍=1s（语义固化）",
-              SubmitRestoreDeferral.blurGraceSeconds == 10
+        check("const C10: 延迟=3s、节拍=1s（语义固化）",
+              SubmitRestoreDeferral.restoreDelaySeconds == 3
               && SubmitRestoreDeferral.evaluationInterval == 1.0)
 
         print("=== SubmitRestoreDeferral done ===\n")

@@ -246,25 +246,22 @@ extension RunnerHarness {
         check("ups A3b: 还原已在途 → restoreInProgress（双通道去重，先于记录门）",
               decide(isRestoreAlreadyActive: true, recordGate: .eligible,
                      isOnMainScreen: true, isInCooldown: false) == .restoreInProgress)
-        // 0.0.92 失焦归位（第五次收敛）：可归位记录不再「提交瞬间归位」——提交
-        // 那一刻窗必然持焦（用户刚回车），立即执行 = 干活时被拽走（当晚 39 次/小时
-        // 实锤）。eligible → restoreDeferredFocusHold（登记 SubmitRestoreDeferral，
-        // 连续失焦 ≥10s 后节拍复核资格门归位）；A4c 手动记录仍经资格门归一 eligible
-        // ——「回车后窗回副屏」承诺推迟到放手后兑现，9-28/9-29 凌晨两代裁决同时成立。
-        check("ups A4: 可归位记录（时效内+不在原位，来源无关）→ restoreDeferredFocusHold（先于主屏/冷却判定）",
+        // 0.0.93 延迟归位（第六次收敛）：可归位记录 → restoreDeferred（提交后
+        // ~3 秒执行，气泡正在输入则顺延）。0.0.91 瞬间拽走与 0.0.92 失焦保持双双
+        // 被用户裁决否弃（前者=干活时被拽，后者=提交后不归位违背开关承诺）。
+        check("ups A4: 可归位记录（时效内+不在原位，来源无关）→ restoreDeferred（先于主屏/冷却判定）",
               decide(recordGate: .eligible, isOnMainScreen: true,
-                     isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreDeferredFocusHold)
-        check("ups A4b: 可归位记录且窗口已被挪走 → 仍失焦归位",
-              decide(recordGate: .eligible, isOnMainScreen: false, isInCooldown: false) == .restoreDeferredFocusHold)
-        // 2026-09-29 凌晨回归锁（0.0.90 粘滞分支回退）+ 0.0.92 时机改道：手动 ⌃Q
-        // 拉上去 → 回车 → 窗**终将**回副屏是既定承诺——手动记录经资格门归一为
-        // eligible 走失焦归位（不得在持焦时拽走）；陈旧（>30min）记录不论来源一律
-        // recordExpired。
-        check("ups A4c: 手动 ⌃Q 记录（新鲜）经资格门归一 eligible → restoreDeferredFocusHold",
+                     isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreDeferred)
+        check("ups A4b: 可归位记录且窗口已被挪走 → 仍延迟归位",
+              decide(recordGate: .eligible, isOnMainScreen: false, isInCooldown: false) == .restoreDeferred)
+        // 2026-09-29 凌晨回归锁（0.0.90 粘滞分支回退）+ 0.0.93 终局时机：手动 ⌃Q
+        // 拉上去 → 回车 → 窗回副屏是既定承诺——手动记录经资格门归一为 eligible
+        // 走延迟归位；陈旧（>30min）记录不论来源一律 recordExpired。
+        check("ups A4c: 手动 ⌃Q 记录（新鲜）经资格门归一 eligible → restoreDeferred",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 10, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
                                              tolerance: tol) == .eligible
-              && decide(recordGate: .eligible, isOnMainScreen: true, isInCooldown: false) == .restoreDeferredFocusHold)
+              && decide(recordGate: .eligible, isOnMainScreen: true, isInCooldown: false) == .restoreDeferred)
         check("ups A4d: 手动 ⌃Q 记录超 30min → expired → recordExpired（粘滞已回退，时效门仍守）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 30 * 60 + 1, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
@@ -326,7 +323,7 @@ extension RunnerHarness {
               && code(HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s")) == "no_binding_skip"
               && code(HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")) == "session_rate_limited"
               && code(HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s")) == "restore_already_active"
-              && code(HookEventHandler.promptHttpResponse(for: .restoreDeferredFocusHold, sessionID: "s")) == "restore_deferred_focus_hold"
+              && code(HookEventHandler.promptHttpResponse(for: .restoreDeferred, sessionID: "s")) == "restore_deferred"
               && code(HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s")) == "toggle_record_expired"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s")) == "already_at_original"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s")) == "already_on_main_screen"
@@ -338,7 +335,7 @@ extension RunnerHarness {
             HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s").response.code,
-            HookEventHandler.promptHttpResponse(for: .restoreDeferredFocusHold, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .restoreDeferred, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s").response.code,
@@ -352,16 +349,16 @@ extension RunnerHarness {
               && rr.response.message == "Session UPS rate limited (20/20 in 10min), skipping move")
         let cr = HookEventHandler.promptHttpResponse(for: .cooldownActive(remainingSeconds: 9), sessionID: "s")
         check("ups B: 冷却文案含剩余秒", cr.response.message == "Auto-restore cooldown active (9s remaining)")
-        check("ups B: 新决策文案逐字锁定（粘滞码已随 0.0.91 回退退役；restoreToOriginal 码已随 0.0.92 失焦归位退役）",
+        check("ups B: 新决策文案逐字锁定（粘滞码已随 0.0.91 回退退役；restoreToOriginal 已随 0.0.92 退役，restore_deferred_focus_hold 已随 0.0.93 改名 restore_deferred）",
               HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s").response.message == "Toggle record older than 30min; leaving window in place"
               && HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s").response.message == "Window already at original position; stale record cleared"
               && HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s").response.message == "A restore for this window is already in progress; skipping duplicate"
-              && HookEventHandler.promptHttpResponse(for: .restoreDeferredFocusHold, sessionID: "s").response.handled == false)
+              && HookEventHandler.promptHttpResponse(for: .restoreDeferred, sessionID: "s").response.handled == false)
 
         // B+. 字段级收口（B65）：全部决策 ok=true/200/sessionID 透传 + 常量分支文案逐字锁定。
         let allDecisions: [HookEventHandler.PromptMoveDecision] = [
             .autoRestoreDisabled, .noBinding, .rateLimited(recentCount: 2, maxEvents: 20),
-            .restoreInProgress, .restoreDeferredFocusHold,
+            .restoreInProgress, .restoreDeferred,
             .recordExpired, .alreadyAtOriginal, .alreadyOnMain,
             .cooldownActive(remainingSeconds: 4), .stayOnCurrentScreen,
         ]

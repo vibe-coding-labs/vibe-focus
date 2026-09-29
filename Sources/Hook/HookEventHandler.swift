@@ -28,13 +28,11 @@ final class HookEventHandler {
 
     /// UserPromptSubmit 事件处理：双向编排的「回程」——提交新提示词时回原位。
     ///
-    /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺；2026-09-28
-    /// 日志审计批修订资格门；0.0.92 失焦归位）**：窗口带可归位 toggle 记录
-    /// （30min 时效内 + 不在原位；来源无关）→ 登记 SubmitRestoreDeferral，
-    /// 窗口连续失焦 ≥10s 后经 ToggleEngine.restore 回原位；无记录保持单向兜底
-    /// （不在主屏→拉主屏，已在主屏→跳过）。提交瞬间窗口必然持焦（用户刚回车），
-    /// 立即归位 = 正在读回复/续输时被拽走——执行时机让位给用户交互，承诺推迟到
-    /// 放手后兑现。
+    /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺；0.0.93
+    /// 终局时机）**：窗口带可归位 toggle 记录（30min 时效内 + 不在原位；来源无关）
+    /// → 登记 SubmitRestoreDeferral，约 3 秒后经 ToggleEngine.restore 回原位；
+    /// 无记录保持单向兜底（不在主屏→拉主屏，已在主屏→跳过）。不在提交瞬间执行
+    /// （回车余波先落地），气泡正开着输入则顺延——「提交后归位」必达且及时。
     ///
     /// **历史教训（0f0a3bc 曾把本路径退化成单向移主屏）**：旧 restore 实现
     /// 因 Stop→UPS 无限循环被移除，但设置页承诺未改——UI 与行为脱节数月。
@@ -154,19 +152,18 @@ final class HookEventHandler {
         case .autoRestoreDisabled, .noBinding:
             return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
-        case .restoreDeferredFocusHold:
-            // 有可归位 toggle 记录（时效内 + 不在原位，来源无关）→ 登记失焦延迟
-            // 归位（SubmitRestoreDeferral）：提交瞬间窗口必然持焦（用户刚回车），
-            // 立即归位 = 正在读回复/续输时被拽走（0.0.91 当晚 39 次/小时日志实锤）。
-            // 节拍在连续失焦 ≥10s 后复核资格门执行；⌃Q 手动 toggle 仍可随时提前
-            // 送回。reactivate 由执行点在 restore 成功后补（UPS 通道携带 sessionID）。
+        case .restoreDeferred:
+            // 有可归位 toggle 记录（时效内 + 不在原位，来源无关）→ 登记延迟归位
+            // （SubmitRestoreDeferral）：提交后 ~3 秒执行（0.0.93 终局语义——0.0.91
+            // 的瞬间拽走与 0.0.92 的失焦保持双双被用户裁决否弃）；气泡正在输入则
+            // 顺延。reactivate 由执行点在 restore 成功后补（UPS 通道携带 sessionID）。
             SubmitRestoreDeferral.shared.arm(
                 windowID: identity.windowID,
                 triggerSource: "hook_user_prompt_submit",
                 sessionID: payload.sessionID
             )
             log(
-                "[HookEventHandler] UserPromptSubmit: toggle record present, restore deferred until window loses focus",
+                "[HookEventHandler] UserPromptSubmit: toggle record present, restore scheduled in a few seconds (postponed while bubble is composing)",
                 level: .info,
                 fields: [
                     "traceID": traceID,
