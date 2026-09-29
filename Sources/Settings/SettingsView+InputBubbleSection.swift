@@ -186,7 +186,7 @@ private struct InputBubbleSectionView: View {
 
             SettingsRow(
                 title: "提交后自动归位",
-                detail: "气泡提交（回车发送）后，把窗还原到移动前的原位（如副屏）；仅当窗有移动记录且在主屏时生效。"
+                detail: "气泡提交（回车发送）后，把 agent 拉到主屏的窗还原到移动前的原位（如副屏）；你自己按 ⌃Q 摆到主屏的窗不会被拽走，看完再按 ⌃Q 手动送回。"
             ) {
                 Toggle("", isOn: $autoRestoreOnSubmit)
                     .labelsHidden()
