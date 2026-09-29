@@ -213,66 +213,29 @@ extension InputBubbleController {
             hasToggleRecord: hasEligibleToggleRecord,
             isOnMainScreen: WindowManager.shared.isWindowOnMainScreen(windowID: target.windowID)
         )
-        // 双通道在途去重（决策点即占位）：注入的回车会让 claude 在 0~2.5s 内发来
-        // UPS，见标记即跳过，不再背靠背跑两遍全量 restore 管线（含视角守卫 focus 链）。
-        // 被占先时保留 decision（日志如实显示「判定归位、未执行」），仅不置 restoreArmed。
-        var restoreArmed = false
+        // 失焦归位（0.0.92）：提交瞬间窗口必然持焦（用户刚在气泡里回车），立即
+        // 执行 restore = 正在读回复/续输时被拽走。登记 SubmitRestoreDeferral，
+        // 节拍在连续失焦 ≥10s 后复核资格门执行（与 UPS 侧同一执行入口）。
+        // 执行在途（RestoreInFlightRegistry 新鲜期，如节拍恰好开跑）时不重复登记。
         if autoRestoreDecision == .restore {
             if RestoreInFlightRegistry.shared.isRecent(windowID: target.windowID) {
                 log("[InputBubble] submit auto-restore skipped: another restore already in flight", fields: [
                     "windowID": String(target.windowID)
                 ])
             } else {
-                RestoreInFlightRegistry.shared.mark(windowID: target.windowID)
-                restoreArmed = true
+                SubmitRestoreDeferral.shared.arm(
+                    windowID: target.windowID,
+                    triggerSource: "input_bubble_submit",
+                    sessionID: nil
+                )
+                log("[InputBubble] submit auto-restore deferred until blur", fields: [
+                    "windowID": String(target.windowID)
+                ])
             }
         }
-        let restoreWindowID = target.windowID
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(InputBubbleTiming.clipboardRestoreDelayMs)) { [weak self] in
             self?.restoreClipboardIfSafe()
-            self?.autoRestoreIfDecided(decision: autoRestoreDecision, shouldExecute: restoreArmed, windowID: restoreWindowID)
             self?.finishSubmission()
-        }
-    }
-
-    /// B176：提交注入落地后按门决议归位（经 ToggleEngine 直调，与 UPS restoreToOriginal
-    /// 同一执行入口；成功清 toggle 记录）。
-    /// B191：restore 下放 WindowWorkExecutor（B180 hook UPS 同款——装机 34 条 STALL
-    /// 取证中本路径 0.26~2.3s 全部阻塞主线程=提交瞬间气泡/界面冻结主因）；归位在
-    /// 后台串行队列执行，提交收尾立即返回，移动结果日志照常落账。
-    /// 2026-09-28 审计批：B176 的「UPS 后到见无记录」假设不总成立（UPS 常更快到达），
-    /// 双通道改为决策点在途标记互斥（RestoreInFlightRegistry）；shouldExecute=false
-    /// 表示归位已被另一通道占先（skip 原因照实落日志，不再执行移动）。
-    private func autoRestoreIfDecided(decision: InputBubbleAutoRestoreGate.Outcome, shouldExecute: Bool, windowID: UInt32) {
-        guard decision == .restore, shouldExecute else {
-            log("[InputBubble] auto-restore skip", level: .debug, fields: [
-                "outcome": String(describing: decision),
-                "shouldExecute": String(shouldExecute),
-                "windowID": String(windowID)
-            ])
-            return
-        }
-        let traceID = "bubble-\(Int(Date().timeIntervalSince1970 * 1000))"
-        Task { @MainActor in
-            let outcome = await WindowWorkExecutor.run {
-                ToggleEngine.shared.restore(
-                    windowID: windowID,
-                    triggerSource: "input_bubble_submit",
-                    traceID: traceID
-                )
-            }
-            if case .restored = outcome {
-                log("[InputBubble] submit auto-restore completed", fields: [
-                    "windowID": String(windowID),
-                    "traceID": traceID
-                ])
-            } else {
-                log("[InputBubble] submit auto-restore failed", level: .warn, fields: [
-                    "windowID": String(windowID),
-                    "outcome": outcome.outcomeLabel,
-                    "traceID": traceID
-                ])
-            }
         }
     }
 

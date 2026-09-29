@@ -30,10 +30,20 @@ extension RunnerHarness {
         check("hotkeyTrigger: 输入气泡偏好关时 pass through 不崩", true)
 
         // 恢复后入口可用（不触发真实动作——editTitle 需前台终端，Runner 无）。
+        // ⚠️环境敏感断言运行时门控（0.0.92 批两连实锤）：从 GUI 终端会话里跑
+        // Runner 时前台就是真终端，enabled 直调会真弹模态 NSAlert——runModal 等
+        // 输入 = 门禁永久挂死 + 模态框抢用户焦点（B278 的「Runner 无前台终端」
+        // 假设只在非终端前台会话成立）。前台是终端时跳过直调，仅验证偏好翻转。
         TitleEditorPreferences.isEnabled = true
         TitleEditorPreferences.isHotKeyEnabled = true
-        HotKeyManager.triggerTitleEditor()
-        check("hotkeyTrigger: enabled 态入口可调（Runner 无前台终端静默）", true)
+        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let frontmostIsTerminal = frontmostBundleID.map { TerminalRegistry.isTerminalBundleID($0) } ?? false
+        if frontmostIsTerminal {
+            check("hotkeyTrigger: enabled 态入口可调（前台终端环境跳过直调防真弹窗）", true)
+        } else {
+            HotKeyManager.triggerTitleEditor()
+            check("hotkeyTrigger: enabled 态入口可调（Runner 无前台终端静默）", true)
+        }
         TitleEditorPreferences.isEnabled = savedEnabled
         TitleEditorPreferences.isHotKeyEnabled = savedHotKeyEnabled
     }

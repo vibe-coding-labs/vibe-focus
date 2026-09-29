@@ -268,6 +268,7 @@ final class FakeAuditor: RestoreAuditing {
         runRegistryPurgeTests()
         runHookWalkTests()
         runRestoreInFlightTests()
+        runSubmitRestoreDeferralTests()
         runRegistryFindPIDTests()
         runWindowMoveExecuteTests()
         runHookInstallHomeTests()

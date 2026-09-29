@@ -1,13 +1,13 @@
 import Foundation
 
-/// 提交归位在途标记（2026-09-28 日志审计批）。
+/// 提交归位在途标记（2026-09-28 日志审计批；0.0.92 起语义微调）。
 ///
-/// 气泡提交归位（B176/B191）与注入回车引发的 UPS 归位（restoreToOriginal）消费的是
-/// 同一条 toggle 记录。B176 假设「气泡先清记录、~2s 后到达的 UPS 见无记录 → stay」，
-/// 实测 UPS 常更快到达（注入 Return → claude 回包可快于气泡剪贴板恢复延迟），两条
-/// 全量 restore 管线（含视角守卫 focus 链）背靠背执行。修法 = 双方决策点（均在主
-/// 线程）先查后占：先到者占位并执行，后到者诚实跳过；占位由新鲜期自然失效，
-/// 不需要完成回调（restore 管线在后台队列，成败不影响去重语义）。
+/// 0.0.92 失焦归位后，气泡/UPS 提交决策点只登记 SubmitRestoreDeferral（幂等），
+/// 不再在决策点占位；本注册表的 mark 仅由**执行点**（SubmitRestoreDeferral.
+/// executePending 及其它真实开跑 restore 管线的入口）打——新鲜期内后到的重复
+/// 触发（同窗二次提交/气泡登记撞上节拍开跑）诚实跳过，不重复跑全量 restore
+/// 管线（含视角守卫 focus 链）。占位由新鲜期自然失效，不需要完成回调
+/// （restore 管线在后台队列，成败不影响去重语义）。
 final class RestoreInFlightRegistry: @unchecked Sendable {
     static let shared = RestoreInFlightRegistry()
 
