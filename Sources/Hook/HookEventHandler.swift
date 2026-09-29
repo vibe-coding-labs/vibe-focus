@@ -28,17 +28,16 @@ final class HookEventHandler {
 
     /// UserPromptSubmit 事件处理：双向编排的「回程」——提交新提示词时回原位。
     ///
-    /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺；0.0.93
-    /// 终局时机）**：窗口带可归位 toggle 记录（30min 时效内 + 不在原位；来源无关）
-    /// → 登记 SubmitRestoreDeferral，约 3 秒后经 ToggleEngine.restore 回原位；
-    /// 无记录保持单向兜底（不在主屏→拉主屏，已在主屏→跳过）。不在提交瞬间执行
-    /// （回车余波先落地），气泡正开着输入则顺延——「提交后归位」必达且及时。
+    /// **语义（2026-09-10 用户定案，=设置页「提交后自动恢复」的承诺；2026-09-28
+    /// 日志审计批修订资格门）**：窗口带可归位 toggle 记录（自动化来源 + 30min
+    /// 时效内 + 不在原位；来源无关）→ 经 ToggleEngine.restore
+    /// 回原位；无记录保持单向兜底（不在主屏→拉主屏，已在主屏→跳过）。
     ///
     /// **历史教训（0f0a3bc 曾把本路径退化成单向移主屏）**：旧 restore 实现
     /// 因 Stop→UPS 无限循环被移除，但设置页承诺未改——UI 与行为脱节数月。
     /// 新实现的可界性：restore 仅在可归位 toggle 记录存在时触发（记录只由真实
     /// 移动创建、成功即清除，每次回跳需一次新的移动作凭证）+ UPS 限流闸前置
-    /// + 双通道在途去重 + 失焦延迟执行点复核资格门。
+    /// + 双通道在途去重。
     func handleUserPromptSubmit(
         payload: ClaudeHookPayload
     ) async -> (statusCode: Int, response: ClaudeHookResponse) {
@@ -152,18 +151,15 @@ final class HookEventHandler {
         case .autoRestoreDisabled, .noBinding:
             return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
-        case .restoreDeferred:
-            // 有可归位 toggle 记录（时效内 + 不在原位，来源无关）→ 登记延迟归位
-            // （SubmitRestoreDeferral）：提交后 ~3 秒执行（0.0.93 终局语义——0.0.91
-            // 的瞬间拽走与 0.0.92 的失焦保持双双被用户裁决否弃）；气泡正在输入则
-            // 顺延。reactivate 由执行点在 restore 成功后补（UPS 通道携带 sessionID）。
-            SubmitRestoreDeferral.shared.arm(
-                windowID: identity.windowID,
-                triggerSource: "hook_user_prompt_submit",
-                sessionID: payload.sessionID
-            )
+        case .restoreToOriginal:
+            // 有可归位 toggle 记录（自动化来源 + 时效内 + 不在原位）→ 经
+            // ToggleEngine.restore 回原位（本地会话与远程 machine_label 会话通用）。
+            // 记录在 restore 成功后由引擎清除：每次回跳都需要一次新的移动作
+            // 凭证，配合前置 UPS 限流闸，震荡天然有界。
+            // 决策点即占位：注入的回车会让气泡链路的归位与本次互斥（先到先执行）。
+            RestoreInFlightRegistry.shared.mark(windowID: identity.windowID)
             log(
-                "[HookEventHandler] UserPromptSubmit: toggle record present, restore scheduled in a few seconds (postponed while bubble is composing)",
+                "[HookEventHandler] UserPromptSubmit: toggle record present, restoring to original screen/space/position",
                 level: .info,
                 fields: [
                     "traceID": traceID,
@@ -171,8 +167,45 @@ final class HookEventHandler {
                     "sessionID": payload.sessionID
                 ]
             )
+            // B180：归位移动下放窗口作业串行队列——主线程解放（实测此路径
+            // 34/35 次 >200ms、max 2.3s，与用户打字节奏重合=卡死主诉）。
+            // 响应仍在移动完成后返回，hook 语义不变。
+            let outcome = await WindowWorkExecutor.run {
+                ToggleEngine.shared.restore(
+                    windowID: identity.windowID,
+                    triggerSource: "hook_user_prompt_submit",
+                    traceID: traceID
+                )
+            }
+            var restored = false
+            if case .restored = outcome { restored = true }
+            if restored {
+                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
+            } else {
+                log(
+                    "[HookEventHandler] UserPromptSubmit: restore to original failed",
+                    level: .warn,
+                    fields: [
+                        "traceID": traceID,
+                        "windowID": String(identity.windowID),
+                        "outcome": outcome.outcomeLabel,
+                        "sessionID": payload.sessionID
+                    ]
+                )
+            }
             return Self.injecting(
-                Self.promptHttpResponse(for: decision, sessionID: payload.sessionID),
+                (
+                    200,
+                    ClaudeHookResponse(
+                        ok: true,
+                        code: restored ? "restored_to_original" : "restore_failed",
+                        message: restored
+                            ? "Window restored to original screen/space/position"
+                            : "Restore to original position failed (\(outcome.outcomeLabel))",
+                        sessionID: payload.sessionID,
+                        handled: restored
+                    )
+                ),
                 context: envContext
             )
 
