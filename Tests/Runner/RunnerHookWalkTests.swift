@@ -246,20 +246,22 @@ extension RunnerHarness {
         check("ups A3b: 还原已在途 → restoreInProgress（双通道去重，先于记录门）",
               decide(isRestoreAlreadyActive: true, recordGate: .eligible,
                      isOnMainScreen: true, isInCooldown: false) == .restoreInProgress)
-        check("ups A4: 可归位记录（时效内+不在原位，来源无关）→ restoreToOriginal（先于主屏/冷却判定）",
+        // 第十一次收敛：UPS（终端回车）= 用户站在窗里看回复 → keepForViewing 窗不动
+        // +记录保留（归位只属于气泡通道与 ⌃Q 手动；20:49-20:51Z 三连拽三连拉回实证）。
+        check("ups A4: 可归位记录（时效内+不在原位）→ keepForViewing（回车不拽，记录保留）",
               decide(recordGate: .eligible, isOnMainScreen: true,
-                     isInCooldown: true, cooldownRemainingSeconds: 5) == .restoreToOriginal)
-        check("ups A4b: 可归位记录且窗口已被挪走 → 仍回原位",
-              decide(recordGate: .eligible, isOnMainScreen: false, isInCooldown: false) == .restoreToOriginal)
+                     isInCooldown: true, cooldownRemainingSeconds: 5) == .keepForViewing)
+        check("ups A4b: 可归位记录且窗口在副屏 → 仍 keepForViewing（回车永不拽窗）",
+              decide(recordGate: .eligible, isOnMainScreen: false, isInCooldown: false) == .keepForViewing)
         // 2026-09-30 第十次收敛（勿再单方向推翻）：0.0.96 的来源豁免只活了 4 小时——
         // 用户真实节奏=⌃Q 拉上→气泡发送→2 秒后自己 ⌃Q 送回（04:29-04:32Z 铁证），
         // 豁免把「送回」还给手脚被裁「不归位=BUG」。半夜式断崖真凶=归位时焦点被摔给
         // 随机 app（0.0.98 焦点跟随已根治）。归位承诺恢复普适，不论记录来源。
-        check("ups A4c: 手动 ⌃Q 记录（新鲜）→ eligible → restoreToOriginal（普适归位恢复）",
+        check("ups A4c: 手动 ⌃Q 记录（新鲜）→ 资格门 eligible（门不动）→ 决策 keepForViewing（回车不拽）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 10, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
                                              tolerance: tol) == .eligible
-              && decide(recordGate: .eligible, isOnMainScreen: true, isInCooldown: false) == .restoreToOriginal)
+              && decide(recordGate: .eligible, isOnMainScreen: true, isInCooldown: false) == .keepForViewing)
         check("ups A4d: 手动 ⌃Q 记录超 30min → expired → recordExpired（时效门不论来源仍守）",
               AutoRestoreRecordGate.evaluate(record: record(reason: "manual_hotkey", ageSeconds: 30 * 60 + 1, now: gateNow),
                                              now: gateNow, currentFrame: CGRect(x: 79, y: 38, width: 1649, height: 1079),
@@ -325,7 +327,7 @@ extension RunnerHarness {
               && code(HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s")) == "no_binding_skip"
               && code(HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s")) == "session_rate_limited"
               && code(HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s")) == "restore_already_active"
-              && code(HookEventHandler.promptHttpResponse(for: .restoreToOriginal, sessionID: "s")) == "restore_to_original"
+              && code(HookEventHandler.promptHttpResponse(for: .keepForViewing, sessionID: "s")) == "submit_keep_window"
               && code(HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s")) == "toggle_record_expired"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s")) == "already_at_original"
               && code(HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s")) == "already_on_main_screen"
@@ -337,7 +339,7 @@ extension RunnerHarness {
             HookEventHandler.promptHttpResponse(for: .noBinding, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .rateLimited(recentCount: 20, maxEvents: 20), sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .restoreInProgress, sessionID: "s").response.code,
-            HookEventHandler.promptHttpResponse(for: .restoreToOriginal, sessionID: "s").response.code,
+            HookEventHandler.promptHttpResponse(for: .keepForViewing, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .recordExpired, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .alreadyAtOriginal, sessionID: "s").response.code,
             HookEventHandler.promptHttpResponse(for: .alreadyOnMain, sessionID: "s").response.code,
@@ -359,7 +361,7 @@ extension RunnerHarness {
         // B+. 字段级收口（B65）：全部决策 ok=true/200/sessionID 透传 + 常量分支文案逐字锁定。
         let allDecisions: [HookEventHandler.PromptMoveDecision] = [
             .autoRestoreDisabled, .noBinding, .rateLimited(recentCount: 2, maxEvents: 20),
-            .restoreInProgress, .restoreToOriginal,
+            .restoreInProgress, .keepForViewing,
             .recordExpired, .alreadyAtOriginal, .alreadyOnMain,
             .cooldownActive(remainingSeconds: 4), .stayOnCurrentScreen,
         ]

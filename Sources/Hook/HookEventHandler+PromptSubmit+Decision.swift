@@ -6,9 +6,15 @@ import Foundation
 // 决策序 = 生产守护顺序（handleUserPromptSubmit 消费）：
 //   autoRestore 关闭 → 无窗口身份 → UPS 限流 → 还原已在途（气泡/UPS 双通道
 //   去重，RestoreInFlightRegistry）→ toggle 记录资格门（AutoRestoreRecordGate：
-//   eligible 回原位[来源无关]；expired 超 30min 时效不归位；alreadyAtOriginalFrame
-//   已在原位仅清理）→ 留在当前屏（UPS 永不搬窗：用户正在副屏/其它屏交互时拉去
-//   主屏 = 2026-09-11 用户明令禁止的复现行为；「拉主屏」只归 Stop）。
+//   eligible → keepForViewing 窗原地不动+记录保留；expired 超 30min 时效；
+//   alreadyAtOriginalFrame 已在原位仅清理）→ 留在当前屏（UPS 永不搬窗）。
+//
+// ## 提交通道分流（2026-09-30 第十一次收敛，终结十轮钟摆）
+// 回车/气泡都触发 UPS，但用户意图按通道分流：
+// - **气泡发送** = 遥控手势（人不一定在窗前）→ 立即归位（InputBubble 链路保留）；
+// - **终端回车** = 用户站在窗里，提交后要看回复 → 窗原地不动（本文件 keepForViewing）。
+// 证据：04:29-04:32Z 气泡节奏=发送后 2s 主动送回（要归位）；20:49-20:51Z 回车节奏=
+// 发送后 1-3s 主动 ⌃Q 拉回（要留下）。同一动作两种意图，唯一稳定规则=按通道分流。
 // 每个决策的响应码唯一且稳定。
 //
 // 「回原位」语义（2026-09-10 用户定案，恢复 0f0a3bc 移除的承诺；2026-09-29 凌晨
@@ -31,8 +37,11 @@ import Foundation
 // → 0.0.95(9-30 凌晨：Terminal.app ⌃Q 支持拍，归位语义未动)
 // → 0.0.96(来源分流：agent 拉的归位、用户摆的不拽——4 小时后被否：用户节奏实为
 //   ⌃Q 拉上→发送→2 秒后自己 ⌃Q 送回，豁免把「送回」还给手脚，裁「不归位=BUG」)
-// → **0.0.99(本版·第十次收敛：撤豁免恢复普适归位。半夜式断崖的真凶=归位时焦点被
-//   摔给随机 app，0.0.98 焦点跟随已根治；钟摆两端在「归位带着焦点走」下合一)。**
+// → 0.0.99(撤豁免恢复普适归位——4 小时后回车通道的拽回再被打架：20:49-20:51Z
+//   用户连发三连 Enter 每次都被拽、每次 1-3s 内 ⌃Q 拉回)
+// → **0.1.0(本版·第十一次收敛：提交通道分流——气泡=遥控手势发送即归位（气泡链路
+//   不变）；终端回车=人在窗里看回复，窗原地不动+记录保留[keepForViewing/
+//   submit_keep_window]。十轮钟摆终结于「按通道分流」而非第 11 次拨开关)。**
 
 @MainActor
 extension HookEventHandler {
@@ -44,7 +53,9 @@ extension HookEventHandler {
         case rateLimited(recentCount: Int, maxEvents: Int)
         /// 气泡/UPS 双通道去重：该窗口已有归位在途（RestoreInFlightRegistry）。
         case restoreInProgress
-        case restoreToOriginal
+        /// 终端回车提交（用户站在窗里看回复）→ 窗原地不动、记录保留；
+        /// 归位只属于气泡通道（遥控手势）与 ⌃Q 手动（2026-09-30 第十一次收敛）。
+        case keepForViewing
         /// 记录超时效（AutoRestoreRecordGate.maxRecordAgeSeconds）→ 不再驱动自动归位。
         case recordExpired
         /// 窗口已在记录原位 → 无需移动（陈旧记录由调用方清理）。
@@ -78,7 +89,7 @@ extension HookEventHandler {
         }
         switch recordGate {
         case .eligible:
-            return .restoreToOriginal
+            return .keepForViewing
         case .expired:
             return .recordExpired
         case .alreadyAtOriginalFrame:
@@ -132,12 +143,12 @@ extension HookEventHandler {
                     sessionID: sessionID, handled: false
                 )
             )
-        case .restoreToOriginal:
+        case .keepForViewing:
             return (
                 200,
                 ClaudeHookResponse(
-                    ok: true, code: "restore_to_original",
-                    message: "Toggle record present, restoring window to original screen/space/position",
+                    ok: true, code: "submit_keep_window",
+                    message: "Prompt submitted; window stays for you to watch the response (record preserved)",
                     sessionID: sessionID, handled: false
                 )
             )

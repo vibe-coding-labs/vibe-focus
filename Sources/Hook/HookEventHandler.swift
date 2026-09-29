@@ -103,10 +103,11 @@ final class HookEventHandler {
         sessionUPSLimiters[payload.sessionID] = limiter
 
         // 门 3/4/5 输入采集：toggle 记录资格归类 / 还原在途标记 / 主屏归属 / 冷却。
-        // 资格门（2026-09-30 第十次收敛）：普适归位（不论来源，时效 ≤30min 且不在
-        // 原位→归位；归位时焦点跟随窗口回副屏=0.0.98）；已在原位的陈旧记录仅清理
-        // 不移动；气泡/UPS 双通道用在途标记去重——语义见 AutoRestoreRecordGate 头注
-        // 与 docs/log-audit-2026-09-29.md 第十轮。
+        // 资格门（2026-09-30 第十一次收敛）：终端回车提交→keepForViewing 窗原地不动
+        // +记录保留（用户站在窗里看回复）；归位只属于气泡通道（遥控手势，InputBubble
+        // 链路）与 ⌃Q 手动；已在原位的陈旧记录仅清理不移动；在途去重保留——语义见
+        // HookEventHandler+PromptSubmit+Decision 头注与 docs/log-audit-2026-09-29.md
+        // 第十一轮。
         let toggleRecord = ToggleEngine.shared.load(windowID: identity.windowID)
         // 仅在有记录时做一次 CG 读回（已在原位检测）；无记录零额外查询。
         let currentFrameForGate: CGRect? = toggleRecord != nil ? cgWindowBounds(for: identity.windowID) : nil
@@ -152,15 +153,13 @@ final class HookEventHandler {
         case .autoRestoreDisabled, .noBinding:
             return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
-        case .restoreToOriginal:
-            // 有可归位 toggle 记录（自动化来源 + 时效内 + 不在原位）→ 经
-            // ToggleEngine.restore 回原位（本地会话与远程 machine_label 会话通用）。
-            // 记录在 restore 成功后由引擎清除：每次回跳都需要一次新的移动作
-            // 凭证，配合前置 UPS 限流闸，震荡天然有界。
-            // 决策点即占位：注入的回车会让气泡链路的归位与本次互斥（先到先执行）。
-            RestoreInFlightRegistry.shared.mark(windowID: identity.windowID)
+        case .keepForViewing:
+            // 终端回车提交（第十一次收敛）：用户站在窗里，提交后要看回复——窗原地
+            // 不动，toggle 记录保留（气泡链路的归位与 ⌃Q 手动循环仍可消费）。
+            // 20:49-20:51Z 实证：回车连发三次每次都被拽、每次 1-3s 内 ⌃Q 拉回=
+            // 提交即拽与「看回复」节奏正面冲突；归位只属于气泡通道（遥控手势）。
             log(
-                "[HookEventHandler] UserPromptSubmit: toggle record present, restoring to original screen/space/position",
+                "[HookEventHandler] UserPromptSubmit: submit in window, keeping it in place for viewing",
                 level: .info,
                 fields: [
                     "traceID": traceID,
@@ -168,47 +167,11 @@ final class HookEventHandler {
                     "sessionID": payload.sessionID
                 ]
             )
-            // B180：归位移动下放窗口作业串行队列——主线程解放（实测此路径
-            // 34/35 次 >200ms、max 2.3s，与用户打字节奏重合=卡死主诉）。
-            // 响应仍在移动完成后返回，hook 语义不变。
-            let outcome = await WindowWorkExecutor.run {
-                ToggleEngine.shared.restore(
-                    windowID: identity.windowID,
-                    triggerSource: "hook_user_prompt_submit",
-                    traceID: traceID
-                )
-            }
-            var restored = false
-            if case .restored = outcome { restored = true }
-            if restored {
-                SessionWindowRegistry.shared.reactivate(sessionID: payload.sessionID)
-            } else {
-                log(
-                    "[HookEventHandler] UserPromptSubmit: restore to original failed",
-                    level: .warn,
-                    fields: [
-                        "traceID": traceID,
-                        "windowID": String(identity.windowID),
-                        "outcome": outcome.outcomeLabel,
-                        "sessionID": payload.sessionID
-                    ]
-                )
-            }
-            return Self.injecting(
-                (
-                    200,
-                    ClaudeHookResponse(
-                        ok: true,
-                        code: restored ? "restored_to_original" : "restore_failed",
-                        message: restored
-                            ? "Window restored to original screen/space/position"
-                            : "Restore to original position failed (\(outcome.outcomeLabel))",
-                        sessionID: payload.sessionID,
-                        handled: restored
-                    )
-                ),
-                context: envContext
+            SessionWindowRegistry.shared.touch(
+                sessionID: payload.sessionID,
+                message: "提交收到，窗原地保留供查看回复"
             )
+            return Self.injecting(Self.promptHttpResponse(for: decision, sessionID: payload.sessionID), context: envContext)
 
         case .rateLimited:
             log(
