@@ -186,10 +186,23 @@ struct ToggleRecord: Equatable {
     /// toggle state 是否有效（origFrame 不在主屏上，targetFrame 在主屏上）
     /// origFrame/targetFrame 是 Quartz 坐标，mainScreenFrame 是 Cocoa 坐标
     /// 需要转换后再比较
-    func isValid(mainScreenFrame: CGRect) -> Bool {
+    ///
+    /// ## 单屏机语义（displayCount ≤ 1）
+    /// 双屏规则里「orig 必须不在主屏」是跨屏 toggle 的成立前提；单屏机上窗口永远
+    /// 在主屏，同屏最大化记录（orig=网格单元帧、target=满屏帧）双中心都在主屏属
+    /// 常态而非损坏。单屏规则 = 双中心都在主屏即有效——顺带把「双屏时代留下的
+    /// orig 指向已拔副屏」的陈旧记录判为损坏（restore 直写会落屏外），随
+    /// corruptedClearWindowID 清除后由下一次 ⌃Q 重新按单屏语义建立记录。
+    /// displayCount 默认 2 = 历史双屏语义（既有调用方/测试零改动）。
+    func isValid(mainScreenFrame: CGRect, displayCount: Int = 2) -> Bool {
         let mainScreenHeight = mainScreenFrame.height
         let origCocoaCenter = CGPoint(x: origFrame.midX, y: mainScreenHeight - origFrame.midY)
         let tgtCocoaCenter = CGPoint(x: targetFrame.midX, y: mainScreenHeight - targetFrame.midY)
-        return !mainScreenFrame.contains(origCocoaCenter) && mainScreenFrame.contains(tgtCocoaCenter)
+        let origOnMain = mainScreenFrame.contains(origCocoaCenter)
+        let targetOnMain = mainScreenFrame.contains(tgtCocoaCenter)
+        if displayCount <= 1 {
+            return origOnMain && targetOnMain
+        }
+        return !origOnMain && targetOnMain
     }
 }

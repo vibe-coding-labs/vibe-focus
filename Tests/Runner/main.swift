@@ -328,6 +328,7 @@ final class FakeAuditor: RestoreAuditing {
         runHotKeyEventMatchTests()
         runHotKeyRealMachineE2E()
         runToggleDecisionTests()
+        runSingleDisplayToggleTests()
         runStuckRoutingTests()
         runAXSelfHealTests()
         runWatcherSpawnTests()

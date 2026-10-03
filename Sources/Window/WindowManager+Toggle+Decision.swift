@@ -22,10 +22,13 @@ extension WindowManager {
 
     /// Pure decision logic for shouldRestoreCurrentWindow.
     /// Separates the decision tree from system I/O for unit testing.
+    /// displayCount 默认 2 = 历史双屏语义（既有调用方/测试零改动）；生产入口传
+    /// ToggleEngine.displayCount 真值，单屏机走单屏 record 有效性规则。
     static func decideRestore(
         focusedOnMain: Bool?,
         recordByWindowID: ToggleRecord?,
-        mainScreenFrame: CGRect?
+        mainScreenFrame: CGRect?,
+        displayCount: Int = 2
     ) -> RestoreDecision {
         guard let focusedOnMain else {
             return .noFocusedWindow
@@ -39,7 +42,7 @@ extension WindowManager {
         guard let mainScreenFrame else {
             return .noMainScreen
         }
-        if !record.isValid(mainScreenFrame: mainScreenFrame) {
+        if !record.isValid(mainScreenFrame: mainScreenFrame, displayCount: displayCount) {
             return .corruptedClearWindowID(record.windowID)
         }
         return .restore
@@ -52,6 +55,9 @@ extension WindowManager {
         case restore
         case moveToMain
         case moveSecondaryStuck
+        /// 单屏机（displayCount ≤ 1）：无跨屏可去，无 record → 同屏最大化
+        /// （有 record 的 restore 分支在前已短路）。
+        case singleDisplayMaximize
 
         /// 日志 mode 字段名（与审计 eventType 的 mode 值一致）。
         var logName: String {
@@ -59,6 +65,7 @@ extension WindowManager {
             case .restore: return "restore"
             case .moveToMain: return "move_to_main"
             case .moveSecondaryStuck: return "move_to_secondary_stuck"
+            case .singleDisplayMaximize: return "single_display_maximize"
             }
         }
     }
@@ -77,8 +84,20 @@ extension WindowManager {
     /// - 其余决策按解析层归属（resolution.onMainScreen，与决策层的
     ///   isWindowOnMainScreen 是不同来源，可能不一致——以解析层为准执行）：
     ///   在主屏 → stuck 解堵（移副屏）；不在主屏或归属未知（nil）→ move_to_main。
+    ///
+    /// ## 单屏机（displayCount ≤ 1，2026-10-03）
+    /// 只有一块屏时「移副屏解堵」「跨屏拉主屏」都无处可去——历史上 ⌃Q 在单屏机
+    /// 是纯 no-op（stuck 找不到副屏 warn 后 return）。新语义：除 restore 外一律
+    /// 同屏最大化（网格中选中的窗充满主屏可视区，记录 orig=原网格单元帧；
+    /// 下一次 ⌃Q 经 restore 分支回退原尺寸，与双屏「拉上⇄送回」节奏对齐）。
+    /// 旧双参签名保留委托（displayCount=2 双屏语义），既有测试零改动。
     static func route(for decision: RestoreDecision, onMainScreen: Bool?) -> ToggleRoute {
+        route(for: decision, onMainScreen: onMainScreen, displayCount: 2)
+    }
+
+    static func route(for decision: RestoreDecision, onMainScreen: Bool?, displayCount: Int) -> ToggleRoute {
         if case .restore = decision { return .restore }
+        if displayCount <= 1 { return .singleDisplayMaximize }
         return onMainScreen == true ? .moveSecondaryStuck : .moveToMain
     }
 
@@ -170,10 +189,14 @@ extension WindowManager {
 
         let record = store.load(windowID: currentWindowID)
         let mainScreenFrame: CGRect? = (record != nil) ? getMainScreen()?.frame : nil
+        // 单屏机判据：displayCount 真值进决策（record 有效性单/双屏规则分流，
+        // P-INST-267 注释里「toggle 入口判断单屏/多屏」的既定消费点）。
+        let displayCount = ToggleEngine.shared.displayCount
         let decision = Self.decideRestore(
             focusedOnMain: focusedOnMain,
             recordByWindowID: record,
-            mainScreenFrame: mainScreenFrame
+            mainScreenFrame: mainScreenFrame,
+            displayCount: displayCount
         )
         if case .corruptedClearWindowID(let clearedID) = decision {
             log(

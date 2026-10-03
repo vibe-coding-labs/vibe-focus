@@ -119,7 +119,8 @@ extension WindowManager {
         targetDisplayIndex: Int?,
         reason: WindowMoveReason,
         sessionID: String?,
-        op: String
+        op: String,
+        singleDisplay: Bool = false
     ) -> Int {
         let saveStart = Date()
         let sourceSpaceIndex = spaceContext.sourceSpaceIndex ?? .yabai(0)
@@ -138,7 +139,8 @@ extension WindowManager {
             targetFrame: targetFrame,
             targetDisplay: targetDisplayIndex ?? 0,
             sessionID: sessionID,
-            reason: reason
+            reason: reason,
+            singleDisplay: singleDisplay
         )
         let saveMs = elapsedMilliseconds(since: saveStart)
 

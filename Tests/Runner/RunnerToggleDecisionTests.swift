@@ -260,3 +260,131 @@ extension RunnerHarness {
               !HookEventHandler.isTerminalOrIDEApp(appName: "Safari", bundleIdentifier: "com.apple.Safari"))
     }
 }
+
+extension RunnerHarness {
+    /// 0.1.1：单屏机 ⌃Q 同屏最大化——displayCount 进决策/路由维度的真身直测。
+    /// 语义：单屏 record 有效性 = 双中心都在主屏（orig=网格单元帧是常态非损坏）；
+    /// 路由 = 非 restore 一律 singleDisplayMaximize；save 拒收门对单屏记录绕行。
+    func runSingleDisplayToggleTests() {
+        print("\n=== SingleDisplayToggle (0.1.1) ===")
+        let main = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+        func record(orig: CGRect, target: CGRect, windowID: UInt32 = 77) -> ToggleRecord {
+            ToggleRecord(
+                windowID: windowID, pid: 100, bundleIdentifier: "com.apple.Terminal",
+                appName: "Terminal", origFrame: orig, sourceSpace: 1, sourceDisplay: 1,
+                sourceYabaiDisp: 1, sourceDispSpace: 1, targetFrame: target, targetDisplay: 1,
+                toggledAt: Date(timeIntervalSince1970: 1_800_000_000), sessionID: nil
+            )
+        }
+        let onMainTarget = CGRect(x: 100, y: 100, width: 800, height: 600)
+        // 单屏最大化记录夹具：orig=网格单元帧（主屏内），target=满屏帧（主屏内）
+        let singleMaximized = record(orig: CGRect(x: 60, y: 80, width: 840, height: 500),
+                                     target: CGRect(x: 0, y: 0, width: 1728, height: 1117))
+        // 双屏时代陈旧记录：orig 指向已拔副屏（Quartz 负 y），target 主屏
+        let staleDual = record(orig: CGRect(x: 100, y: -700, width: 800, height: 600),
+                               target: onMainTarget)
+
+        // ===== isValid：displayCount 维度真值表 =====
+        do {
+            check("sdValid: 单屏 orig/target 双中心在主屏 → valid（单屏最大化记录是常态）",
+                  singleMaximized.isValid(mainScreenFrame: main, displayCount: 1))
+            check("sdValid: 单屏 orig 指向已拔副屏 → 损坏（restore 直写会落屏外）",
+                  !staleDual.isValid(mainScreenFrame: main, displayCount: 1))
+            check("sdValid: 单屏 target 中心越出主屏 → 损坏",
+                  !record(orig: CGRect(x: 60, y: 80, width: 840, height: 500),
+                          target: CGRect(x: 3000, y: 100, width: 800, height: 600))
+                  .isValid(mainScreenFrame: main, displayCount: 1))
+            // 双屏旧规则不被放宽（回归锁）
+            check("sdValid: 双屏 orig 在主屏 → 损坏（旧判据保持）",
+                  !singleMaximized.isValid(mainScreenFrame: main, displayCount: 2))
+            check("sdValid: 双屏 orig 副屏 + target 主屏 → valid（旧判据保持）",
+                  staleDual.isValid(mainScreenFrame: main, displayCount: 2))
+            check("sdValid: 缺省签名 = 双屏语义（既有调用方零漂移）",
+                  record(orig: CGRect(x: 60, y: 80, width: 840, height: 500), target: onMainTarget)
+                  .isValid(mainScreenFrame: main)
+                  == record(orig: CGRect(x: 60, y: 80, width: 840, height: 500), target: onMainTarget)
+                  .isValid(mainScreenFrame: main, displayCount: 2))
+        }
+
+        // ===== decideRestore：displayCount=1 分支 =====
+        do {
+            check("sdDecide: 单屏 + 单屏最大化记录 → restore（⌃Q 二次回退原尺寸）",
+                  WindowManager.decideRestore(focusedOnMain: true, recordByWindowID: singleMaximized,
+                                              mainScreenFrame: main, displayCount: 1)
+                  == .restore)
+            check("sdDecide: 单屏 + 双屏陈旧记录 → corruptedClearWindowID（清掉后按单屏语义重建）",
+                  WindowManager.decideRestore(focusedOnMain: true, recordByWindowID: staleDual,
+                                              mainScreenFrame: main, displayCount: 1)
+                  == .corruptedClearWindowID(77))
+            check("sdDecide: 单屏 + 无记录 → noRecord（路由层转最大化）",
+                  WindowManager.decideRestore(focusedOnMain: true, recordByWindowID: nil,
+                                              mainScreenFrame: main, displayCount: 1)
+                  == .noRecord)
+            check("sdDecide: 焦点未知 → noFocusedWindow（不随屏数变化）",
+                  WindowManager.decideRestore(focusedOnMain: nil, recordByWindowID: singleMaximized,
+                                              mainScreenFrame: main, displayCount: 1)
+                  == .noFocusedWindow)
+            check("sdDecide: 双屏 + orig 在主屏 → corrupted（displayCount 显式 2 回归锁）",
+                  WindowManager.decideRestore(focusedOnMain: true, recordByWindowID: singleMaximized,
+                                              mainScreenFrame: main, displayCount: 2)
+                  == .corruptedClearWindowID(77))
+        }
+
+        // ===== route：displayCount 维度分支穷尽 =====
+        do {
+            check("sdRoute: 单屏 restore → restore",
+                  WindowManager.route(for: .restore, onMainScreen: true, displayCount: 1) == .restore)
+            check("sdRoute: 单屏 noRecord → singleDisplayMaximize",
+                  WindowManager.route(for: .noRecord, onMainScreen: true, displayCount: 1)
+                  == .singleDisplayMaximize)
+            check("sdRoute: 单屏 moveToMain（解析层异常态）→ 同屏最大化兜底",
+                  WindowManager.route(for: .moveToMain, onMainScreen: false, displayCount: 1)
+                  == .singleDisplayMaximize)
+            check("sdRoute: 单屏 corrupted → singleDisplayMaximize",
+                  WindowManager.route(for: .corruptedClearWindowID(7), onMainScreen: nil, displayCount: 1)
+                  == .singleDisplayMaximize)
+            check("sdRoute: 单屏 noMainScreen → singleDisplayMaximize",
+                  WindowManager.route(for: .noMainScreen, onMainScreen: true, displayCount: 1)
+                  == .singleDisplayMaximize)
+            check("sdRoute: 双屏 noRecord + 在主屏 → moveSecondaryStuck（旧路由回归锁）",
+                  WindowManager.route(for: .noRecord, onMainScreen: true, displayCount: 2)
+                  == .moveSecondaryStuck)
+            check("sdRoute: 旧双参签名委托 = displayCount 2 语义",
+                  WindowManager.route(for: .noRecord, onMainScreen: nil)
+                  == WindowManager.route(for: .noRecord, onMainScreen: nil, displayCount: 2))
+            check("sdRoute: logName = single_display_maximize",
+                  WindowManager.ToggleRoute.singleDisplayMaximize.logName == "single_display_maximize")
+        }
+
+        // ===== save：单屏记录绕行 orig-on-main 拒收门（store 注入真身落库） =====
+        do {
+            let dir = "/tmp/vibefocus-sdtoggle-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let engine = ToggleEngine(store: WindowStateStore(dbPath: dir + "/sdtoggle.db"))
+
+            // 单屏最大化记录：orig 在主屏内 + singleDisplay: true → 落库
+            let orig = CGRect(x: 60, y: 80, width: 840, height: 500)
+            let target = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+            engine.save(windowID: 7701, pid: 1000, bundleIdentifier: "com.apple.Terminal",
+                        appName: "Terminal", origFrame: orig,
+                        sourceSpace: .yabai(1), sourceDisplay: .yabai(1), sourceYabaiDisp: .yabai(1),
+                        sourceDispSpace: 1, targetFrame: target, targetDisplay: 1,
+                        sessionID: nil, reason: .manualHotkey, singleDisplay: true)
+            var savedOK = false
+            if let r = engine.load(windowID: 7701) {
+                savedOK = r.origFrame == orig && r.targetFrame == target
+                    && r.reason == WindowMoveReason.manualHotkey.rawValue
+            }
+            check("sdSave: singleDisplay 绕行拒收门 → 记录落库可回读", savedOK)
+
+            // 默认签名（多屏语义）对同帧仍拒收——拒收门未被放开（回归锁）
+            engine.save(windowID: 7702, pid: 1000, bundleIdentifier: nil, appName: nil,
+                        origFrame: orig,
+                        sourceSpace: .yabai(1), sourceDisplay: .yabai(1), sourceYabaiDisp: .yabai(1),
+                        sourceDispSpace: 1, targetFrame: target, targetDisplay: 1, sessionID: nil)
+            check("sdSave: 默认多屏语义同帧仍拒收不落库",
+                  engine.load(windowID: 7702) == nil)
+        }
+    }
+}

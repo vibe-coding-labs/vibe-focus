@@ -57,7 +57,8 @@ final class ToggleEngine: ToggleRecordStore, @unchecked Sendable {
         targetFrame: CGRect,
         targetDisplay: Int,
         sessionID: String?,
-        reason: WindowMoveReason = .manualHotkey
+        reason: WindowMoveReason = .manualHotkey,
+        singleDisplay: Bool = false
     ) {
         // P-INST-231: toggle record 保存编排端到端耗时（NSScreen.screens 主屏验证 + shouldRejectSave + ToggleRecord 构造 + store.saveToggleRecord SQLite 写 P-INST-17/P-INST-202；toggle 热路径每次调用，区分 NSScreen/构造 vs SQLite dbMs）。
         #if PERF_INSTRUMENT
@@ -66,9 +67,11 @@ final class ToggleEngine: ToggleRecordStore, @unchecked Sendable {
             log("[ToggleEngine] save finished", level: .debug, fields: ["windowID": String(windowID), "durationMs": String(elapsedMilliseconds(since: saveTotalStart))])
         }
         #endif
-        // 验证 origFrame 不在主屏上 — 如果 origFrame 在主屏，说明数据异常
+        // 验证 origFrame 不在主屏上 — 如果 origFrame 在主屏，说明数据异常。
+        // 单屏机（singleDisplay=true，同屏最大化）orig 在主屏是常态，绕行拒收门。
         let mainScreen = NSScreen.screens.first { $0.frame.origin == .zero }
-        if Self.shouldRejectSave(origFrame: origFrame, mainScreenFrame: mainScreen?.frame) {
+        if !singleDisplay,
+           Self.shouldRejectSave(origFrame: origFrame, mainScreenFrame: mainScreen?.frame) {
             log(
                 "[ToggleEngine] save rejected: origFrame is on main screen (corrupted data)",
                 level: .warn,

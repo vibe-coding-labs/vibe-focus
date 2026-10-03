@@ -208,7 +208,11 @@ extension WindowManager {
         // Batch 5：mode 字符串与执行分支同源（route 唯一映射）——此前 mode 计算
         // 与执行 switch 是两份表示，(decision=.moveToMain, onMain=true) 组合下
         // 日志与执行各说各话（stuck 分支记 "move_to_main" 的日志失真）。
-        let route = Self.route(for: decision, onMainScreen: resolution.onMainScreen)
+        // displayCount 真值进路由：单屏机走 single_display_maximize（2026-10-03）。
+        let route = Self.route(
+            for: decision,
+            onMainScreen: resolution.onMainScreen,
+            displayCount: ToggleEngine.shared.displayCount)
         let mode = route.logName
 
         // 采集 toggle record 状态用于决策日志
@@ -227,7 +231,9 @@ extension WindowManager {
                 decisionFields["toggleRecordOrigFrame"] = QuartzRect(record.origFrame).description
                 decisionFields["toggleRecordSourceSpace"] = String(record.sourceSpace)
                 if let mainScreen = cachedMainScreen {
-                    decisionFields["toggleRecordValid"] = String(record.isValid(mainScreenFrame: mainScreen.frame))
+                    decisionFields["toggleRecordValid"] = String(record.isValid(
+                        mainScreenFrame: mainScreen.frame,
+                        displayCount: ToggleEngine.shared.displayCount))
                 }
             } else {
                 decisionFields["toggleRecordExists"] = "false"
@@ -282,6 +288,28 @@ extension WindowManager {
                     eventType: "toggle_move_to_main",
                     windowID: winID,
                     details: ["mode": "move_to_main", "source": triggerSource]
+                )
+            }
+        case .singleDisplayMaximize:
+            // 单屏机无跨屏可去：同屏最大化（有有效 record 的窗口在 .restore 分支
+            // 已回退原尺寸）。原帧/身份复用 toggle 入口解析结果（与 moveToMain
+            // 同款前置，避免 float 重摆后读帧）。
+            log(
+                "[WindowManager] toggle: single display, maximizing focused window in place",
+                level: .info,
+                fields: ["op": op, "windowID": toggleContext["windowID"] ?? "nil"]
+            )
+            maximizeFocusedWindowOnSingleDisplay(
+                operationID: op,
+                triggerSource: triggerSource,
+                knownIdentity: resolvedIdentity,
+                knownOrigFrame: resolution.windowFrame
+            )
+            if let winID = resolvedWindowID {
+                AuditLogger.shared.record(
+                    eventType: "toggle_single_display_maximize",
+                    windowID: winID,
+                    details: ["mode": "single_display_maximize", "source": triggerSource]
                 )
             }
         }

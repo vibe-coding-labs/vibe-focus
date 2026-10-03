@@ -233,4 +233,151 @@ extension WindowManager {
             CrashContextRecorder.shared.record("move_to_main_failed op=\(op)")
         }
     }
+
+    /// 单屏机 ⌃Q：聚焦窗同屏最大化（网格中选中的窗充满主屏可视区）+ 落单屏 toggle 记录。
+    ///
+    /// ## 场景
+    /// - 仅 toggle 的 .singleDisplayMaximize 分支调用（displayCount ≤ 1 且无有效
+    ///   toggle record）。双屏语义里这一格是 stuck 解堵移副屏——单屏无处可去，
+    ///   历史行为是纯 no-op（找不到副屏 warn 后 return）；新语义与双屏「拉上⇄
+    ///   送回」节奏对齐：⌃Q 最大化 ↔ ⌃Q 回退原尺寸（原网格单元帧）。
+    ///
+    /// ## 与 moveWindowToMainScreen 管线的关系
+    /// 不复用 MoveToMainPipeline：窗口已在主屏，管线判 .alreadyOnMain 短路，
+    /// 既不最大化也不落记录。本函数是 stuck 路径的同屏镜像——同一套原语
+    /// （float 脱管 → frame 直写内置读回收敛 → 记录落账），几何上只是目标帧
+    /// 从副屏可视区换成主屏可视区。
+    ///
+    /// ## 竞态/时序约束
+    /// - origFrame 必须 float 脱管**前**快照（float 触发 yabai 默认重摆会改帧，
+    ///   与 moveToMain 的 knownOrigFrame 前置约束同源，a049a86 教训）；
+    /// - spaceContext 同理 float 前采集（restore 源 space 预切回消费）；
+    /// - 记录走 save(singleDisplay: true) 绕行 orig-on-main 拒收门（单屏常态）。
+    func maximizeFocusedWindowOnSingleDisplay(
+        operationID: String? = nil,
+        triggerSource: String = "unknown",
+        knownIdentity: WindowIdentity? = nil,
+        knownOrigFrame: CGRect? = nil
+    ) {
+        let op = operationID ?? makeOperationID(prefix: "max")
+        let startedAt = Date()
+        log(
+            "[WindowManager] single_display_maximize started",
+            fields: [
+                "op": op,
+                "source": triggerSource
+            ]
+        )
+
+        guard hasAccessibilityPermission() else {
+            log(
+                "[WindowManager] single_display_maximize failed: accessibility denied",
+                level: .warn,
+                fields: ["op": op]
+            )
+            CrashContextRecorder.shared.record("single_display_maximize_ax_denied op=\(op)")
+            logDiagnostics("ax_trusted_false_single_display_maximize")
+            notifyAccessibilityPermissionRequired()
+            return
+        }
+        guard let identity = knownIdentity ?? captureFocusedWindowIdentity() else {
+            log(
+                "[WindowManager] single_display_maximize failed: focused window identity missing",
+                level: .error,
+                fields: ["op": op]
+            )
+            CrashContextRecorder.shared.record("single_display_maximize_failed_identity_missing op=\(op)")
+            return
+        }
+        let windowID = identity.windowID
+
+        // float 脱管前的原帧快照（restore 目标=原网格单元帧）；两来源都拿不到时
+        // 宁可不动——没有 orig 的最大化不可回退，等于把用户的网格布局毁掉。
+        guard let origFrame = knownOrigFrame ?? cgWindowBounds(for: windowID) else {
+            log(
+                "[WindowManager] single_display_maximize failed: cannot snapshot original frame",
+                level: .error,
+                fields: ["op": op, "windowID": String(windowID)]
+            )
+            return
+        }
+        let spaceContext = spaceController.captureSpaceContext(windowID: windowID, operationID: op)
+
+        guard let mainScreen = getMainScreen() else {
+            log(
+                "[WindowManager] single_display_maximize failed: no main screen",
+                level: .error,
+                fields: ["op": op, "windowID": String(windowID)]
+            )
+            return
+        }
+        let targetFrame = CoordinateKit.quartzVisibleFrame(of: mainScreen)
+
+        // 源屏可视区（单屏下=主屏自己）：与 move_to_main 管线 P2 同源，供写序判定。
+        let windowInfo = spaceController.queryWindow(windowID: windowID, ignoreCache: false)
+        let sourceVisibleFrame = windowInfo?.display
+            .flatMap { SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: $0) }
+            .map { CoordinateKit.quartzVisibleFrame(of: $0) }
+
+        floatAndSettle(windowID: windowID, operationID: op, knownWindowInfo: windowInfo)
+        let moveStart = Date()
+        let moved = moveWindowToFrameViaYabai(
+            windowID: windowID,
+            frame: targetFrame,
+            op: op,
+            stage: "single_display_maximize",
+            sourceVisibleFrame: sourceVisibleFrame
+        )
+        let moveMs = elapsedMilliseconds(since: moveStart)
+        log(
+            "[WindowManager] single_display_maximize: frame move",
+            level: moved ? .info : .error,
+            fields: [
+                "op": op,
+                "windowID": String(windowID),
+                "origFrame": QuartzRect(origFrame).description,
+                "targetFrame": QuartzRect(targetFrame).description,
+                "moved": String(moved),
+                "moveMs": String(moveMs)
+            ]
+        )
+
+        if moved {
+            // B193 残窗防护同款：写失败不动记录（recordKept 语义）——只有真实
+            // 最大化成功才落单屏记录，restore 才有可信的回退目标。
+            _ = saveToggleRecordForMainMove(
+                identity: identity,
+                windowID: windowID,
+                origFrame: origFrame,
+                spaceContext: spaceContext,
+                targetFrame: targetFrame,
+                targetDisplayIndex: displayIndex(forDisplayID: displayID(for: mainScreen)),
+                reason: .manualHotkey,
+                sessionID: nil,
+                op: op,
+                singleDisplay: true
+            )
+        }
+        MoveCooldownRegistry.shared.clearCooldown(windowID: windowID)
+        if moved {
+            let focusOK = focusWindowByCGWindowID(windowID)
+            log(
+                "SINGLE DISPLAY MAXIMIZED",
+                fields: [
+                    "op": op,
+                    "durationMs": String(elapsedMilliseconds(since: startedAt)),
+                    "focusOK": String(focusOK)
+                ]
+            )
+        } else {
+            log(
+                "SINGLE DISPLAY MAXIMIZE FAILED",
+                level: .error,
+                fields: [
+                    "op": op,
+                    "durationMs": String(elapsedMilliseconds(since: startedAt))
+                ]
+            )
+        }
+    }
 }

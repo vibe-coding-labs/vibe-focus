@@ -110,28 +110,47 @@ extension RunnerHarness {
             check("tglFallback: 主屏窗 + 无记录 → noRecord",
                   wm.evaluateRestoreDecision(windowID: onWin.windowID, store: B219FakeRecordStore()) == .noRecord)
 
-            // 主屏 + 损坏记录（origFrame 中心在主屏）→ corruptedClearWindowID 且已附带 clear
-            let corrupted = B219FakeRecordStore()
-            corrupted.records[onWin.windowID] = ToggleRecord(
-                windowID: onWin.windowID, pid: 1, bundleIdentifier: nil, appName: nil,
-                origFrame: CGRect(x: 100, y: 100, width: 400, height: 300),
-                sourceSpace: 1, sourceDisplay: 1, sourceYabaiDisp: 1, sourceDispSpace: 1,
-                targetFrame: CGRect(x: 100, y: 100, width: 400, height: 300), targetDisplay: 0,
-                toggledAt: Date(), sessionID: nil)
-            let dCorrupt = wm.evaluateRestoreDecision(windowID: onWin.windowID, store: corrupted)
-            check("tglFallback: 损坏记录 → corruptedClearWindowID 且附带执行 clear",
-                  dCorrupt == .corruptedClearWindowID(onWin.windowID) && corrupted.cleared == [onWin.windowID])
+            // record 有效性随环境屏数分流（0.1.1 单屏语义）：单屏机 orig-on-main 是
+            // 同屏最大化记录的常态而非损坏；双屏机同帧 = 损坏。两种环境各自锁全部分支。
+            let displayCount = ToggleEngine.shared.displayCount
+            let inMainFrame = CGRect(x: 100, y: 100, width: 400, height: 300)
 
-            // 主屏 + 合法记录（orig 副屏负 y 区）→ restore
-            let valid = B219FakeRecordStore()
-            valid.records[onWin.windowID] = ToggleRecord(
+            // 「orig/target 同帧在主屏」记录：单屏 → valid → restore；双屏 → corrupted + clear
+            let sameFrameStore = B219FakeRecordStore()
+            sameFrameStore.records[onWin.windowID] = ToggleRecord(
+                windowID: onWin.windowID, pid: 1, bundleIdentifier: nil, appName: nil,
+                origFrame: inMainFrame,
+                sourceSpace: 1, sourceDisplay: 1, sourceYabaiDisp: 1, sourceDispSpace: 1,
+                targetFrame: inMainFrame, targetDisplay: 0,
+                toggledAt: Date(), sessionID: nil)
+            let dSameFrame = wm.evaluateRestoreDecision(windowID: onWin.windowID, store: sameFrameStore)
+            if displayCount <= 1 {
+                check("tglFallback: 单屏 + 同帧最大化记录 → restore（0.1.1 单屏语义）",
+                      dSameFrame == .restore && sameFrameStore.cleared.isEmpty)
+            } else {
+                check("tglFallback: 损坏记录 → corruptedClearWindowID 且附带执行 clear",
+                      dSameFrame == .corruptedClearWindowID(onWin.windowID)
+                      && sameFrameStore.cleared == [onWin.windowID])
+            }
+
+            // 「orig 指向屏外（单屏机上=陈旧双屏记录）」记录：双屏 → valid → restore；
+            // 单屏 → corrupted + clear（restore 直写会落屏外，清除后按单屏语义重建）
+            let offScreenStore = B219FakeRecordStore()
+            offScreenStore.records[onWin.windowID] = ToggleRecord(
                 windowID: onWin.windowID, pid: 1, bundleIdentifier: nil, appName: nil,
                 origFrame: CGRect(x: 100, y: -800, width: 800, height: 600),
                 sourceSpace: 3, sourceDisplay: 2, sourceYabaiDisp: 2, sourceDispSpace: 2,
                 targetFrame: CGRect(x: 100, y: 100, width: 800, height: 600), targetDisplay: 0,
                 toggledAt: Date(), sessionID: nil)
-            check("tglFallback: 合法记录 → restore（决策与执行分离，本层不动窗）",
-                  wm.evaluateRestoreDecision(windowID: onWin.windowID, store: valid) == .restore)
+            let dOffScreen = wm.evaluateRestoreDecision(windowID: onWin.windowID, store: offScreenStore)
+            if displayCount <= 1 {
+                check("tglFallback: 单屏 + orig 屏外陈旧记录 → corruptedClearWindowID 且附带执行 clear",
+                      dOffScreen == .corruptedClearWindowID(onWin.windowID)
+                      && offScreenStore.cleared == [onWin.windowID])
+            } else {
+                check("tglFallback: 合法记录 → restore（决策与执行分离，本层不动窗）",
+                      dOffScreen == .restore)
+            }
         }
 
         // ===== focusWindowByCGWindowID 未命中分支 =====
