@@ -8,6 +8,11 @@ final class WindowStateStore: @unchecked Sendable {
 
     var db: OpaquePointer?
     private let dbPath: String
+    /// 连接级序列锁：FULLMUTEX 只互斥单个 sqlite3 API 调用，「UPDATE→
+    /// sqlite3_changes→fallback INSERT」这类跨调用序列仍会被并发写插队
+    /// （changes 读到别人的计数 = 丢写）。含多调用序列的方法
+    /// （saveToggleRecord / pruneExpiredWindowStates）须整体持锁。
+    let dbSequenceLock = NSLock()
 
     init(dbPath: String? = nil) {
         if let dbPath {
@@ -44,7 +49,12 @@ extension WindowStateStore {
             if ms >= 5 { log("[WindowStateStore] openDatabase slow", level: .warn, fields: ["durationMs": String(ms)]) }
         }
         #endif
-        if sqlite3_open(dbPath, &db) != SQLITE_OK {
+        // 2026-10 崩溃波取证（crash-fatal-20261006~1017 六起 SIGSEGV/SIGBUS，堆栈全部落在
+        // sqlite3Prepare/sqlite3RunParser 解析器内部）：macOS 系统 libsqlite3 编译为
+        // threadsafe()=2（multi-thread），sqlite3_open 打开的连接本身无互斥——主线程 tick 读
+        // + 后台 toggle 队列写共用 shared 连接即并发踩坏解析器堆。FULLMUTEX 强制本连接
+        // 全部 API 调用串行化，不可回退为 sqlite3_open，否则回到未定义行为。
+        if sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) != SQLITE_OK {
             log("[WindowStateStore] failed to open database at \(dbPath)", level: .error)
             db = nil
             return

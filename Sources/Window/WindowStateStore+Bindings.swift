@@ -193,6 +193,9 @@ extension WindowStateStore {
             if ms >= 5 { log("[WindowStateStore] pruneExpiredWindowStates slow", level: .warn, fields: ["removed": String(removed), "durationMs": String(ms)]) }
         }
         guard let db else { return 0 }
+        // DELETE→sqlite3_changes 是跨调用序列，持锁防并发写插队（见 dbSequenceLock 注释）
+        dbSequenceLock.lock()
+        defer { dbSequenceLock.unlock() }
         let now = Date().timeIntervalSince1970
         let activeCutoff = now - activeRetention
         let completedCutoff = now - completedRetention

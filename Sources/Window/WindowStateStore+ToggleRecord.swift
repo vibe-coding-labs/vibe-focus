@@ -26,6 +26,9 @@ extension WindowStateStore {
             log("saveToggleRecord: db is nil", level: .error)
             return
         }
+        // UPDATE→sqlite3_changes→fallback INSERT 是跨调用序列，整体持锁防并发写插队（见 dbSequenceLock 注释）
+        dbSequenceLock.lock()
+        defer { dbSequenceLock.unlock() }
         let now = Date().timeIntervalSince1970
         var stmt: OpaquePointer?
 

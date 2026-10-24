@@ -5,7 +5,8 @@ import Foundation
 // 开库/迁移/错误分支全链在临时目录承载（VIBEFOCUS_DB_PATH 环境注入缝 + ShellRunner
 // 预置 legacy 库），零触生产 ~/.vibefocus。覆盖：env 路径分支（含父目录自动创建）、
 // 垃圾文件库 WAL/schema/prepare 连锁败、写锁 BUSY step 失败、PK 迁移三态
-// （成功含 OR IGNORE 去重 / 建表失败 / 拷贝失败回滚）。
+// （成功含 OR IGNORE 去重 / 建表失败 / 拷贝失败回滚）、六线程并发轰炸 FULLMUTEX 回归锁
+// （2026-10 崩溃波：共享连接多线程 prepare 踩坏解析器堆）。
 
 extension RunnerHarness {
     func runStoreDatabaseTests() {
@@ -123,6 +124,47 @@ extension RunnerHarness {
                 arguments: [p, "SELECT count(*) FROM (SELECT name FROM pragma_table_info('windows') WHERE pk=1 AND name='pid');"])
             check("storeDB: 迁移中止后原表 PK 保持 (pid,...) 不动",
                   pk?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "1")
+        }
+
+        // ===== G. 并发轰炸回归锁（2026-10 崩溃波：六起 SIGSEGV/SIGBUS 全落在 sqlite3Prepare）=====
+        // 形态复刻：主线程 tick 读（findWindowStateByWindowID）+ 后台 toggle 队列写
+        // （saveToggleRecord UPDATE→changes→INSERT）+ prune 清理，共用一个连接并发轰炸。
+        // macOS 系统 libsqlite3 threadsafe()=2（multi-thread），连接须以 FULLMUTEX 打开
+        // 才能跨线程共用；退回 sqlite3_open 本段会在 1 秒内崩掉整个 Runner（红已演示）。
+        do {
+            let p = dir + "conc.db"
+            let store = WindowStateStore(dbPath: p)
+            let makeRec: @Sendable (Int) -> ToggleRecord = { i in
+                ToggleRecord(windowID: UInt32(4242 + i % 3), pid: 100,
+                             bundleIdentifier: "com.googlecode.iterm2", appName: "iTerm2",
+                             origFrame: CGRect(x: 1, y: 2, width: 300, height: 200),
+                             sourceSpace: 1, sourceDisplay: 0, sourceYabaiDisp: 1, sourceDispSpace: 1,
+                             targetFrame: CGRect(x: 0, y: 0, width: 1000, height: 800),
+                             targetDisplay: 0, toggledAt: Date(), sessionID: nil)
+            }
+            store.saveToggleRecord(makeRec(0))
+            check("storeDB: 并发段种子行落库可读", store.findWindowStateByWindowID(4242) != nil)
+
+            let group = DispatchGroup()
+            let deadline = Date().addingTimeInterval(1.0)
+            for i in 0..<6 {
+                group.enter()
+                DispatchQueue.global().async {
+                    defer { group.leave() }
+                    while Date() < deadline {
+                        switch i % 3 {
+                        case 0: store.saveToggleRecord(makeRec(i))
+                        case 1: _ = store.findWindowStateByWindowID(UInt32(4242 + i % 3))
+                        default: _ = store.pruneExpiredWindowStates(activeRetention: 3600, completedRetention: 3600)
+                        }
+                    }
+                }
+            }
+            check("storeDB: 六线程并发轰炸 1s 存活（FULLMUTEX 回归锁）",
+                  group.wait(timeout: .now() + 10) == .success)
+            store.saveToggleRecord(makeRec(0))
+            check("storeDB: 轰炸后连接仍可写读",
+                  store.findWindowStateByWindowID(4242) != nil)
         }
 
         try? FileManager.default.removeItem(atPath: dir)
