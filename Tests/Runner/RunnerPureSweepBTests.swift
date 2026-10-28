@@ -903,6 +903,12 @@ extension RunnerHarness {
         check("straggler243: autoHide=true → dismiss", InputBubbleResignPlan.decide(autoHide: true) == .dismiss)
         check("straggler243: autoHide=false → stay（绑定跟随）", InputBubbleResignPlan.decide(autoHide: false) == .stay)
 
+        // --- InputBubbleEscPlan：语音取消门（0.1.3，装机 14 次无提交消失取证后新增） ---
+        check("escPlan: 语音气泡在屏 → keepAndConsume（吞 Esc 不关气泡）",
+              InputBubbleEscPlan.decide(voiceBubbleOnScreen: true) == .keepAndConsume)
+        check("escPlan: 语音气泡不在屏 → dismiss（Esc 语义不变）",
+              InputBubbleEscPlan.decide(voiceBubbleOnScreen: false) == .dismiss)
+
         // --- latestEntry：空仓 nil / 记录后=最新 ---
         let suite = "RunnerStraggler243-\(UUID().uuidString)"
         let store = InputBubbleHistoryStore(defaults: UserDefaults(suiteName: suite)!)

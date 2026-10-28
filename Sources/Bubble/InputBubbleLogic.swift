@@ -394,6 +394,20 @@ enum InputBubbleResignPlan {
     }
 }
 
+/// Esc 处置门（0.1.3 语音取消事故）。取证：装机日志 14 次无提交消失、12 次与
+/// LazyTyper 录音时刻重合——录音期气泡是 key window，用户按 Esc 取消 take/关
+/// 转写浮层时 Esc 落进气泡被当「关闭不注入」，正在用的气泡连带消失。
+/// - voiceBubbleOnScreen=true → keepAndConsume：吞掉 Esc（语音气泡检测沿用 B186
+///   的 owner+尺寸判据），录音结束前 Esc 不再误伤；
+/// - false → dismiss：语义不变（关闭不注入，草稿保留）。
+enum InputBubbleEscPlan {
+    enum Action: Equatable { case dismiss, keepAndConsume }
+
+    static func decide(voiceBubbleOnScreen: Bool) -> Action {
+        voiceBubbleOnScreen ? .keepAndConsume : .dismiss
+    }
+}
+
 /// 注入时序常量唯一事实源（执行器消费）。
 enum InputBubbleTiming {
     /// 激活终端后等前台到位的轮询间隔 / 总预算。

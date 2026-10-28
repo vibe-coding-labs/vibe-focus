@@ -137,7 +137,7 @@ final class InputBubbleController: NSObject {
         let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"
         log("[InputBubble] summon called", fields: ["phase": String(describing: phase), "frontBundle": frontBundle])
         if phase == .open {
-            dismiss(reactivateTarget: false)
+            dismiss(reactivateTarget: false, reason: "hotkeyToggle")
             return
         }
         guard phase == .idle else { return }
@@ -238,7 +238,7 @@ final class InputBubbleController: NSObject {
         log("[InputBubble] follow retarget \(current.windowID) -> \(windowID)", fields: [
             "appName": appName ?? "nil"
         ])
-        dismiss(reactivateTarget: false)
+        dismiss(reactivateTarget: false, reason: "retarget")
         summonForMovedWindow(windowID: windowID, pid: pid, appName: appName)
     }
 
@@ -338,11 +338,16 @@ final class InputBubbleController: NSObject {
 
     /// Esc / 点外部 / toggle 关闭。reactivateTarget：Esc 关闭时把焦点还给终端
     /// （submit 路径自己已激活终端，传 false 防重复抢）。
-    func dismiss(reactivateTarget: Bool) {
+    /// 0.1.3：reason 必填——关闭路径全量埋点。教训：装机 14 次「无提交消失」
+    /// 事发后无法归因（本函数原日志是 debug 级且无 caller，只能靠排除法考古）。
+    /// 所有调用点必须带 reason 标签，新调用点不带参编译不过；日志出现未知
+    /// reason 即存在未登记的关闭路径。voiceOnScreen 留事发时语音气泡在场取证。
+    func dismiss(reactivateTarget: Bool, reason: String) {
         PerfMonitor.shared.beginSection("bubble.hide")
         defer { PerfMonitor.shared.endSection() }
         guard phase == .open else { return }
         let captured = target
+        let dismissedTextChars = textView?.string.count ?? 0
         // B195：关闭即抓当前文本落盘（不再依赖 300ms 防抖的最后一次 textDidChange——
         // 真机曾丢尾编辑）+ 进全局历史（重开/换窗都能拿回）。干净关闭（文本=恢复
         // 基准，用户没打字）零写入——不把默认前缀当草稿/历史污染存储。
@@ -375,7 +380,12 @@ final class InputBubbleController: NSObject {
         if reactivateTarget, let t = captured {
             _ = NSRunningApplication(processIdentifier: t.pid)?.activate(options: .activateIgnoringOtherApps)
         }
-        log("[InputBubble] bubble dismissed", level: .debug)
+        log("[InputBubble] bubble dismissed", fields: [
+            "reason": reason,
+            "windowID": captured.map { String($0.windowID) } ?? "nil",
+            "textChars": String(dismissedTextChars),
+            "voiceOnScreen": voiceBubblePresentNow() ? "true" : "false"
+        ])
     }
 
     /// B195：SIGTERM 收尾（部署杀进程高频）——气泡开着且输入中时把当前文本落
@@ -547,7 +557,7 @@ final class InputBubbleController: NSObject {
               let windowBefore = followWindowOrigin, let bubbleBefore = followBubbleOrigin else { return }
         if NSRunningApplication(processIdentifier: target.pid) == nil {
             log("[InputBubble] follow: target app gone, dismissing", level: .debug)
-            dismiss(reactivateTarget: false)
+            dismiss(reactivateTarget: false, reason: "followTargetAppGone")
             return
         }
         guard let cgFrame = cgWindowBounds(for: target.windowID) else { return }
@@ -584,19 +594,27 @@ final class InputBubbleController: NSObject {
     /// B186：检测 LazyTyper 录音气泡是否在屏——在则降层让位、消失即恢复。
     /// 让位发生在录音气泡出现之后，不影响 LazyTyper 的活跃显示器解析（那一刻
     /// 我们的气泡仍是最顶层窗）。幂等，状态由 voiceYielded 持有。
-    func updateVoiceYield() {
-        guard phase == .open, let panel else { return }
-        // B190 区间埋点：全表 CGWindowList 扫描 ~1Hz（跟随模式开着时），journal 静默同 followTick。
-        PerfMonitor.shared.beginSection("bubble.voiceYield")
-        defer { PerfMonitor.shared.endSection() }
-        // 不筛 layer：LazyTyper 录音气泡实测 layer=5（floating 域），按 owner+尺寸识别
-        let present = cgWindowListAll().contains { entry in
+    /// 语音气泡此刻是否在屏（fresh 全表扫描）。B186 yield 巡检与 0.1.3 Esc 取消门
+    /// 共用同一判据。不筛 layer：LazyTyper 录音气泡实测 layer=5（floating 域），
+    /// 按 owner+尺寸识别。
+    /// Esc 门不用 voiceYielded 粘滞位的原因：该位随 ~1s 巡检更新，录音刚开始的
+    /// 半秒内可能尚未置位——而那正是用户按 Esc 取消 take 的时刻（装机取证）。
+    func voiceBubblePresentNow() -> Bool {
+        cgWindowListAll().contains { entry in
             entry.isOnScreen
                 && InputBubbleLayout.isVoiceBubbleWindow(
                     ownerName: entry.ownerName,
                     width: entry.bounds?.width ?? 0,
                     height: entry.bounds?.height ?? 0)
         }
+    }
+
+    func updateVoiceYield() {
+        guard phase == .open, let panel else { return }
+        // B190 区间埋点：全表 CGWindowList 扫描 ~1Hz（跟随模式开着时），journal 静默同 followTick。
+        PerfMonitor.shared.beginSection("bubble.voiceYield")
+        defer { PerfMonitor.shared.endSection() }
+        let present = voiceBubblePresentNow()
         switch InputBubbleVoiceYieldPlan.decide(voiceBubblePresent: present, alreadyYielded: voiceYielded) {
         case .yield:
             panel.level = .floating
@@ -663,7 +681,7 @@ final class InputBubbleController: NSObject {
         if case .dismissOnly = InputBubbleSubmitGate.decide(
             text: text, mode: mode, targetStillValid: true, frontmostMatchesTarget: true
         ) {
-            dismiss(reactivateTarget: true)
+            dismiss(reactivateTarget: true, reason: "submitGateEmptyOrCancel")
             return
         }
 
@@ -704,8 +722,17 @@ extension InputBubbleController: NSTextViewDelegate {
         }
         switch commandSelector {
         case #selector(NSResponder.cancelOperation(_:)):
-            // Esc：关闭不注入，草稿保留（输入跟窗绑定，回来接着打）
-            dismiss(reactivateTarget: true)
+            // Esc：关闭不注入，草稿保留（输入跟窗绑定，回来接着打）。
+            // 0.1.3 语音取消门：语音气泡在屏时 Esc 归语音流（用户按 Esc 取消录音
+            // take/关转写浮层），吞掉不关气泡——录音期气泡是 key window，Esc 会
+            // 误关正在使用的气泡（14 次无提交消失取证，详见 InputBubbleEscPlan）。
+            if case .keepAndConsume = InputBubbleEscPlan.decide(voiceBubbleOnScreen: voiceBubblePresentNow()) {
+                log("[InputBubble] esc kept for voice flow, bubble stays", fields: [
+                    "windowID": target.map { String($0.windowID) } ?? "nil"
+                ])
+                return true
+            }
+            dismiss(reactivateTarget: true, reason: "esc")
             return true
         default:
             return false
@@ -732,7 +759,7 @@ extension InputBubbleController: NSWindowDelegate {
         // B183：「自动隐藏」开=旧行为失焦即关；关（默认）=绑定跟随，失焦不消失，
         // 气泡跟随目标窗（含跨屏与拖动），用 ✕ / Esc / 快捷键 / 提交 关闭。
         if case .dismiss = InputBubbleResignPlan.decide(autoHide: InputBubblePreferences.autoHide) {
-            dismiss(reactivateTarget: false)
+            dismiss(reactivateTarget: false, reason: "resignAutoHide")
         }
     }
 

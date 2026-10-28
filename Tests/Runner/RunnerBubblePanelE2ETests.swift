@@ -121,7 +121,7 @@ extension RunnerHarness {
             let sem = DispatchSemaphore(value: 0)
             Task { @MainActor in
                 if InputBubbleController.shared.phase != .idle {
-                    InputBubbleController.shared.dismiss(reactivateTarget: false)
+                    InputBubbleController.shared.dismiss(reactivateTarget: false, reason: "runnerTest")
                 }
                 sem.signal()
             }
@@ -262,7 +262,7 @@ extension RunnerHarness {
         // 生产 dismiss 收起（不回焦 scratch 窗——避免抢用户焦点链）
         let dismissSem = DispatchSemaphore(value: 0)
         Task { @MainActor in
-            InputBubbleController.shared.dismiss(reactivateTarget: false)
+            InputBubbleController.shared.dismiss(reactivateTarget: false, reason: "runnerTest")
             dismissSem.signal()
         }
         while dismissSem.wait(timeout: .now()) == .timedOut {

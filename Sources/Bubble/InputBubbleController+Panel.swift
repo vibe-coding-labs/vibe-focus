@@ -74,7 +74,7 @@ extension InputBubbleController {
         let closeButton = BubbleCloseButton(frame: .zero)
         closeButton.toolTip = "关闭气泡（Esc / 快捷键 同效）"
         closeButton.onClose = { [weak self] in
-            self?.dismiss(reactivateTarget: false)
+            self?.dismiss(reactivateTarget: false, reason: "closeButton")
         }
         card.closeButton = closeButton
         // 子视图序在 scroll 之后 = z 序更高，压在滚动区上沿可点

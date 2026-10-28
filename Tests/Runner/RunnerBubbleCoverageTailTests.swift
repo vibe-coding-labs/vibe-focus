@@ -260,7 +260,7 @@ extension RunnerHarness {
         check("tail: 设置窗可见性归还臂跑通", controller.phase == .idle)
         controller.submitButtonClicked()
         check("tail: 提交钮空态守卫", controller.phase == .idle)
-        controller.dismiss(reactivateTarget: false)
+        controller.dismiss(reactivateTarget: false, reason: "runnerTest")
         controller.handleEnter(commandHeld: false)
         check("tail: handleEnter 空态守卫", controller.phase == .idle)
 
