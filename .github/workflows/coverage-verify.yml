@@ -86,6 +86,8 @@ jobs:
           # 会被一个挂起域拖死并丢掉整轮 profraw。逐域化后单域挂起只损失该域。
           VIBEFOCUS_PER_DOMAIN_RUN: "1"
           VIBEFOCUS_PER_DOMAIN_TIMEOUT: "120"
+          # 弹窗门由脚本按域精确放开：runDomainUIGated 注册的 8 个 UI 域在临时
+          # runner 上带 VIBEFOCUS_UI_E2E=1 执行；其余域保持 0（真机零弹窗铁律不变）。
           WATCHDOG_MINUTES: "80"
         run: |
           set -o pipefail

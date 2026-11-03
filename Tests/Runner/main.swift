@@ -235,6 +235,12 @@ final class FakeAuditor: RestoreAuditing {
         }
     }
 
+    /// UI 域注册：既走域过滤（逐域采集时只在选中进程里求值），又保留弹窗门。
+    /// 未选中时 runDomain 直接返回，不会落到 runUIGated 的 skip 分支。
+    func runDomainUIGated(_ name: String, _ body: () -> Void) {
+        runDomain(name) { runUIGated(name, body) }
+    }
+
     /// 域过滤（2026-11-03）：CI 覆盖/定向回归用 `VIBEFOCUS_RUNNER_DOMAINS=runA,runB`
     /// 只跑指定域；未设置或为空 = 全量（真机门禁口径不变）。
     private lazy var requestedDomains: Set<String>? = {
@@ -432,23 +438,23 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runVoiceQueueAdvanceTests") { runVoiceQueueAdvanceTests() }
         runDomain("runKeyEventPosterTests") { runKeyEventPosterTests() }
         runDomain("runBubbleIdleGuardTests") { runBubbleIdleGuardTests() }
-        runUIGated("BubbleSubmitPipeline") {
+        runDomainUIGated("BubbleSubmitPipeline") {
             runBubbleSubmitPipelineTests()
         }
-        runUIGated("BubbleLifecyclePanel") {
+        runDomainUIGated("BubbleLifecyclePanel") {
             runBubbleLifecyclePanelTests()
         }
-        runUIGated("BubbleCoverageSweep") {
+        runDomainUIGated("BubbleCoverageSweep") {
             runBubbleCoverageSweepTests()
         }
-        runUIGated("BubbleCoverageTail") {
+        runDomainUIGated("BubbleCoverageTail") {
             runBubbleCoverageTailTests()
         }
-        runUIGated("BubbleCoverageFinale") {
+        runDomainUIGated("BubbleCoverageFinale") {
             runBubbleCoverageFinaleTests()
         }
         runDomain("runYabaiAsyncAndVoicePersistTests") { runYabaiAsyncAndVoicePersistTests() }
-        runUIGated("AutoShowStart") {
+        runDomainUIGated("AutoShowStart") {
             runAutoShowStartTests()
         }
         runDomain("runVoiceDelegateCallbackTests") { runVoiceDelegateCallbackTests() }
@@ -474,7 +480,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runBubbleButtonCursorTests") { runBubbleButtonCursorTests() }
         runDomain("runSelectionRefreshTests") { runSelectionRefreshTests() }
         runDomain("runHotKeyManagerStateTests") { runHotKeyManagerStateTests() }
-        runUIGated("BubbleHistoryPanelGuard") {
+        runDomainUIGated("BubbleHistoryPanelGuard") {
             runBubbleHistoryPanelGuardTests()
         }
         runDomain("runToggleEngineStoreTests") { runToggleEngineStoreTests() }
@@ -555,7 +561,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runWorkspaceSectionBranchTests") { runWorkspaceSectionBranchTests() }
         runDomain("runGridSectionPanelTests") { runGridSectionPanelTests() }
         runDomain("runSettingsRenderPilotTests") { runSettingsRenderPilotTests() }
-        runUIGated("SettingsWindowController") {
+        runDomainUIGated("SettingsWindowController") {
             runSettingsWindowControllerTests()
         }
         runDomain("runSettingsSnapshotRenderTests") { runSettingsSnapshotRenderTests() }

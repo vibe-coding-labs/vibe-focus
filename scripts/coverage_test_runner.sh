@@ -66,9 +66,10 @@ if [ "$PER_DOMAIN_RUN" = "1" ]; then
   rm -rf "$RAW_DIR" "$LOG_DIR"
   mkdir -p "$RAW_DIR" "$LOG_DIR"
 
-  # 域清单从注册表提取（main.swift 的 runDomain("...") 调用，保持注册顺序去重）。
-  DOMAINS="$(grep -oE 'runDomain\("[^"]+"' Tests/Runner/main.swift \
-    | sed -E 's/^runDomain\("//; s/"$//' \
+  # 域清单从注册表提取（main.swift 的 runDomain("...") / runDomainUIGated("...")
+  # 调用，保持注册顺序去重）。
+  DOMAINS="$(grep -oE 'runDomain(UIGated)?\("[^"]+"' Tests/Runner/main.swift \
+    | sed -E 's/^runDomain(UIGated)?\("//; s/"$//' \
     | awk '!seen[$0]++')"
   if [ -z "$DOMAINS" ]; then
     echo "ERROR: 未能从 Tests/Runner/main.swift 提取域清单" >&2
@@ -76,6 +77,12 @@ if [ "$PER_DOMAIN_RUN" = "1" ]; then
   fi
   SKIP_DOMAINS="${VIBEFOCUS_RUNNER_SKIP_DOMAINS:-}"
   ONLY_DOMAINS="${VIBEFOCUS_RUNNER_DOMAINS:-}"
+  # 弹窗门只对 UI 域放开：CI 是临时 runner，不碰用户共享桌面；其余域保持
+  # VIBEFOCUS_UI_E2E=0（runAllTests 的自动唤起保险丝照旧）。逐域进程相互隔离，
+  # 因此这里可以按域精确给开关，不会让 UI 域在 280 个进程里重复展开。
+  UI_DOMAINS="$(grep -oE 'runDomainUIGated\("[^"]+"' Tests/Runner/main.swift \
+    | sed -E 's/^runDomainUIGated\("//; s/"$//' \
+    | awk '!seen[$0]++')"
 
   START_SECONDS="$(date +%s)"
   BUDGET_SECONDS=$(( ${WATCHDOG_MINUTES:-80} * 60 ))
@@ -110,10 +117,15 @@ if [ "$PER_DOMAIN_RUN" = "1" ]; then
     fi
 
     DOMAIN_LOG="$LOG_DIR/${domain}.log"
+    DOMAIN_UI_E2E=0
+    if printf '%s\n' "$UI_DOMAINS" | grep -qx -- "$domain"; then
+      DOMAIN_UI_E2E=1
+    fi
     echo "=== [domain] ${domain} ==="
     set +e
     LLVM_PROFILE_FILE="$RAW_DIR/${domain}-%p.profraw" \
       VIBEFOCUS_RUNNER_DOMAINS="$domain" \
+      VIBEFOCUS_UI_E2E="$DOMAIN_UI_E2E" \
       run_with_timeout "$PER_DOMAIN_TIMEOUT" "$BIN" > "$DOMAIN_LOG" 2>&1
     DOMAIN_STATUS=$?
     set -e
