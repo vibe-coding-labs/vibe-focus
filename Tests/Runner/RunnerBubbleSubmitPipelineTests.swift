@@ -282,8 +282,8 @@ extension RunnerHarness {
         arm(text: "归位分支正文", bundleID: "com.googlecode.iterm2")
         InputBubblePreferences.autoRestoreOnSubmit = true
         controller.submitHasToggleRecordProvider = { true }
-        controller.submitSettleAXWindowProvider = { probeAXElement() }
-        if controller.submitSettleAXWindowProvider != nil {
+        if let probeAX = probeAXElement() {
+            controller.submitSettleAXWindowProvider = { probeAX.element }
             controller.submit(mode: .submit)
             _ = pumpUntilIdle(4.0)
             check("pipeline: 归位 restore 分支进入并收尾不崩（失败臂）", controller.phase == .idle)
