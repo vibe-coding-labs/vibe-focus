@@ -25,7 +25,9 @@ jobs:
       - name: Cache SwiftPM build
         uses: actions/cache@v4
         with:
-          path: .build
+          path: |
+            .build
+            .build-coverage
           key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: |
             swiftpm-${{ runner.os }}-
@@ -58,4 +60,33 @@ jobs:
         run: bash Tests/run_all_tests.sh
 
       - name: Runner tests
-        run: swift run VibeFocusTestRunner
+        env:
+          NSUnbufferedIO: "YES"
+        run: |
+          # CI 机器没有 yabai/AX 授权，个别真机依赖用例可能进入长等待；用 25 分钟
+          # 看门狗兜底并保留截止前的无缓冲输出（最后一段 === 域名 === 即卡住位置）。
+          swift build --product VibeFocusTestRunner
+          .build/debug/VibeFocusTestRunner &
+          pid=$!
+          ( sleep 1500; kill -9 "$pid" 2>/dev/null ) &
+          watchdog=$!
+          wait "$pid"; status=$?
+          kill "$watchdog" 2>/dev/null || true
+          exit $status
+
+      # 行/region 真实覆盖率（Runner 通道，@testable 直测 Sources）。报告逐文件
+      # 输出，作为「补哪一块」的选靶依据；同时上传 artifact 便于离线分析。
+      - name: Coverage (Runner, llvm-cov)
+        env:
+          NSUnbufferedIO: "YES"
+        run: |
+          set -o pipefail
+          bash scripts/coverage_test_runner.sh 2>&1 | tee coverage-report.txt
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report.txt
+          if-no-files-found: warn
