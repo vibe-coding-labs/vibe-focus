@@ -68,4 +68,44 @@ extension ToggleEngine {
         guard let visible = visibleSpaceOnSourceDisplay else { return .notNeeded }
         return visible == sourceSpace ? .notNeeded : .switchNeeded(visibleSpace: visible)
     }
+
+    /// 4-pre fresh 拓扑裁决（2026-11-03）：`sourceSpace` 已是按 display-local
+    /// 序号回译后的**当次拓扑目标**（RestoreSpaceTargetResolver 产物）。
+    ///
+    /// 与旧决策的差异只在「可观测性是否可信」：
+    /// - 显示不在 fresh 拓扑 / 目标 space 不在该显示 → `.targetUnresolvable`
+    ///   （不盲切、不谎报精确）；
+    /// - 可见 space 未知（拓扑里有该屏但没有 is-visible 项）→ `.switchNeeded(nil)`：
+    ///   切回命令幂等，尝试一次比默认「已精确」诚实；spaceExact 由切后轮询裁决。
+    enum FreshSourceSpacePreSwitch: Equatable {
+        /// record 无 space/display 上下文
+        case noContext
+        /// 目标显示/space 在 fresh 拓扑里无法定位（拔屏/索引漂移）——不可判定
+        case targetUnresolvable
+        /// 源屏可见 space 已等于目标
+        case notNeeded
+        /// 需要切回；visibleSpace=nil 表示可见性未知（仍尝试幂等切回）
+        case switchNeeded(visibleSpace: Int?)
+    }
+
+    static func freshSourceSpacePreSwitch(
+        sourceSpace: Int,
+        targetDisplay: Int?,
+        displayInTopology: Bool,
+        spaceOnDisplay: Bool,
+        visibleSpaceOnSourceDisplay: Int?
+    ) -> FreshSourceSpacePreSwitch {
+        guard sourceSpace > 0, let targetDisplay, targetDisplay > 0 else { return .noContext }
+        guard displayInTopology, spaceOnDisplay else { return .targetUnresolvable }
+        if visibleSpaceOnSourceDisplay == sourceSpace { return .notNeeded }
+        return .switchNeeded(visibleSpace: visibleSpaceOnSourceDisplay)
+    }
+
+    /// move 后落位裁决（2026-11-03）：地面真值优先。
+    /// - 落位与目标都可知 → 相等才精确；
+    /// - 任一未知 → 沿用预切回结论（绝不把未知伪装成精确）。
+    static func landingSpaceExact(preSwitch: Bool?, landedSpace: Int?, targetSpace: Int?) -> Bool? {
+        guard let landedSpace, let targetSpace else { return preSwitch }
+        return landedSpace == targetSpace
+    }
 }

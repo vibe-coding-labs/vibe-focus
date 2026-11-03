@@ -12,6 +12,28 @@ import Foundation
 // frame 直写、屏归属判定、审计事件——ToggleEngine.performRestore 七依赖全注入，
 // 测试无需真实 yabai/AX/SQLite 即可穷尽结局裁决全部分支。
 
+/// restore 的 fresh space 拓扑快照。
+///
+/// 为什么不用 `[YabaiSpaceInfo]?`：nil 同时可能表示「查询失败」与「测试未注入」。
+/// 预切回决策必须区分——查询失败要留 WARN 取证，未注入（历史假件）要走旧路径
+/// 保持既有序列锁不失效。
+enum RestoreSpaceTopology: Equatable {
+    /// 未取得 fresh 拓扑（yabai 查询失败/不可用；历史假件默认值）
+    case unavailable
+    /// fresh 拓扑（生产恒 ignoreCache=true）
+    case available([YabaiSpaceInfo])
+
+    var spaces: [YabaiSpaceInfo]? {
+        if case .available(let spaces) = self { return spaces }
+        return nil
+    }
+
+    var isAvailable: Bool {
+        if case .available = self { return true }
+        return false
+    }
+}
+
 /// restore 双层切回编排的 space 通道抽象。
 /// 生产实现 = SpaceController；测试注入假通道记录调用序列。
 protocol RestoreSpaceChanneling: AnyObject {
@@ -31,6 +53,15 @@ protocol RestoreSpaceChanneling: AnyObject {
     func queryWindow(windowID: UInt32, ignoreCache: Bool) -> YabaiWindowInfo?
     /// 指定 display 当前可见 space（4-pre 预切回决策 + 切回「等到位」轮询目标态）
     func visibleSpaceIndex(forDisplayIndex: Int?, spaces: [YabaiSpaceInfo]?, ignoreCache: Bool) -> SpaceIdentifier?
+    /// fresh space 拓扑（生产 ignoreCache=true）：restore 目标解析 + 索引漂移取证。
+    /// 预切回决策必须基于 fresh 状态——2s 缓存里的可见 space 可能是用户切走前的旧值。
+    func querySpaceTopology() -> RestoreSpaceTopology
+    /// Quartz frame 当前几何归属的 yabai display（record.sourceYabaiDisp 漂移校验；
+    /// nil=映射失败，调用方回退 record 值）。
+    func sourceDisplayForFrame(_ frame: CGRect) -> Int?
+    /// 窗口当前实际所属 space（move 后落位校验；生产 ignoreCache=true）。
+    /// nil=查询失败（未知，不等于落错）。
+    func windowSpaceIndex(windowID: UInt32) -> Int?
     /// float 脱管（--toggle float）；返回结局供调用方决定是否等重摆
     func setWindowFloat(_ windowID: UInt32, operationID: String?, knownWindowInfo: YabaiWindowInfo?) -> SpaceController.FloatToggleOutcome
     /// 按 space 过滤的窗口查询（守卫降级候选来源，轻查询计划）

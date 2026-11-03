@@ -105,6 +105,40 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
         return ignoreCache ? visibleSpaceAfterSwitch : visibleSpace
     }
 
+    // MARK: fresh 拓扑 / 几何屏 / 落位复核（2026-11-03 restore 取证加固）
+    //
+    // 默认值刻意保持「旧路径」：spaceTopology=.unavailable、landingSpace=nil。
+    // 三者均不写 seq/calls——既有 S1-S4 精确序列锁与 calls 断言不受影响。
+
+    /// fresh space 拓扑；默认 unavailable → performSourcePreSwitch 逐字回退旧路径。
+    var spaceTopology: RestoreSpaceTopology = .unavailable
+    /// origFrame 的几何 yabai display（nil=映射失败 → 解析器回退 record 屏）
+    var geometricSourceDisplay: Int?
+    /// 落位复核返回的窗口 space（nil=查询失败）
+    var landingSpace: Int?
+    /// 落位复核按调用顺序取值（模拟「补看后落定」时序）；空则退回 landingSpace
+    var landingSpaceQueue: [Int?] = []
+
+    private(set) var topologyQueries = 0
+    private(set) var geometricDisplayQueries = 0
+    private(set) var landingSpaceQueries = 0
+
+    func querySpaceTopology() -> RestoreSpaceTopology {
+        topologyQueries += 1
+        return spaceTopology
+    }
+
+    func sourceDisplayForFrame(_ frame: CGRect) -> Int? {
+        geometricDisplayQueries += 1
+        return geometricSourceDisplay
+    }
+
+    func windowSpaceIndex(windowID: UInt32) -> Int? {
+        landingSpaceQueries += 1
+        guard !landingSpaceQueue.isEmpty else { return landingSpace }
+        return landingSpaceQueue.removeFirst()
+    }
+
     func setWindowFloat(_ windowID: UInt32, operationID: String?, knownWindowInfo: YabaiWindowInfo?) -> SpaceController.FloatToggleOutcome {
         calls.append("float")
         seq?.add("float")
@@ -245,6 +279,7 @@ final class FakeAuditor: RestoreAuditing {
         runRestoreOrchestrationTests()
         runRestoreStageTests()
         runRestoreStageClampTests()
+        runRestoreSpaceTargetTests()
         runLayoutGridTests()
         runGridTargetE2E()
         runGridTargetLogicTests()

@@ -200,6 +200,32 @@ extension SpaceController {
         return Self.resolveVisibleSpaceIndex(displayIndex: displayIndex, spaces: resolvedSpaces)
     }
 
+    /// restore 目标的 fresh space 拓扑（RestoreSpaceChanneling）。
+    /// 恒 ignoreCache：restore 预切回决策绝不能读 2s 缓存——用户可能刚切走源屏
+    /// space，缓存里仍是旧可见值，会误判 notNeeded 跳过切回（落错工作区根因之一）。
+    nonisolated func querySpaceTopology() -> RestoreSpaceTopology {
+        guard let spaces = querySpaces(caller: "restoreTopology", ignoreCache: true) else {
+            log("[SpaceController] restore topology query failed (fresh)", level: .warn, fields: [
+                "durationBudget": "restore"
+            ])
+            return .unavailable
+        }
+        return .available(spaces)
+    }
+
+    /// Quartz frame → yabai display（record.sourceYabaiDisp 漂移校验）。
+    /// 几何归属唯一实现仍归 WindowManager.displayContext（Cocoa 变换 + 精确匹配表），
+    /// 这里只做转发，避免第二套“猜屏”逻辑。
+    func sourceDisplayForFrame(_ frame: CGRect) -> Int? {
+        WindowManager.shared.displayContext(for: frame).yabaiIndex
+    }
+
+    /// 窗口当前实际所属 space（move 后落位校验）。
+    /// 恒 ignoreCache：win 窗 query 缓存里是 move 前的旧 space，读缓存会让校验恒错。
+    nonisolated func windowSpaceIndex(windowID: UInt32) -> Int? {
+        queryWindow(windowID: windowID, ignoreCache: true)?.space
+    }
+
     func currentSpaceIndex() -> Int? {
         refreshAvailabilityIfNeeded()
         guard isEnabled, let space = queryFocusedSpace() else {

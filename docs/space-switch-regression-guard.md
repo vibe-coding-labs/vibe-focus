@@ -75,6 +75,24 @@ stderr 分类裁决），不许用间接字段推测；探针裁决走纯函数 
 缓存里是操作前的旧状态，读缓存恒假会让轮询白转满预算并误判失败）。
 无观测信号的等待（float 重摆完成）保留固定档并写明理由。
 
+### 教训 H：把「坐标对」当成「工作区对」（2026-11-03 主诉根因）
+
+用户主诉「工作区 2 的窗口还原时落到工作区 3 的对应位置」——frame 收敛（`frameOK`）
+与源屏可见 space 判定（`spaceExact`）都可能为真，但窗口真实所属 space 是另一个：
+同坐标不同 Space 在日志里与成功完全同形。另外两个隐性来源：
+1. `sourceSpace` 是 toggle 时刻的**全局索引**，任一屏增删 Space 都会位移；
+   还原目标必须按 `sourceDispSpace`（display-local 序号）在 fresh 拓扑上回译。
+2. 预切回决策读 2s 查询缓存：toggle→restore 间隔短时缓存还是切走前的可见 Space，
+   会误判「已在原工作区」跳过切回。
+**规则**：
+- restore 目标解析一律 `RestoreSpaceTargetResolver` + fresh `query --spaces`
+  （`querySpaceTopology`，恒 ignoreCache），拓扑失败才回退旧路径；
+- move 后用 `verifyLandingSpace`（窗口真实 space，恒 ignoreCache）做地面真值裁决，
+  结局 `spaceExact` 以落位为准；落位未知不得冒充精确，也不得冒充失败；
+- 目标屏/space 在拓扑里定位不到时**不盲切**，`spaceExact=false` 如实降级；
+- `completed` 日志/`restore_success` 审计必须同时带 `targetSpace`、`landedSpace`、
+  `spaceIndexShifted`——错工作区可凭这三个字段直接定位。
+
 ## 防护规则（当前版）
 
 1. **任何优化不得跳过**：源屏预切回、frame 读回验证、结局裁决、视角守卫。
@@ -85,7 +103,11 @@ stderr 分类裁决），不许用间接字段推测；探针裁决走纯函数 
    1) 副屏 toggle 到主屏；2) 源屏切到别的 space 后 restore → 窗口应回 sourceSpace；
    3) 源屏 space 清空后 restore → SA 可用时应精确切回（spaceExact=true，P0-1 直切通道）；
       SA 失效时结局应如实（spaceExact=false + WARN，不得 crash/假成功）；
-   4) 最小化后 restore → 快速失败且 record 保留；5) hook 自动聚焦不受影响。
+   4) 最小化后 restore → 快速失败且 record 保留；5) hook 自动聚焦不受影响；
+   6) 增删 Space 造成全局索引位移后 restore → 日志 `spaceIndexShifted=true`、
+      `targetSpace` 为回译值，窗口回原 display-local 工作区、`landedSpace==targetSpace`；
+   7) 错工作区场景复盘：`grep 'restore: completed'` 必须能一眼看出
+      `targetSpace` / `landedSpace` 是否相等（旧日志无此字段）。
 6. **门禁**：`swift build` 零警告 + `bash Tests/run_all_tests.sh` 全绿 +
    `swift run VibeFocusTestRunner` 全绿（真代码直测 + `bash scripts/coverage_test_runner.sh`
    覆盖率数字；新写/重写的纯决策逻辑按 2.13 口径分支穷尽覆盖至 100%）+

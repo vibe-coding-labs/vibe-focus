@@ -62,6 +62,13 @@ enum WindowSettle {
     /// 使用点：ToggleEngine+Restore 4-pre（切回成功后的可见性确认）。
     static let spaceSwitchWaitBudgetMs: UInt32 = 800
 
+    /// restore move 后「落位 space 复核」的补看预算：300ms / 50ms 节拍。
+    /// 只在首查已拿到 space 且 ≠ 目标时消费（落错要等 yabai/macOS 异步落定，
+    /// 避免把瞬态当结论）；首查即正确或查询失败都不进入轮询（零等待）。
+    /// 使用点：ToggleEngine+Restore+Stages.verifyLandingSpace。
+    static let landingSpaceVerifyPollIntervalMs: UInt32 = 50
+    static let landingSpaceVerifyBudgetMs: UInt32 = 300
+
     /// move/resize 分段写入的段间到位预算：300ms。fork 返回 ≠ 窗口服务已应用
     /// （2026-09-03 乱蹦二次修复实测：move 命令 179ms 返回时窗口服务尚未应用 resize，
     /// 第一段必须轮询到效果可观测才能发第二段）；yabai 单命令 fork 实测 82~322ms。
