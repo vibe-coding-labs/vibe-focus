@@ -232,6 +232,41 @@ extension RunnerHarness {
             check("renderAgent: 全开态 body 求值零崩溃", true)
         }
 
+        // ===== J. 读侧 API body 构建（status/sessions/snapshots/windows 信封） =====
+        // 四个 build*Body 是 GET 端点的唯一事实源；只锁信封与自洽性（count 与数组
+        // 长度一致），不锁具体窗口/会话内容（CI 与真机环境不同）。
+        do {
+            func payload(_ data: Data) -> [String: Any] {
+                (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            }
+            func dataOf(_ body: [String: Any]) -> [String: Any] {
+                body["data"] as? [String: Any] ?? [:]
+            }
+            let prefs = AgentAccessPreferences.Snapshot(
+                enabled: true, allowWindowOps: false, allowCreateWindows: false)
+            let status = payload(ClaudeHookServer.buildStatusBody(prefs: prefs))
+            let statusData = dataOf(status)
+            let agentAccess = statusData["agentAccess"] as? [String: Any]
+            check("apiBody: status 信封 ok/code + agentAccess 三开关回显",
+                  status["ok"] as? Bool == true && status["code"] as? String == "ok"
+                      && agentAccess?["enabled"] as? Bool == true
+                      && agentAccess?["allowWindowOps"] as? Bool == false
+                      && agentAccess?["allowCreateWindows"] as? Bool == false)
+            check("apiBody: status 含 version/hookServer/sessionCount",
+                  statusData["version"] != nil
+                      && (statusData["hookServer"] as? [String: Any])?["running"] != nil
+                      && (statusData["sessionCount"] as? Int) != nil)
+            let sessions = dataOf(payload(ClaudeHookServer.buildSessionsBody()))
+            check("apiBody: sessions 信封 count 与数组一致",
+                  (sessions["count"] as? Int) == ((sessions["sessions"] as? [Any])?.count ?? -1))
+            let snapshots = dataOf(payload(ClaudeHookServer.buildSnapshotsBody()))
+            check("apiBody: snapshots 信封 count 与数组一致",
+                  (snapshots["count"] as? Int) == ((snapshots["snapshots"] as? [Any])?.count ?? -1))
+            let windows = dataOf(payload(ClaudeHookServer.buildWindowsBody()))
+            check("apiBody: windows 信封 count 与数组一致",
+                  (windows["count"] as? Int) == ((windows["windows"] as? [Any])?.count ?? -1))
+        }
+
         // ===== I. MCP 响应信封形状（result/error 两构造器直测） =====
         // 信封字段名与 jsonrpc 版本是 MCP host 的解析契约；id 原样回显（数字/字符串/null）、
         // error 只带 code/message、result 内嵌对象不被重排。
