@@ -87,7 +87,7 @@ extension RunnerHarness {
         // SettingsView（general tab），由外层注入环境。
         var allOK = true
         for duplicates in [["/tmp/VibeFocus-Copy-A.app", "/tmp/VibeFocus-Copy-B.app"], []] {
-            var view = SettingsView()
+            let view = SettingsView()
             view.selectedTab = .general
             view.duplicateAppPaths = duplicates
             let renderer = ImageRenderer(
@@ -164,7 +164,7 @@ extension RunnerHarness {
             for enabled in [false, true] {
                 let conflicts: [String?] = [nil, "Rectangle"]
                 for conflict in conflicts {
-                    var view = SettingsView()
+                    let view = SettingsView()
                     view.selectedTab = .orchestration
                     view.layoutHotKeysEnabled = enabled
                     view.layoutConflictSummary = conflict

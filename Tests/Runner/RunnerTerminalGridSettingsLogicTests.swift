@@ -18,7 +18,7 @@ extension RunnerHarness {
 
         // MARK: A. 目标摘要四分支：快照缺失 → 回退文案
         do {
-            var view = SettingsView()
+            let view = SettingsView()
             view.gridMinimapScreens = []
 
             view.gridTargetCode = GridTargetCode.main.code
@@ -37,7 +37,7 @@ extension RunnerHarness {
 
         // MARK: B. 快照命中：屏号-位次语言
         do {
-            var view = SettingsView()
+            let view = SettingsView()
             view.gridMinimapScreens = [
                 ScreenLayoutMapper.InputScreen(
                     displayID: 4_292_000_001,
@@ -55,12 +55,12 @@ extension RunnerHarness {
                   view.gridTargetSummary == "→ 屏1 当前 Space")
             view.gridTargetCode = GridTargetCode.displaySpace(displayID: 4_292_000_001, spaceIndex: 7).code
             check("gridSettings: displaySpace 快照命中→屏号-位次",
-                  view.gridTargetSummary == "→ 屏1 · 屏1-位次2")
+                  view.gridTargetSummary == "→ 屏1 · 1-2")
         }
 
         // MARK: C. 快照重建（只读 yabai 查询；无 yabai 时退化为纯屏幕）
         do {
-            var view = SettingsView()
+            let view = SettingsView()
             view.refreshGridMinimap(ignoreCache: true)
             check("gridSettings: 强制重建后屏幕表非空（CI 至少一屏）",
                   !view.gridMinimapScreens.isEmpty || NSScreen.screens.isEmpty)
@@ -73,7 +73,7 @@ extension RunnerHarness {
             let empty = ImageRenderer(content: SettingsView().terminalGridSection)
             check("gridSettings: 空快照整段渲染出图", empty.nsImage != nil)
 
-            var warned = SettingsView()
+            let warned = SettingsView()
             warned.gridTargetCode = GridTargetCode.display(displayID: 4_292_000_999).code
             warned.gridSpaceSwitchMessage = "已切换到 屏1-位次2"
             warned.gridMinimapScreens = [

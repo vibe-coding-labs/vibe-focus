@@ -337,6 +337,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runSessionListsAndSettingsUIRenderTests") { runSessionListsAndSettingsUIRenderTests() }
         runDomain("runSessionLivePanelRenderTests") { runSessionLivePanelRenderTests() }
         runDomain("runTerminalGridSettingsLogicTests") { runTerminalGridSettingsLogicTests() }
+        runDomain("runSpaceQueryCacheTests") { runSpaceQueryCacheTests() }
         runDomain("runSettingsCommonSectionRenderTests") { runSettingsCommonSectionRenderTests() }
         runDomain("runWorkspaceAndSessionRenderTests") { runWorkspaceAndSessionRenderTests() }
         runDomain("runAllSectionsRenderTests") { runAllSectionsRenderTests() }
