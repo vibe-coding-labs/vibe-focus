@@ -77,15 +77,11 @@ jobs:
           NSUnbufferedIO: "YES"
           # workflow_dispatch 定向采集：逗号分隔域名单；空=全部。
           VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
-          # CI 无 yabai/AX/真实终端进程的整域跳过（真机门禁不设此变量，全跑）；
-          # 与 restore 门禁通道保持同一份名单，避免两条线口径漂移。
-          # runWorkspaceAndSessionRenderTests：activeSessionList 在无会话/无真显示的
-          # runner 上挂起（2026-11-03 实测 12 分钟无进展，拖死整轮）。
-          # runSettingsCommonSectionRenderTests：customAudioFileRows 之后停摆 21 分钟
-          # 无任何 PASS（2026-11-03 实测 41622369160，terminalGrid/claudeHook 段等
-          # 真实终端/配置探测），同样整域跳过。
-          # runRegistryFindPIDTests：改名夹具依赖真实 comm 链，CI 进程链不匹配恒红。
-          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests,runWorkspaceAndSessionRenderTests,runSettingsCommonSectionRenderTests,runRegistryFindPIDTests
+          # 逐域隔离后不再整域跳过：此前的挂起（activeSessionList 12min、
+          # SettingsCommon 21min）多为前序域遗留定时器/全局态所致，独立进程可隔离；
+          # 单域仍挂起则由 VIBEFOCUS_PER_DOMAIN_TIMEOUT 兜底，只损失该域。
+          # 环境性断言红（无 yabai/AX）不阻断覆盖率——退出码非 0 仍会落 profraw。
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: ""
           # 逐域独立进程：CI 上个别域会唤醒单例后台定时器永久空转，单进程全量跑
           # 会被一个挂起域拖死并丢掉整轮 profraw。逐域化后单域挂起只损失该域。
           VIBEFOCUS_PER_DOMAIN_RUN: "1"

@@ -423,6 +423,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runVoicePrefsPersistenceTests") { runVoicePrefsPersistenceTests() }
         runDomain("runBubbleClipboardIOTests") { runBubbleClipboardIOTests() }
         runDomain("runDiagnosticsTests") { runDiagnosticsTests() }
+        runDomain("runDiagnosticPathTests") { runDiagnosticPathTests() }
         runDomain("runScreenPositionTests") { runScreenPositionTests() }
         runDomain("runLoginItemRefreshTests") { runLoginItemRefreshTests() }
         runDomain("runTitleEditorChannelTests") { runTitleEditorChannelTests() }
@@ -586,7 +587,9 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runBStateSweepTests") { runBStateSweepTests() }
         runDomain("runAXDirectMoveTests") { runAXDirectMoveTests() }
         runDomain("runOverlayWindowE2ETests") { runOverlayWindowE2ETests() }
-        runPerfWatchdogTests()   // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰
+        // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰。
+        // 2026-11-03：登记为独立域（原先直接调用），逐域覆盖率采集下也只跑一次。
+        runDomain("runPerfWatchdogTests") { runPerfWatchdogTests() }
     // MARK: 汇总
 
     let skippedNote = skipped > 0 ? ", \(skipped) domains skipped" : ""
