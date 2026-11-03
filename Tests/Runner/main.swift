@@ -438,6 +438,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runVoiceQueueTests") { runVoiceQueueTests() }
         runDomain("runVoiceQueueAdvanceTests") { runVoiceQueueAdvanceTests() }
         runDomain("runKeyEventPosterTests") { runKeyEventPosterTests() }
+        runDomain("runHotKeyCarbonEventTests") { runHotKeyCarbonEventTests() }
         runDomain("runBubbleIdleGuardTests") { runBubbleIdleGuardTests() }
         runDomainUIGated("BubbleSubmitPipeline") {
             runBubbleSubmitPipelineTests()

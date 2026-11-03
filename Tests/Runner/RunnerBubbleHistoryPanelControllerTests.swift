@@ -16,6 +16,7 @@ import Foundation
 // 安全红线：真开一块我方 NSPanel（并短暂 activate）——用户活跃期（2 分钟内有真实
 // 输入）诚实跳过；defaults 域（inputBubbleHistory）先快照后恢复；激活策略原样还原。
 
+@MainActor
 private func historyPanelHostWindow(_ view: NSView, size: NSSize) -> NSWindow {
     let window = NSWindow(
         contentRect: NSRect(origin: .zero, size: size),
@@ -222,7 +223,7 @@ extension RunnerHarness {
         check("historyCtl: 第二点执行清空本窗过滤结果",
               store.entries().count < entriesBeforeClear
               && store.entries().contains { $0.windowID == 6_161 }
-              && (toastLabel()?.stringValue?.hasPrefix("已清空") ?? false))
+              && (toastLabel()?.stringValue.hasPrefix("已清空") ?? false))
         // 空结果再清 → 提示无可清空
         miniButton("清空")?.onClick?()
         miniButton("确认清空")?.onClick?()
