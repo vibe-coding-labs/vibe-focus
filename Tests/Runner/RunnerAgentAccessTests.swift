@@ -277,14 +277,14 @@ extension RunnerHarness {
             let ok = obj(MCPProtocol.resultResponse(id: 7, result: ["tools": []]))
             check("mcpResp: result 信封 jsonrpc/id/result 齐备",
                   ok["jsonrpc"] as? String == "2.0" && ok["id"] as? Int == 7
-                      && ok["result"] is [String: Any] && ok["error"] == nil)
+                      && (ok["result"] as? [String: Any]) != nil && ok["error"] == nil)
             check("mcpResp: 字符串 id 原样回显",
                   obj(MCPProtocol.resultResponse(id: "abc", result: [:]))["id"] as? String == "abc")
             let err = obj(MCPProtocol.errorResponse(id: NSNull(), code: -32601, message: "method not found"))
             let errBody = err["error"] as? [String: Any]
             check("mcpResp: error 信封 code/message 且无 result",
                   err["jsonrpc"] as? String == "2.0"
-                      && err["id"] is NSNull
+                      && (err["id"] as? NSNull) != nil
                       && errBody?["code"] as? Int == -32601
                       && errBody?["message"] as? String == "method not found"
                       && err["result"] == nil)
