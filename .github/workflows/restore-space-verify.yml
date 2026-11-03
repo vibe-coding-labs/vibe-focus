@@ -27,7 +27,7 @@ on:
 jobs:
   gates:
     runs-on: macos-latest
-    timeout-minutes: 40
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +72,11 @@ jobs:
         env:
           NSUnbufferedIO: "YES"
           VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
+          # CI 无 yabai/AX/真实终端进程的整域跳过（真机门禁不设此变量，全跑）：
+          # - HookWalk: 依赖真实终端进程 comm 链
+          # - AgentAccessLoopback: 写类 handler 触真机窗口/yabai，主线程阻塞后 HTTP 级联超时
+          # - SpaceSwitch/SpaceQueryYabai: 需要运行中的 yabai
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests
           WATCHDOG_MINUTES: ${{ inputs.watchdog_minutes || '25' }}
         run: |
           # CI 机器没有 yabai/AX 授权，个别真机依赖用例可能进入长等待；看门狗兜底
@@ -89,10 +94,12 @@ jobs:
       # 行/region 真实覆盖率（Runner 通道，@testable 直测 Sources）。报告逐文件
       # 输出，作为「补哪一块」的选靶依据；同时上传 artifact 便于离线分析。
       - name: Coverage (Runner, llvm-cov)
-        if: success()
+        # 即使 Runner 断言失败也出报告（脚本容忍非 0、保留 profraw）；artifact 恒上传。
+        if: always()
         env:
           NSUnbufferedIO: "YES"
           VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests
         run: |
           set -o pipefail
           bash scripts/coverage_test_runner.sh 2>&1 | tee coverage-report.txt

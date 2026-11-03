@@ -22,7 +22,17 @@ swift build --product VibeFocusTestRunner --scratch-path "$SCRATCH" \
   -Xswiftc -profile-generate -Xswiftc -profile-coverage-mapping
 
 echo "==> 执行 VibeFocusTestRunner（profraw → ${RAW}）"
+# 覆盖率采集不因个别断言失败而丢报告：Runner 非 0 时照常 merge/report，
+# 最后原样透传退出码（测点已在正常退出时落盘；看门狗 SIGKILL 才会丢 profraw）。
+set +e
 LLVM_PROFILE_FILE="$RAW" "$BIN"
+RUNNER_STATUS=$?
+set -e
+echo "==> Runner 退出码：$RUNNER_STATUS（仍继续出覆盖率报告）"
+if [ ! -f "$RAW" ]; then
+  echo "ERROR: 未生成 profraw（进程可能被 SIGKILL/崩溃）" >&2
+  exit 2
+fi
 
 echo "==> merge profdata"
 llvm_profdata_bin() {
@@ -48,3 +58,6 @@ echo "==> llvm-cov 报告（Sources/ 逐文件）"
 # 不含 "Sources/" 前缀），任何按 /Sources\// 过滤的 awk 都会把逐文件行全部滤掉，
 # 只剩 TOTAL——逐文件 100% 验收数字在门禁输出里不可见。路径过滤已限定范围，全量输出。
 "$COV_TOOL" report "$BIN" -instr-profile="$PROFDATA" "$(pwd)/Sources"
+
+echo "==> Runner 断言状态：$([ "$RUNNER_STATUS" -eq 0 ] && echo '全绿' || echo "失败(exit $RUNNER_STATUS)")"
+exit "$RUNNER_STATUS"
