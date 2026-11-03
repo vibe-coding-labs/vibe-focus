@@ -194,6 +194,8 @@ final class FakeAuditor: RestoreAuditing {
 @MainActor final class RunnerHarness {
     var passed = 0
     var failed = 0
+    /// 环境不具备而整域跳过的计数（不计 PASS/FAIL，汇总单列）。
+    var skipped = 0
     func check(_ name: String, _ condition: Bool) {
         if condition { passed += 1; print("  PASS: \(name)") }
         else { failed += 1; print("  FAIL: \(name)") }
@@ -243,8 +245,22 @@ final class FakeAuditor: RestoreAuditing {
         return names.isEmpty ? nil : Set(names)
     }()
 
+    /// CI 无 yabai/AX/真实终端进程时的整域跳过名单（`VIBEFOCUS_RUNNER_SKIP_DOMAINS`）；
+    /// 真机门禁不设此变量 = 全跑。跳过计入 skipped，汇总单列。
+    private lazy var skippedDomains: Set<String> = {
+        guard let raw = ProcessInfo.processInfo.environment["VIBEFOCUS_RUNNER_SKIP_DOMAINS"] else { return [] }
+        return Set(raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty })
+    }()
+
     func runDomain(_ name: String, _ body: () -> Void) {
         if let requested = requestedDomains, !requested.contains(name) { return }
+        if skippedDomains.contains(name) {
+            skipped += 1
+            print("  SKIP: \(name)（环境不具备：\(ProcessInfo.processInfo.environment["VIBEFOCUS_SKIP_REASON"] ?? "见 VIBEFOCUS_RUNNER_SKIP_DOMAINS")）")
+            return
+        }
         print("=== \(name) ===")
         body()
     }
@@ -573,7 +589,8 @@ final class FakeAuditor: RestoreAuditing {
         runPerfWatchdogTests()   // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰
     // MARK: 汇总
 
-    print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
+    let skippedNote = skipped > 0 ? ", \(skipped) domains skipped" : ""
+    print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed\(skippedNote)")
     exit(failed == 0 ? 0 : 1)
     }
 }

@@ -231,5 +231,163 @@ extension RunnerHarness {
             _ = view.agentAccessSection
             check("renderAgent: 全开态 body 求值零崩溃", true)
         }
+
+        // ===== H. CLI 解析分支穷尽（2026-11-03 覆盖率补强） =====
+        // 只锁纯函数：参数解析每个 invalid 出口、flagValue 边界、apiBody/apiEndpoint
+        // 全命令表、CLI 值字面量、连接配置兜底链（临时 home 注入，零生产 defaults 写）。
+        do {
+            func invalid(_ outcome: AgentCLIParseOutcome) -> Bool {
+                if case .invalid = outcome { return true }
+                return false
+            }
+
+            // windows 子命令族
+            check("cliH: windows list 多余参数→invalid",
+                  invalid(AgentCLIRouter.parse(["windows", "list", "--all", "x"])))
+            check("cliH: windows 未知子命令→invalid",
+                  invalid(AgentCLIRouter.parse(["windows", "evil"])))
+            check("cliH: windows 无子命令→invalid",
+                  invalid(AgentCLIRouter.parse(["windows"])))
+            check("cliH: focus 合法",
+                  AgentCLIRouter.parse(["windows", "focus", "--id", "12"]) == .command(.focus(windowID: 12)))
+            check("cliH: focus 缺 id→invalid",
+                  invalid(AgentCLIRouter.parse(["windows", "focus"])))
+            check("cliH: move-main id=0→invalid",
+                  invalid(AgentCLIRouter.parse(["windows", "move-main", "--id", "0"])))
+            check("cliH: move-main id 非数字→invalid",
+                  invalid(AgentCLIRouter.parse(["windows", "move-main", "--id", "abc"])))
+            check("cliH: float --off",
+                  AgentCLIRouter.parse(["windows", "float", "--id", "7", "--off"]) == .command(.float(windowID: 7, on: false)))
+            check("cliH: float 同时给 --on/--off 时 --on 优先（顺序契约）",
+                  AgentCLIRouter.parse(["windows", "float", "--id", "7", "--off", "--on"]) == .command(.float(windowID: 7, on: true)))
+            check("cliH: float id=0→invalid",
+                  invalid(AgentCLIRouter.parse(["windows", "float", "--id", "0", "--on"])))
+            check("cliH: layout 缺 preset→invalid",
+                  invalid(AgentCLIRouter.parse(["windows", "layout"])))
+
+            // 其余顶层动词
+            check("cliH: sessions 非 list→invalid", invalid(AgentCLIRouter.parse(["sessions", "list", "x"])))
+            check("cliH: snapshots list 合法",
+                  AgentCLIRouter.parse(["snapshots", "list"]) == .command(.snapshotsList))
+            check("cliH: snapshots list 多余参数→invalid",
+                  invalid(AgentCLIRouter.parse(["snapshots", "list", "x"])))
+            check("cliH: snapshots 未知子命令→invalid",
+                  invalid(AgentCLIRouter.parse(["snapshots", "evil"])))
+            check("cliH: grid 非 create→invalid", invalid(AgentCLIRouter.parse(["grid", "list"])))
+            check("cliH: grid 空参数→行列 nil",
+                  AgentCLIRouter.parse(["grid", "create"]) == .command(.gridCreate(rows: nil, cols: nil)))
+            check("cliH: grid --cols 非整数→invalid",
+                  invalid(AgentCLIRouter.parse(["grid", "create", "--cols", "x"])))
+            check("cliH: grid 只给 --cols",
+                  AgentCLIRouter.parse(["grid", "create", "--cols", "4"]) == .command(.gridCreate(rows: nil, cols: 4)))
+            check("cliH: notify 空文本→invalid",
+                  invalid(AgentCLIRouter.parse(["notify", "--text", ""])))
+            check("cliH: notify 无 title→title nil",
+                  AgentCLIRouter.parse(["notify", "--text", "hi"]) == .command(.notify(text: "hi", title: nil)))
+            check("cliH: space 非 switch→invalid", invalid(AgentCLIRouter.parse(["space", "focus"])))
+            check("cliH: space switch 缺值→invalid", invalid(AgentCLIRouter.parse(["space", "switch"])))
+            check("cliH: space switch 非数字→invalid",
+                  invalid(AgentCLIRouter.parse(["space", "switch", "--space", "x"])))
+            check("cliH: settings get 合法",
+                  AgentCLIRouter.parse(["settings", "get"]) == .command(.settingsGet))
+            check("cliH: settings get 多余参数→invalid",
+                  invalid(AgentCLIRouter.parse(["settings", "get", "x"])))
+            check("cliH: settings set 合法",
+                  AgentCLIRouter.parse(["settings", "set", "--key", "sound.volume", "--value", "0.5"])
+                  == .command(.settingsSet(key: "sound.volume", value: "0.5")))
+            check("cliH: settings set 缺 value→invalid",
+                  invalid(AgentCLIRouter.parse(["settings", "set", "--key", "k"])))
+            check("cliH: settings 未知子命令→invalid",
+                  invalid(AgentCLIRouter.parse(["settings", "evil"])))
+
+            // flagValue 边界：末位无值 / 重复取首个 / 无该旗标
+            check("cliH: flagValue 末位无值→nil", AgentCLIRouter.flagValue(["view", "--id"], "--id") == nil)
+            check("cliH: flagValue 重复取首个", AgentCLIRouter.flagValue(["--id", "1", "--id", "2"], "--id") == "1")
+            check("cliH: flagValue 无该旗标→nil", AgentCLIRouter.flagValue(["view"], "--id") == nil)
+
+            // CLI 值字面量（settings set 的类型解析）
+            check("cliH: parseCLIValue true→Bool",
+                  AgentCLIRouter.parseCLIValue("true") as? Bool == true)
+            check("cliH: parseCLIValue false→Bool",
+                  AgentCLIRouter.parseCLIValue("false") as? Bool == false)
+            check("cliH: parseCLIValue 整数→Int",
+                  AgentCLIRouter.parseCLIValue("-12") as? Int == -12)
+            check("cliH: parseCLIValue 小数→Double",
+                  AgentCLIRouter.parseCLIValue("0.25") as? Double == 0.25)
+            check("cliH: parseCLIValue 其余→String 原样",
+                  AgentCLIRouter.parseCLIValue("leftHalf") as? String == "leftHalf")
+
+            // apiBody 全分支
+            check("cliH: notify 带 title body",
+                  AgentCLICommand.notify(text: "hi", title: "T").apiBody["title"] as? String == "T")
+            check("cliH: notify 无 title 不带键",
+                  AgentCLICommand.notify(text: "hi", title: nil).apiBody["title"] == nil)
+            check("cliH: grid 双 nil body 为空",
+                  AgentCLICommand.gridCreate(rows: nil, cols: nil).apiBody.isEmpty)
+            check("cliH: grid 只 rows body 仅一鍵",
+                  AgentCLICommand.gridCreate(rows: 2, cols: nil).apiBody.count == 1
+                  && AgentCLICommand.gridCreate(rows: 2, cols: nil).apiBody["rows"] as? Int == 2)
+            check("cliH: snapshotCapture 无 name body 为空",
+                  AgentCLICommand.snapshotCapture(name: nil).apiBody.isEmpty)
+            check("cliH: snapshotRestore 带 id body",
+                  AgentCLICommand.snapshotRestore(id: "abc").apiBody["id"] as? String == "abc")
+            check("cliH: settingsSet body 值按类型解析",
+                  AgentCLICommand.settingsSet(key: "k", value: "0.5").apiBody["value"] as? Double == 0.5)
+            check("cliH: 直读命令 body 皆空",
+                  AgentCLICommand.status.apiBody.isEmpty
+                  && AgentCLICommand.snapshotsList.apiBody.isEmpty
+                  && AgentCLICommand.settingsGet.apiBody.isEmpty)
+
+            // apiEndpoint 全命令表（settings GET/POST 必须按方法精确命中）
+            check("cliH: focus 端点", AgentCLICommand.focus(windowID: 1).apiEndpoint?.path == "/api/v1/windows/focus")
+            check("cliH: layout 端点", AgentCLICommand.layout(preset: "center").apiEndpoint?.path == "/api/v1/windows/layout")
+            check("cliH: notify 端点", AgentCLICommand.notify(text: "x", title: nil).apiEndpoint?.path == "/api/v1/notify")
+            check("cliH: space 端点", AgentCLICommand.spaceSwitch(space: 2).apiEndpoint?.path == "/api/v1/space/switch")
+            check("cliH: grid 端点", AgentCLICommand.gridCreate(rows: nil, cols: nil).apiEndpoint?.path == "/api/v1/grid/create")
+            check("cliH: snapshotCapture 端点",
+                  AgentCLICommand.snapshotCapture(name: nil).apiEndpoint?.path == "/api/v1/snapshots/capture")
+            check("cliH: snapshotRestore 端点",
+                  AgentCLICommand.snapshotRestore(id: nil).apiEndpoint?.path == "/api/v1/snapshots/restore")
+            check("cliH: settingsGet 精确 GET",
+                  AgentCLICommand.settingsGet.apiEndpoint?.method == "GET"
+                  && AgentCLICommand.settingsGet.apiEndpoint?.path == "/api/v1/settings")
+            check("cliH: settingsSet 精确 POST",
+                  AgentCLICommand.settingsSet(key: "k", value: "v").apiEndpoint?.method == "POST"
+                  && AgentCLICommand.settingsSet(key: "k", value: "v").apiEndpoint?.path == "/api/v1/settings")
+
+            // 退出码 default 分支
+            check("cliH: exit 500→6（默认操作失败）",
+                  AgentCLIExitCode.resolve(transportFailed: false, httpStatus: 500) == 6)
+            check("cliH: exit 传输失败压过 HTTP 状态",
+                  AgentCLIExitCode.resolve(transportFailed: true, httpStatus: 200) == 3)
+
+            // 连接配置兜底链：临时 home 注入，零生产 defaults 写
+            let home = NSTemporaryDirectory() + "vf-cli-\(UUID().uuidString)"
+            let cfgDir = home + "/.vibefocus"
+            try? FileManager.default.createDirectory(atPath: cfgDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: home) }
+            check("cliH: 无配置文件→默认端口+无 token",
+                  AgentCLIConnection.load(home: home, preferCFPreferences: false)
+                  == .init(port: ClaudeHookPreferences.defaultPort, token: nil))
+            let jsonWithToken = #"{"port":39277,"token":"tk"}"#
+            try? jsonWithToken.write(toFile: cfgDir + "/hook-config.json", atomically: true, encoding: .utf8)
+            check("cliH: 配置文件端口+token 命中",
+                  AgentCLIConnection.load(home: home, preferCFPreferences: false)
+                  == .init(port: 39277, token: "tk"))
+            let jsonEmptyToken = #"{"port":39277,"token":""}"#
+            try? jsonEmptyToken.write(toFile: cfgDir + "/hook-config.json", atomically: true, encoding: .utf8)
+            check("cliH: 空 token 归一为 nil",
+                  AgentCLIConnection.load(home: home, preferCFPreferences: false)
+                  == .init(port: 39277, token: nil))
+            let jsonLowPort = #"{"port":80,"token":"tk"}"#
+            try? jsonLowPort.write(toFile: cfgDir + "/hook-config.json", atomically: true, encoding: .utf8)
+            check("cliH: 特权端口(<1024)丢弃→默认端口",
+                  AgentCLIConnection.load(home: home, preferCFPreferences: false)
+                  == .init(port: ClaudeHookPreferences.defaultPort, token: nil))
+            try? "not json".write(toFile: cfgDir + "/hook-config.json", atomically: true, encoding: .utf8)
+            check("cliH: 坏 JSON→默认端口",
+                  AgentCLIConnection.load(home: home, preferCFPreferences: false)
+                  == .init(port: ClaudeHookPreferences.defaultPort, token: nil))
+        }
     }
 }

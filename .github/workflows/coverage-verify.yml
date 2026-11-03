@@ -68,6 +68,10 @@ jobs:
         env:
           NSUnbufferedIO: "YES"
           VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
+          # CI 无 yabai/AX/真实终端进程的整域跳过（真机门禁不设此变量，全跑）；
+          # 与 restore 门禁通道保持同一份名单，避免两条线口径漂移。
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests
+          WATCHDOG_MINUTES: "25"
         run: |
           set -o pipefail
           bash scripts/coverage_test_runner.sh 2>&1 | tee coverage-report.txt

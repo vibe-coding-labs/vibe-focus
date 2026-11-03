@@ -7,6 +7,9 @@
 # 作为「分支穷尽覆盖」验收（2.13 用户裁决）的量化参考。
 #
 # Run: bash scripts/coverage_test_runner.sh
+# 环境变量：
+#   WATCHDOG_MINUTES   Runner 看门狗分钟数（默认 25）；CI 无 yabai/AX 时长等待兜底。
+#   VIBEFOCUS_RUNNER_SKIP_DOMAINS  整域跳过（见 Tests/Runner/main.swift runDomain）。
 # 退出码：0 = Runner 全过并成功出报告；非 0 = Runner 失败或工具链缺失。
 
 set -euo pipefail
@@ -24,9 +27,20 @@ swift build --product VibeFocusTestRunner --scratch-path "$SCRATCH" \
 echo "==> 执行 VibeFocusTestRunner（profraw → ${RAW}）"
 # 覆盖率采集不因个别断言失败而丢报告：Runner 非 0 时照常 merge/report，
 # 最后原样透传退出码（测点已在正常退出时落盘；看门狗 SIGKILL 才会丢 profraw）。
+# 看门狗：CI 机器无 yabai/AX，个别域可能进入长等待；超时 kill -9 并保留截止前输出。
+WATCHDOG_MINUTES="${WATCHDOG_MINUTES:-25}"
 set +e
-LLVM_PROFILE_FILE="$RAW" "$BIN"
+LLVM_PROFILE_FILE="$RAW" "$BIN" &
+runner_pid=$!
+( sleep $((10#$WATCHDOG_MINUTES * 60)); kill -9 "$runner_pid" 2>/dev/null ) &
+watchdog_pid=$!
+wait "$runner_pid"
 RUNNER_STATUS=$?
+kill "$watchdog_pid" 2>/dev/null
+wait "$watchdog_pid" 2>/dev/null
+if [ "$RUNNER_STATUS" -eq 137 ]; then
+  echo "ERROR: Runner 被看门狗杀死（超过 ${WATCHDOG_MINUTES} 分钟）" >&2
+fi
 set -e
 echo "==> Runner 退出码：$RUNNER_STATUS（仍继续出覆盖率报告）"
 if [ ! -f "$RAW" ]; then
