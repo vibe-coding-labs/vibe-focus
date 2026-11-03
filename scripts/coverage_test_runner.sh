@@ -42,7 +42,9 @@ if [ "$RUNNER_STATUS" -eq 137 ]; then
   echo "ERROR: Runner 被看门狗杀死（超过 ${WATCHDOG_MINUTES} 分钟）" >&2
 fi
 set -e
-echo "==> Runner 退出码：$RUNNER_STATUS（仍继续出覆盖率报告）"
+# 变量紧邻全角括号时必须用 ${} 包住：bash 会把多字节字符当成标识符的一部分，
+# `$RUNNER_STATUS（` 会被解析成名为「RUNNER_STATUS（」的变量（CI 实测 unbound）。
+echo "==> Runner 退出码：${RUNNER_STATUS}（仍继续出覆盖率报告）"
 if [ ! -f "$RAW" ]; then
   echo "ERROR: 未生成 profraw（进程可能被 SIGKILL/崩溃）" >&2
   exit 2

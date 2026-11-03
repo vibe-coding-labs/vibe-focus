@@ -24,7 +24,9 @@ on:
 jobs:
   coverage:
     runs-on: macos-latest
-    timeout-minutes: 75
+    # 全量 Runner 在无 yabai/AX 的 runner 上约 60-80 分钟（实测：25 分钟内只跑到
+    # 第 55/285 个域，且被环境性挂起拖住）。看门狗与作业上限同步放宽。
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -70,8 +72,11 @@ jobs:
           VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
           # CI 无 yabai/AX/真实终端进程的整域跳过（真机门禁不设此变量，全跑）；
           # 与 restore 门禁通道保持同一份名单，避免两条线口径漂移。
-          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests
-          WATCHDOG_MINUTES: "25"
+          # runWorkspaceAndSessionRenderTests：activeSessionList 在无会话/无真显示的
+          # runner 上挂起（2026-11-03 实测 12 分钟无进展，拖死整轮）。
+          # runRegistryFindPIDTests：改名夹具依赖真实 comm 链，CI 进程链不匹配恒红。
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests,runWorkspaceAndSessionRenderTests,runRegistryFindPIDTests
+          WATCHDOG_MINUTES: "80"
         run: |
           set -o pipefail
           bash scripts/coverage_test_runner.sh 2>&1 | tee coverage-report.txt
