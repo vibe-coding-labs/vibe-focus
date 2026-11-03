@@ -1,0 +1,46 @@
+name: Verify (macOS)
+
+# 特征分支的真实门禁通道（2026-11-03）。
+#
+# 背景：开发会话跑在 Linux 主机，无 Swift 工具链且工程依赖 AppKit，
+# AGENTS.md 规定的三道门禁无法本机执行。此工作流把门禁搬到 macOS runner：
+#   swift build（零警告）→ bash Tests/run_all_tests.sh → swift run VibeFocusTestRunner
+#
+# 只由本特征分支的 push 触发（不挂 main / 不挂 PR），合并进 main 后可用
+# workflow_dispatch 手动跑；不会给日常提交带来额外消耗。
+
+on:
+  push:
+    branches:
+      - fix/restore-space-observability
+  workflow_dispatch:
+
+jobs:
+  gates:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
+      - name: swift build (zero warnings)
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee build.log
+          if grep -n "warning:" build.log; then
+            echo "::error::swift build 出现警告（门禁要求零警告）"
+            exit 1
+          fi
+
+      - name: Standalone tests
+        run: bash Tests/run_all_tests.sh
+
+      - name: Runner tests
+        run: swift run VibeFocusTestRunner
