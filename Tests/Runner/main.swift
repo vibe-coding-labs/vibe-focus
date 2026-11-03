@@ -317,6 +317,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runRestoreInFlightTests") { runRestoreInFlightTests() }
         runDomain("runRegistryFindPIDTests") { runRegistryFindPIDTests() }
         runDomain("runWindowMoveExecuteTests") { runWindowMoveExecuteTests() }
+        runDomain("runWindowResolutionFallbackTests") { runWindowResolutionFallbackTests() }
         runDomain("runHookInstallHomeTests") { runHookInstallHomeTests() }
         runDomain("runHookClaudeSettingsHomeTests") { runHookClaudeSettingsHomeTests() }
         runDomain("runSettingsSectionRenderTests") { runSettingsSectionRenderTests() }
@@ -443,6 +444,9 @@ final class FakeAuditor: RestoreAuditing {
         }
         runDomainUIGated("BubbleLifecyclePanel") {
             runBubbleLifecyclePanelTests()
+        }
+        runDomainUIGated("BubbleHistoryPanel") {
+            runBubbleHistoryPanelTests()
         }
         runDomainUIGated("BubbleCoverageSweep") {
             runBubbleCoverageSweepTests()
