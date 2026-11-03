@@ -15,17 +15,17 @@ on:
     branches:
       - test/coverage-sprint
   workflow_dispatch:
+    inputs:
+      domains:
+        description: '只跑指定 Runner 域（逗号分隔；留空=全量）'
+        required: false
+        default: ''
 
 # 连续 push 只保留最新一轮全量采集：旧轮（可能正卡在环境性慢域）就地取消，
 # 避免队列堆积把 macOS 分钟数耗在过期提交上。
 concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
-    inputs:
-      domains:
-        description: '只跑指定 Runner 域（逗号分隔；留空=全量）'
-        required: false
-        default: ''
 
 jobs:
   coverage:
