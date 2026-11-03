@@ -80,9 +80,13 @@ jobs:
           # - AgentAccessLoopback: 写类 handler 触真机窗口/yabai，主线程阻塞后 HTTP 级联超时
           # - SpaceSwitch/SpaceQueryYabai: 需要运行中的 yabai
           # - WorkspaceAndSessionRender: activeSessionList 在无会话 runner 上挂起
+          # - SettingsCommonSectionRender: customAudioFileRows 后停摆 21 分钟（terminalGrid/
+          #   claudeHook 段依赖真实终端/配置探测），41622369160 实测
           # - RegistryFindPID: 改名夹具依赖真实 comm 链，CI 进程链不匹配
-          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests,runWorkspaceAndSessionRenderTests,runRegistryFindPIDTests
-          WATCHDOG_MINUTES: ${{ inputs.watchdog_minutes || '25' }}
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests,runWorkspaceAndSessionRenderTests,runSettingsCommonSectionRenderTests,runRegistryFindPIDTests
+          # push 触发时 inputs.* 为空，此兜底即默认值——必须与 inputs 默认（65）一致，
+          # 否则 push 运行仍按 25 分钟被杀（2026-11-03 实测：41622369160 即在 25 分整被杀）。
+          WATCHDOG_MINUTES: ${{ inputs.watchdog_minutes || '65' }}
         run: |
           # CI 机器没有 yabai/AX 授权，个别真机依赖用例可能进入长等待；看门狗兜底
           # 并保留截止前的无缓冲输出（最后一段 === 域名 === 即卡住位置）。
