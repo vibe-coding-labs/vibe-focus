@@ -1,0 +1,81 @@
+name: Coverage (macOS)
+
+# 覆盖率线专用 macOS 通道（2026-11-03）。
+#
+# 开发会话在 Linux 主机（无 Swift 工具链、工程依赖 AppKit），AGENTS.md 门禁只能在
+# macOS 跑。本工作流只服务 test/coverage-sprint 分支：
+#   构建零警告 → Standalone → llvm-cov 全量 Runner 覆盖率报告（artifact）。
+# 覆盖率脚本容忍 Runner 断言失败（profraw 已落盘即出报告），因此 CI 无 yabai/AX
+# 导致的真机域红不会挡住覆盖率数字；报告仍会标注 Runner 退出码。
+#
+# 定向采集：workflow_dispatch 传 domains=<逗号分隔 runXxxTests>，只跑相关域。
+
+on:
+  push:
+    branches:
+      - test/coverage-sprint
+  workflow_dispatch:
+    inputs:
+      domains:
+        description: '只跑指定 Runner 域（逗号分隔；留空=全量）'
+        required: false
+        default: ''
+
+jobs:
+  coverage:
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            .build-coverage
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
+      # Csqlite3/module.modulemap 硬编码开发机 CLT SDK 路径；runner 的 CLT SDK 不含
+      # usr/include 头文件。CI 侧软链 Xcode SDK 同名头（不改仓库构建配置）。
+      - name: Prepare SQLite header for hardcoded CLT path
+        run: |
+          target="/Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sqlite3.h"
+          if [ ! -f "$target" ]; then
+            sdk="$(xcrun --sdk macosx --show-sdk-path)"
+            test -f "$sdk/usr/include/sqlite3.h"
+            sudo mkdir -p "$(dirname "$target")"
+            sudo ln -sf "$sdk/usr/include/sqlite3.h" "$target"
+          fi
+          ls -l "$target"
+
+      - name: swift build (zero warnings)
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee build.log
+          if grep -n "warning:" build.log; then
+            echo "::error::swift build 出现警告（门禁要求零警告）"
+            exit 1
+          fi
+
+      - name: Standalone tests
+        run: bash Tests/run_all_tests.sh
+
+      - name: Coverage (Runner, llvm-cov)
+        if: always()
+        env:
+          NSUnbufferedIO: "YES"
+          VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
+        run: |
+          set -o pipefail
+          bash scripts/coverage_test_runner.sh 2>&1 | tee coverage-report.txt
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report.txt
+          if-no-files-found: warn
