@@ -74,8 +74,11 @@ jobs:
           # 与 restore 门禁通道保持同一份名单，避免两条线口径漂移。
           # runWorkspaceAndSessionRenderTests：activeSessionList 在无会话/无真显示的
           # runner 上挂起（2026-11-03 实测 12 分钟无进展，拖死整轮）。
+          # runSettingsCommonSectionRenderTests：customAudioFileRows 之后停摆 21 分钟
+          # 无任何 PASS（2026-11-03 实测 41622369160，terminalGrid/claudeHook 段等
+          # 真实终端/配置探测），同样整域跳过。
           # runRegistryFindPIDTests：改名夹具依赖真实 comm 链，CI 进程链不匹配恒红。
-          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests,runWorkspaceAndSessionRenderTests,runRegistryFindPIDTests
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests,runWorkspaceAndSessionRenderTests,runSettingsCommonSectionRenderTests,runRegistryFindPIDTests
           WATCHDOG_MINUTES: "80"
         run: |
           set -o pipefail
