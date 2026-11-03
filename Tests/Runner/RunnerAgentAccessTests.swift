@@ -232,6 +232,29 @@ extension RunnerHarness {
             check("renderAgent: 全开态 body 求值零崩溃", true)
         }
 
+        // ===== I. MCP 响应信封形状（result/error 两构造器直测） =====
+        // 信封字段名与 jsonrpc 版本是 MCP host 的解析契约；id 原样回显（数字/字符串/null）、
+        // error 只带 code/message、result 内嵌对象不被重排。
+        do {
+            func obj(_ data: Data) -> [String: Any] {
+                (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            }
+            let ok = obj(MCPProtocol.resultResponse(id: 7, result: ["tools": []]))
+            check("mcpResp: result 信封 jsonrpc/id/result 齐备",
+                  ok["jsonrpc"] as? String == "2.0" && ok["id"] as? Int == 7
+                      && ok["result"] is [String: Any] && ok["error"] == nil)
+            check("mcpResp: 字符串 id 原样回显",
+                  obj(MCPProtocol.resultResponse(id: "abc", result: [:]))["id"] as? String == "abc")
+            let err = obj(MCPProtocol.errorResponse(id: NSNull(), code: -32601, message: "method not found"))
+            let errBody = err["error"] as? [String: Any]
+            check("mcpResp: error 信封 code/message 且无 result",
+                  err["jsonrpc"] as? String == "2.0"
+                      && err["id"] is NSNull
+                      && errBody?["code"] as? Int == -32601
+                      && errBody?["message"] as? String == "method not found"
+                      && err["result"] == nil)
+        }
+
         // ===== H. CLI 解析分支穷尽（2026-11-03 覆盖率补强） =====
         // 只锁纯函数：参数解析每个 invalid 出口、flagValue 边界、apiBody/apiEndpoint
         // 全命令表、CLI 值字面量、连接配置兜底链（临时 home 注入，零生产 defaults 写）。

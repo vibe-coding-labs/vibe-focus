@@ -256,6 +256,7 @@ extension RunnerHarness {
         check("mover B211: claudeSessionEnd → hookPull", InputBubbleArrivalMover.map(.claudeSessionEnd) == .hookPull)
         check("mover B211: manualHotkey → userAction", InputBubbleArrivalMover.map(.manualHotkey) == .userAction)
         check("mover B211: userPromptSubmit（B126 已退役搬窗）保守 → userAction", InputBubbleArrivalMover.map(.userPromptSubmit) == .userAction)
+        check("mover B211: agentCommand（Agent 编排移动）保守 → userAction", InputBubbleArrivalMover.map(.agentCommand) == .userAction)
 
         // --- B211 归因账本：hook 拉回 10s 新鲜期内可弹，过期/覆盖/容量淘汰 ---
         let ledger = MoveToMainAttributionLedger.shared
