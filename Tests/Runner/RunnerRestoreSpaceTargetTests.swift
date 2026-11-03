@@ -227,9 +227,13 @@ extension RunnerHarness {
         }
 
         do {
-            // 可见性未知（拓扑有屏但无 is-visible 项）：仍尝试幂等切回，不默认精确
+            // 可见性未知（拓扑有屏但无 is-visible 项）：仍尝试幂等切回，不默认精确。
+            // 夹具必须让记录 display-local 序号（2）在该屏存在：display 2 放 local 1=4、
+            // local 2=5。若只放一个 space，解析器会判 local 序号越界（spaceOnDisplay=false）
+            // 而走「目标不可定位」——那是另一条分支（见下一条用例）。
             let layout = [
                 space(1, display: 1, visible: false),
+                space(4, display: 2, visible: false),
                 space(5, display: 2, visible: false),
             ]
             let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)

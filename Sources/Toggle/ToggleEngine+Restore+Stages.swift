@@ -516,10 +516,10 @@ extension ToggleEngine {
         // 窗口从此卡在主屏全屏态（用户主诉「尺寸/位置搞错」）。改为：原始帧夹进
         // 源屏可视区（保持尺寸、位置回到可见处）幂等重试一次；成功即还原（审计
         // 诚实标注 clamped_restore=true），仍失败才清 record 升级永久失败。
-        if let sourceScreen = SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: record.sourceYabaiDisp) {
+        if let sourceVisibleFrame = windows.visibleFrameForDisplay(record.sourceYabaiDisp) {
             let clampedFrame = CoordinateKit.clampFrame(
                 record.origFrame,
-                into: CoordinateKit.quartzVisibleFrame(of: sourceScreen)
+                into: sourceVisibleFrame
             )
             log("[ToggleEngine] restore: origFrame is off any display, clamping into source screen and retrying", level: .warn, fields: [
                 "traceID": trace, "windowID": String(windowID),

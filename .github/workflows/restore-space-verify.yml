@@ -14,6 +14,15 @@ on:
     branches:
       - fix/restore-space-observability
   workflow_dispatch:
+    inputs:
+      domains:
+        description: '只跑指定 Runner 域（逗号分隔的 runXxxTests；留空=全量）'
+        required: false
+        default: ''
+      watchdog_minutes:
+        description: 'Runner 看门狗分钟数（默认 25）'
+        required: false
+        default: '25'
 
 jobs:
   gates:
@@ -62,13 +71,16 @@ jobs:
       - name: Runner tests
         env:
           NSUnbufferedIO: "YES"
+          VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
+          WATCHDOG_MINUTES: ${{ inputs.watchdog_minutes || '25' }}
         run: |
-          # CI 机器没有 yabai/AX 授权，个别真机依赖用例可能进入长等待；用 25 分钟
-          # 看门狗兜底并保留截止前的无缓冲输出（最后一段 === 域名 === 即卡住位置）。
+          # CI 机器没有 yabai/AX 授权，个别真机依赖用例可能进入长等待；看门狗兜底
+          # 并保留截止前的无缓冲输出（最后一段 === 域名 === 即卡住位置）。
+          # 定向回归：workflow_dispatch 传 domains=<逗号分隔域方法名>。
           swift build --product VibeFocusTestRunner
           .build/debug/VibeFocusTestRunner &
           pid=$!
-          ( sleep 1500; kill -9 "$pid" 2>/dev/null ) &
+          ( sleep $((10#$WATCHDOG_MINUTES * 60)); kill -9 "$pid" 2>/dev/null ) &
           watchdog=$!
           wait "$pid"; status=$?
           kill "$watchdog" 2>/dev/null || true
@@ -77,8 +89,10 @@ jobs:
       # 行/region 真实覆盖率（Runner 通道，@testable 直测 Sources）。报告逐文件
       # 输出，作为「补哪一块」的选靶依据；同时上传 artifact 便于离线分析。
       - name: Coverage (Runner, llvm-cov)
+        if: success()
         env:
           NSUnbufferedIO: "YES"
+          VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
         run: |
           set -o pipefail
           bash scripts/coverage_test_runner.sh 2>&1 | tee coverage-report.txt

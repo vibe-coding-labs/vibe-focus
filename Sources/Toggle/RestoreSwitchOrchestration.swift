@@ -1,4 +1,5 @@
 import ApplicationServices
+import Cocoa
 import Foundation
 
 // MARK: - Restore 双层切回编排（可注入通道抽象）
@@ -85,8 +86,19 @@ protocol RestoreWindowOperating: AnyObject {
     func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement?
     func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleFrame: CGRect?) -> Bool
     func displayContext(for frame: CGRect) -> (yabaiIndex: Int?, displayID: UInt32?)
+    /// 指定 yabai display 的可视帧（Quartz 坐标）；nil=该屏不存在（拔屏/索引失效）。
+    /// origFrame 屏外 clamp 退让依赖它——注入缝让该分支在无真机的测试通道可确定性执行。
+    func visibleFrameForDisplay(_ displayIndex: Int) -> CGRect?
     /// frame 收敛容差（FloatSettle 重摆等待的稳定判据与移动收敛共用同一容差）
     var frameTolerance: CGFloat { get }
+}
+
+extension RestoreWindowOperating {
+    /// 生产默认：走 SpaceController 的 yabai display → NSScreen 换算。
+    func visibleFrameForDisplay(_ displayIndex: Int) -> CGRect? {
+        SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: displayIndex)
+            .map { CoordinateKit.quartzVisibleFrame(of: $0) }
+    }
 }
 
 extension WindowManager: RestoreWindowOperating {}

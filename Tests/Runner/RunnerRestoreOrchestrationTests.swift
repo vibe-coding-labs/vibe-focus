@@ -1080,6 +1080,7 @@ extension RunnerHarness {
             let log = RestoreSeqLog()
             let (rec, win, ch2, aud) = makeDeps(moveOK: false, channels: ch, seq: log)
             win.displayContextResult = (yabaiIndex: nil, displayID: nil)  // 屏外 → clamp 退让
+            win.visibleFrameResult = CGRect(x: 0, y: 0, width: 1440, height: 900) // 注入源屏帧，脱离真机 NSScreen
             win.moveResult = false                                        // clamp 重试也失败
             let outcome = run(rec, win, ch2, aud)
             check("restoreSeq S4: 屏外且 clamp 失败 → moveFailedPermanent", outcome == .moveFailedPermanent)

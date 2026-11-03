@@ -114,15 +114,14 @@ extension RunnerHarness {
         }
 
         // ===== F. 屏外 origFrame → 夹进源屏幂等重试成功（restore_clamped 闭环）=====
-        guard SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: 1) != nil else {
-            check("restoreStage: clamp 重试成功路（环境无屏号映射，跳过）", true)
-            return
-        }
+        // 源屏帧由 FakeWindows 注入（2026-11-03）：不再依赖真机 NSScreen 映射，
+        // CI/无头环境同样确定性执行 clamp 分支。
         do {
             let ch = FakeRestoreChannels(canControlSpaces: true, currentSpace: 1)
             let rec = FakeRecords(record: record)
             let win = FakeWindows(findResult: nil, moveResult: true)
             win.displayContextResult = (yabaiIndex: nil, displayID: nil) // origFrame 落所有屏之外
+            win.visibleFrameResult = CGRect(x: 0, y: 0, width: 1440, height: 900)
             let aud = FakeAuditor()
             let pre = ToggleEngine.RestorePreMoveContext(
                 preMoveSpace: 1, preMoveFocusedDisplay: 1, spaceExact: true, guardPrefetchedWindows: [])
