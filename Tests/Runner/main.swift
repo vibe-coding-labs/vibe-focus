@@ -323,6 +323,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runSettingsSectionRenderTests") { runSettingsSectionRenderTests() }
         runDomain("runAgentAccessTests") { runAgentAccessTests() }
         runDomain("runAgentAccessLoopbackTests") { runAgentAccessLoopbackTests() }
+        runDomain("runAgentAPIDispatchTests") { runAgentAPIDispatchTests() }
         runDomain("runMCPRegistrationTests") { runMCPRegistrationTests() }
         runDomain("runAgentSettingsWriteTests") { runAgentSettingsWriteTests() }
         runDomain("runAgentOnboardingTests") { runAgentOnboardingTests() }
@@ -335,6 +336,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runSessionListsAndWorkspaceRenderTests") { runSessionListsAndWorkspaceRenderTests() }
         runDomain("runSessionListsAndSettingsUIRenderTests") { runSessionListsAndSettingsUIRenderTests() }
         runDomain("runSessionLivePanelRenderTests") { runSessionLivePanelRenderTests() }
+        runDomain("runTerminalGridSettingsLogicTests") { runTerminalGridSettingsLogicTests() }
         runDomain("runSettingsCommonSectionRenderTests") { runSettingsCommonSectionRenderTests() }
         runDomain("runWorkspaceAndSessionRenderTests") { runWorkspaceAndSessionRenderTests() }
         runDomain("runAllSectionsRenderTests") { runAllSectionsRenderTests() }
