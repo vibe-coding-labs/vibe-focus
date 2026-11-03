@@ -218,7 +218,7 @@ struct InfoBanner<Accessory: View>: View {
         style: Style,
         title: String? = nil,
         text: String,
-        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+        @ViewBuilder accessory: () -> Accessory
     ) {
         self.style = style
         self.title = title
@@ -260,6 +260,14 @@ struct InfoBanner<Accessory: View>: View {
             RoundedRectangle(cornerRadius: VibeRadius.panel, style: .continuous)
                 .strokeBorder(style.tint.opacity(0.16), lineWidth: 1)
         )
+    }
+}
+
+extension InfoBanner where Accessory == EmptyView {
+    /// 无尾部操作插槽时的便捷构造。默认参数写不出泛型默认值（`= { EmptyView() }`
+    /// 在 Swift 6 语言模式下会报错），用受限扩展显式固定 Accessory == EmptyView。
+    init(style: Style, title: String? = nil, text: String) {
+        self.init(style: style, title: title, text: text, accessory: { EmptyView() })
     }
 }
 
