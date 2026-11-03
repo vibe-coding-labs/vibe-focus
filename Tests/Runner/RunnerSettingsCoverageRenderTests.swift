@@ -82,14 +82,20 @@ extension RunnerHarness {
     func runSettingsTabAppearanceRenderTests() { renderSettingsTab(.appearance) }
 
     func runSettingsRenderPermissionsDuplicatesTests() {
-        let view = SettingsView()
-        let saved = view.duplicateAppPaths
-        defer { view.duplicateAppPaths = saved }
-        // 副本列表非空分支：ForEach 行 + 「全部移到废纸篓」按钮构建（action 不触发）。
-        view.duplicateAppPaths = ["/tmp/VibeFocus-Copy-A.app", "/tmp/VibeFocus-Copy-B.app"]
-        _ = renderSectionImage("permissions/副本列表", view.permissionsSection)
-        view.duplicateAppPaths = []
-        _ = renderSectionImage("permissions/无副本", view.permissionsSection)
+        // 权限分区读 SettingsView 自身的 @EnvironmentObject hotKeyManager，独立求值
+        // `view.permissionsSection` 会 fatal（CI 实证 Trace/BPT）；改渲染整棵
+        // SettingsView（general tab），由外层注入环境。
+        var allOK = true
+        for duplicates in [["/tmp/VibeFocus-Copy-A.app", "/tmp/VibeFocus-Copy-B.app"], []] {
+            var view = SettingsView()
+            view.selectedTab = .general
+            view.duplicateAppPaths = duplicates
+            let renderer = ImageRenderer(
+                content: SettingsViewHost(view: view).environmentObject(HotKeyManager.shared))
+            renderer.proposedSize = ProposedViewSize(width: 680, height: 940)
+            if renderer.nsImage == nil { allOK = false }
+        }
+        check("renderCov: 权限分区 有/无副本 两态渲染出图", allOK)
     }
 
     func runSettingsCoverageRenderTests() {
@@ -109,11 +115,13 @@ extension RunnerHarness {
                 manager.updateLLMMaxChars(saved.llmMaxChars)
             }
 
-            let view = SettingsView()
+            // 每次渲染用**新的 SettingsView 实例**：CI 实证复用同一实例时 SwiftUI 会
+            // 命中 body 缓存（游离的 @StateObject 不订阅 @Published），后三次渲染根本
+            // 不求值 `if mode != .none` 分支——实测 30~205 行整段未覆盖。
             var allRendered = true
             for mode in VoiceAnnouncementMode.allCases {
                 manager.updateMode(mode)
-                let renderer = ImageRenderer(content: view.voiceAnnouncementSection)
+                let renderer = ImageRenderer(content: SettingsView().voiceAnnouncementSection)
                 if renderer.nsImage == nil { allRendered = false }
             }
             check("renderCov: 语音播报四模式全渲染出图", allRendered)
@@ -125,12 +133,12 @@ extension RunnerHarness {
             manager.updateTemplateText("")
             manager.updateVolume(0)
             manager.updateSpeechRate(100)
-            let emptyTemplate = ImageRenderer(content: view.voiceAnnouncementSection)
+            let emptyTemplate = ImageRenderer(content: SettingsView().voiceAnnouncementSection)
             check("renderCov: 语音模板空文案渲染出图", emptyTemplate.nsImage != nil)
 
             manager.updateMode(.audioFile)
             manager.updateAudioFilePath("/tmp/nonexistent-audio.wav")
-            let audio = ImageRenderer(content: view.voiceAnnouncementSection)
+            let audio = ImageRenderer(content: SettingsView().voiceAnnouncementSection)
             check("renderCov: 语音音频文件路径渲染出图", audio.nsImage != nil)
 
             manager.updateMode(.llmSummary)
@@ -140,34 +148,40 @@ extension RunnerHarness {
             manager.updateLLMApiKey("sk-test")
             manager.updateLLMModel("gpt-test")
             manager.updateLLMMaxChars(100)
-            let llm = ImageRenderer(content: view.voiceAnnouncementSection)
+            let llm = ImageRenderer(content: SettingsView().voiceAnnouncementSection)
             check("renderCov: 语音 LLM 端值渲染出图", llm.nsImage != nil)
         }
 
         // MARK: B. 摆位快捷键分区：注入 EnvironmentObject 渲染 + 状态双分支
+        //
+        // 2026-11-03 CI 实证：直接求值 `view.layoutHotKeySection` 会 fatal
+        // （No ObservableObject of type HotKeyManager）——该分区读的是 **SettingsView
+        // 自身的 @EnvironmentObject**，注入到子视图上无效（属性包装器在父实例上未安装）。
+        // 改为把整棵 SettingsView 交给 SwiftUI 求值：外层注入环境、选中编排 tab、
+        // ImageRenderer 触发完整布局（ScrollView 子内容随之实例化）。
         do {
-            let view = SettingsView()
-            let savedEnabled = view.layoutHotKeysEnabled
-            let savedConflict = view.layoutConflictSummary
-
             var allOK = true
             for enabled in [false, true] {
                 let conflicts: [String?] = [nil, "Rectangle"]
                 for conflict in conflicts {
+                    var view = SettingsView()
+                    view.selectedTab = .orchestration
                     view.layoutHotKeysEnabled = enabled
                     view.layoutConflictSummary = conflict
-                    let host = NSHostingView(
-                        rootView: view.layoutHotKeySection.environmentObject(HotKeyManager.shared)
-                    )
-                    host.frame = NSRect(x: 0, y: 0, width: 680, height: 700)
-                    host.layoutSubtreeIfNeeded()
-                    if host.subviews.isEmpty { allOK = false }
+                    let renderer = ImageRenderer(
+                        content: SettingsViewHost(view: view)
+                            .environmentObject(HotKeyManager.shared))
+                    renderer.proposedSize = ProposedViewSize(width: 680, height: 900)
+                    if renderer.nsImage == nil { allOK = false }
                 }
             }
             check("renderCov: 摆位分区 开关×冲突横幅 四态渲染非退化", allOK)
-
-            view.layoutHotKeysEnabled = savedEnabled
-            view.layoutConflictSummary = savedConflict
         }
     }
+}
+
+/// 让 SwiftUI 真正求值 SettingsView.body（其 @EnvironmentObject 才能被安装）。
+private struct SettingsViewHost: View {
+    let view: SettingsView
+    var body: some View { view }
 }

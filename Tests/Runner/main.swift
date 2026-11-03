@@ -334,6 +334,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runTGEmptySnapshotRenderTests") { runTGEmptySnapshotRenderTests() }
         runDomain("runSessionListsAndWorkspaceRenderTests") { runSessionListsAndWorkspaceRenderTests() }
         runDomain("runSessionListsAndSettingsUIRenderTests") { runSessionListsAndSettingsUIRenderTests() }
+        runDomain("runSessionLivePanelRenderTests") { runSessionLivePanelRenderTests() }
         runDomain("runSettingsCommonSectionRenderTests") { runSettingsCommonSectionRenderTests() }
         runDomain("runWorkspaceAndSessionRenderTests") { runWorkspaceAndSessionRenderTests() }
         runDomain("runAllSectionsRenderTests") { runAllSectionsRenderTests() }
@@ -439,6 +440,8 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runVoiceQueueAdvanceTests") { runVoiceQueueAdvanceTests() }
         runDomain("runKeyEventPosterTests") { runKeyEventPosterTests() }
         runDomain("runHotKeyCarbonEventTests") { runHotKeyCarbonEventTests() }
+        runDomain("runHotKeyFallbackMonitorTests") { runHotKeyFallbackMonitorTests() }
+        runDomain("runHotKeyShortcutValidationTests") { runHotKeyShortcutValidationTests() }
         runDomain("runBubbleIdleGuardTests") { runBubbleIdleGuardTests() }
         runDomainUIGated("BubbleSubmitPipeline") {
             runBubbleSubmitPipelineTests()

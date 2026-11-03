@@ -132,5 +132,131 @@ extension RunnerHarness {
         let deadline = Date().addingTimeInterval(0.2)
         while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
         check("carbon: 唤起键异步落地后气泡仍空闲", InputBubbleController.shared.isIdle)
+
+        // ⑦ 摆位键（Carbon id → action 映射）：置「在途」只走去抖 skip 臂，
+        // 零搬窗、零 beep（外层的 LayoutPreferences defer 会还原总开关）。
+        let savedLayoutInFlight = manager.isLayoutInFlight
+        let savedLayoutTriggeredAt = manager.lastLayoutTriggeredAt
+        defer {
+            manager.isLayoutInFlight = savedLayoutInFlight
+            manager.lastLayoutTriggeredAt = savedLayoutTriggeredAt
+        }
+        LayoutPreferences.isEnabled = true
+        if let action = LayoutAction.allCases.first(where: {
+               guard let hotKey = manager.layoutTable.hotKey(for: $0) else { return false }
+               return hotKey != manager.currentHotKey
+           }),
+           let layoutEvent = makeEvent(
+               hotKeyID: EventHotKeyID(signature: manager.hotkeySignature, id: action.carbonHotKeyID)) {
+            manager.isLayoutInFlight = true
+            check("carbon: 摆位键命中且在途时消费、不搬窗",
+                  manager.handleHotKeyEvent(layoutEvent) == noErr)
+            manager.isLayoutInFlight = false
+        } else {
+            check("carbon: 摆位默认绑定可查（环境受限跳过）", true)
+        }
+    }
+}
+
+// MARK: - 回退 NSEvent monitor 通道（CGEventTap 不可用时的兜底）
+
+// 安全边界：monitor 安装后立即同步移除（回调只在 run loop 期触发，窗口内零派发）；
+// 事件全为合成 NSEvent；所有可能真执行动作的臂都先置「在途/冷却」标志，只走 skip 分支。
+
+extension RunnerHarness {
+
+    func runHotKeyFallbackMonitorTests() {
+        print("\n=== HotKeyFallbackMonitor ===")
+        let manager = HotKeyManager.shared
+
+        // --- 安装/移除：本地 monitor 必装；重复移除幂等 ---
+        manager.removeFallbackMonitors()
+        manager.installFallbackMonitors()
+        check("hotkeyFallback: 本地 keyDown monitor 已安装", manager.localMonitor != nil)
+        manager.removeFallbackMonitors()
+        manager.removeFallbackMonitors()
+        check("hotkeyFallback: 移除后两槽清空且幂等",
+              manager.globalMonitor == nil && manager.localMonitor == nil)
+
+        func keyEvent(keyCode: UInt32, modifiers: UInt32, isRepeat: Bool = false) -> NSEvent? {
+            var flags: NSEvent.ModifierFlags = []
+            if modifiers & UInt32(cmdKey) != 0 { flags.insert(.command) }
+            if modifiers & UInt32(optionKey) != 0 { flags.insert(.option) }
+            if modifiers & UInt32(controlKey) != 0 { flags.insert(.control) }
+            if modifiers & UInt32(shiftKey) != 0 { flags.insert(.shift) }
+            return NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                windowNumber: 0, context: nil,
+                characters: "v", charactersIgnoringModifiers: "v",
+                isARepeat: isRepeat, keyCode: UInt16(truncatingIfNeeded: keyCode))
+        }
+
+        let savedBubbleEnabled = InputBubblePreferences.isEnabled
+        let savedLayoutEnabled = LayoutPreferences.isEnabled
+        let savedTitleEnabled = TitleEditorPreferences.isEnabled
+        let savedTitleHotKey = TitleEditorPreferences.isHotKeyEnabled
+        let savedInFlight = manager.isToggleInFlight
+        let savedTriggeredAt = manager.lastToggleTriggeredAt
+        let savedLayoutInFlight = manager.isLayoutInFlight
+        let savedLayoutTriggeredAt = manager.lastLayoutTriggeredAt
+        defer {
+            InputBubblePreferences.isEnabled = savedBubbleEnabled
+            LayoutPreferences.isEnabled = savedLayoutEnabled
+            TitleEditorPreferences.isEnabled = savedTitleEnabled
+            TitleEditorPreferences.isHotKeyEnabled = savedTitleHotKey
+            manager.isToggleInFlight = savedInFlight
+            manager.lastToggleTriggeredAt = savedTriggeredAt
+            manager.isLayoutInFlight = savedLayoutInFlight
+            manager.lastLayoutTriggeredAt = savedLayoutTriggeredAt
+            manager.removeFallbackMonitors()
+        }
+        InputBubblePreferences.isEnabled = false
+        TitleEditorPreferences.isEnabled = false
+        TitleEditorPreferences.isHotKeyEnabled = false
+
+        // ① 自动连发：入口直接放行
+        if let repeatEvent = keyEvent(
+            keyCode: manager.currentHotKey.keyCode, modifiers: manager.currentHotKey.modifiers,
+            isRepeat: true) {
+            check("hotkeyFallback: 自动连发不消费",
+                  manager.handleFallbackEvent(repeatEvent, source: "unit") == false)
+        }
+
+        // ② 完全不相干的键：不消费
+        if let plainEvent = keyEvent(keyCode: 0, modifiers: 0) {
+            check("hotkeyFallback: 无关按键不消费",
+                  manager.handleFallbackEvent(plainEvent, source: "unit") == false)
+        }
+
+        // ③ 主 toggle 键命中，但在途 → 消费事件、动作被去重门丢弃
+        if let toggleEvent = keyEvent(
+            keyCode: manager.currentHotKey.keyCode, modifiers: manager.currentHotKey.modifiers) {
+            manager.isToggleInFlight = true
+            check("hotkeyFallback: 主键命中消费且在途不搬窗",
+                  manager.handleFallbackEvent(toggleEvent, source: "unit") == true)
+            manager.isToggleInFlight = false
+        }
+
+        // ④ 摆位键命中，但在途 → 消费事件、动作被去抖门丢弃（零搬窗、零 beep）
+        LayoutPreferences.isEnabled = true
+        // 避开与主键同组合的摆位绑定（layoutHit 要求 !matches）
+        if let action = LayoutAction.allCases.first(where: {
+               guard let hk = manager.layoutTable.hotKey(for: $0) else { return false }
+               return hk != manager.currentHotKey
+           }),
+           let hotKey = manager.layoutTable.hotKey(for: action),
+           let layoutEvent = keyEvent(keyCode: hotKey.keyCode, modifiers: hotKey.modifiers) {
+            manager.isLayoutInFlight = true
+            check("hotkeyFallback: 摆位键命中消费且在途不搬窗",
+                  manager.handleFallbackEvent(layoutEvent, source: "unit") == true)
+            manager.isLayoutInFlight = false
+
+            // ⑤ 去抖窗内重复触发：同样丢弃
+            manager.lastLayoutTriggeredAt = Date()
+            manager.triggerLayoutActionIfNeeded(action, source: "unit")
+            check("hotkeyFallback: 摆位触发冷却窗内丢弃", manager.isLayoutInFlight == false)
+        } else {
+            check("hotkeyFallback: 摆位默认绑定可查（环境受限跳过）", true)
+        }
     }
 }
