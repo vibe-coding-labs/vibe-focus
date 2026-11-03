@@ -17,6 +17,97 @@ extension RunnerHarness {
         runTerminalAutomationBuilders()
         runRestoreModelStats()
         runCGWindowAndToggleGuards()
+        runCodexHookDocumentTransforms()
+    }
+
+    // MARK: - Codex hooks.json 纯变换（B130 双形状安装/卸载）
+
+    /// 本段原覆盖寄居在 runHookWalkTests（CI 进程链不具备而整域跳过）；这里把
+    /// 字典级纯变换搬到普通域，锁定双形状层序、顶层历史层降级、开关裁剪与卸载保留外部条目。
+    private func runCodexHookDocumentTransforms() {
+        let scriptPath = "/tmp/vf-codex-hook-\(UUID().uuidString.prefix(6)).sh"
+        let targetURL = "http://127.0.0.1:39277/codex/hook"
+        func ourEntry() -> [String: Any] {
+            ["matcher": "", "hooks": [["type": "command", "command": "bash \"\(scriptPath)\"", "timeout": 10]]]
+        }
+        func foreignEntry() -> [String: Any] {
+            ["matcher": "", "hooks": [["type": "command", "command": "/usr/bin/other-tool"]]]
+        }
+
+        // A. 路径派生
+        check("codexDoc A1: 配置目录/文件路径按 home 拼接",
+              CodexHookPreferences.codexConfigDir(home: "/Users/t") == "/Users/t/.codex"
+                  && CodexHookPreferences.codexConfigPath(home: "/Users/t") == "/Users/t/.codex/hooks.json")
+
+        // B. 双形状层序：规范 hooks 层在前，文档本体殿后
+        let layered = CodexHookPreferences.codexHookLayers(in: ["hooks": ["Stop": [ourEntry()]]])
+        check("codexDoc B1: 规范层在前、文档本体殿后",
+              layered.count == 2 && (layered[0]["Stop"] as? [Any]) != nil)
+        check("codexDoc B2: 无规范层→仅文档本体",
+              CodexHookPreferences.codexHookLayers(in: ["Stop": [ourEntry()]]).count == 1)
+        check("codexDoc B3: hooks 非字典→仅文档本体",
+              CodexHookPreferences.codexHookLayers(in: ["hooks": "oops"]).count == 1)
+
+        let savedAuto = ClaudeHookPreferences.autoRestoreOnPromptSubmit
+        let savedEnd = ClaudeHookPreferences.triggerOnSessionEnd
+        defer {
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = savedAuto
+            ClaudeHookPreferences.triggerOnSessionEnd = savedEnd
+        }
+        ClaudeHookPreferences.autoRestoreOnPromptSubmit = true
+        ClaudeHookPreferences.triggerOnSessionEnd = true
+
+        // C. installedDocument：nil 起点 → 规范层注册五事件，顶层事件键不残留
+        let (freshDoc, freshEvents) = CodexHookPreferences.installedDocument(
+            existingData: nil, triggerOnSessionEnd: true, autoRestoreOnPromptSubmit: true,
+            scriptPath: scriptPath, targetURL: targetURL)
+        let freshHooks = freshDoc["hooks"] as? [String: Any]
+        check("codexDoc C1: nil 起点注册五事件（规范层）",
+              freshEvents == ["PermissionRequest", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"]
+                  && freshHooks?.count == 5)
+        check("codexDoc C2: 顶层事件键不残留",
+              ["SessionStart", "Stop", "SessionEnd", "UserPromptSubmit", "PermissionRequest"]
+                  .allSatisfy { freshDoc[$0] == nil })
+
+        // C3. 开关关 → 对应事件被裁
+        let (trimmedDoc, trimmedEvents) = CodexHookPreferences.installedDocument(
+            existingData: nil, triggerOnSessionEnd: false, autoRestoreOnPromptSubmit: false,
+            scriptPath: scriptPath, targetURL: targetURL)
+        check("codexDoc C3: SessionEnd/UserPromptSubmit 按开关裁剪",
+              trimmedEvents == ["PermissionRequest", "SessionStart", "Stop"]
+                  && (trimmedDoc["hooks"] as? [String: Any])?.count == 3)
+
+        // C4. 历史错形状（我方条目在顶层）→ 顶层整层降级，我方条目迁入规范层
+        let legacyData = try? JSONSerialization.data(withJSONObject: [
+            "SessionStart": [ourEntry(), foreignEntry()],
+            "custom": "keep",
+        ])
+        let (legacyDoc, legacyEvents) = CodexHookPreferences.installedDocument(
+            existingData: legacyData, triggerOnSessionEnd: true, autoRestoreOnPromptSubmit: true,
+            scriptPath: scriptPath, targetURL: targetURL)
+        check("codexDoc C4: 顶层历史层整体弃置（foreign 亦不保留）",
+              legacyDoc["SessionStart"] == nil && legacyDoc["custom"] as? String == "keep"
+                  && legacyEvents.count == 5)
+
+        // D. uninstalledDocument：两形状层都清我方，外部条目原样保留
+        let existingData = try? JSONSerialization.data(withJSONObject: [
+            "hooks": ["Stop": [ourEntry(), foreignEntry()]],
+            "SessionStart": [ourEntry()],
+            "custom": "keep",
+        ])
+        let uninstalled = existingData.map {
+            CodexHookPreferences.uninstalledDocument(
+                existingData: $0, scriptPath: scriptPath, targetURL: targetURL)
+        } ?? [:]
+        let remainingStop = (uninstalled["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]]
+        check("codexDoc D1: 规范层只留外部条目",
+              remainingStop?.count == 1
+                  && ((remainingStop?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String) == "/usr/bin/other-tool")
+        check("codexDoc D2: 顶层历史层清空后不残留键，其余字段保留",
+              uninstalled["SessionStart"] == nil && uninstalled["custom"] as? String == "keep")
+        check("codexDoc D3: 损坏 JSON → 空文档（不崩）",
+              CodexHookPreferences.uninstalledDocument(
+                  existingData: Data("not-json".utf8), scriptPath: scriptPath, targetURL: targetURL).isEmpty)
     }
 
     // MARK: - installHooks / uninstall 注入缝错误分支（B155 缝失败半边）

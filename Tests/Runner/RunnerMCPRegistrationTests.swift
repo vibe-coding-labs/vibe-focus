@@ -100,5 +100,19 @@ extension RunnerHarness {
             let naked = MCPRegistration.register(.claudeCode, home: tmp, command: nil, fileExists: { _ in false })
             check("mcpReg: 无桥→报缺不写文件", !naked.ok && !naked.changed)
         }
+
+        // MARK: D. 路径派生（配置文件位置 + 随包桥二进制）
+        do {
+            check("mcpReg: claudeConfigPath 按 home 拼接",
+                  MCPRegistration.claudeConfigPath(home: "/Users/tester") == "/Users/tester/.claude.json")
+            check("mcpReg: codexConfigPath 按 home 拼接",
+                  MCPRegistration.codexConfigPath(home: "/tmp/h") == "/tmp/h/.codex/config.toml")
+            check("mcpReg: 无可执行文件→桥路径 nil",
+                  MCPRegistration.mcpBinaryPath(bundleExecutableURL: nil) == nil)
+            let exe = URL(fileURLWithPath: "/Applications/VibeFocus.app/Contents/MacOS/VibeFocus")
+            check("mcpReg: 桥二进制与主二进制同目录",
+                  MCPRegistration.mcpBinaryPath(bundleExecutableURL: exe)
+                      == "/Applications/VibeFocus.app/Contents/MacOS/VibeFocusMCP")
+        }
     }
 }
