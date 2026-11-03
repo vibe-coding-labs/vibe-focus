@@ -205,11 +205,14 @@ extension RunnerHarness {
         }
 
         // --- S8 提交链全真面板（mock 键击 + 前台/柄/AX 缝） ---
-        // 提交会对 target 发 activate——pid 换成 Runner 自身（非终端激活，
-        // 不污染全局 didActivate 通知流，bstate 等后续测试零互扰）
+        // 提交会对 target 发 activate——用幽灵 pid（activate 为 no-op，不污染全局
+        // didActivate 通知流，bstate 等后续测试零互扰；此前用 Runner 自身 pid）。
+        // 幽灵 pid 同时保证 settle 的 AX 回退（focusedWindow(for:)）立刻失败：
+        // AX 读自身进程在主线程会自阻塞（2026-11-03 CI 实测）。
+        let ghostPID: pid_t = 999_999
         controller.target = InputBubbleController.Target(
-            pid: ownRunnerPID(), bundleID: "com.googlecode.iterm2", windowID: windowA, title: "s8")
-        controller.submitFrontmostPIDProvider = { ownRunnerPID() }
+            pid: ghostPID, bundleID: "com.googlecode.iterm2", windowID: windowA, title: "s8")
+        controller.submitFrontmostPIDProvider = { ghostPID }
         controller.submitFocusedWindowHandleProvider = { windowA }
         controller.submitSettleAXWindowProvider = { nil }  // 登录屏 AX 封锁 → verifyNoAXWindow 兜底
         controller.submit(mode: .submit)

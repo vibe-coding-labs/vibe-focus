@@ -48,15 +48,9 @@ extension RunnerHarness {
         host.layoutSubtreeIfNeeded()
         check("renderPilot: terminalGrid tab 二次 relayout 收敛", host.subviews.count > 0)
 
-        // --- 全 tab 扫尾：@StateObject 在安装期已全部实例化（B238 审计），
-        //     逐 tab 渲染只新增各 section body 的构建期求值 ---
-        for tab in SettingsTab.allCases {
-            let tabView = SettingsView()
-            tabView.selectedTab = tab
-            let tabHost = NSHostingView(rootView: tabView.environmentObject(HotKeyManager.shared))
-            tabHost.frame = NSRect(x: 0, y: 0, width: 680, height: 940)
-            tabHost.layoutSubtreeIfNeeded()
-            check("renderPilot: \(tab.rawValue) tab 渲染无异常", tabHost.subviews.count > 0)
-        }
+        // 2026-11-03：全 tab 扫尾循环已拆成独立域（见 RunnerSettingsCoverageRenderTests
+        // 的 runSettingsTabXxxRenderTests）。同一进程里连续渲染 7 个 tab 时，每次
+        // onAppear 都会跑 spaceAvailability/AX/登录项/安装扫描（CI 上单次实测 2~28s），
+        // 累计 >120s 让整域超时并丢掉全部 profraw。拆域后每个 tab 独立成败。
     }
 }

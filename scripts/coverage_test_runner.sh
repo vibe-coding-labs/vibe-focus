@@ -20,6 +20,8 @@
 #                                    自动跳过，整轮可完成；
 #                                  - 各进程 profraw 由 llvm-profdata 合并，覆盖率口径不变。
 #   VIBEFOCUS_PER_DOMAIN_TIMEOUT   逐域单进程超时秒数（默认 120）。
+#   VIBEFOCUS_PER_DOMAIN_TIMEOUT_OVERRIDES  单域超时覆盖，逗号分隔 name=seconds
+#                                  （例 runAgentAccessLoopbackTests=300）。
 # 退出码：0 = 成功产出覆盖率报告；2 = 工具链缺失/profraw 缺失。
 #         断言失败不阻断报告（CI 覆盖通道无 yabai/AX，红域属环境性），
 #         逐域失败/超时数量在汇总中单列；真机门禁仍以 `swift run VibeFocusTestRunner` 为准。
@@ -33,6 +35,10 @@ PROFDATA="$(pwd)/$SCRATCH/coverage.profdata"
 LCov="$(pwd)/coverage.lcov"
 PER_DOMAIN_RUN="${VIBEFOCUS_PER_DOMAIN_RUN:-0}"
 PER_DOMAIN_TIMEOUT="${VIBEFOCUS_PER_DOMAIN_TIMEOUT:-120}"
+# 个别域的单域超时覆盖（逗号分隔 name=seconds）。用于 CI 上合法但慢的域：
+# 例 runAgentAccessLoopbackTests 内含多轮真实 curl 打环，CI 无 yabai/AX 时
+# 单次请求可被拖到 30s 级，120s 不够但并非死循环。
+PER_DOMAIN_TIMEOUT_OVERRIDES="${VIBEFOCUS_PER_DOMAIN_TIMEOUT_OVERRIDES:-}"
 
 echo "==> 构建（profile-generate + coverage-mapping）"
 swift build --product VibeFocusTestRunner --scratch-path "$SCRATCH" \
@@ -121,14 +127,29 @@ if [ "$PER_DOMAIN_RUN" = "1" ]; then
     if printf '%s\n' "$UI_DOMAINS" | grep -qx -- "$domain"; then
       DOMAIN_UI_E2E=1
     fi
+    DOMAIN_TIMEOUT="$PER_DOMAIN_TIMEOUT"
+    if [ -n "$PER_DOMAIN_TIMEOUT_OVERRIDES" ]; then
+      OVERRIDE="$(printf '%s' "$PER_DOMAIN_TIMEOUT_OVERRIDES" | tr ',' '\n' \
+        | awk -F= -v d="$domain" '$1 == d { print $2; exit }')"
+      if [ -n "$OVERRIDE" ]; then
+        DOMAIN_TIMEOUT="$OVERRIDE"
+        echo "  (单域超时覆盖 ${domain} → ${DOMAIN_TIMEOUT}s)"
+      fi
+    fi
     echo "=== [domain] ${domain} ==="
     set +e
     LLVM_PROFILE_FILE="$RAW_DIR/${domain}-%p.profraw" \
       VIBEFOCUS_RUNNER_DOMAINS="$domain" \
       VIBEFOCUS_UI_E2E="$DOMAIN_UI_E2E" \
-      run_with_timeout "$PER_DOMAIN_TIMEOUT" "$BIN" > "$DOMAIN_LOG" 2>&1
+      run_with_timeout "$DOMAIN_TIMEOUT" "$BIN" > "$DOMAIN_LOG" 2>&1
     DOMAIN_STATUS=$?
     set -e
+    # UI 域带 VIBEFOCUS_UI_E2E=1 会触发 Runner 的真机 E2E 互斥锁（atexit 释放）。
+    # 超时被杀时 atexit 不执行，锁会把后续 UI 域全部挡成 exit 3（零 profraw）；
+    # 本脚本严格串行，子进程已退出，残留锁必然属于刚才这一步，直接回收。
+    if [ "$DOMAIN_UI_E2E" = "1" ] && [ -e /tmp/vibefocus-e2e.lock ]; then
+      rm -rf /tmp/vibefocus-e2e.lock
+    fi
     cat "$DOMAIN_LOG"
 
     RAN=$((RAN + 1))
@@ -137,7 +158,7 @@ if [ "$PER_DOMAIN_RUN" = "1" ]; then
     PASSED_CHECKS=$((PASSED_CHECKS + ${domain_passed:-0}))
     FAILED_CHECKS=$((FAILED_CHECKS + ${domain_failed:-0}))
     if [ "$DOMAIN_STATUS" -eq 143 ] || [ "$DOMAIN_STATUS" -eq 137 ]; then
-      echo "  TIMEOUT: ${domain}（超过 ${PER_DOMAIN_TIMEOUT}s，已跳过；该域无 profraw）"
+      echo "  TIMEOUT: ${domain}（超过 ${DOMAIN_TIMEOUT}s，已跳过；该域无 profraw）"
       TIMED_OUT=$((TIMED_OUT + 1))
     elif [ "$DOMAIN_STATUS" -ne 0 ]; then
       FAILED=$((FAILED + 1))

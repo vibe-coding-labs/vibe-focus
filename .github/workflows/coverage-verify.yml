@@ -85,7 +85,12 @@ jobs:
           # 逐域独立进程：CI 上个别域会唤醒单例后台定时器永久空转，单进程全量跑
           # 会被一个挂起域拖死并丢掉整轮 profraw。逐域化后单域挂起只损失该域。
           VIBEFOCUS_PER_DOMAIN_RUN: "1"
-          VIBEFOCUS_PER_DOMAIN_TIMEOUT: "120"
+          # UI 域带「最近 2 分钟无用户输入」观测窗，个别面板域可能接近 120s；
+          # 放宽到 180s 让它们正常收尾，全局 80 分钟预算仍是硬上限。
+          VIBEFOCUS_PER_DOMAIN_TIMEOUT: "180"
+          # 合法但慢的单域（真实 curl 打环，CI 上单请求可被拖到 30s 级）单独放宽，
+          # 避免误杀整域 profraw（实测 120s 只跑到 CLI 矩阵中段）。
+          VIBEFOCUS_PER_DOMAIN_TIMEOUT_OVERRIDES: "runAgentAccessLoopbackTests=300"
           # 弹窗门由脚本按域精确放开：runDomainUIGated 注册的 8 个 UI 域在临时
           # runner 上带 VIBEFOCUS_UI_E2E=1 执行；其余域保持 0（真机零弹窗铁律不变）。
           WATCHDOG_MINUTES: "80"

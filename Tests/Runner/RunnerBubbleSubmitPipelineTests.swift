@@ -21,6 +21,25 @@ private struct SubmitPipelineKeyEvent: Equatable {
     let keyDown: Bool
 }
 
+/// AX 探针结果盒：AXUIElement 非 Sendable，后台线程探测完成后一次性交给主线程
+/// （NSLock 收口，零共享态）。
+private final class SubmitPipelineAXProbeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var element: AXUIElement?
+    private var windowID: UInt32?
+    func store(_ element: AXUIElement, windowID: UInt32) {
+        lock.lock()
+        self.element = element
+        self.windowID = windowID
+        lock.unlock()
+    }
+    func load() -> (AXUIElement?, UInt32?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (element, windowID)
+    }
+}
+
 private final class SubmitPipelineKeyEventPoster: KeyEventPosting {
     private(set) var events: [SubmitPipelineKeyEvent] = []
     var returnKeyCount: Int { events.filter { $0.keyCode == CGKeyCode(kVK_Return) && $0.keyDown }.count }
@@ -62,19 +81,41 @@ extension RunnerHarness {
         probe.contentView = probeText
         probe.orderFront(nil)
 
-        func probeAXElement() -> AXUIElement? {
-            // 轮询几拍等 AX windows 表收录新窗
-            for _ in 0..<10 {
-                let appEl = AXUIElementCreateApplication(ownPID)
-                var ref: CFTypeRef?
-                if AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &ref) == .success,
-                   let windows = ref as? [AXUIElement] {
-                    for w in windows where WindowManager.shared.title(of: w) == "VF-Submit-Pipeline-Probe" {
-                        return w
+        // 探针：后台线程做 AX 读（窗口 + 标题 + CGWindowID），主线程有界等待并同时泵
+        // RunLoop。2026-11-03 CI 实测：AX 读「自身进程」在主线程直接调用会自阻塞
+        // （AX 应答需要主线程 run loop，而线程正卡在调用里），整域 120s 超时零 profraw。
+        let probeTitle = "VF-Submit-Pipeline-Probe"
+        func probeAXElement() -> (element: AXUIElement, windowID: UInt32)? {
+            let box = SubmitPipelineAXProbeBox()
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { done.signal() }
+                // 轮询几拍等 AX windows 表收录新窗
+                for _ in 0..<10 {
+                    let appEl = AXUIElementCreateApplication(ownPID)
+                    var ref: CFTypeRef?
+                    if AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &ref) == .success,
+                       let windows = ref as? [AXUIElement] {
+                        for w in windows {
+                            var titleRef: CFTypeRef?
+                            guard AXUIElementCopyAttributeValue(w, kAXTitleAttribute as CFString, &titleRef) == .success,
+                                  (titleRef as? String) == probeTitle else { continue }
+                            var handle: CGWindowID = 0
+                            guard _AXUIElementGetWindow(w, &handle) == .success, handle != 0 else { continue }
+                            box.store(w, windowID: handle)
+                            return
+                        }
                     }
+                    Thread.sleep(forTimeInterval: 0.05)
                 }
-                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             }
+            let deadline = Date().addingTimeInterval(2.0)
+            while Date() < deadline {
+                if done.wait(timeout: .now() + 0.05) == .success { break }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+            let loaded = box.load()
+            if let element = loaded.0, let windowID = loaded.1 { return (element, windowID) }
             return nil
         }
 
@@ -112,15 +153,21 @@ extension RunnerHarness {
             }
             return controller.phase == .idle
         }
-        func arm(text: String, bundleID: String?, windowID: UInt32 = 777_001) {
+        // pid 默认 Runner 自身（第⑤步靠前台 provider 翻转 abort，不碰 AX）。
+        // 第⑥步显式传幽灵 pid：settle 的 window 缝返回 nil 后会回退到
+        // `WindowManager.shared.focusedWindow(for: target.pid)`，而 AX 读自身进程在
+        // 主线程会自阻塞（AX 应答需要主线程 run loop）；幽灵 pid 让该调用立刻失败，
+        // 确定性地走到 verifyNoAXWindow 兜底（2026-11-03 CI 实测挂起根因）。
+        func arm(text: String, bundleID: String?, windowID: UInt32 = 777_001, pid: pid_t? = nil) {
+            let targetPID = pid ?? ownPID
             controller.finishSubmission()
             controller.phase = .open
-            controller.target = InputBubbleController.Target(pid: ownPID, bundleID: bundleID, windowID: windowID, title: "probe")
+            controller.target = InputBubbleController.Target(pid: targetPID, bundleID: bundleID, windowID: windowID, title: "probe")
             let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 80))
             tv.string = text
             controller.textView = tv
             mock.reset()
-            controller.submitFrontmostPIDProvider = { ownPID }
+            controller.submitFrontmostPIDProvider = { targetPID }
             controller.submitFocusedWindowHandleProvider = { windowID }
             controller.submitSettleAXWindowProvider = nil
             controller.submitHasToggleRecordProvider = nil
@@ -157,8 +204,9 @@ extension RunnerHarness {
         check("pipeline: blind 收尾 phase 归 idle", controller.phase == .idle)
 
         // --- ③ axVerify 命中路（自有探针窗 AXTextArea 含粘贴尾部 → 看到 ROI 才发 Return） ---
-        let axWindow = probeAXElement()
-        if let axWindow, let handle = WindowManager.shared.windowHandle(for: axWindow) {
+        if let probeAX = probeAXElement() {
+            let axWindow = probeAX.element
+            let handle = probeAX.windowID
             probeText.string = "屏上已有内容 probe-submit-tail-marker"
             arm(text: "验证正文 probe-submit-tail-marker", bundleID: "com.googlecode.iterm2", windowID: handle)
             controller.submitSettleAXWindowProvider = { axWindow }
@@ -172,7 +220,8 @@ extension RunnerHarness {
         }
 
         // --- ④ axVerify 超时兜底（屏文本永不含尾部 → 预算耗尽仍发 Return=旧行为下限） ---
-        if let axWindow = probeAXElement() {
+        if let probeAX = probeAXElement() {
+            let axWindow = probeAX.element
             probeText.string = "完全不匹配的屏幕内容"
             arm(text: "永不上屏的正文 tail-not-present-xyz", bundleID: "com.googlecode.iterm2")
             controller.submitSettleAXWindowProvider = { axWindow }
@@ -195,7 +244,9 @@ extension RunnerHarness {
               controller.phase == .idle && NSPasteboard.general.string(forType: .string) == "VF-clip-guard-A")
 
         // --- ⑥ settle 无 AX 窗：verifyNoAXWindow 兜底照发 Return ---
-        arm(text: "无 AX 窗正文", bundleID: "com.googlecode.iterm2")
+        // 幽灵 pid：window 缝 nil 后回退的 focusedWindow(for:) 立刻失败，不触发
+        // 主线程自读 AX（见 arm 注释）。
+        arm(text: "无 AX 窗正文", bundleID: "com.googlecode.iterm2", pid: 999_999)
         controller.submitSettleAXWindowProvider = { nil }
         controller.submit(mode: .submit)
         let noAxIdle = pumpUntilIdle(2.5)

@@ -561,6 +561,23 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runWorkspaceSectionBranchTests") { runWorkspaceSectionBranchTests() }
         runDomain("runGridSectionPanelTests") { runGridSectionPanelTests() }
         runDomain("runSettingsRenderPilotTests") { runSettingsRenderPilotTests() }
+        runDomain("runSettingsCoverageRenderTests") { runSettingsCoverageRenderTests() }
+        // 单分区独立成域：避免 B288 一次渲染 8 段被其中一段拖到整域超时（零 profraw）。
+        runDomain("runSettingsRenderOverlaySectionTests") { runSettingsRenderOverlaySectionTests() }
+        runDomain("runSettingsRenderWorkspaceSectionTests") { runSettingsRenderWorkspaceSectionTests() }
+        runDomain("runSettingsRenderAntiDisturbTests") { runSettingsRenderAntiDisturbTests() }
+        runDomain("runSettingsRenderProjectRulesTests") { runSettingsRenderProjectRulesTests() }
+        runDomain("runSettingsRenderCustomAudioTests") { runSettingsRenderCustomAudioTests() }
+        runDomain("runSettingsRenderCodexTests") { runSettingsRenderCodexTests() }
+        runDomain("runSettingsRenderPermissionsDuplicatesTests") { runSettingsRenderPermissionsDuplicatesTests() }
+        // 每个 tab 独立成域：B239 单域全 tab 循环在 CI 超时会连带丢掉已渲染 tab 的 profraw。
+        runDomain("runSettingsTabGeneralRenderTests") { runSettingsTabGeneralRenderTests() }
+        runDomain("runSettingsTabWorkspaceRenderTests") { runSettingsTabWorkspaceRenderTests() }
+        runDomain("runSettingsTabOrchestrationRenderTests") { runSettingsTabOrchestrationRenderTests() }
+        runDomain("runSettingsTabClaudeIntegrationRenderTests") { runSettingsTabClaudeIntegrationRenderTests() }
+        runDomain("runSettingsTabCodexIntegrationRenderTests") { runSettingsTabCodexIntegrationRenderTests() }
+        runDomain("runSettingsTabAgentAccessRenderTests") { runSettingsTabAgentAccessRenderTests() }
+        runDomain("runSettingsTabAppearanceRenderTests") { runSettingsTabAppearanceRenderTests() }
         runDomainUIGated("SettingsWindowController") {
             runSettingsWindowControllerTests()
         }
@@ -654,6 +671,12 @@ private func acquireE2ELockOrExit() {
 }
 
 acquireE2ELockOrExit()
+
+// 逐域隔离模式（VIBEFOCUS_RUNNER_DOMAINS）每个进程只跑一个域，没有前序域帮忙
+// 初始化 AppKit——DockBadge 的 dockTile、气泡收尾的 activationPolicy 等直接摸
+// NSApp 的代码会因隐式解包 nil 崩溃（2026-11-03 逐域采集实测两处）。单进程全量
+// 模式本来就由前面的域完成初始化，这里补上不改变任何可见行为（不建窗口/不置前）。
+_ = NSApplication.shared
 
 MainActor.assumeIsolated {
     RunnerHarness().runAllTests()
