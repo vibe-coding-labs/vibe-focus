@@ -30,6 +30,21 @@ jobs:
           restore-keys: |
             swiftpm-${{ runner.os }}-
 
+      # Csqlite3/module.modulemap 硬编码了开发机的 CLT SDK 路径
+      # （MacOSX26.2.sdk/usr/include/sqlite3.h）；GitHub runner 的 CLT SDK 不含
+      # usr/include 头文件，构建时报 header not found。CI 侧把 Xcode SDK 的同名头
+      # 软链到该路径（不改仓库构建配置，避免影响并行会话）。
+      - name: Prepare SQLite header for hardcoded CLT path
+        run: |
+          target="/Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sqlite3.h"
+          if [ ! -f "$target" ]; then
+            sdk="$(xcrun --sdk macosx --show-sdk-path)"
+            test -f "$sdk/usr/include/sqlite3.h"
+            sudo mkdir -p "$(dirname "$target")"
+            sudo ln -sf "$sdk/usr/include/sqlite3.h" "$target"
+          fi
+          ls -l "$target"
+
       - name: swift build (zero warnings)
         run: |
           set -o pipefail
