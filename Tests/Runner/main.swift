@@ -445,8 +445,8 @@ final class FakeAuditor: RestoreAuditing {
         runDomainUIGated("BubbleLifecyclePanel") {
             runBubbleLifecyclePanelTests()
         }
-        runDomainUIGated("BubbleHistoryPanel") {
-            runBubbleHistoryPanelTests()
+        runDomainUIGated("BubbleHistoryPanelController") {
+            runBubbleHistoryPanelControllerTests()
         }
         runDomainUIGated("BubbleCoverageSweep") {
             runBubbleCoverageSweepTests()
