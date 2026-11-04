@@ -102,6 +102,12 @@ extension WindowManager {
             if durMs >= 30 { log("[WindowManager] displayContext slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
         #endif
+        // 一次快照：NSScreen.screens 是 WindowServer 查询，循环判定不再二次枚举；
+        // 屏帧数组与屏实例同序，下标可直接回查。主屏高也取自同一快照（origin .zero
+        // 契约），避免 displayContext 中间发生热插拔时混用两次枚举。
+        let screens = NSScreen.screens
+        let primaryScreen = screens.first { $0.frame.origin == .zero } ?? screens.first
+        let primaryHeight = primaryScreen?.frame.height ?? 0
         log(
             "[WindowManager] displayContext called",
             level: .debug,
@@ -109,32 +115,29 @@ extension WindowManager {
                 "frame": String(describing: frame),
                 "centerX": "\(frame.midX)",
                 "centerY": "\(frame.midY)",
-                "screenCount": String(NSScreen.screens.count)
+                "screenCount": String(screens.count)
             ]
         )
         // 全局 Quartz→Cocoa 变换（变换常量恒为主屏高，与点在哪块屏无关）
-        let cocoaFrame = CGRect(
-            x: frame.origin.x,
-            y: CoordinateKit.mainScreenHeight - frame.maxY,
-            width: frame.width,
-            height: frame.height
+        let matchedIndex = CoordinateKit.screenIndex(
+            containingQuartz: frame,
+            primaryHeight: primaryHeight,
+            screenFrames: screens.map { $0.frame }
         )
-        let cocoaCenter = CGPoint(x: cocoaFrame.midX, y: cocoaFrame.midY)
-        for (screenIndex, screen) in NSScreen.screens.enumerated() {
-            if screen.frame.contains(cocoaCenter) || screen.frame.intersects(cocoaFrame) {
-                let yabaiIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen)
-                let dID = CoordinateKit.cgDisplayID(for: screen)
-                log(
-                    "[WindowManager] displayContext matched screen",
-                    level: .debug,
-                    fields: [
-                        "screenArrayIndex": String(screenIndex),
-                        "yabaiIndex": String(describing: yabaiIndex),
-                        "displayID": String(describing: dID)
-                    ]
-                )
-                return (yabaiIndex, dID)
-            }
+        if let screenIndex = matchedIndex, screenIndex < screens.count {
+            let screen = screens[screenIndex]
+            let yabaiIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen)
+            let dID = CoordinateKit.cgDisplayID(for: screen)
+            log(
+                "[WindowManager] displayContext matched screen",
+                level: .debug,
+                fields: [
+                    "screenArrayIndex": String(screenIndex),
+                    "yabaiIndex": String(describing: yabaiIndex),
+                    "displayID": String(describing: dID)
+                ]
+            )
+            return (yabaiIndex, dID)
         }
         log(
             "[WindowManager] displayContext: no screen matched frame",

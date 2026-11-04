@@ -310,6 +310,7 @@ final class FakeAuditor: RestoreAuditing {
         runSpaceSwitchQueryShapeTests()
         runYabaiUtilsTests()
         runCoordinateTypesTests()
+        runCoordinateGeometryTests()
         runSpaceIdentityTests()
         runScreenIndexPrefsMigrationTests()
         runYabaiModelTests()

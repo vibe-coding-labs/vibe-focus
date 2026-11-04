@@ -61,15 +61,12 @@ extension CoordinateKit {
         // 主屏上方时 AppKit y 为正（+1117），Quartz 里应为负（-1055），yabai --move abs
         // 按 Quartz 解释，stuck 解堵把窗口直写到主屏下方不存在的屏幕区域
         //（trace toggle-00000129，窗口悬在屏外）。任意屏统一换算，主屏数值不变。
-        guard let primaryMaxY = NSScreen.screens.first?.frame.maxY else {
+        // 主屏 = origin .zero（CoordinateKit.primaryScreen 单一事实源），
+        // 不用 NSScreen.screens.first 裸下标——与全仓主屏语义保持一致。
+        guard let primaryMaxY = primaryScreen?.frame.maxY else {
             return visibleFrame
         }
-        return CGRect(
-            x: visibleFrame.origin.x,
-            y: quartzY(appKitRectMaxY: visibleFrame.maxY, primaryMaxY: primaryMaxY),
-            width: visibleFrame.width,
-            height: visibleFrame.height
-        )
+        return quartzRect(fromCocoa: visibleFrame, primaryHeight: primaryMaxY)
     }
 
 
@@ -196,8 +193,8 @@ extension CoordinateKit {
         else { return [:] }
 
         // Quartz TopLeft → Cocoa BottomLeft
-        let yabaiCocoaFrames: [CGRect] = yabaiQuartzFrames.map { q in
-            CGRect(x: q.minX, y: mainHeight - q.maxY, width: q.width, height: q.height)
+        let yabaiCocoaFrames: [CGRect] = yabaiQuartzFrames.map {
+            cocoaRect(fromQuartz: $0, primaryHeight: mainHeight)
         }
 
         // 全对全中心距，按距离升序贪心唯一配对

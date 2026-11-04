@@ -149,14 +149,15 @@ extension TerminalGridController {
 
     /// CGWindowList bounds（Quartz）→ 所属 displayID（复用 WindowManager 判定语义）
     func displayContextDisplayID(for frame: CGRect) -> UInt32? {
-        let cocoaFrame = CGRect(
-            x: frame.origin.x,
-            y: CoordinateKit.mainScreenHeight - frame.maxY,
-            width: frame.width,
-            height: frame.height
-        )
-        return NSScreen.screens.first { $0.frame.contains(cocoaFrame) || $0.frame.intersects(cocoaFrame) }
-            .flatMap { CoordinateKit.cgDisplayID(for: $0) }
+        let screens = NSScreen.screens
+        // 主屏高与屏帧取同一快照（origin .zero 契约），零额外 WindowServer 枚举。
+        let primaryScreen = screens.first { $0.frame.origin == .zero } ?? screens.first
+        let primaryHeight = primaryScreen?.frame.height ?? 0
+        return CoordinateKit.screenIndex(
+            containingQuartz: frame,
+            primaryHeight: primaryHeight,
+            screenFrames: screens.map { $0.frame }
+        ).flatMap { CoordinateKit.cgDisplayID(for: screens[$0]) }
     }
 
     func bundleIdentifier(ofPID pid: pid_t) -> String? {
