@@ -208,10 +208,9 @@ extension InputBubbleController {
 
     /// 锚点：目标窗（AppKit 全局坐标）左下内侧，夹进所在屏 visibleFrame。
     func anchorOrigin(targetCGFrame: CGRect) -> CGPoint {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let appKitFrame = InputBubbleLayout.appKitFrame(
             fromCGFrame: targetCGFrame,
-            primaryScreenHeight: primaryHeight
+            primaryScreenHeight: CoordinateKit.mainScreenHeight
         )
         let visibleFrame = containingScreenVisibleFrame(for: appKitFrame)
         return InputBubbleLayout.anchorOrigin(
@@ -227,10 +226,9 @@ extension InputBubbleController {
     func restoredOrigin(targetCGFrame: CGRect) -> CGPoint {
         let fallback = anchorOrigin(targetCGFrame: targetCGFrame)
         guard let saved = InputBubblePreferences.userPlacedOrigin else { return fallback }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let appKitFrame = InputBubbleLayout.appKitFrame(
             fromCGFrame: targetCGFrame,
-            primaryScreenHeight: primaryHeight
+            primaryScreenHeight: CoordinateKit.mainScreenHeight
         )
         let visibleFrame = containingScreenVisibleFrame(for: appKitFrame)
         return InputBubbleLayout.clampedOrigin(
@@ -241,13 +239,11 @@ extension InputBubbleController {
     }
 
     /// 目标窗中心点所在屏的 visibleFrame（找不到回落主屏）。
-    /// B234 审计：回落用 CoordinateKit.primaryScreen（origin .zero 契约），
-    /// NSScreen.main 是焦点屏，气泡会被摆到用户正用屏而非目标回落屏。
+    /// 判定与回落口径集中在 CoordinateKit.cocoaVisibleFrame——
+    /// B234 审计：回落用主屏（origin .zero 契约），NSScreen.main 是焦点屏，
+    /// 气泡会被摆到用户正用屏而非目标回落屏。
     func containingScreenVisibleFrame(for appKitFrame: CGRect) -> CGRect {
-        let center = CGPoint(x: appKitFrame.midX, y: appKitFrame.midY)
-        let screen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
-            ?? CoordinateKit.primaryScreen
-        return screen?.visibleFrame ?? appKitFrame
+        CoordinateKit.cocoaVisibleFrame(containing: appKitFrame)
     }
 
     private static func dynamicColor(lightHex: UInt32, darkHex: UInt32) -> NSColor {

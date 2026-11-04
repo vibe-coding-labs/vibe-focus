@@ -522,9 +522,8 @@ final class InputBubbleController: NSObject {
 
     /// 启动跟随：基线 = 唤起时目标窗位置与气泡位置；0.2s 轮询目标窗位移。
     func startFollowing(targetCGFrame: CGRect, bubbleOrigin: NSPoint) {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         followWindowOrigin = InputBubbleLayout.appKitFrame(
-            fromCGFrame: targetCGFrame, primaryScreenHeight: primaryHeight
+            fromCGFrame: targetCGFrame, primaryScreenHeight: CoordinateKit.mainScreenHeight
         ).origin
         followBubbleOrigin = bubbleOrigin
         followTimer?.invalidate()
@@ -561,7 +560,8 @@ final class InputBubbleController: NSObject {
             return
         }
         guard let cgFrame = cgWindowBounds(for: target.windowID) else { return }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        // 5Hz 轮询：主屏高只取一次（mainScreenHeight 内部是 NSScreen 枚举）
+        let primaryHeight = CoordinateKit.mainScreenHeight
         let windowNow = InputBubbleLayout.appKitFrame(
             fromCGFrame: cgFrame, primaryScreenHeight: primaryHeight
         ).origin
@@ -570,7 +570,9 @@ final class InputBubbleController: NSObject {
             windowOriginBefore: windowBefore,
             windowOriginNow: windowNow
         )
-        let appKitFrame = InputBubbleLayout.appKitFrame(fromCGFrame: cgFrame, primaryScreenHeight: primaryHeight)
+        let appKitFrame = InputBubbleLayout.appKitFrame(
+            fromCGFrame: cgFrame, primaryScreenHeight: primaryHeight
+        )
         let clamped = InputBubbleLayout.clampedOrigin(
             position: moved,
             bubbleSize: panel.frame.size,

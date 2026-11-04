@@ -178,16 +178,16 @@ enum CoordinateKit {
     }
 
     /// Quartz 矩形所在屏的数组下标（纯函数，屏帧由调用方注入）。
-    /// 判定语义与历史 displayContext 一致：中心点落在屏内优先，其次矩形与屏相交；
-    /// 按屏序取第一个命中，无命中返回 nil。
+    /// 判定算法唯一实现在 `ScreenGeometry`（中心命中优先、相交兜底、按屏序），
+    /// 本函数仅为既有调用方保留的便捷入口。
     static func screenIndex(containingQuartz rect: CGRect, primaryHeight: CGFloat, screenFrames: [CGRect]) -> Int? {
-        screenIndex(containing: cocoaRect(fromQuartz: rect, primaryHeight: primaryHeight), in: screenFrames)
+        ScreenGeometry(cocoaFrames: screenFrames)
+            .index(containingQuartz: rect, primaryHeight: primaryHeight)
     }
 
-    /// Cocoa 矩形所在屏的数组下标（纯函数）。
+    /// Cocoa 矩形所在屏的数组下标（纯函数，委托 `ScreenGeometry`）。
     static func screenIndex(containing rect: CGRect, in screenFrames: [CGRect]) -> Int? {
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        return screenFrames.firstIndex { $0.contains(center) || $0.intersects(rect) }
+        ScreenGeometry(cocoaFrames: screenFrames).index(containingCocoa: rect)
     }
 
     // MARK: 窗口帧收敛判据（唯一事实源）

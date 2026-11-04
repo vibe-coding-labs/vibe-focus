@@ -35,11 +35,10 @@ extension TerminalGridController {
         return SpaceController.shared.visibleSpaceIndex(forDisplayIndex: displayIndex, spaces: nil, ignoreCache: true)?.yabaiIndex
     }
 
-    /// 网格规划可用区：visibleFrame 扣该屏已学习保留区（重排/恢复共用同一事实源）
+    /// 网格规划可用区：visibleFrame 扣该屏已学习保留区（重排/恢复共用同一事实源，
+    /// 解算口径集中在 ScreenWorkArea）。
     func gridPlanningFrame(for screen: NSScreen) -> CGRect {
-        let base = CoordinateKit.quartzVisibleFrame(of: screen)
-        let insets = DisplayWorkArea.learnedInsets(displayID: CoordinateKit.cgDisplayID(for: screen) ?? 0)
-        return DisplayWorkArea.plannedFrame(visibleFrame: base, insets: insets)
+        ScreenWorkArea.plan(for: screen).planningFrame
     }
 
     /// 显式目标带工作区且非该屏当前可见 → 切视角（yabai 直切 → 聚焦带动双层），
@@ -150,14 +149,11 @@ extension TerminalGridController {
     /// CGWindowList bounds（Quartz）→ 所属 displayID（复用 WindowManager 判定语义）
     func displayContextDisplayID(for frame: CGRect) -> UInt32? {
         let screens = NSScreen.screens
-        // 主屏高与屏帧取同一快照（origin .zero 契约），零额外 WindowServer 枚举。
-        let primaryScreen = screens.first { $0.frame.origin == .zero } ?? screens.first
-        let primaryHeight = primaryScreen?.frame.height ?? 0
-        return CoordinateKit.screenIndex(
-            containingQuartz: frame,
-            primaryHeight: primaryHeight,
-            screenFrames: screens.map { $0.frame }
-        ).flatMap { CoordinateKit.cgDisplayID(for: screens[$0]) }
+        // 主屏高与屏帧取同一快照（ScreenGeometry 的 origin .zero 契约），
+        // 零额外 WindowServer 枚举。
+        return ScreenGeometry(cocoaFrames: screens.map { $0.frame })
+            .index(containingQuartz: frame)
+            .flatMap { CoordinateKit.cgDisplayID(for: screens[$0]) }
     }
 
     func bundleIdentifier(ofPID pid: pid_t) -> String? {

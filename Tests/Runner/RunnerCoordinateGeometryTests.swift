@@ -13,7 +13,9 @@ import Foundation
 //   2. 三块屏（主屏 / 上方副屏 / 左侧副屏）的象限与负坐标语义；
 //   3. ScreenLayoutMapper、TerminalGridPlanner、DisplayWorkArea 的边界与退化输入；
 //   4. OverlayWindow / InputBubbleLayout 的六方位与负坐标屏；
-//   5. ScreenHotplugGuard（此前仅 XCTest 套件覆盖，Runner 基线缺位）。
+//   5. ScreenHotplugGuard（此前仅 XCTest 套件覆盖，Runner 基线缺位）；
+//   6. ScreenGeometry（主屏契约 + 双坐标系命中）、ScreenWorkArea（工作区解算）
+//      与 WorkAreaLearning（保留区学习/探测/重排决策）。
 //
 // 纯函数直测，不依赖当前真机屏幕数量；需要主屏高度的用例一律用夹具值 1117。
 
@@ -483,6 +485,150 @@ extension RunnerHarness {
             check("coordGeom: 热插拔结果过滤全存活 / 全过期",
                   ScreenHotplugGuard.filterStale(results, liveUUIDs: [a, b]).count == 2
                   && ScreenHotplugGuard.filterStale(results, liveUUIDs: [c]).isEmpty)
+        }
+
+        // ===== J. ScreenGeometry：主屏契约 + 双坐标系命中（纯值表） =====
+        do {
+            let frames = [
+                CGRect(x: 0, y: 0, width: 1728, height: 1117),      // 主屏（origin .zero）
+                CGRect(x: 0, y: 1117, width: 1920, height: 1080),   // 上方副屏
+                CGRect(x: -1920, y: 0, width: 1920, height: 1080),  // 左侧副屏
+            ]
+            let geometry = ScreenGeometry(cocoaFrames: frames)
+
+            check("screenGeom: 主屏下标取 origin .zero（非首元素也正确）",
+                  ScreenGeometry(cocoaFrames: [frames[1], frames[0]]).primaryIndex == 1)
+            check("screenGeom: 无 origin .zero → 回退首元素",
+                  ScreenGeometry(cocoaFrames: [frames[1], frames[2]]).primaryIndex == 0)
+            check("screenGeom: 空表 → primaryIndex nil / primaryHeight 0",
+                  ScreenGeometry(cocoaFrames: []).primaryIndex == nil
+                  && ScreenGeometry(cocoaFrames: []).primaryHeight == 0)
+            check("screenGeom: primaryHeight 取主屏高度", geometry.primaryHeight == 1117)
+
+            check("screenGeom: Quartz 三屏归属（含负 y / 负 x）",
+                  geometry.index(containingQuartz: CGRect(x: 100, y: 100, width: 10, height: 10)) == 0
+                  && geometry.index(containingQuartz: CGRect(x: 0, y: -1080, width: 100, height: 100)) == 1
+                  && geometry.index(containingQuartz: CGRect(x: -1900, y: 10, width: 100, height: 100)) == 2)
+            check("screenGeom: 显式主屏高与自取结果一致",
+                  geometry.index(containingQuartz: CGRect(x: 0, y: -1080, width: 1920, height: 1080),
+                                 primaryHeight: 1117) == 1)
+            check("screenGeom: 远离所有屏 → nil",
+                  geometry.index(containingQuartz: CGRect(x: 5000, y: 5000, width: 10, height: 10)) == nil)
+
+            // 点严格包含：max 边不算命中（与 NSMouseInRect(flipped: false) 一致）
+            check("screenGeom: 点严格包含排除 max 边",
+                  geometry.index(containingCocoaPoint: CGPoint(x: 1728, y: 500)) == nil
+                  && geometry.index(containingCocoaPoint: CGPoint(x: 0, y: 0)) == 0)
+            // 中心在屏外、矩形与屏相交 → 相交兜底（单屏表避免相邻屏中心命中干扰）
+            check("screenGeom: 中心在外但相交 → 兜底命中",
+                  ScreenGeometry(cocoaFrames: [frames[0]])
+                    .index(containingCocoa: CGRect(x: -50, y: 500, width: 80, height: 80)) == 0)
+
+            // 相邻屏共边：恰好铺满副屏的窗口必须归副屏，不能被主屏「抢走」。
+            // CGRect.intersects 对仅共边的矩形也返回 true（交叠面积为 0），
+            // 因此相交兜底必须要求正面积。
+            check("screenGeom: 共边不抢屏（副屏全屏窗口归副屏）",
+                  geometry.index(
+                    containingQuartz: CGRect(x: 0, y: -1080, width: 1920, height: 1080),
+                    primaryHeight: 1117) == 1)
+            check("screenGeom: 仅共边且中心在屏外 → nil",
+                  ScreenGeometry(cocoaFrames: [frames[0]])
+                    .index(containingCocoa: CGRect(x: -50, y: 10, width: 50, height: 90)) == nil)
+
+            // 中心屏优先：矩形同时压到 A 屏（正面积），但中心落在 B 屏 → B。
+            let overlapScreens = [CGRect(x: 0, y: 0, width: 100, height: 100),
+                                  CGRect(x: 50, y: 0, width: 100, height: 100)]
+            check("screenGeom: 中心屏优先于相交屏",
+                  ScreenGeometry(cocoaFrames: overlapScreens)
+                    .index(containingCocoa: CGRect(x: 95, y: 10, width: 20, height: 20)) == 1)
+
+            // CoordinateKit 便捷入口与值表实现同源
+            let quartzRect = CGRect(x: 0, y: -1080, width: 1920, height: 1080)
+            check("screenGeom: 与 CoordinateKit.screenIndex 委托等价",
+                  geometry.index(containingQuartz: quartzRect, primaryHeight: 1117)
+                  == CoordinateKit.screenIndex(containingQuartz: quartzRect,
+                                                primaryHeight: 1117,
+                                                screenFrames: frames)
+                  && geometry.index(containingCocoa: frames[2])
+                  == CoordinateKit.screenIndex(containing: frames[2], in: frames))
+        }
+
+        // ===== K. ScreenWorkArea：visibleFrame + 学习保留区 → 规划帧（纯解算重载） =====
+        do {
+            let suiteName = "vibefocus-screenworkarea-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let visible = CGRect(x: -1920, y: 37, width: 1920, height: 1080)
+
+            let clean = ScreenWorkArea.plan(visibleFrame: visible, displayID: 7, defaults: defaults)
+            check("screenWorkArea: 无保留区时规划帧 = 原始 visibleFrame",
+                  clean.planningFrame == visible && clean.learnedInsets == .zero
+                  && clean.displayID == 7 && clean.visibleFrame == visible)
+
+            DisplayWorkArea.store(WorkAreaInsets(top: 25, left: 0, bottom: 0, right: 15),
+                                  displayID: 7, defaults: defaults)
+            let planned = ScreenWorkArea.plan(visibleFrame: visible, displayID: 7, defaults: defaults)
+            check("screenWorkArea: 学习保留区参与规划帧且原始 frame 保留",
+                  planned.learnedInsets == WorkAreaInsets(top: 25, left: 0, bottom: 0, right: 15)
+                  && planned.planningFrame == CGRect(x: -1920, y: 62, width: 1905, height: 1055)
+                  && planned.visibleFrame == visible)
+
+            DisplayWorkArea.store(WorkAreaInsets(top: 40, left: 0, bottom: 0, right: 0),
+                                  displayID: 8, defaults: defaults)
+            check("screenWorkArea: 他屏保留区不串扰",
+                  ScreenWorkArea.plan(visibleFrame: visible, displayID: 7, defaults: defaults) == planned)
+        }
+
+        // ===== L. WorkAreaLearning：学习 / 探测 / 重排三态决策 =====
+        do {
+            let planning = CGRect(x: 0, y: 0, width: 1000, height: 1000)
+            func cell(_ x: CGFloat, _ y: CGFloat) -> CGRect { CGRect(x: x, y: y, width: 200, height: 200) }
+            let planned = [cell(0, 0), cell(800, 800)]
+            let learned = WorkAreaInsets(top: 10, left: 0, bottom: 0, right: 0)
+
+            let learnedCase = WorkAreaLearning.decide(
+                learned: .zero,
+                planned: planned,
+                actual: [cell(0, 20), cell(800, 780)],
+                planningFrame: planning)
+            check("workAreaLearn: 学到非零 → merged、需持久化、不探测",
+                  learnedCase.learnedNonzero
+                  && learnedCase.insets == WorkAreaInsets(top: 20, left: 0, bottom: 20, right: 0)
+                  && !learnedCase.shouldProbe && learnedCase.changedFromLearned)
+
+            let probeCase = WorkAreaLearning.decide(
+                learned: learned,
+                planned: planned,
+                actual: planned,
+                planningFrame: planning)
+            check("workAreaLearn: 全贴边 + 已有学习值 → 探测且不重排",
+                  !probeCase.learnedNonzero && probeCase.shouldProbe
+                  && probeCase.insets == learned && !probeCase.changedFromLearned)
+
+            let cleanCase = WorkAreaLearning.decide(
+                learned: .zero,
+                planned: planned,
+                actual: planned,
+                planningFrame: planning)
+            check("workAreaLearn: 全贴边 + 无学习值 → 不探测",
+                  !cleanCase.learnedNonzero && !cleanCase.shouldProbe && cleanCase.insets == .zero)
+
+            let noChange = WorkAreaLearning.decide(
+                learned: learned,
+                planned: planned,
+                actual: [cell(0, 5), cell(800, 800)],
+                planningFrame: planning)
+            check("workAreaLearn: 新观测未超过已有 → 不重排",
+                  noChange.learnedNonzero && noChange.insets == learned
+                  && !noChange.changedFromLearned && !noChange.shouldProbe)
+
+            let missing = WorkAreaLearning.decide(
+                learned: learned,
+                planned: planned,
+                actual: [nil, nil],
+                planningFrame: planning)
+            check("workAreaLearn: 回读缺失 → 零观测并转入探测",
+                  !missing.learnedNonzero && missing.shouldProbe && missing.insets == learned)
         }
     }
 }

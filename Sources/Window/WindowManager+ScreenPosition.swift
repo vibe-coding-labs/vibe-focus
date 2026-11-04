@@ -103,11 +103,11 @@ extension WindowManager {
         }
         #endif
         // 一次快照：NSScreen.screens 是 WindowServer 查询，循环判定不再二次枚举；
-        // 屏帧数组与屏实例同序，下标可直接回查。主屏高也取自同一快照（origin .zero
-        // 契约），避免 displayContext 中间发生热插拔时混用两次枚举。
+        // 屏帧数组与屏实例同序，下标可直接回查。主屏高也取自同一快照
+        // （ScreenGeometry.primaryIndex 的 origin .zero 契约），避免 displayContext
+        // 中间发生热插拔时混用两次枚举。
         let screens = NSScreen.screens
-        let primaryScreen = screens.first { $0.frame.origin == .zero } ?? screens.first
-        let primaryHeight = primaryScreen?.frame.height ?? 0
+        let geometry = ScreenGeometry(cocoaFrames: screens.map { $0.frame })
         log(
             "[WindowManager] displayContext called",
             level: .debug,
@@ -119,11 +119,7 @@ extension WindowManager {
             ]
         )
         // 全局 Quartz→Cocoa 变换（变换常量恒为主屏高，与点在哪块屏无关）
-        let matchedIndex = CoordinateKit.screenIndex(
-            containingQuartz: frame,
-            primaryHeight: primaryHeight,
-            screenFrames: screens.map { $0.frame }
-        )
+        let matchedIndex = geometry.index(containingQuartz: frame)
         if let screenIndex = matchedIndex, screenIndex < screens.count {
             let screen = screens[screenIndex]
             let yabaiIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen)

@@ -199,8 +199,8 @@ extension ClaudeHookServer {
     }
 
     static func buildWindowsBody() -> Data {
-        let mainScreen = NSScreen.screens.first { $0.frame.origin == .zero }?.frame
-            ?? NSScreen.main?.frame
+        // 主屏唯一事实源（origin .zero 契约）；不再用 NSScreen.main（焦点屏）兜底。
+        let mainScreen = CoordinateKit.primaryScreen?.frame
         let summaries = AgentWindowListing.summaries(
             from: cgWindowListAll(),
             mainScreenFrame: mainScreen,

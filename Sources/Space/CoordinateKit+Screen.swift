@@ -18,7 +18,12 @@ extension CoordinateKit {
     /// 2026-09-20 真机实证：用户焦点在副屏时 NSScreen.main 指向副屏（displayID 3），
     /// 而主屏 displayID 1 仍 origin .zero。
     static var primaryScreen: NSScreen? {
-        NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
+        // 主屏契约唯一实现在 ScreenGeometry.primaryIndex（origin .zero → 首元素兜底）。
+        let screens = NSScreen.screens
+        guard let index = ScreenGeometry(cocoaFrames: screens.map { $0.frame }).primaryIndex else {
+            return nil
+        }
+        return screens[index]
     }
 
     static var mainScreenQuartzFrame: CGRect? {
@@ -31,7 +36,11 @@ extension CoordinateKit {
             ])
         }
         #endif
-        return NSScreen.screens.first { $0.frame.origin == .zero }?.frame ?? NSScreen.screens.first?.frame
+        let screens = NSScreen.screens
+        guard let index = ScreenGeometry(cocoaFrames: screens.map { $0.frame }).primaryIndex else {
+            return nil
+        }
+        return screens[index].frame
     }
 
     static var mainScreenHeight: CGFloat {
@@ -43,7 +52,9 @@ extension CoordinateKit {
             if durMs >= 30 { log("[CoordinateKit] mainScreenHeight slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         }
         #endif
-        return mainScreenQuartzFrame?.height ?? NSScreen.screens.first?.frame.height ?? 0
+        // mainScreenQuartzFrame 已含「无 origin-zero → 首元素」兜底；屏表为空时 0。
+        // 不再二次枚举 NSScreen.screens。
+        return mainScreenQuartzFrame?.height ?? 0
     }
 
 
@@ -78,6 +89,26 @@ extension CoordinateKit {
     static func isOnMainScreen(_ rect: CGRect) -> Bool {
         guard let mainFrame = mainScreenQuartzFrame else { return false }
         return isOnMainScreen(rect, mainScreenFrame: mainFrame)
+    }
+
+    // MARK: 包含判定（Cocoa 全局坐标）
+
+    /// 包含 Cocoa 全局点的屏（严格包含，不含 max 边）；无命中回落主屏。
+    /// 气泡/历史面板「目标窗中心点在哪块屏」的统一口径——此前两处各自内联
+    /// `NSScreen.screens.first { NSMouseInRect(...) } ?? primaryScreen`。
+    /// ⚠️ 回落是主屏而非 `NSScreen.main`（焦点屏），多屏焦点漂移时面板不会被
+    /// 摆到用户当前操作屏。
+    static func screen(containingCocoaPoint point: CGPoint) -> NSScreen? {
+        let screens = NSScreen.screens
+        let index = ScreenGeometry(cocoaFrames: screens.map { $0.frame })
+            .index(containingCocoaPoint: point)
+        return index.map { screens[$0] } ?? primaryScreen
+    }
+
+    /// Cocoa 全局矩形中心点所在屏的 visibleFrame；无命中回落主屏可视区，
+    /// 仍无屏可用则原样返回入参（调用方夹取逻辑对退化输入保持幂等）。
+    static func cocoaVisibleFrame(containing rect: CGRect) -> CGRect {
+        screen(containingCocoaPoint: CGPoint(x: rect.midX, y: rect.midY))?.visibleFrame ?? rect
     }
 
 

@@ -654,12 +654,9 @@ final class InputBubbleHistoryPanelController: NSObject {
     }
 
     private func containingVisibleFrame(of anchorFrame: CGRect) -> CGRect {
-        let center = CGPoint(x: anchorFrame.midX, y: anchorFrame.midY)
-        // B234 审计：回落主屏走 CoordinateKit.primaryScreen（origin .zero 契约），
-        // NSScreen.main 是焦点屏，历史面板回落会被摆到用户正用屏。
-        let screen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
-            ?? CoordinateKit.primaryScreen
-        return screen?.visibleFrame ?? anchorFrame
+        // 与输入气泡共用同一包含判定/回落链（CoordinateKit.cocoaVisibleFrame）：
+        // 中心点所在屏 → 主屏（origin .zero 契约，不用焦点屏 NSScreen.main）。
+        CoordinateKit.cocoaVisibleFrame(containing: anchorFrame)
     }
 }
 

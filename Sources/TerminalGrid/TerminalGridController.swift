@@ -66,11 +66,12 @@ final class TerminalGridController {
         // 规划可用区：visibleFrame 扣「已学习保留区」。副屏菜单栏等隐形钳制
         // 真机实证（P40UG）：visibleFrame 谎报整屏 3440×1440，但窗口写不进顶部
         // 25px——按原始 visibleFrame 规划的网格顶行必留一条空带（用户反馈的
-        // "空隙"来源之一）。
-        let baseVisible = CoordinateKit.quartzVisibleFrame(of: screen)
-        let gridDisplayID = CoordinateKit.cgDisplayID(for: screen) ?? 0
-        let learnedInsets = DisplayWorkArea.learnedInsets(displayID: gridDisplayID)
-        var planningFrame = DisplayWorkArea.plannedFrame(visibleFrame: baseVisible, insets: learnedInsets)
+        // "空隙"来源之一）。解算集中在 ScreenWorkArea（与 Layout 快捷键同源）。
+        let workArea = ScreenWorkArea.plan(for: screen)
+        let baseVisible = workArea.visibleFrame
+        let gridDisplayID = workArea.displayID
+        let learnedInsets = workArea.learnedInsets
+        var planningFrame = workArea.planningFrame
         var frames = TerminalGridPlanner.cells(
             visibleFrame: planningFrame,
             spec: .init(rows: rows, cols: cols, gap: TerminalGridPreferences.gap)
@@ -134,9 +135,15 @@ final class TerminalGridController {
             return createdWindowIDs.map { id in entries.first(where: { $0.windowID == id })?.bounds }
         }
         var insets = learnedInsets
-        let observed = DisplayWorkArea.inferInsets(planned: frames, actual: readbackFrames(), planningFrame: planningFrame)
-        if !observed.isZero {
-            insets = insets.merged(with: observed)
+        // 学习决策（merge / 是否探测 / 是否重排）集中在 WorkAreaLearning 纯内核。
+        let learning = WorkAreaLearning.decide(
+            learned: learnedInsets,
+            planned: frames,
+            actual: readbackFrames(),
+            planningFrame: planningFrame
+        )
+        if learning.learnedNonzero {
+            insets = learning.insets
             DisplayWorkArea.store(insets, displayID: gridDisplayID)
             let fields: [String: String] = [
                 "op": op,
@@ -147,7 +154,7 @@ final class TerminalGridController {
                 "right": "\(insets.right)"
             ]
             log("[TerminalGrid] createGrid work-area learned", fields: fields)
-        } else if !learnedInsets.isZero {
+        } else if learning.shouldProbe {
             // 缓存非零但本轮格子都到达了规划边缘 → 探测写验证能否缩回
             // （菜单栏改自动隐藏等设置变化后自愈）。
             if let probeFrame = TerminalGridPlanner.cells(

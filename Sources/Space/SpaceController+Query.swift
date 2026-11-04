@@ -257,7 +257,7 @@ extension SpaceController {
         let displays = queryDisplays(caller: "displayMatchTable")
         let screens = NSScreen.screens
         guard let displays, !displays.isEmpty, !screens.isEmpty else { return nil }
-        let mainHeight = screens.first { $0.frame.origin == .zero }?.frame.height ?? 0
+        let mainHeight = ScreenGeometry(cocoaFrames: screens.map { $0.frame }).primaryHeight
         let match = CoordinateKit.matchYabaiDisplayIndices(
             cocoaFrames: screens.map(\.frame),
             mainHeight: mainHeight,
@@ -300,6 +300,14 @@ extension SpaceController {
             return screen
         }
         return CoordinateKit.nsScreen(forYabaiDisplayIndex: index)
+    }
+
+    /// 目标 yabai display 之外的任意一块屏（跨屏投递的「泊靠屏」）。
+    /// 单屏 / 索引不可得 → nil。TerminalGrid 建窗投递与 SessionRestore 回写共用
+    /// 同一选屏口径：跨 display 移动必入目标屏当前可见 space，因此必须先泊到
+    /// 另一块屏再写回（同屏移动不触发 display 切换）。
+    func parkingScreen(excludingYabaiDisplayIndex index: Int) -> NSScreen? {
+        NSScreen.screens.first { exactYabaiDisplayIndex(for: $0) != index }
     }
 
     /// 拓扑变化（didChangeScreenParameters）即时失效几何匹配表。
