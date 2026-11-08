@@ -333,9 +333,9 @@ function WindowFlowAnim() {
         <div className="wf-badge">✓ 响应完成 · 窗口自动到主屏</div>
         <div className="wf-key wf-key-focus">⌃Q</div>
         <div className="wf-key wf-key-restore">⌃Q</div>
-        <svg className="wf-arrow" viewBox="0 0 100 40" aria-hidden="true">
-          <path d="M4 30 C 30 6, 62 6, 92 22" />
-          <polygon points="92,22 82,15 84,26" />
+        <svg className="wf-arrow" viewBox="0 0 40 100" aria-hidden="true">
+          <path d="M12 4 C 34 28, 34 62, 14 88" />
+          <polygon points="14,96 7,81 20,82" />
         </svg>
       </div>
       <div className="wf-captions">
@@ -577,6 +577,10 @@ function Automation() {
               <div className="flow-window-lines"><i /><i /><i className="short" /></div>
             </div>
           </div>
+          <svg className="flow-arrow" viewBox="0 0 40 100" aria-hidden="true">
+            <path d="M12 4 C 34 28, 34 62, 14 88" />
+            <polygon className="flow-arrow-head" points="14,96 7,81 20,82" />
+          </svg>
           <div className="flow-screen flow-screen-primary">
             <span className="flow-screen-label">主屏</span>
             <div className="flow-window flow-window-main">
@@ -589,10 +593,6 @@ function Automation() {
               ⏎ 已自动提交 · 窗口不动
             </div>
           </div>
-          <svg className="flow-arrow" viewBox="0 0 120 60" aria-hidden="true">
-            <path d="M4 44 C 40 8, 78 8, 114 36" />
-            <polygon className="flow-arrow-head" points="114,36 103,30 106,41" />
-          </svg>
         </div>
 
         <div className="flow-steps">

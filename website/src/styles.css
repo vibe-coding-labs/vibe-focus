@@ -487,7 +487,7 @@ code {
 
 .wf-stage {
   position: relative;
-  aspect-ratio: 10 / 5.4;
+  aspect-ratio: 10 / 9;
   background: linear-gradient(135deg, #fbf7ef 0%, #f4ead6 100%);
   border: 1px solid var(--line);
   border-radius: 26px;
@@ -503,12 +503,12 @@ code {
 }
 
 .wf-screen-secondary {
-  left: 5%; top: 22%; width: 38%; height: 62%;
+  left: 22%; top: 5%; width: 56%; height: 38%;
   background: #f1e9d8;
 }
 
 .wf-screen-primary {
-  left: 55%; top: 10%; width: 40%; height: 78%;
+  left: 10%; top: 50%; width: 80%; height: 38%;
   border-color: rgba(230, 74, 51, 0.35);
   animation: wf-primary-glow 7.5s ease infinite;
 }
@@ -554,9 +554,9 @@ code {
 }
 
 @keyframes wf-fly {
-  0%, 9% { left: 11%; top: 36%; width: 26%; height: 42%; }
-  26%, 48% { left: 58.5%; top: 16%; width: 33%; height: 66%; }
-  65%, 100% { left: 11%; top: 36%; width: 26%; height: 42%; }
+  0%, 9% { left: 31%; top: 12%; width: 38%; height: 20%; }
+  26%, 48% { left: 16%; top: 54%; width: 68%; height: 30%; }
+  65%, 100% { left: 31%; top: 12%; width: 38%; height: 20%; }
 }
 
 .wf-win-bar {
@@ -599,7 +599,7 @@ code {
 
 .wf-slot {
   position: absolute;
-  left: 11%; top: 36%; width: 26%; height: 42%;
+  left: 31%; top: 12%; width: 38%; height: 20%;
   border: 1.5px dashed rgba(138, 123, 104, 0.6);
   border-radius: 10px;
   display: flex;
@@ -625,7 +625,7 @@ code {
 
 .wf-badge {
   position: absolute;
-  left: 50%; bottom: 5%;
+  left: 50%; bottom: 2.5%;
   transform: translateX(-50%) translateY(6px);
   background: #2b241d;
   color: #fff;
@@ -649,7 +649,7 @@ code {
 
 .wf-key {
   position: absolute;
-  left: 43.5%; top: 30%;
+  left: 72%; top: 42%;
   z-index: 4;
   background: #fff;
   border: 1.5px solid rgba(64, 54, 43, 0.24);
@@ -682,8 +682,8 @@ code {
 
 .wf-arrow {
   position: absolute;
-  left: 41.5%; top: 20%;
-  width: 16%;
+  left: 12%; top: 32%;
+  width: 11%;
   stroke: var(--coral);
   fill: none;
   stroke-width: 3;
@@ -696,7 +696,7 @@ code {
 .wf-arrow polygon { fill: var(--coral); stroke: none; }
 
 @keyframes wf-arrow {
-  0%, 10% { opacity: 0; transform: translateX(-8px); }
+  0%, 10% { opacity: 0; transform: translateY(-8px); }
   17%, 25% { opacity: 0.95; transform: none; }
   36%, 100% { opacity: 0; }
 }
@@ -1031,9 +1031,9 @@ code {
 .flow-stage {
   position: relative;
   display: flex;
-  gap: 56px;
-  justify-content: center;
-  align-items: stretch;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
   padding: 10px 0 6px;
 }
 
@@ -1057,11 +1057,11 @@ code {
 }
 
 .flow-screen-secondary {
-  width: min(300px, 38%);
+  width: min(460px, 88%);
 }
 
 .flow-screen-primary {
-  width: min(380px, 46%);
+  width: min(560px, 100%);
   background: #fff9f0;
   border-color: var(--peach-soft);
 }
@@ -1152,12 +1152,10 @@ code {
 }
 
 .flow-arrow {
-  position: absolute;
-  top: 42%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 120px;
-  height: 60px;
+  width: 40px;
+  height: 46px;
+  flex: none;
+  margin: -4px 0;
   z-index: 2;
 }
 
@@ -1716,18 +1714,7 @@ code {
   }
 
   .flow-stage {
-    flex-direction: column;
-    gap: 30px;
-    align-items: center;
-  }
-
-  .flow-screen-secondary,
-  .flow-screen-primary {
-    width: min(420px, 100%);
-  }
-
-  .flow-arrow {
-    display: none;
+    gap: 24px;
   }
 
   .flow-bubble {
