@@ -39,6 +39,13 @@ git commit -m "..." -- <具体文件...>
    - `bash Tests/run_all_tests.sh` 全绿；
    - `swift run VibeFocusTestRunner` 全绿（无条件必跑——B56 起 Runner 是主断言基线，
      896+ checks 秒级；新增断言入对应域文件 `Tests/Runner/RunnerXxxTests.swift`）；
+   - **显示睡眠防护（B319 实证）**：用户离开期跑 Runner/覆盖率管线一律加
+     `caffeinate -d` 前缀（如 `caffeinate -d swift run VibeFocusTestRunner`）。
+     显示睡眠期 yabai 全局查询确定性截断（B299 在案）**且 WindowServer 自有
+     layer0 窗成为「第一个他属在屏窗」类夹具的唯一候选**——BindingVerifier/
+     BindingResolution 等测试确定性假红（2026-11-09 03:11 pid157 实锤 ×3 轮全败，
+     用户回来即自愈）；选择器已排除 WindowServer/loginwindow，但 caffeinate 是
+     根防护。诊断：`yabai -m query --spaces | wc -c` == 2 即中招。
 2. `git fetch origin` 确认 `origin/main` 无新提交（有则先 rebase/merge 解决冲突）；
 3. `git push origin HEAD:main`（fast-forward）；
 4. 合并推送后清理：`git worktree remove ../vibe-focus-<topic>` + `git branch -d <分支>`。
