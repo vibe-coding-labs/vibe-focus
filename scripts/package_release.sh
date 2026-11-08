@@ -17,7 +17,11 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PLIST_PATH="$CONTENTS_DIR/Info.plist"
 
 echo "== Building release binary =="
-swift build -c release
+# 只构建 App 主产物（对齐 run.sh 语义）：全量构建会连 VibeFocusTestRunner 一起编，
+# 其 @testable import 在 release 配置（无 -enable-testing）下直接编不过。
+# SWIFT_BUILD_EXTRA_ARGS 注入缝：TUN/代理断连导致 SwiftPM 强制 fetch 远端超时时，
+# 传 --skip-update 并预置 .build/{checkouts,repositories} 缓存即可离线构建（v0.1.4 发版实证）。
+swift build -c release --product "$EXECUTABLE_NAME" ${SWIFT_BUILD_EXTRA_ARGS:-}
 
 echo "== Preparing app bundle =="
 rm -rf "$APP_DIR"
