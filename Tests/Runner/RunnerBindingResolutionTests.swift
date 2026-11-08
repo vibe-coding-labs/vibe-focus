@@ -44,9 +44,14 @@ extension RunnerHarness {
             return ws
         }
 
-        // 真实他属 layer0 在屏窗（活性校验真值源；同 B215 BindingVerifier 夹具）
+        // 真实他属 layer0 在屏窗（活性校验真值源；同 B215 BindingVerifier 夹具）。
+        // B319 排除系统属主（WindowServer/loginwindow）：睡眠/锁屏期 WindowServer
+        // layer0 窗成唯一候选 → verifyBinding 恒败（详见 RunnerBindingVerifierTests 注记）
         let myPID = ProcessInfo.processInfo.processIdentifier
-        guard let foreign = cgWindowListAll().first(where: { $0.layer == 0 && $0.isOnScreen && $0.ownerPID != myPID }) else {
+        let systemOwners: Set<String> = ["WindowServer", "loginwindow"]
+        guard let foreign = cgWindowListAll().first(where: {
+            $0.layer == 0 && $0.isOnScreen && $0.ownerPID != myPID
+                && !systemOwners.contains($0.ownerName ?? "") }) else {
             check("bindRes: 环境存在他属 layer0 在屏窗（夹具前提）", false)
             return
         }

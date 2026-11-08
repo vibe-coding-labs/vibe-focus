@@ -37,8 +37,17 @@ extension RunnerHarness {
 
             // ===== 真实 CGWindowList 对账 =====
             let windows = cgWindowListAll()
-            // 挑一个 layer 0 的在屏他属窗口（Dock/前台 app 必有；Runner 自身无窗口）
-            guard let foreign = windows.first(where: { $0.layer == 0 && $0.isOnScreen && $0.ownerPID != myPID }) else {
+            // 挑一个 layer 0 的在屏他属窗口（Dock/前台 app 必有；Runner 自身无窗口）。
+            // B319 排除系统属主（WindowServer/loginwindow）：显示睡眠/锁屏期真实 app 窗
+            // 全下屏，WindowServer 自有 layer0 窗成为唯一候选——verifyBinding 对其
+            // 恒失败（进程不在 NSRunningApplication 表），两测试确定性假红（03:11 实锤
+            // pid=157 WindowServer ×3 轮全败；用户回来 Chrome 复为首位即绿）。
+            let systemOwners: Set<String> = ["WindowServer", "loginwindow"]
+            let appWindow: (CGWindowEntry) -> Bool = {
+                $0.layer == 0 && $0.isOnScreen && $0.ownerPID != myPID
+                    && !systemOwners.contains($0.ownerName ?? "")
+            }
+            guard let foreign = windows.first(where: appWindow) else {
                 check("bv: 环境存在他属 layer0 在屏窗口（夹具前提）", false)
                 return
             }
@@ -50,8 +59,7 @@ extension RunnerHarness {
             // 每轮重新采 CGWindowList 重挑候选，3 轮内任一通过即可。
             var validOK = false
             for _ in 0..<3 {
-                if let candidate = cgWindowListAll().first(where: {
-                    $0.layer == 0 && $0.isOnScreen && $0.ownerPID != myPID }) {
+                if let candidate = cgWindowListAll().first(where: appWindow) {
                     if reg.verifyBinding(bvState(pid: candidate.ownerPID,
                                                  windowID: candidate.windowID,
                                                  bundleID: nil)) {
