@@ -503,8 +503,12 @@ code {
 }
 
 .wf-screen-secondary {
-  left: 22%; top: 5%; width: 56%; height: 38%;
+  left: 6%; top: 6%; width: 42%; height: 34%;
   background: #f1e9d8;
+}
+
+.wf-screen-s2 {
+  left: 52%; top: 6%; width: 42%; height: 34%;
 }
 
 .wf-screen-primary {
@@ -554,9 +558,9 @@ code {
 }
 
 @keyframes wf-fly {
-  0%, 9% { left: 31%; top: 12%; width: 38%; height: 20%; }
+  0%, 9% { left: 12%; top: 12%; width: 30%; height: 16%; }
   26%, 48% { left: 16%; top: 54%; width: 68%; height: 30%; }
-  65%, 100% { left: 31%; top: 12%; width: 38%; height: 20%; }
+  65%, 100% { left: 12%; top: 12%; width: 30%; height: 16%; }
 }
 
 .wf-win-bar {
@@ -599,7 +603,7 @@ code {
 
 .wf-slot {
   position: absolute;
-  left: 31%; top: 12%; width: 38%; height: 20%;
+  left: 12%; top: 12%; width: 30%; height: 16%;
   border: 1.5px dashed rgba(138, 123, 104, 0.6);
   border-radius: 10px;
   display: flex;
@@ -682,8 +686,8 @@ code {
 
 .wf-arrow {
   position: absolute;
-  left: 12%; top: 32%;
-  width: 11%;
+  left: 20%; top: 38%;
+  width: 9%;
   stroke: var(--coral);
   fill: none;
   stroke-width: 3;
@@ -872,6 +876,15 @@ code {
 
 /* ---------------------------------- 功能 ---------------------------------- */
 
+/* 自动化流程：顶部两块副屏并排 */
+.flow-screens-top {
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  gap: 22px;
+  width: 100%;
+}
+
 /* bento 功能区：2 张大卡（各占 3 列）+ 6 张小卡（各占 2 列，一行三张） */
 
 .feature-bento {
@@ -1057,7 +1070,7 @@ code {
 }
 
 .flow-screen-secondary {
-  width: min(460px, 88%);
+  width: min(340px, 46%);
 }
 
 .flow-screen-primary {
