@@ -722,7 +722,7 @@ function Download() {
             <span className="download-step-num">1</span>
             <div>
               <strong>下载解压</strong>
-              <span>从 Releases 下载最新的 <code>VibeFocus-macos.zip</code> 并解压。</span>
+              <span>从 Releases 下载 <code>{`VibeFocus-${LATEST_VERSION}-macos.zip`}</code> 并解压。</span>
             </div>
           </div>
           <div className="download-step">
