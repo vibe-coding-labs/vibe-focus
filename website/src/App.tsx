@@ -315,27 +315,38 @@ function WindowFlowAnim() {
       <div className="wf-stage">
         <div className="wf-screen wf-screen-secondary">
           <span className="wf-screen-label">副屏 1</span>
+          <span className="wf-disp">1</span>
           <span className="wf-tabs"><i className="is-on">工作区 1</i><i>工作区 2</i></span>
           <div className="wf-grid">
-            <i /><i /><i /><i /><i className="wf-cell-empty" /><i />
+            <i className="wf-c-term" /><i className="wf-c-doc" /><i className="wf-c-code" />
+            <i className="wf-c-code" /><i className="wf-cell-empty" /><i className="wf-c-term" />
           </div>
         </div>
         <div className="wf-screen wf-screen-secondary wf-screen-s2">
           <span className="wf-screen-label">副屏 2</span>
+          <span className="wf-disp">2</span>
           <span className="wf-tabs"><i>工作区 1</i><i className="is-on">工作区 2</i></span>
-          <div className="wf-grid"><i /><i /><i /><i /><i /><i /></div>
+          <div className="wf-grid">
+            <i className="wf-c-doc" /><i className="wf-c-term" /><i className="wf-c-doc" />
+            <i className="wf-c-code" /><i className="wf-c-doc" /><i className="wf-c-term" />
+          </div>
         </div>
         <div className="wf-screen wf-screen-primary">
           <span className="wf-screen-label">主屏</span>
-          <div className="wf-grid wf-grid-main"><i /><i /><i /><i /><i /><i /></div>
+          <span className="wf-disp wf-disp-main">主</span>
+          <div className="wf-grid wf-grid-main">
+            <i className="wf-c-term" /><i className="wf-c-doc" /><i className="wf-c-code" />
+            <i className="wf-c-code" /><i className="wf-c-doc" /><i className="wf-c-term" />
+          </div>
         </div>
         <div className="wf-win">
           <span className="wf-win-bar">
             <i /><i /><i />
             <em>claude</em>
           </span>
-          <span className="wf-win-line" />
-          <span className="wf-win-line wf-win-line-short" />
+          <span className="wf-win-prompt"><b>$</b>claude "重构这个模块"</span>
+          <span className="wf-win-out" />
+          <span className="wf-win-input"><i />⏎</span>
         </div>
         <div className="wf-badge">✓ 响应完成 · 窗口自动到主屏</div>
         <div className="wf-key wf-key-focus">⌃Q</div>
@@ -579,8 +590,9 @@ function Automation() {
           <div className="flow-screens-top">
             <div className="flow-screen flow-screen-secondary">
               <span className="flow-screen-label">副屏 1</span>
+              <span className="flow-disp">1</span>
               <span className="flow-tabs"><i className="is-on">工作区 1</i><i>工作区 2</i></span>
-              <div className="flow-grid"><i /><i /><i /><i /><i /><i /></div>
+              <div className="flow-grid"><i className="flow-c-term" /><i className="flow-c-doc" /><i className="flow-c-code" /><i className="flow-c-code" /><i className="flow-c-term" /><i className="flow-c-doc" /></div>
               <div className="flow-window flow-window-code">
                 <span className="flow-window-dots"><i /><i /><i /></span>
                 <span className="flow-window-title">claude</span>
@@ -589,8 +601,9 @@ function Automation() {
             </div>
             <div className="flow-screen flow-screen-secondary">
               <span className="flow-screen-label">副屏 2</span>
+              <span className="flow-disp">2</span>
               <span className="flow-tabs"><i>工作区 1</i><i className="is-on">工作区 2</i></span>
-              <div className="flow-grid"><i /><i /><i /><i /><i /><i /></div>
+              <div className="flow-grid"><i className="flow-c-doc" /><i className="flow-c-term" /><i className="flow-c-doc" /><i className="flow-c-code" /><i className="flow-c-doc" /><i className="flow-c-term" /></div>
             </div>
           </div>
           <svg className="flow-arrow" viewBox="0 0 40 100" aria-hidden="true">
@@ -599,7 +612,8 @@ function Automation() {
           </svg>
           <div className="flow-screen flow-screen-primary">
             <span className="flow-screen-label">主屏</span>
-            <div className="flow-grid flow-grid-main"><i /><i /><i /><i /><i /><i /></div>
+            <span className="flow-disp">主</span>
+            <div className="flow-grid flow-grid-main"><i className="flow-c-term" /><i className="flow-c-doc" /><i className="flow-c-code" /><i className="flow-c-code" /><i className="flow-c-doc" /><i className="flow-c-term" /></div>
             <div className="flow-window flow-window-main">
               <span className="flow-window-dots"><i /><i /><i /></span>
               <span className="flow-window-title">claude — 响应完成</span>
