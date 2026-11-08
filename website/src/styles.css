@@ -503,16 +503,16 @@ code {
 }
 
 .wf-screen-secondary {
-  left: 6%; top: 6%; width: 42%; height: 34%;
+  left: 6%; top: 4%; width: 42%; height: 38%;
   background: #f1e9d8;
 }
 
 .wf-screen-s2 {
-  left: 52%; top: 6%; width: 42%; height: 34%;
+  left: 52%; top: 4%; width: 42%; height: 38%;
 }
 
 .wf-screen-primary {
-  left: 10%; top: 50%; width: 80%; height: 38%;
+  left: 10%; top: 52%; width: 80%; height: 40%;
   border-color: rgba(230, 74, 51, 0.35);
   animation: wf-primary-glow 7.5s ease infinite;
 }
@@ -558,9 +558,9 @@ code {
 }
 
 @keyframes wf-fly {
-  0%, 9% { left: 12%; top: 12%; width: 30%; height: 16%; }
-  26%, 48% { left: 16%; top: 54%; width: 68%; height: 30%; }
-  65%, 100% { left: 12%; top: 12%; width: 30%; height: 16%; }
+  0%, 9% { left: 11%; top: 15%; width: 30%; height: 22%; }
+  26%, 48% { left: 14%; top: 55.5%; width: 72%; height: 34%; }
+  65%, 100% { left: 11%; top: 15%; width: 30%; height: 22%; }
 }
 
 .wf-win-bar {
@@ -599,19 +599,7 @@ code {
 
 .wf-win-line-short { width: 55%; }
 
-/* 副屏虚线空位：窗口离开时显现 */
-
-.wf-slot {
-  position: absolute;
-  left: 12%; top: 12%; width: 30%; height: 16%;
-  border: 1.5px dashed rgba(138, 123, 104, 0.6);
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  animation: wf-slot 7.5s ease infinite;
-}
+/* 副屏 1 方阵中的虚线空位：窗口离开时显现 */
 
 @keyframes wf-slot {
   0%, 22% { opacity: 0; }
@@ -619,11 +607,88 @@ code {
   62%, 100% { opacity: 0; }
 }
 
-.wf-slot-hint {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
+/* 工作区标签条 */
+
+.wf-tabs {
+  position: absolute;
+  top: 6%; left: 6%; right: 6%;
+  display: flex;
+  gap: 4px;
+  z-index: 2;
 }
+
+.wf-tabs i {
+  flex: 1;
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.7;
+  color: var(--muted);
+  background: rgba(255, 253, 248, 0.72);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.wf-tabs i.is-on {
+  color: var(--coral);
+  background: #fffdf8;
+  border-color: rgba(230, 74, 51, 0.35);
+}
+
+/* 窗口方阵（3×2）：表达多工作区 × 多窗口 */
+
+.wf-grid {
+  position: absolute;
+  left: 6%; right: 6%; top: 30%; bottom: 7%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 7px;
+}
+
+.wf-grid i {
+  position: relative;
+  border-radius: 5px;
+  background: rgba(138, 123, 104, 0.16);
+  border: 1px solid rgba(138, 123, 104, 0.24);
+}
+
+.wf-grid i::before {
+  content: '';
+  position: absolute;
+  top: 16%; left: 12%; right: 38%;
+  height: 13%;
+  border-radius: 2px;
+  background: rgba(138, 123, 104, 0.3);
+}
+
+.wf-grid i::after {
+  content: '';
+  position: absolute;
+  top: 44%; left: 12%; right: 12%; bottom: 18%;
+  border-radius: 2px;
+  background: rgba(138, 123, 104, 0.12);
+}
+
+.wf-cell-empty {
+  border: 1.5px dashed rgba(230, 74, 51, 0.55) !important;
+  background: rgba(230, 74, 51, 0.05) !important;
+  opacity: 0;
+  animation: wf-slot 7.5s ease infinite;
+}
+
+.wf-cell-empty::before,
+.wf-cell-empty::after { display: none; }
+
+.wf-grid-main i {
+  background: rgba(230, 74, 51, 0.08);
+  border-color: rgba(230, 74, 51, 0.2);
+}
+
+.wf-grid-main i::before { background: rgba(230, 74, 51, 0.24); }
+.wf-grid-main i::after { background: rgba(230, 74, 51, 0.1); }
 
 /* 主屏落位徽章 */
 
@@ -653,7 +718,7 @@ code {
 
 .wf-key {
   position: absolute;
-  left: 72%; top: 42%;
+  left: 73%; top: 43.5%;
   z-index: 4;
   background: #fff;
   border: 1.5px solid rgba(64, 54, 43, 0.24);
@@ -686,7 +751,7 @@ code {
 
 .wf-arrow {
   position: absolute;
-  left: 20%; top: 38%;
+  left: 20%; top: 42%;
   width: 9%;
   stroke: var(--coral);
   fill: none;
@@ -1055,9 +1120,76 @@ code {
   border-radius: 18px;
   border: 1.5px solid var(--line);
   background: var(--bg);
-  padding: 40px 26px 26px;
+  padding: 40px 16px 14px;
   transition: border-color 0.4s ease, box-shadow 0.4s ease;
 }
+
+/* 工作区标签条 + 窗口方阵：多工作区 × 多窗口拓扑 */
+
+.flow-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.flow-tabs i {
+  flex: 1;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--muted);
+  background: rgba(255, 253, 248, 0.72);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+
+.flow-tabs i.is-on {
+  color: var(--coral);
+  background: #fffdf8;
+  border-color: rgba(230, 74, 51, 0.35);
+}
+
+.flow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.flow-grid i {
+  position: relative;
+  height: 36px;
+  border-radius: 6px;
+  background: rgba(138, 123, 104, 0.14);
+  border: 1px solid rgba(138, 123, 104, 0.2);
+}
+
+.flow-grid i::before {
+  content: '';
+  position: absolute;
+  top: 6px; left: 6px; right: 42%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(138, 123, 104, 0.28);
+}
+
+.flow-grid i::after {
+  content: '';
+  position: absolute;
+  top: 14px; left: 6px; right: 6px; bottom: 6px;
+  border-radius: 2px;
+  background: rgba(138, 123, 104, 0.1);
+}
+
+.flow-grid-main i {
+  background: rgba(230, 74, 51, 0.08);
+  border-color: rgba(230, 74, 51, 0.18);
+}
+
+.flow-grid-main i::before { background: rgba(230, 74, 51, 0.22); }
+.flow-grid-main i::after { background: rgba(230, 74, 51, 0.1); }
 
 .flow-screen-label {
   position: absolute;
@@ -1070,7 +1202,7 @@ code {
 }
 
 .flow-screen-secondary {
-  width: min(340px, 46%);
+  width: min(360px, 46%);
 }
 
 .flow-screen-primary {
@@ -1086,6 +1218,21 @@ code {
   box-shadow: var(--shadow-sm);
   padding: 10px 12px 14px;
   transition: opacity 0.5s ease, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.5s ease;
+}
+
+.flow-window-code {
+  position: absolute;
+  left: 12px; right: 36px; top: 78px;
+  z-index: 2;
+}
+
+.flow-screen-primary .flow-window-main {
+  position: absolute;
+  left: 14px; right: 14px; top: 40px; bottom: 12px;
+  z-index: 2;
+}
+
+.flow-screen-primary { min-height: 150px; }
 }
 
 .flow-window-dots {
@@ -1153,6 +1300,7 @@ code {
   position: absolute;
   right: 22px;
   bottom: 16px;
+  z-index: 3;
   background: var(--bg-deep);
   color: #f1e9de;
   font-size: 12px;

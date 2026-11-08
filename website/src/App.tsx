@@ -315,15 +315,19 @@ function WindowFlowAnim() {
       <div className="wf-stage">
         <div className="wf-screen wf-screen-secondary">
           <span className="wf-screen-label">副屏 1</span>
-          <div className="wf-slot">
-            <span className="wf-slot-hint">窗口已离开</span>
+          <span className="wf-tabs"><i className="is-on">工作区 1</i><i>工作区 2</i></span>
+          <div className="wf-grid">
+            <i /><i /><i /><i /><i className="wf-cell-empty" /><i />
           </div>
         </div>
         <div className="wf-screen wf-screen-secondary wf-screen-s2">
           <span className="wf-screen-label">副屏 2</span>
+          <span className="wf-tabs"><i>工作区 1</i><i className="is-on">工作区 2</i></span>
+          <div className="wf-grid"><i /><i /><i /><i /><i /><i /></div>
         </div>
         <div className="wf-screen wf-screen-primary">
           <span className="wf-screen-label">主屏</span>
+          <div className="wf-grid wf-grid-main"><i /><i /><i /><i /><i /><i /></div>
         </div>
         <div className="wf-win">
           <span className="wf-win-bar">
@@ -575,6 +579,8 @@ function Automation() {
           <div className="flow-screens-top">
             <div className="flow-screen flow-screen-secondary">
               <span className="flow-screen-label">副屏 1</span>
+              <span className="flow-tabs"><i className="is-on">工作区 1</i><i>工作区 2</i></span>
+              <div className="flow-grid"><i /><i /><i /><i /><i /><i /></div>
               <div className="flow-window flow-window-code">
                 <span className="flow-window-dots"><i /><i /><i /></span>
                 <span className="flow-window-title">claude</span>
@@ -583,6 +589,8 @@ function Automation() {
             </div>
             <div className="flow-screen flow-screen-secondary">
               <span className="flow-screen-label">副屏 2</span>
+              <span className="flow-tabs"><i>工作区 1</i><i className="is-on">工作区 2</i></span>
+              <div className="flow-grid"><i /><i /><i /><i /><i /><i /></div>
             </div>
           </div>
           <svg className="flow-arrow" viewBox="0 0 40 100" aria-hidden="true">
@@ -591,6 +599,7 @@ function Automation() {
           </svg>
           <div className="flow-screen flow-screen-primary">
             <span className="flow-screen-label">主屏</span>
+            <div className="flow-grid flow-grid-main"><i /><i /><i /><i /><i /><i /></div>
             <div className="flow-window flow-window-main">
               <span className="flow-window-dots"><i /><i /><i /></span>
               <span className="flow-window-title">claude — 响应完成</span>
