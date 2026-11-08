@@ -3,7 +3,8 @@ import { MonitorFrame } from './components/MonitorFrame';
 
 const RELEASES_URL = 'https://github.com/vibe-coding-labs/vibe-focus/releases';
 const REPO_URL = 'https://github.com/vibe-coding-labs/vibe-focus';
-const LATEST_VERSION = '0.0.89';
+const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
+const LATEST_VERSION = '0.1.3';
 // vite base=/vibe-focus/（GitHub Pages 项目页）：public 资源必须拼 BASE_URL，否则线上 404
 const BASE = import.meta.env.BASE_URL;
 
@@ -71,6 +72,12 @@ const IconGithub = ({ className }: IconProps) => (
   </svg>
 );
 
+const IconStar = ({ className }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2.6l2.9 5.9 6.5.95-4.7 4.6 1.1 6.45L12 17.45 6.2 20.5l1.1-6.45L2.6 9.45l6.5-.95L12 2.6z" />
+  </svg>
+);
+
 const IconDownload = ({ className }: IconProps) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 3v12" />
@@ -114,17 +121,7 @@ const pains = [
   }
 ];
 
-const capabilities = [
-  {
-    icon: <IconBolt />,
-    title: '一键聚焦 / 恢复',
-    text: '⌃Q 把当前窗口移到主屏并铺满可见区域，再按一次精确回到原位置、原尺寸——不切 Space，不动桌面结构。'
-  },
-  {
-    icon: <IconTerminal />,
-    title: 'AI 对话自动聚焦',
-    text: 'Claude Code / Codex 完成响应（Stop 事件）时，终端自动拉回主屏——响应好了窗口自己过来，不用盯。'
-  },
+const smallCapabilities = [
   {
     icon: <IconBubble />,
     title: '⌃X 输入气泡',
@@ -203,7 +200,7 @@ const faqs = [
 
 /* ---------------------------------- 动效基建 ---------------------------------- */
 
-/** 进视口显现：挂载后观察所有 .reveal 元素，进入视口加 .is-visible */
+/** 进视口显现：IntersectionObserver 常规触发 + rAF 扫描兜底（拖滚动条/End 键瞬跳会跳过交点，区块必须补显） */
 function useRevealObserver() {
   useEffect(() => {
     const els = Array.from(document.querySelectorAll('.reveal'));
@@ -211,6 +208,16 @@ function useRevealObserver() {
       els.forEach((el) => el.classList.add('is-visible'));
       return;
     }
+    const pending = () =>
+      els.filter((el) => !el.classList.contains('is-visible'));
+    const sweep = () => {
+      const vh = window.innerHeight;
+      pending().forEach((el) => {
+        if (el.getBoundingClientRect().top < vh * 1.02) {
+          el.classList.add('is-visible');
+        }
+      });
+    };
     const io = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -220,10 +227,24 @@ function useRevealObserver() {
           }
         });
       },
-      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' }
+      { threshold: 0.05, rootMargin: '0px 0px -4% 0px' }
     );
     els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        sweep();
+        ticking = false;
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    sweep();
+    return () => {
+      io.disconnect();
+      window.removeEventListener('scroll', onScroll);
+    };
   }, []);
 }
 
@@ -267,10 +288,73 @@ function useInViewportPlay(ref: React.RefObject<HTMLVideoElement>) {
   return playing;
 }
 
+/** GitHub star 数：运行时拉取真实值，失败则保持 null（诚实降级为 Star on GitHub） */
+function useGitHubStars() {
+  const [stars, setStars] = useState<number | null>(null);
+  useEffect(() => {
+    fetch('https://api.github.com/repos/vibe-coding-labs/vibe-focus')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.stargazers_count === 'number') setStars(d.stargazers_count);
+      })
+      .catch(() => {});
+  }, []);
+  return stars;
+}
+
+/* ---------------------------------- 首屏窗口流动动画 ---------------------------------- */
+
+/**
+ * 高对比度两屏示意：窗口从副屏飞到主屏铺满（Stop 事件 / ⌃Q），
+ * 停顿展示后精确飞回原位——把产品核心动作在首屏讲清楚。
+ * 纯 CSS 循环动画，所有子元素共用同一 7.5s 时长保持同步。
+ */
+function WindowFlowAnim() {
+  return (
+    <div className="wf" role="img" aria-label="演示动画：副屏的终端窗口自动移动到主屏铺满，随后精确恢复原位">
+      <div className="wf-stage">
+        <div className="wf-screen wf-screen-secondary">
+          <span className="wf-screen-label">副屏</span>
+          <div className="wf-slot">
+            <span className="wf-slot-hint">窗口已离开</span>
+          </div>
+        </div>
+        <div className="wf-screen wf-screen-primary">
+          <span className="wf-screen-label">主屏</span>
+        </div>
+        <div className="wf-win">
+          <span className="wf-win-bar">
+            <i /><i /><i />
+            <em>claude</em>
+          </span>
+          <span className="wf-win-line" />
+          <span className="wf-win-line wf-win-line-short" />
+        </div>
+        <div className="wf-badge">✓ 响应完成 · 窗口自动到主屏</div>
+        <div className="wf-key wf-key-focus">⌃Q</div>
+        <div className="wf-key wf-key-restore">⌃Q</div>
+        <svg className="wf-arrow" viewBox="0 0 100 40" aria-hidden="true">
+          <path d="M4 30 C 30 6, 62 6, 92 22" />
+          <polygon points="92,22 82,15 84,26" />
+        </svg>
+      </div>
+      <div className="wf-captions">
+        <span className="wf-caption">
+          <strong>Claude 完成响应</strong>窗口自己过来
+        </span>
+        <span className="wf-caption">
+          <strong>再按 ⌃Q</strong>精确回到原位
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------------------- 组件 ---------------------------------- */
 
 function Nav() {
   const scrolled = useScrolled();
+  const stars = useGitHubStars();
   const links = [
     ['#features', '功能'],
     ['#automation', '自动化'],
@@ -292,7 +376,7 @@ function Nav() {
         </nav>
         <a className="btn btn-primary btn-sm nav-cta" href="#download">
           <IconDownload className="btn-icon" />
-          免费下载
+          <span className="nav-cta-label">免费下载</span>
         </a>
         <a
           className="nav-github"
@@ -302,6 +386,11 @@ function Nav() {
           aria-label="GitHub 仓库"
         >
           <IconGithub />
+          {stars !== null && (
+            <span className="nav-github-stars">
+              {stars >= 1000 ? `${(stars / 1000).toFixed(1)}k` : stars}
+            </span>
+          )}
         </a>
       </div>
     </header>
@@ -309,8 +398,7 @@ function Nav() {
 }
 
 function Hero() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const playing = useInViewportPlay(videoRef);
+  const stars = useGitHubStars();
   return (
     <section className="hero" id="top">
       <div className="hero-blob hero-blob-a" aria-hidden="true" />
@@ -321,16 +409,16 @@ function Hero() {
             <span className="hero-badge-dot" />
             macOS 菜单栏 · Claude Code / Codex 深度集成 · v{LATEST_VERSION}
           </span>
-          <h1 className="hero-title reveal" style={{ '--delay': '0.06s' } as React.CSSProperties}>
+          <h1 className="hero-title reveal" style={{ '--delay': '0.04s' } as React.CSSProperties}>
             窗口自动就位，
             <br />
             编码<em className="grad-text">不再扭头</em>
           </h1>
-          <p className="hero-sub reveal" style={{ '--delay': '0.12s' } as React.CSSProperties}>
-            一键聚焦 / 恢复窗口布局；AI 对话结束自动拉回主屏；⌃X 输入气泡让你
-            不切窗口直接下指令。把「拖窗、摆窗、盯屏」这些机械动作全部交给系统。
+          <p className="hero-sub reveal" style={{ '--delay': '0.08s' } as React.CSSProperties}>
+            ⌃Q 一键把窗口拉到主屏，再按精确恢复；AI 对话结束窗口自己过来；
+            ⌃X 输入气泡不切窗口直接下指令。拖窗、摆窗、盯屏，全部交给系统。
           </p>
-          <div className="hero-actions reveal" style={{ '--delay': '0.18s' } as React.CSSProperties}>
+          <div className="hero-actions reveal" style={{ '--delay': '0.12s' } as React.CSSProperties}>
             <a className="btn btn-primary btn-lg" href="#download">
               <IconDownload className="btn-icon" />
               免费下载 v{LATEST_VERSION}
@@ -338,8 +426,18 @@ function Hero() {
             <a className="btn btn-ghost btn-lg" href="#automation">
               看它如何工作
             </a>
+            <a
+              className="star-pill"
+              href={REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <IconStar className="star-pill-icon" />
+              {stars !== null ? stars : 'Star'}
+              <span className="star-pill-label">on GitHub</span>
+            </a>
           </div>
-          <div className="hero-stats reveal" style={{ '--delay': '0.24s' } as React.CSSProperties}>
+          <div className="hero-stats reveal" style={{ '--delay': '0.16s' } as React.CSSProperties}>
             <div className="hero-stat">
               <strong>⌃Q</strong>
               <span>一键聚焦 / 恢复</span>
@@ -358,20 +456,9 @@ function Hero() {
             </div>
           </div>
         </div>
-        <div className="hero-media reveal" style={{ '--delay': '0.15s' } as React.CSSProperties}>
+        <div className="hero-media reveal" style={{ '--delay': '0.1s' } as React.CSSProperties}>
           <div className="hero-media-glow" aria-hidden="true" />
-          <MonitorFrame isActive={playing} brand="Vibe Focus">
-            <video
-              ref={videoRef}
-              className="hero-video"
-              src="/vibe-focus/demos/hero-loop-preview.mp4?v=10"
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="metadata"
-            />
-          </MonitorFrame>
+          <WindowFlowAnim />
         </div>
       </div>
       <div className="terminal-strip" aria-hidden="true">
@@ -398,7 +485,7 @@ function Pains() {
       </div>
       <div className="pain-grid">
         {pains.map((p, i) => (
-          <div className="pain-card reveal" key={p.title} style={{ '--delay': `${i * 0.07}s` } as React.CSSProperties}>
+          <div className="pain-card reveal" key={p.title} style={{ '--delay': `${i * 0.04}s` } as React.CSSProperties}>
             <span className="pain-num">0{i + 1}</span>
             <h3>{p.title}</h3>
             <p>{p.text}</p>
@@ -415,11 +502,44 @@ function Features() {
       <div className="section-head reveal">
         <span className="section-kicker">功能</span>
         <h2 className="section-title">从一个快捷键，长成一套窗口自动驾驶系统</h2>
-        <p className="section-lead">0.0.x 持续迭代 20+ 个版本：聚焦、气泡、网格、会话恢复、小地图、远程联动，全部为你自动就位。</p>
+        <p className="section-lead">0.1.x 持续迭代 30+ 个版本：聚焦、气泡、网格、会话恢复、小地图、远程联动，全部为你自动就位。</p>
       </div>
-      <div className="feature-grid">
-        {capabilities.map((c, i) => (
-          <div className="feature-card reveal" key={c.title} style={{ '--delay': `${(i % 4) * 0.06}s` } as React.CSSProperties}>
+      <div className="feature-bento">
+        <div className="feature-card feature-card-lg reveal">
+          <div className="feature-lg-body">
+            <div className="feature-icon"><IconBolt /></div>
+            <h3>一键聚焦 / 恢复</h3>
+            <p>
+              ⌃Q 把当前窗口移到主屏并铺满可见区域，再按一次精确回到原位置、原尺寸——
+              不切 Space，不动桌面结构。
+            </p>
+          </div>
+          <div className="feature-lg-visual" aria-hidden="true">
+            <span className="keycap">⌃Q</span>
+            <span className="feature-lg-arrow">→</span>
+            <span className="keycap keycap-ghost">⌃Q</span>
+            <span className="feature-lg-note">移到主屏铺满 · 精确回到原位</span>
+          </div>
+        </div>
+        <div className="feature-card feature-card-lg reveal" style={{ '--delay': '0.05s' } as React.CSSProperties}>
+          <div className="feature-lg-body">
+            <div className="feature-icon"><IconTerminal /></div>
+            <h3>AI 对话自动聚焦</h3>
+            <p>
+              Claude Code / Codex 完成响应（Stop 事件）时，终端自动拉回主屏——
+              响应好了窗口自己过来，不用盯。
+            </p>
+          </div>
+          <div className="feature-lg-visual feature-lg-visual-flow" aria-hidden="true">
+            <span className="flow-chip flow-chip-ai">Claude</span>
+            <span className="flow-chip-arrow">→</span>
+            <span className="flow-chip flow-chip-hook">Stop Hook</span>
+            <span className="flow-chip-arrow">→</span>
+            <span className="flow-chip flow-chip-main">主屏铺满</span>
+          </div>
+        </div>
+        {smallCapabilities.map((c, i) => (
+          <div className="feature-card feature-card-sm reveal" key={c.title} style={{ '--delay': `${(i % 3) * 0.04}s` } as React.CSSProperties}>
             <div className="feature-icon">{c.icon}</div>
             <h3>{c.title}</h3>
             <p>{c.text}</p>
@@ -502,11 +622,11 @@ function Automation() {
           <h4>Stop → 拉回主屏</h4>
           <p>Claude 完成响应或会话结束时，绑定的终端窗口自动移动到主屏并铺满——多实例按会话精确绑定，不串窗。</p>
         </div>
-        <div className="auto-card reveal" style={{ '--delay': '0.07s' } as React.CSSProperties}>
+        <div className="auto-card reveal" style={{ '--delay': '0.05s' } as React.CSSProperties}>
           <h4>输入期间绝不搬窗</h4>
           <p>你提交 Prompt、语音输入时窗口保持原地——自动化从不与你的手抢窗口，聚焦多久由你决定。</p>
         </div>
-        <div className="auto-card reveal" style={{ '--delay': '0.14s' } as React.CSSProperties}>
+        <div className="auto-card reveal" style={{ '--delay': '0.1s' } as React.CSSProperties}>
           <h4>本地与远程同款</h4>
           <p>SSH 到局域网机器跑的 Claude Code / Codex 会话同样生效，转发器自动把 Hook 事件送回本机。</p>
         </div>
@@ -544,21 +664,23 @@ function Demos() {
       <div className="demo-grid">
         <div className="demo-card reveal">
           <div className="demo-media">
-            <img src="/vibe-focus/demos/focus-to-main-display.gif" alt="一键拉回主屏并铺满" loading="lazy" />
+            <MonitorFrame brand="Vibe Focus">
+              <img src={`${BASE}demos/focus-to-main-display.gif`} alt="一键拉回主屏并铺满" loading="lazy" />
+            </MonitorFrame>
           </div>
           <h3>一键拉回主屏并铺满</h3>
           <p>从副屏窗口到主屏聚焦态，一次按键完成。</p>
         </div>
-        <div className="demo-card reveal" style={{ '--delay': '0.07s' } as React.CSSProperties}>
+        <div className="demo-card reveal" style={{ '--delay': '0.05s' } as React.CSSProperties}>
           <div className="demo-media">
-            <DemoVideo src="/vibe-focus/demos/restore-original-layout.mp4" />
+            <DemoVideo src={`${BASE}demos/restore-original-layout.mp4`} />
           </div>
           <h3>再次触发，恢复原布局</h3>
           <p>窗口回到原位置与尺寸，桌面回到你摆好的样子。</p>
         </div>
-        <div className="demo-card reveal" style={{ '--delay': '0.14s' } as React.CSSProperties}>
+        <div className="demo-card reveal" style={{ '--delay': '0.1s' } as React.CSSProperties}>
           <div className="demo-media">
-            <DemoVideo src="/vibe-focus/demos/permissions-diagnostics.mp4" />
+            <DemoVideo src={`${BASE}demos/permissions-diagnostics.mp4`} />
           </div>
           <h3>权限与状态诊断</h3>
           <p>辅助功能授权、登录项、快捷键状态一站检查。</p>
@@ -600,7 +722,7 @@ function Download() {
             <span className="download-step-num">1</span>
             <div>
               <strong>下载解压</strong>
-              <span>从 Releases 下载 <code>VibeFocus-{LATEST_VERSION}-macos.zip</code> 并解压。</span>
+              <span>从 Releases 下载最新的 <code>VibeFocus-macos.zip</code> 并解压。</span>
             </div>
           </div>
           <div className="download-step">
@@ -666,8 +788,9 @@ function Footer() {
           <a href="#demo">演示</a>
           <a href="#download">下载</a>
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href={LICENSE_URL} target="_blank" rel="noopener noreferrer">License</a>
         </nav>
-        <span className="footer-copy">© 2024-2026 Vibe Focus · Open Source</span>
+        <span className="footer-copy">© 2024-2026 Vibe Focus · Open Source under MIT</span>
       </div>
     </footer>
   );
