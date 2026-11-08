@@ -4,7 +4,7 @@ import { MonitorFrame } from './components/MonitorFrame';
 const RELEASES_URL = 'https://github.com/vibe-coding-labs/vibe-focus/releases';
 const REPO_URL = 'https://github.com/vibe-coding-labs/vibe-focus';
 const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
-const LATEST_VERSION = '0.1.3';
+const LATEST_VERSION = '0.1.4';
 // vite base=/vibe-focus/（GitHub Pages 项目页）：public 资源必须拼 BASE_URL，否则线上 404
 const BASE = import.meta.env.BASE_URL;
 
