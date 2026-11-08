@@ -314,10 +314,13 @@ function WindowFlowAnim() {
     <div className="wf" role="img" aria-label="演示动画：副屏的终端窗口自动移动到主屏铺满，随后精确恢复原位">
       <div className="wf-stage">
         <div className="wf-screen wf-screen-secondary">
-          <span className="wf-screen-label">副屏</span>
+          <span className="wf-screen-label">副屏 1</span>
           <div className="wf-slot">
             <span className="wf-slot-hint">窗口已离开</span>
           </div>
+        </div>
+        <div className="wf-screen wf-screen-secondary wf-screen-s2">
+          <span className="wf-screen-label">副屏 2</span>
         </div>
         <div className="wf-screen wf-screen-primary">
           <span className="wf-screen-label">主屏</span>
@@ -569,12 +572,17 @@ function Automation() {
 
       <div className="flow reveal" data-step={active}>
         <div className="flow-stage" aria-hidden="true">
-          <div className="flow-screen flow-screen-secondary">
-            <span className="flow-screen-label">副屏</span>
-            <div className="flow-window flow-window-code">
-              <span className="flow-window-dots"><i /><i /><i /></span>
-              <span className="flow-window-title">claude</span>
-              <div className="flow-window-lines"><i /><i /><i className="short" /></div>
+          <div className="flow-screens-top">
+            <div className="flow-screen flow-screen-secondary">
+              <span className="flow-screen-label">副屏 1</span>
+              <div className="flow-window flow-window-code">
+                <span className="flow-window-dots"><i /><i /><i /></span>
+                <span className="flow-window-title">claude</span>
+                <div className="flow-window-lines"><i /><i /><i className="short" /></div>
+              </div>
+            </div>
+            <div className="flow-screen flow-screen-secondary">
+              <span className="flow-screen-label">副屏 2</span>
             </div>
           </div>
           <svg className="flow-arrow" viewBox="0 0 40 100" aria-hidden="true">
