@@ -264,6 +264,20 @@ extension RunnerHarness {
         controller.handleEnter(commandHeld: false)
         check("tail: handleEnter 空态守卫", controller.phase == .idle)
 
+        // --- T5b Esc 关闭回归锁（0.1.4）：0.1.3 语音取消门被用户实测证伪——录音期
+        //     连按 Esc 11 次全被门吞掉、被迫点 ✕（装机日志 2026-11-09 00:08Z）。
+        //     Esc 必须无条件走 dismiss(reason:"esc")：任何重新引入的门控（含语音
+        //     气泡 fresh 扫描判据）触发时本断言即翻红。用户活跃期本文件整体诚实
+        //     跳过（见文件头门控），锁在空闲机跑上生效。
+        controller.summonForMovedWindow(windowID: iterm2Entries[0].windowID, pid: iterm2PID, appName: "iTerm2")
+        pump(0.2)
+        check("tail: Esc 锁前置 open", controller.phase == .open)
+        let escConsumed = controller.textView(
+            controller.textView ?? NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        let escIdle = pumpUntilIdle(2.0)
+        check("tail: Esc 无条件关闭气泡（0.1.3 语音取消门已回退）",
+              escConsumed && escIdle && controller.phase == .idle)
+
         // --- T6 summon 开关与开态 toggle 臂（真实前台非终端 beep 路径，安全） ---
         InputBubblePreferences.isEnabled = false
         InputBubbleController.triggerFromHotKey()

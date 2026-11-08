@@ -723,15 +723,11 @@ extension InputBubbleController: NSTextViewDelegate {
         switch commandSelector {
         case #selector(NSResponder.cancelOperation(_:)):
             // Esc：关闭不注入，草稿保留（输入跟窗绑定，回来接着打）。
-            // 0.1.3 语音取消门：语音气泡在屏时 Esc 归语音流（用户按 Esc 取消录音
-            // take/关转写浮层），吞掉不关气泡——录音期气泡是 key window，Esc 会
-            // 误关正在使用的气泡（14 次无提交消失取证，详见 InputBubbleEscPlan）。
-            if case .keepAndConsume = InputBubbleEscPlan.decide(voiceBubbleOnScreen: voiceBubblePresentNow()) {
-                log("[InputBubble] esc kept for voice flow, bubble stays", fields: [
-                    "windowID": target.map { String($0.windowID) } ?? "nil"
-                ])
-                return true
-            }
+            // 0.1.4：0.1.3 的「语音取消门」（语音气泡在屏→吞 Esc）已按用户实测
+            // 回退——装机实录（2026-11-09 00:08Z）录音期用户连按 Esc 11 次全被门
+            // 吞掉、被迫点 ✕ 关气泡：预期就是 Esc 关气泡。且 LazyTyper 取消 take
+            // 走自身全局键监听，不依赖本 app 吞键，吞 Esc 对语音流无益。回归锁=
+            // RunnerBubbleCoverageTailTests Esc 无条件关闭断言。
             dismiss(reactivateTarget: true, reason: "esc")
             return true
         default:
