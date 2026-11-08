@@ -264,7 +264,10 @@ extension TerminalGridController {
             "windowID": String(cgID),
             "readback": actual.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil"
         ])
-        let corrected = WindowManager.shared.placeWindow(windowID: cgID, frame: frame, operationID: op)
+        // B313：纠偏 yabai fork 下放窗口作业队列（见 TerminalGridController.swift 文件头注记）
+        let corrected = await WindowWorkExecutor.run {
+            WindowManager.shared.placeWindow(windowID: cgID, frame: frame, operationID: op)
+        } ?? false
         return (cgID, corrected, appleScriptID)
     }
 

@@ -74,8 +74,11 @@ extension TerminalGridController {
         func pollSpace(_ windowID: UInt32, equals target: Int, budgetSeconds: Double) async -> Bool {
             let deadline = Date().addingTimeInterval(budgetSeconds)
             while Date() < deadline {
-                if let after = SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true),
-                   after.space == target {
+                // B313：查询 fork 下放窗口作业队列（见 TerminalGridController.swift 文件头注记）
+                let after = await WindowWorkExecutor.run {
+                    SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)
+                } ?? nil
+                if let after, after.space == target {
                     return true
                 }
                 try? await Task.sleep(nanoseconds: 150_000_000)
@@ -85,12 +88,16 @@ extension TerminalGridController {
 
         for (index, windowID) in windowIDs.enumerated() where index < frames.count {
             // 目标屏可见 space 若被激活拖拽等拉走，先拉回（Space 上已有的
-            // 已投递窗口天然成为 refocus 候选）
-            if activeSpaceIndex(for: screen) != spaceIndex {
-                _ = SpaceController.shared.refocusWindowOnSpace(spaceIndex, operationID: op)
+            // 已投递窗口天然成为 refocus 候选）。B313：fork 原语下放窗口作业队列。
+            if await Self.activeSpaceIndexOffMain(for: screen) != spaceIndex {
+                _ = await WindowWorkExecutor.run {
+                    SpaceController.shared.refocusWindowOnSpace(spaceIndex, operationID: op)
+                } ?? false
             }
-            let visible = activeSpaceIndex(for: screen)
-            let info = SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)
+            let visible = await Self.activeSpaceIndexOffMain(for: screen)
+            let info = await WindowWorkExecutor.run {
+                SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)
+            } ?? nil
             let decision = Self.spaceDeliveryDecision(
                 targetSpaceIndex: spaceIndex,
                 targetDisplayVisibleSpace: visible,
@@ -118,7 +125,10 @@ extension TerminalGridController {
             let axDeadline = Date().addingTimeInterval(3)
             var axReady = false
             while Date() < axDeadline {
-                if SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)?.isManageableByYabai == true {
+                let probeInfo = await WindowWorkExecutor.run {
+                    SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)
+                } ?? nil
+                if probeInfo?.isManageableByYabai == true {
                     axReady = true
                     break
                 }
@@ -130,26 +140,34 @@ extension TerminalGridController {
                 ])
                 continue
             }
-            _ = SpaceController.shared.setWindowFloat(windowID, operationID: op)
+            _ = await WindowWorkExecutor.run {
+                SpaceController.shared.setWindowFloat(windowID, operationID: op)
+            }
             if decision == .deliverRoundTrip {
                 // 窗在目标屏但错位 space（同 display 不可见 space）：frame 直写无法
                 // 跨 space，先泊到其它屏——写回时目标屏正显示目标 space
-                _ = SpaceController.shared.runYabai(
-                    arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(parkFrame.origin.x)):\(Int(parkFrame.origin.y))"],
-                    operation: "delivery.park(windowID=\(windowID))", operationID: op
-                )
+                _ = await WindowWorkExecutor.run {
+                    SpaceController.shared.runYabai(
+                        arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(parkFrame.origin.x)):\(Int(parkFrame.origin.y))"],
+                        operation: "delivery.park(windowID=\(windowID))", operationID: op
+                    )
+                } ?? nil
                 try? await Task.sleep(nanoseconds: 600_000_000)
             }
             // 写回：crossDisplay 直写目标格位、roundTrip 从泊位写回，跨屏归属
             // 切换都落入「目标屏当前可见 space」= 目标 space
-            _ = SpaceController.shared.runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
-                operation: "delivery.writeback.move(windowID=\(windowID))", operationID: op
-            )
-            _ = SpaceController.shared.runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
-                operation: "delivery.writeback.resize(windowID=\(windowID))", operationID: op
-            )
+            _ = await WindowWorkExecutor.run {
+                SpaceController.shared.runYabai(
+                    arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
+                    operation: "delivery.writeback.move(windowID=\(windowID))", operationID: op
+                )
+            } ?? nil
+            _ = await WindowWorkExecutor.run {
+                SpaceController.shared.runYabai(
+                    arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
+                    operation: "delivery.writeback.resize(windowID=\(windowID))", operationID: op
+                )
+            } ?? nil
             if await pollSpace(windowID, equals: spaceIndex, budgetSeconds: 5.0) {
                 delivered += 1
             }

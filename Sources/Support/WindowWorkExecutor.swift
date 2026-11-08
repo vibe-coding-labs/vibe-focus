@@ -30,13 +30,31 @@ import Foundation
 enum WindowWorkExecutor {
 
     /// 串行队列：窗口作业天然互斥（并发移动同一窗口有害），保持全局一条。
-    /// 预算熔断时整体替换（stateLock 保护）——换新队列 = 弃用被挂死作业占住的旧队列。
-    private static var queue = DispatchQueue(
-        label: "vibefocus.window-work",
-        qos: .userInitiated,
-        target: .global(qos: .userInitiated)
-    )
-    private static let stateLock = NSLock()
+    /// 预算熔断时整体替换——换新队列 = 弃用被挂死作业占住的旧队列。
+    /// B313：static var 全局可变状态在 StrictConcurrency 下告警（Swift 6 error），
+    /// 收进锁保护盒（与 ResumeOnce 同款手法，语义不变：读经锁、替换仅当仍是
+    /// 当前队列时生效）。
+    private final class QueueHolder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var current = DispatchQueue(
+            label: "vibefocus.window-work",
+            qos: .userInitiated,
+            target: .global(qos: .userInitiated)
+        )
+        var queue: DispatchQueue {
+            lock.lock()
+            defer { lock.unlock() }
+            return current
+        }
+        func replaceIfCurrent(_ old: DispatchQueue, with new: DispatchQueue) {
+            lock.lock()
+            defer { lock.unlock() }
+            if current === old {
+                current = new
+            }
+        }
+    }
+    private static let holder = QueueHolder()
 
     /// 单作业预算（秒）。熔断时调用方拿 nil，作业本体不中断。
     static let jobBudget: TimeInterval = 90
@@ -65,9 +83,7 @@ enum WindowWorkExecutor {
         budget: TimeInterval = jobBudget,
         _ work: @Sendable @escaping () -> T
     ) async -> T? {
-        stateLock.lock()
-        let currentQueue = queue
-        stateLock.unlock()
+        let currentQueue = holder.queue
         return await withCheckedContinuation { continuation in
             let resumeGate = ResumeOnce()
             currentQueue.async {
@@ -80,16 +96,12 @@ enum WindowWorkExecutor {
             // 身后永远轮不到——绝不能把看门狗挂到 currentQueue 上。
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + budget) {
                 guard resumeGate.tryResume() else { return }
-                stateLock.lock()
                 // 仅当楔死的还是当前队列时才换（多次熔断竞态下避免覆盖更新队列）
-                if queue === currentQueue {
-                    queue = DispatchQueue(
-                        label: "vibefocus.window-work",
-                        qos: .userInitiated,
-                        target: .global(qos: .userInitiated)
-                    )
-                }
-                stateLock.unlock()
+                holder.replaceIfCurrent(currentQueue, with: DispatchQueue(
+                    label: "vibefocus.window-work",
+                    qos: .userInitiated,
+                    target: .global(qos: .userInitiated)
+                ))
                 log("[WindowWorkExecutor] job exceeded budget \(Int(budget))s, queue rebuilt", level: .error, fields: [
                     "budgetSec": String(Int(budget))
                 ])

@@ -154,8 +154,12 @@ extension WindowManager {
     /// float 脱管 → yabai frame 直写。真机实证（2026-09-04）：Terminal.app 的
     /// AppleScript set bounds 是相对窗口当前屏的局部坐标语义，跨屏摆放必漂移，
     /// 由本原语纠偏（与 moveWindowToMainScreen P2 同一引擎）。
+    /// B313 nonisolated 化：链上仅 floatAndSettle（已 nonisolated）+
+    /// moveWindowToFrameViaYabai（+MoveWindow 非 actor 扩展），零 NSApp/NSWindow
+    /// 依赖（B191 探针同款结论）——grid 链经 WindowWorkExecutor 下放调用后，
+    /// 本体不再被 @MainActor extension 钉住。
     @discardableResult
-    func placeWindow(windowID: UInt32, frame: CGRect, operationID: String) -> Bool {
+    nonisolated func placeWindow(windowID: UInt32, frame: CGRect, operationID: String) -> Bool {
         floatAndWriteFrame(
             windowID: windowID,
             targetFrame: frame,
@@ -199,7 +203,8 @@ extension WindowManager {
         )
     }
 
-    private func floatAndWriteFrame(
+    /// B313 nonisolated（随 placeWindow 下放，链上零 UI 依赖，见 placeWindow 注记）
+    nonisolated private func floatAndWriteFrame(
         windowID: UInt32,
         targetFrame: CGRect,
         op: String,

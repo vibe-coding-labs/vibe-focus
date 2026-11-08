@@ -35,6 +35,17 @@ extension TerminalGridController {
         return SpaceController.shared.visibleSpaceIndex(forDisplayIndex: displayIndex, spaces: nil, ignoreCache: true)?.yabaiIndex
     }
 
+    /// activeSpaceIndex 的主线程外变体（B313）：exact* 几何解析（纯内存匹配表）
+    /// 留在调用线程；yabai 查询 fork 经 WindowWorkExecutor 下放（grid 链从
+    /// @MainActor 同步直调曾把 fork 钉死主线程，见 TerminalGridController.swift
+    /// 文件头注记）。静态实现：@Sendable 闭包不得捕获非 Sendable 的 self/NSScreen。
+    static func activeSpaceIndexOffMain(for screen: NSScreen) async -> Int? {
+        guard let displayIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen) else { return nil }
+        return await WindowWorkExecutor.run {
+            SpaceController.shared.visibleSpaceIndex(forDisplayIndex: displayIndex, spaces: nil, ignoreCache: true)?.yabaiIndex
+        } ?? nil
+    }
+
     /// 网格规划可用区：visibleFrame 扣该屏已学习保留区（重排/恢复共用同一事实源）
     func gridPlanningFrame(for screen: NSScreen) -> CGRect {
         let base = CoordinateKit.quartzVisibleFrame(of: screen)
@@ -52,21 +63,27 @@ extension TerminalGridController {
         guard let displayIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen) else {
             return "yabai 不可用，无法定位工作区，已在该屏当前工作区创建"
         }
-        let spaces = SpaceController.shared.querySpaces() ?? []
+        // B313：以下 fork 原语全部下放窗口作业队列（主线程零占用，见文件头注记）
+        let spaces = await WindowWorkExecutor.run { SpaceController.shared.querySpaces() ?? [] } ?? []
         let displaySpaces = spaces.filter { $0.display == displayIndex }
         guard displaySpaces.contains(where: { $0.index == spaceIndex }) else {
             return "Space \(spaceIndex) 不在「\(screen.localizedName)」上，已在该屏当前工作区创建"
         }
-        if activeSpaceIndex(for: screen) == spaceIndex {
+        if await Self.activeSpaceIndexOffMain(for: screen) == spaceIndex {
             return nil
         }
-        if !SpaceController.shared.focusSpace(.yabai(spaceIndex), operationID: op) {
+        let focusedSpace = await WindowWorkExecutor.run {
+            SpaceController.shared.focusSpace(.yabai(spaceIndex), operationID: op)
+        } ?? false
+        if !focusedSpace {
             // 直切依赖 scripting addition（SA 失效时必败）；退聚焦带动通道
-            _ = SpaceController.shared.refocusWindowOnSpace(spaceIndex, excludingWindowID: nil, operationID: op, prefetchedWindows: nil)
+            _ = await WindowWorkExecutor.run {
+                SpaceController.shared.refocusWindowOnSpace(spaceIndex, excludingWindowID: nil, operationID: op, prefetchedWindows: nil)
+            } ?? false
         }
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if activeSpaceIndex(for: screen) == spaceIndex {
+            if await Self.activeSpaceIndexOffMain(for: screen) == spaceIndex {
                 return nil
             }
             try? await Task.sleep(nanoseconds: 150_000_000)

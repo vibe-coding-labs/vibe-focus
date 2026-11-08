@@ -6,6 +6,14 @@ import Foundation
 /// 创建 n×m 终端网格 / 捕获当前摆法（含 Claude session）/ 恢复布局并自动 --resume。
 /// AppleScript 经 osascript 子进程在后台队列执行（Apple Events 权限首次使用会弹
 /// 系统授权框，-1743 时返回引导文案）。
+///
+/// B313 主线程 STALL 根治：本控制器保持 @MainActor（状态/UI 消费在主线程），
+/// 但链上的同步窗口原语（placeWindow/queryWindow/focusSpace 等——SpaceController
+/// 与 WindowManager 均 nonisolated+Sendable）从 MainActor 直调会把 yabai fork 钉死
+/// 主线程。0.1.5 生产日志实证：grid.create 主线程区间单次 31.4s、其间
+/// shell.main.yabai 主线程 fork 单次 1000ms×65、[PERF][STALL] 131 条。凡 fork 原语
+/// 一律经 WindowWorkExecutor 下放（与 toggle/hook 窗口作业互斥串行；每原语独立
+/// 下放而非整链打包——settle/poll 的 Task.sleep 轮空档不占队列，⌃Q 作业可插入）。
 @MainActor
 final class TerminalGridController {
 
@@ -154,7 +162,10 @@ final class TerminalGridController {
                 visibleFrame: baseVisible,
                 spec: .init(rows: 1, cols: 1, gap: 0)
             ).first, let probeID = createdWindowIDs.first {
-                _ = WindowManager.shared.placeWindow(windowID: probeID, frame: probeFrame, operationID: op)
+                // B313：yabai fork 原语下放窗口作业队列（详见文件头注记）
+                _ = await WindowWorkExecutor.run {
+                    WindowManager.shared.placeWindow(windowID: probeID, frame: probeFrame, operationID: op)
+                } ?? false
                 if let actual = readbackFrames().first ?? nil {
                     let probed = DisplayWorkArea.probedInsets(probeTarget: probeFrame, actual: actual, learned: learnedInsets)
                     if probed != learnedInsets {
@@ -176,7 +187,10 @@ final class TerminalGridController {
                 spec: .init(rows: rows, cols: cols, gap: TerminalGridPreferences.gap)
             )
             for (index, windowID) in createdWindowIDs.enumerated() where index < frames.count {
-                _ = WindowManager.shared.placeWindow(windowID: windowID, frame: frames[index], operationID: op)
+                let targetFrame = frames[index]
+                _ = await WindowWorkExecutor.run {
+                    WindowManager.shared.placeWindow(windowID: windowID, frame: targetFrame, operationID: op)
+                } ?? false
             }
         }
 
@@ -201,7 +215,9 @@ final class TerminalGridController {
                     continue
                 }
                 lastUnconverged += 1
-                if WindowManager.shared.placeWindow(windowID: windowID, frame: frame, operationID: op) {
+                if await WindowWorkExecutor.run({
+                    WindowManager.shared.placeWindow(windowID: windowID, frame: frame, operationID: op)
+                }) ?? false {
                     roundCorrected += 1
                 }
             }
@@ -275,7 +291,8 @@ final class TerminalGridController {
         if let targetSpaceIndex {
             whereLabel = "「\(screen.localizedName)」 · Space \(targetSpaceIndex)"
         } else {
-            whereLabel = "「\(screen.localizedName)」" + (activeSpaceIndex(for: screen).map { " · Space \($0)" } ?? "")
+            let visibleSpace = await Self.activeSpaceIndexOffMain(for: screen)
+            whereLabel = "「\(screen.localizedName)」" + (visibleSpace.map { " · Space \($0)" } ?? "")
         }
         var notes = [screenNote, spaceNote].compactMap { $0 }
         if let targetSpaceIndex {
