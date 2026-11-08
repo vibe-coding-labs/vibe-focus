@@ -235,17 +235,42 @@ extension SettingsView {
     /// yabai 不可用时 Space 带为空，minimap 退化为纯屏幕选择，功能不缺失。
     /// ignoreCache=true 供胶囊 live 切换后的即时重建用——默认缓存会吐出切换前的
     /// 可见位，高亮就停在旧工作区上（2026-09-10 用户报告）。
+    ///
+    /// B314：yabai fork 段下放 WindowWorkExecutor——refresh 链触发频率高
+    /// （SIGUSR1/插拔/toggle 广播 400ms 防抖 + 3s 心跳），querySpaces 同步 fork
+    /// 在主线程实测 0.1~0.2s+/次（B178 埋点自证，[PERF][STALL]
+    /// sections=[minimap.refresh] ×3）。fork 与窗口作业互斥串行（querySpaces 写
+    /// spacesQueryCache）；@State 落账与 exact* 几何解析（纯内存）留主线程。
+    /// 结果晚一拍到达，心跳/防抖链天然覆盖（live 语义不变）。
+    /// 区间 begin/end 收进同一 Task（PerfMonitor 区间栈按线程 LIFO；跨 Task 交错
+    /// 至多换两段 duration 指标，无崩溃面，自愈于下一拍）。
     func refreshGridMinimap(ignoreCache: Bool = false) {
-        // B178 常开埋点：编排页 live 重建（yabai fork 同步在主线程），广播触发频率高
-        // （SIGUSR1/插拔/toggle 汇聚 + 400ms 防抖），设置页卡顿归因靠它。
-        PerfMonitor.shared.beginSection("minimap.refresh", fields: ["ignoreCache": String(ignoreCache)])
-        defer { PerfMonitor.shared.endSection() }
-        let spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]] = Dictionary(grouping: (SpaceController.shared.querySpaces(ignoreCache: ignoreCache) ?? []).compactMap { info -> (display: Int, space: ScreenLayoutMapper.InputSpace)? in
+        // B178 常开埋点保留：编排页 live 重建归因（fork 已下放，主线程区间≈内存映射）。
+        Task { @MainActor in
+            PerfMonitor.shared.beginSection("minimap.refresh", fields: ["ignoreCache": String(ignoreCache)])
+            let spacesByYabaiDisplay = await Self.gridMinimapSpacesByDisplay(ignoreCache: ignoreCache)
+            applyGridMinimapScreens(spacesByYabaiDisplay: spacesByYabaiDisplay)
+            PerfMonitor.shared.endSection()
+        }
+    }
+
+    /// minimap 的 yabai 空间分组（fork 段）。静态实现：@Sendable 闭包不得捕获
+    /// 非 Sendable 的 self（SettingsView struct 持 @State 包装器族）。
+    @MainActor
+    static func gridMinimapSpacesByDisplay(ignoreCache: Bool) async -> [Int: [ScreenLayoutMapper.InputSpace]] {
+        let spaces = await WindowWorkExecutor.run {
+            SpaceController.shared.querySpaces(ignoreCache: ignoreCache) ?? []
+        } ?? []
+        return Dictionary(grouping: spaces.compactMap { info -> (display: Int, space: ScreenLayoutMapper.InputSpace)? in
             guard let index = info.index, let display = info.display else { return nil }
             return (display, ScreenLayoutMapper.InputSpace(yabaiIndex: index, isVisible: info.isVisible ?? false))
         }, by: { $0.display }).mapValues { $0.map { $0.space }.sorted { $0.yabaiIndex < $1.yabaiIndex } }
+    }
 
-        // 屏标签/胶囊挂接统一走精确解析器（几何匹配 + 1s 缓存，Batch 33/34）。
+    /// minimap 屏快照装配 + @State 落账（主线程）。
+    /// 屏标签/胶囊挂接统一走精确解析器（几何匹配 + 1s 缓存，Batch 33/34）。
+    @MainActor
+    private func applyGridMinimapScreens(spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]]) {
         let screens = NSScreen.screens
         gridMinimapScreens = screens.map { screen in
             let displayID = CoordinateKit.cgDisplayID(for: screen) ?? 0

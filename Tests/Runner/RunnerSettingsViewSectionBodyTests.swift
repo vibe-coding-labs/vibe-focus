@@ -77,8 +77,14 @@ extension RunnerHarness {
         //    RunnerSpaceQueryYabaiTests）。⚠️B249 实测：未安装视图的 @State 写入
         //    不回读（读恒初始值）——快照落账效果在脱离渲染树时不可观察，只断言
         //    全链不崩；回读语义由真机设置页验证。
+        //    B314：刷新已异步化（querySpaces fork 下放 WindowWorkExecutor）——
+        //    泵主 RunLoop 等异步拍真实落地，断言语义从「同步链不崩」升级为
+        //    「含下放 hop 的全链不崩」。
         view.refreshGridMinimap()
-        check("gridSection: minimap 刷新全链不崩（快照写入为渲染树内语义）", true)
+        for _ in 0..<100 {  // ~2s：fork + executor hop + @State 落账拍
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        check("gridSection: minimap 刷新全链不崩（B314 fork 下放后含异步落地拍）", true)
 
         // C. gridTargetSummary：解析成败与真实偏好一致（nil 分支或对应形态分支）
         let summary = view.gridTargetSummary
