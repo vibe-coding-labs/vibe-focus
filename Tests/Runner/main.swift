@@ -338,6 +338,7 @@ final class FakeAuditor: RestoreAuditing {
         runSpoolDrainTests()
         runInputBubbleTests()
         runInputBubbleMarkdownTests()
+        runInputBubbleHistoryPanelViewTests()
         runBubbleHotkeyRecorderTests()
         runBubbleResizeTests()
         runBubbleScrollPolicyTests()
