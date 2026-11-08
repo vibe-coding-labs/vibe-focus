@@ -292,6 +292,7 @@ final class FakeAuditor: RestoreAuditing {
         runSoundVoiceChannelSemanticsTests()
         runSettingsSectionDeepRenderTests()
         runSettingsSectionDeepRender2Tests()
+        runLayoutSectionRenderTests()
         runTGEmptySnapshotRenderTests()
         runSessionListsAndWorkspaceRenderTests()
         runSessionListsAndSettingsUIRenderTests()

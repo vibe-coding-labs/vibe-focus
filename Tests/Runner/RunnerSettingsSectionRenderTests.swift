@@ -596,3 +596,51 @@ extension RunnerHarness {
         check("renderB285: activeSessionList 渲染出图", rSL.nsImage != nil)
     }
 }
+
+// MARK: - B317：LayoutSection（摆位快捷键）全树渲染（切 tab 驱动）
+//
+// llvm-cov 洼地直击：SettingsView+LayoutSection.swift 全文件 0%（B268 全树渲染只达
+// 默认 tab）。layoutHotKeySection 在 .orchestration tab（tabContent 是 switch 非惰性
+// TabView，选中的 case 才构建）；layoutActionRow 在构建期读 hotKeyManager.layoutTable
+// （@EnvironmentObject 急切访问），fragment 渲染不建 SettingsView 节点=环境永不填充
+// （实测 Fatal: No ObservableObject found）——必须整树渲染（SettingsView 为根，
+// B268 .environmentObject 注入手法）+ 安装后写 selectedTab 传播切 tab 重建。
+// 双态 = LayoutPreferences.isEnabled 开/关各起一个新视图（@State 初值随偏好）。
+// 留白：冲突横幅（@State layoutConflictSummary=probe() 初值，测试机无同类管理器恒 nil）、
+// 重置钮分支（改 layoutTable 需经 applyLayoutShortcut 真注册 Carbon 热键，危险不走）、
+// 按钮闭包动作（真机归口不变）。
+extension RunnerHarness {
+    func runLayoutSectionRenderTests() {
+        let savedEnabled = LayoutPreferences.isEnabled
+        defer { LayoutPreferences.isEnabled = savedEnabled }
+        let savedGap = LayoutPreferences.snapGap
+        defer { LayoutPreferences.snapGap = savedGap }
+
+        @discardableResult
+        func renderOrchestrationTab() -> Bool {
+            // B317 测试缝 init(initialTab:)：初始 tab 直接注入（post-install 写 @State
+            // 在无窗 NSHostingView 下不落 storage——实测诚实红锁定，见 SettingsUI 注记）
+            let view = SettingsView(initialTab: .orchestration)
+            let host = NSHostingView(rootView: view.environmentObject(HotKeyManager.shared))
+            host.frame = NSRect(x: 0, y: 0, width: 1200, height: 2600)
+            host.layoutSubtreeIfNeeded()
+            return host.subviews.count > 0
+        }
+
+        // 关态：Toggle 行 + 11 个 layoutActionRow（默认热键态，无重置钮）+ 留白 Picker
+        LayoutPreferences.isEnabled = false
+        check("renderLayout: 关态 .orchestration tab 全树渲染（11 行动作 + 留白 Picker）", renderOrchestrationTab())
+
+        // 开态：Toggle detail 文案分支翻转
+        LayoutPreferences.isEnabled = true
+        check("renderLayout: 开态 .orchestration tab 全树渲染（detail 文案开分支）", renderOrchestrationTab())
+
+        // 留白档位枚举渲染（Picker tag 集 0/4/8/12——tag 文本在树内）
+        var allGapsRender = true
+        for gap in [CGFloat(0), CGFloat(4), CGFloat(8), CGFloat(12)] {
+            LayoutPreferences.snapGap = gap
+            if !renderOrchestrationTab() { allGapsRender = false }
+        }
+        check("renderLayout: 留白四档全渲染", allGapsRender)
+    }
+}

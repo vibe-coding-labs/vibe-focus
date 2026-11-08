@@ -8,6 +8,14 @@ import UniformTypeIdentifiers
 
 public struct SettingsView: View {
     public init() {}
+    /// B317 测试缝：指定初始 tab（tabContent 是 switch 非惰性 TabView，渲染树只含
+    /// 选中 case；@EnvironmentObject 急切访问的 section（如 layoutHotKeySection 的
+    /// hotKeyManager.layoutTable）必须整树渲染，post-install 写 @State 在无窗
+    /// NSHostingView 下不落 storage——初始值注入是唯一确定性通道）。生产默认
+    /// .general，零行为变更（B239 init(startTimerAutomatically:) 同款家法）。
+    init(initialTab: SettingsTab) {
+        _selectedTab = State(initialValue: initialTab)
+    }
     @EnvironmentObject var hotKeyManager: HotKeyManager
     @StateObject var spaceController = SpaceController.shared
     @StateObject var loginItemManager = LoginItemManager.shared
