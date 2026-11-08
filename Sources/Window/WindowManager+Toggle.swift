@@ -79,10 +79,21 @@ extension WindowManager {
 
         // B191：重核心下放窗口作业串行队列（await 期间主线程零占用）。返回后
         // 自动跳回主线程做收尾（frontAfter 读取 + 汇总日志）。
-        let core = await WindowWorkExecutor.run {
+        // 0.1.5 预算熔断：核心段被无界同步调用挂死（AX/XPC）时执行器返回 nil，
+        // overlay 刷新由上方 defer 恢复、热键闸门由 HotKeyManager 收尾释放——
+        // 不再出现「一次挂死→热键永久失灵到重启」（用户报障顽疾的根因链）。
+        let coreOrNil = await WindowWorkExecutor.run {
             self.performToggleCore(
                 operationID: op, triggerSource: triggerSource,
                 frontBefore: frontBefore, snapshotMs: snapshotMs)
+        }
+        guard let core = coreOrNil else {
+            log("[WindowManager] toggle core exceeded executor budget, aborted", level: .error, fields: [
+                "op": op,
+                "source": triggerSource
+            ])
+            CrashContextRecorder.shared.record("toggle_core_wedged op=\(op) source=\(triggerSource)")
+            return
         }
 
         let frontAfter = frontmostAppDescriptor()

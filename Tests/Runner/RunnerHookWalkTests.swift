@@ -482,6 +482,15 @@ extension RunnerHarness {
               ToggleTriggerGate.dedupDecision(isInFlight: false, sinceLastTrigger: 0.15, sinceLastCompletion: 0.05,
                                               dedupInterval: 0.15, cooldownInterval: 0.05) == .accept)
 
+        // 0.1.5 闸门看门狗：持有超预算强制放行（挂死自愈，防热键永久失灵）。
+        check("triggerGate WD1: 未持有 / 持有未超预算 → 不放行",
+              ToggleTriggerGate.shouldForceReleaseInFlightGate(isInFlight: false, inFlightDuration: 999, budget: 120) == false
+              && ToggleTriggerGate.shouldForceReleaseInFlightGate(isInFlight: true, inFlightDuration: 119.9, budget: 120) == false)
+        check("triggerGate WD2: 持有恰达预算（>= 语义）→ 放行",
+              ToggleTriggerGate.shouldForceReleaseInFlightGate(isInFlight: true, inFlightDuration: 120, budget: 120) == true)
+        check("triggerGate WD3: 持有远超预算 → 放行",
+              ToggleTriggerGate.shouldForceReleaseInFlightGate(isInFlight: true, inFlightDuration: 3600, budget: 120) == true)
+
         // B. fallback 路由优先级矩阵。
         check("triggerGate B: repeat 一票忽略（其余全命中也 ignore）",
               ToggleTriggerGate.fallbackRoute(isARepeat: true, matchesPrimaryHotKey: true,

@@ -49,13 +49,14 @@ extension HookEventHandler {
 
         // B180：移动下放窗口作业串行队列（实测 16/16 次 >200ms、max 8.7s 主线程
         // 占用）；await 期间主线程解放，响应仍在移动完成后返回——hook 契约不变。
-        let moved = await WindowWorkExecutor.run {
+        // 0.1.5 预算熔断：nil=作业超预算被熔断（挂死类），按移动失败诚实应答。
+        let moved = (await WindowWorkExecutor.run {
             WindowManager.shared.moveWindowToMainScreen(
                 identity: identity,
                 reason: .claudeSessionEnd,
                 sessionID: payload.sessionID
             )
-        }
+        }) ?? false
         if moved {
             outcome = "moved"
             onComplete?()

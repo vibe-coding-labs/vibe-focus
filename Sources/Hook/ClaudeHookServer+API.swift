@@ -258,13 +258,14 @@ extension ClaudeHookServer {
         guard let identity = WindowManager.shared.findWindowByCGWindowID(windowID) else {
             return (404, AgentApiResponseBuilder.body(ok: false, code: "window_not_found", message: "No window with id \(windowID)"))
         }
-        let moved = await WindowWorkExecutor.run {
+        // 0.1.5 预算熔断：nil=作业超预算被熔断（挂死类），按移动失败诚实应答。
+        let moved = (await WindowWorkExecutor.run {
             WindowManager.shared.moveWindowToMainScreen(
                 identity: identity,
                 reason: .agentCommand,
                 sessionID: nil
             )
-        }
+        }) ?? false
         if moved {
             return (200, AgentApiResponseBuilder.body(ok: true, code: "moved", message: "Window moved to main screen", data: ["windowId": windowID]))
         }

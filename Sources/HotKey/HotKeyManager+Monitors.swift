@@ -64,6 +64,24 @@ extension HotKeyManager {
         let now = Date()
         let hotkey = currentHotKey.displayString
 
+        // 0.1.5 闸门看门狗：持有超预算 = toggle Task 挂死（executor 熔断漏网等），
+        // 强制放行——否则热键三通道静默全灭直到重启（用户报障顽疾）。放行后
+        // dedupDecision 看到 isInFlight=false 照常走重复判定。
+        if ToggleTriggerGate.shouldForceReleaseInFlightGate(
+            isInFlight: isToggleInFlight,
+            inFlightDuration: now.timeIntervalSince(lastToggleTriggeredAt),
+            budget: inFlightGateBudget
+        ) {
+            let heldMs = Int(now.timeIntervalSince(lastToggleTriggeredAt) * 1000)
+            log("[HotKey] in-flight gate held over budget, force releasing", level: .warn, fields: [
+                "heldMs": String(heldMs),
+                "source": source,
+                "key": hotkey
+            ])
+            CrashContextRecorder.shared.record("hotkey_gate_force_release heldMs=\(heldMs) source=\(source)")
+            isToggleInFlight = false
+        }
+
         // Batch 17：去重门提纯为 ToggleTriggerGate.dedupDecision（门序与阈值语义不变）。
         switch ToggleTriggerGate.dedupDecision(
             isInFlight: isToggleInFlight,
@@ -98,7 +116,9 @@ extension HotKeyManager {
         }
 
         let operationID = makeOperationID(prefix: "toggle")
-        let startedAt = Date()
+        // 0.1.5 所有权基准：startedAt 与 lastToggleTriggeredAt 同源（同一 now 实例），
+        // 完成收尾据此判定闸门归属（期间被看门狗强放+新触发接管时不得越权复位）。
+        let startedAt = now
         isToggleInFlight = true
         lastToggleTriggeredAt = now
 
@@ -113,17 +133,26 @@ extension HotKeyManager {
         // 语义与原 defer 等价：闸门保持到 toggle 真正完成，期间的去重门照常拦截
         // 「toggle already in flight」；若本 Task 前自持已释放则 guard 兜底复位。
         // 本类所有热键回调都在主线程，Task 限定 @MainActor 保持簿记单线程。
+        // 0.1.5 所有权判定：闸门被看门狗强放且新触发已接管（lastToggleTriggeredAt
+        // 换主）时，本次陈旧完成不得越权复位——否则会把新触发的闸门提前放倒。
         Task { @MainActor [weak self] in
             await WindowManager.shared.toggle(operationID: operationID, triggerSource: source)
             guard let self else { return }
-            self.lastToggleCompletedAt = Date()
-            self.isToggleInFlight = false
-            let duration = elapsedMilliseconds(since: startedAt)
-            log(
-                "[HotKey] Toggle completed",
-                fields: ["op": operationID, "source": source, "durationMs": String(duration)]
-            )
-            CrashContextRecorder.shared.record("hotkey_toggle_completed op=\(operationID) durationMs=\(duration)")
+            if self.lastToggleTriggeredAt == startedAt {
+                self.lastToggleCompletedAt = Date()
+                self.isToggleInFlight = false
+                let duration = elapsedMilliseconds(since: startedAt)
+                log(
+                    "[HotKey] Toggle completed",
+                    fields: ["op": operationID, "source": source, "durationMs": String(duration)]
+                )
+                CrashContextRecorder.shared.record("hotkey_toggle_completed op=\(operationID) durationMs=\(duration)")
+            } else {
+                log("[HotKey] toggle completed after gate ownership transferred, skip reset", level: .debug, fields: [
+                    "op": operationID,
+                    "source": source
+                ])
+            }
         }
     }
 

@@ -34,6 +34,18 @@ enum ToggleTriggerGate {
         return .accept
     }
 
+    /// in-flight 闸门看门狗（0.1.5 热键失灵顽疾根治第二层）。
+    /// 闸门持有时长超预算 = 触发链挂死（executor 熔断漏网/Task 死等），应强制
+    /// 放行新触发——否则三通道热键静默全灭直到重启。返回 true 时调用方负责
+    /// 复位闸门 + WARN/ CrashContext 留证。
+    static func shouldForceReleaseInFlightGate(
+        isInFlight: Bool,
+        inFlightDuration: TimeInterval,
+        budget: TimeInterval
+    ) -> Bool {
+        isInFlight && inFlightDuration >= budget
+    }
+
     /// fallback NSEvent 的路由结果（返回 false 语义 = ignore）。
     enum FallbackRoute: Equatable {
         case ignore

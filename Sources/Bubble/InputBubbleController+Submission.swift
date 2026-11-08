@@ -254,6 +254,7 @@ extension InputBubbleController {
         }
         let traceID = "bubble-\(Int(Date().timeIntervalSince1970 * 1000))"
         Task { @MainActor in
+            // 0.1.5 预算熔断：nil=作业超预算被熔断（挂死类），按恢复失败如实落账。
             let outcome = await WindowWorkExecutor.run {
                 ToggleEngine.shared.restore(
                     windowID: windowID,
@@ -261,7 +262,7 @@ extension InputBubbleController {
                     traceID: traceID
                 )
             }
-            if case .restored = outcome {
+            if case .restored? = outcome {
                 log("[InputBubble] submit auto-restore completed", fields: [
                     "windowID": String(windowID),
                     "traceID": traceID
@@ -269,7 +270,7 @@ extension InputBubbleController {
             } else {
                 log("[InputBubble] submit auto-restore failed", level: .warn, fields: [
                     "windowID": String(windowID),
-                    "outcome": outcome.outcomeLabel,
+                    "outcome": outcome?.outcomeLabel ?? "executorBudgetExceeded",
                     "traceID": traceID
                 ])
             }

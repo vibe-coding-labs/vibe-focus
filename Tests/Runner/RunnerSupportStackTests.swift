@@ -40,7 +40,7 @@ extension RunnerHarness {
             func snapshot() -> [String] { lock.lock(); defer { lock.unlock() }; return items }
         }
         final class Box: @unchecked Sendable {
-            var value: Int = 0
+            var value: Int?
         }
 
         // 1) 值透传：后台作业结果原样回到 await 方
@@ -69,12 +69,12 @@ extension RunnerHarness {
             let done = DispatchSemaphore(value: 0)
             final class Probe: @unchecked Sendable {
                 var duringBlock: [String] = []
-                var r2 = 0
-                var r3 = 0
+                var r2: Int?
+                var r3: Int?
             }
             let probe = Probe()
             Task { @MainActor in
-                async let blocker: Void = WindowWorkExecutor.run {
+                async let blocker: Void? = WindowWorkExecutor.run {
                     seq.add("blocker-in")
                     release.wait()
                     seq.add("blocker-out")
@@ -107,6 +107,63 @@ extension RunnerHarness {
             check("executor: 串行完成序（blocker 先、w2/w3 后不交叠）",
                   s.count == 4 && s.first == "blocker-in" && s[1] == "blocker-out"
                   && Set(s.dropFirst(2)) == ["w2", "w3"])
+        }
+
+        // 3) 预算熔断（0.1.5）：作业挂死超预算 → await 方拿 nil + 串行队列整体重建
+        //    ——后续作业落新队列立即执行，不再排在尸体作业后面（热键失灵顽疾根治）。
+        do {
+            final class Wedge: @unchecked Sendable {
+                private let lock = NSLock()
+                private(set) var jobStarted = false
+                private(set) var jobDone = false
+                func markStarted() { lock.lock(); jobStarted = true; lock.unlock() }
+                func markDone() { lock.lock(); jobDone = true; lock.unlock() }
+                func isStarted() -> Bool { lock.lock(); defer { lock.unlock() }; return jobStarted }
+                func isDone() -> Bool { lock.lock(); defer { lock.unlock() }; return jobDone }
+            }
+            let wedge = Wedge()
+            let sem = DispatchSemaphore(value: 0)
+            final class Result: @unchecked Sendable {
+                var wedgedNil = false
+                var followUp = -1
+                var followUpLatencyMs = 99_999
+            }
+            let result = Result()
+            Task { @MainActor in
+                async let wedged: Int? = WindowWorkExecutor.run(budget: 0.3) {
+                    wedge.markStarted()
+                    Thread.sleep(forTimeInterval: 1.2)   // 模拟无界挂死（超预算 4 倍）
+                    wedge.markDone()
+                    return 1
+                }
+                // 等挂死作业真正起跑（保证它已占住旧串行队列；async 上下文禁用
+                // DispatchSemaphore.wait——Swift 6 模式警告，零警告红线）
+                var waited = 0
+                while !wedge.isStarted() && waited < 100 {
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                    waited += 1
+                }
+                result.wedgedNil = ((await wedged) == nil)
+                // 关键断言：熔断后新作业必须立即完成（新队列），不等尸体 1.2s
+                let t0 = Date()
+                result.followUp = (await WindowWorkExecutor.run { 7 }) ?? -1
+                result.followUpLatencyMs = Int(Date().timeIntervalSince(t0) * 1000)
+                // 收尸：等挂死作业自然跑完，不给后续测试留悬挂线程
+                var doneWaited = 0
+                while !wedge.isDone() && doneWaited < 250 {
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                    doneWaited += 1
+                }
+                sem.signal()
+            }
+            let deadline = Date().addingTimeInterval(15)
+            while Date() < deadline {
+                if sem.wait(timeout: .now() + 0.05) == .success { break }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+            check("executor: 预算熔断 await 返回 nil", result.wedgedNil)
+            check("executor: 熔断后新作业走新队列立即执行（<800ms，不等尸体）",
+                  result.followUp == 7 && result.followUpLatencyMs < 800)
         }
     }
 

@@ -42,6 +42,10 @@ public final class HotKeyManager: ObservableObject {
     var lastToggleCompletedAt: Date = .distantPast
     let toggleDedupInterval: TimeInterval = 0.15
     let toggleCooldownInterval: TimeInterval = 0.05
+    /// 0.1.5 in-flight 闸门看门狗预算：持有时长超此值视为触发链挂死，强制放行
+    /// （shouldForceReleaseInFlightGate）。取 120s=executor 熔断预算（90s）之上的
+    /// 兜底层，正常 toggle（0.3~2s，B180 风暴极值 66s）永不触发。
+    let inFlightGateBudget: TimeInterval = 120
     /// 摆位触发去抖（独立状态，不与 toggle 互锁）
     var isLayoutInFlight = false
     var lastLayoutTriggeredAt: Date = .distantPast
