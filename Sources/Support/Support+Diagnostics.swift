@@ -68,12 +68,21 @@ func logDiagnostics(_ context: String) {
         log("Build capabilities: unreadable", level: .warn)
     }
 
-    if execPath != "nil" {
-        logCodesign(targetPath: execPath, label: "Executable codesign")
+    // B315：codesign/security 诊断 fork 下放后台——logDiagnostics("launch") 在主线程
+    // 同步跑这三个 fork 实测 323ms+（[PERF][STALL] 启动期 0.39s，journal 铁证
+    // fork.main security 323ms）。纯诊断日志行，晚几拍落盘无消费契约；捕获值
+    // 全 String（Sendable），context 复述进尾行保持 DIAGNOSTICS 段落成组。
+    let diagExecPath = execPath
+    let diagBundlePath = bundlePath
+    let diagContext = context
+    Task.detached(priority: .utility) {
+        if diagExecPath != "nil" {
+            logCodesign(targetPath: diagExecPath, label: "Executable codesign")
+        }
+        logCodesign(targetPath: diagBundlePath, label: "Bundle codesign")
+        logSigningCertificates()
+        log("=== END DIAGNOSTICS (\(diagContext)) ===")
     }
-    logCodesign(targetPath: bundlePath, label: "Bundle codesign")
-    logSigningCertificates()
-    log("=== END DIAGNOSTICS ===")
 }
 
 private func logCodesign(targetPath: String, label: String) {
