@@ -600,9 +600,9 @@ code {
 }
 
 @keyframes wf-fly {
-  0%, 9% { left: 11%; top: 15%; width: 30%; height: 22%; }
+  0%, 9% { left: 21.41%; top: 27.07%; width: 11.33%; height: 7.17%; }
   26%, 48% { left: 14%; top: 55.5%; width: 72%; height: 34%; }
-  65%, 100% { left: 11%; top: 15%; width: 30%; height: 22%; }
+  65%, 100% { left: 21.41%; top: 27.07%; width: 11.33%; height: 7.17%; }
 }
 
 .wf-win-bar {
@@ -631,12 +631,47 @@ code {
   color: var(--ink-soft);
 }
 
-/* 终端拟真：提示符行 + 输出纹理 + 输入行 */
+/* 终端拟真：rest=紧凑绿纹，落位=完整提示符/输出/输入行 */
+
+.wf-win-mini-line {
+  display: block;
+  margin: 6px 8px 0;
+  height: 30%;
+  border-radius: 2px;
+  background: repeating-linear-gradient(0deg, rgba(122, 182, 96, 0.42) 0 2px, transparent 2px 6px);
+  animation: wf-win-detail 7.5s ease infinite;
+}
+
+.wf-win-prompt,
+.wf-win-out,
+.wf-win-input {
+  opacity: 0;
+  animation: wf-win-detail 7.5s ease infinite;
+}
+
+@keyframes wf-win-detail {
+  0%, 11% { opacity: 0; }
+  24%, 52% { opacity: 1; }
+  64%, 100% { opacity: 0; }
+}
+
+.wf-win-mini-line {
+  opacity: 1;
+  animation-name: wf-mini-line;
+}
+
+@keyframes wf-mini-line {
+  0%, 11% { opacity: 1; }
+  24%, 52% { opacity: 0; }
+  64%, 100% { opacity: 1; }
+}
 
 .wf-win-prompt {
+  position: absolute;
+  left: 10px; right: 10px; top: 14%;
   display: block;
-  margin: 7px 10px 0;
-  font-size: 9px;
+  margin: 0;
+  font-size: 10px;
   font-weight: 600;
   color: var(--ink-soft);
   white-space: nowrap;
@@ -650,17 +685,19 @@ code {
 }
 
 .wf-win-out {
+  position: absolute;
+  left: 10px; right: 10px; top: 26%; bottom: 22%;
   display: block;
-  margin: 7px 10px 0;
-  height: 26%;
+  margin: 0;
+  height: auto;
   border-radius: 3px;
   background: repeating-linear-gradient(0deg, rgba(122, 182, 96, 0.4) 0 2px, transparent 2px 7px);
 }
 
 .wf-win-input {
   position: absolute;
-  left: 10px; right: 10px; bottom: 7px;
-  height: 16px;
+  left: 10px; right: 10px; bottom: 8px;
+  height: 15px;
   border-radius: 4px;
   background: rgba(64, 54, 43, 0.06);
   border: 1px solid rgba(230, 74, 51, 0.25);
@@ -803,16 +840,58 @@ code {
   background: repeating-linear-gradient(0deg, rgba(138, 123, 104, 0.24) 0 2px, transparent 2px 8px);
 }
 
-/* 空位格：虚线珊瑚框（相位同步） */
-.wf-cell-empty {
-  border: 1.5px dashed rgba(230, 74, 51, 0.55) !important;
-  background: rgba(230, 74, 51, 0.05) !important;
+/* claude 所在的方阵格：小终端常驻（大小=格子），窗口飞走时本格显虚线空位 */
+
+.wf-cell-claude {
+  background: #fffdf8;
+  border: 1px solid rgba(230, 74, 51, 0.4);
+}
+
+.wf-mini {
+  position: absolute;
+  inset: 3px 3px 3px 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  animation: wf-mini 7.5s ease infinite;
+}
+
+.wf-mini b {
+  height: 5px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #e06c60 0 6px, transparent 6px 10px, #e0b34f 10px 14px, transparent 14px 18px, #58b558 18px 22px, transparent 22px);
+}
+
+.wf-mini u {
+  flex: 1;
+  border-radius: 2px;
+  background: repeating-linear-gradient(0deg, rgba(122, 182, 96, 0.4) 0 2px, transparent 2px 6px);
+  text-decoration: none;
+}
+
+@keyframes wf-mini {
+  0%, 10% { opacity: 1; }
+  20%, 56% { opacity: 0; }
+  66%, 100% { opacity: 1; }
+}
+
+.wf-cell-claude::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed rgba(230, 74, 51, 0.55);
+  border-radius: 5px;
+  background: rgba(230, 74, 51, 0.05);
   opacity: 0;
   animation: wf-slot 7.5s ease infinite;
 }
 
-.wf-cell-empty::before,
-.wf-cell-empty::after { display: none; }
+@keyframes wf-slot {
+  0%, 22% { opacity: 0; }
+  32%, 50% { opacity: 1; }
+  62%, 100% { opacity: 0; }
+}
 
 /* 主屏落位徽章 */
 
@@ -1419,10 +1498,38 @@ code {
   transition: opacity 0.5s ease, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.5s ease;
 }
 
-.flow-window-code {
+.flow-cell-claude {
+  background: #fffdf8;
+  border: 1px solid rgba(230, 74, 51, 0.4);
+}
+
+.flow-cell-claude .flow-window-code {
   position: absolute;
-  left: 12px; right: 36px; top: 78px;
+  inset: 2px;
   z-index: 2;
+  padding: 4px 6px 5px;
+  border-radius: 5px;
+}
+
+.flow-cell-claude .flow-window-lines i {
+  height: 3px;
+}
+
+.flow-cell-claude::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed rgba(230, 74, 51, 0.55);
+  border-radius: 6px;
+  background: rgba(230, 74, 51, 0.05);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  z-index: 3;
+}
+
+.flow[data-step='2'] .flow-cell-claude::after,
+.flow[data-step='3'] .flow-cell-claude::after {
+  opacity: 1;
 }
 
 .flow-screen-primary .flow-window-main {

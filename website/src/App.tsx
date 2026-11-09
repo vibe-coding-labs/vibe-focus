@@ -319,7 +319,11 @@ function WindowFlowAnim() {
           <span className="wf-tabs"><i className="is-on">工作区 1</i><i>工作区 2</i></span>
           <div className="wf-grid">
             <i className="wf-c-term" /><i className="wf-c-doc" /><i className="wf-c-code" />
-            <i className="wf-c-code" /><i className="wf-cell-empty" /><i className="wf-c-term" />
+            <i className="wf-c-code" />
+            <i className="wf-cell-claude">
+              <span className="wf-mini"><b /><u /></span>
+            </i>
+            <i className="wf-c-term" />
           </div>
         </div>
         <div className="wf-screen wf-screen-secondary wf-screen-s2">
@@ -344,6 +348,7 @@ function WindowFlowAnim() {
             <i /><i /><i />
             <em>claude</em>
           </span>
+          <span className="wf-win-mini-line" />
           <span className="wf-win-prompt"><b>$</b>claude "重构这个模块"</span>
           <span className="wf-win-out" />
           <span className="wf-win-input"><i />⏎</span>
@@ -592,12 +597,15 @@ function Automation() {
               <span className="flow-screen-label">副屏 1</span>
               <span className="flow-disp">1</span>
               <span className="flow-tabs"><i className="is-on">工作区 1</i><i>工作区 2</i></span>
-              <div className="flow-grid"><i className="flow-c-term" /><i className="flow-c-doc" /><i className="flow-c-code" /><i className="flow-c-code" /><i className="flow-c-term" /><i className="flow-c-doc" /></div>
-              <div className="flow-window flow-window-code">
-                <span className="flow-window-dots"><i /><i /><i /></span>
-                <span className="flow-window-title">claude</span>
-                <div className="flow-window-lines"><i /><i /><i className="short" /></div>
-              </div>
+              <div className="flow-grid"><i className="flow-c-term" /><i className="flow-c-doc" /><i className="flow-c-code" /><i className="flow-c-code" />
+                <i className="flow-cell-claude">
+                  <div className="flow-window flow-window-code">
+                    <span className="flow-window-dots"><i /><i /><i /></span>
+                    <span className="flow-window-title">claude</span>
+                    <div className="flow-window-lines"><i /><i className="short" /></div>
+                  </div>
+                </i>
+                <i className="flow-c-doc" /></div>
             </div>
             <div className="flow-screen flow-screen-secondary">
               <span className="flow-screen-label">副屏 2</span>
