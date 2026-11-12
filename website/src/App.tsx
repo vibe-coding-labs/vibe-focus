@@ -351,6 +351,7 @@ function WindowFlowAnim() {
           <span className="wf-win-mini-line" />
           <span className="wf-win-prompt"><b>$</b>claude "重构这个模块"</span>
           <span className="wf-win-out" />
+          <span className="wf-win-cursor" />
           <span className="wf-win-input"><i />⏎</span>
         </div>
         <div className="wf-badge">✓ 响应完成 · 窗口自动到主屏</div>
