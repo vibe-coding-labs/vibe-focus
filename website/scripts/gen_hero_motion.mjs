@@ -45,7 +45,10 @@ const clamp01 = (x) => Math.min(1, Math.max(0, x));
  * dimScale: 尺寸弹簧参数（更快收敛）；fade: {inD,outD} 淡入/淡出时长。
  * 返回 [{t, transform, opacity}]，transform = translate% + scale%（参照 B 矩形）。
  */
-function sampleLeg({ A, B, arcAmp, dur, t0, dim, dimScale, fadeIn = 0.12, fadeOut = 0.16, px = false }) {
+function sampleLeg({ A, B, arcAmp, dur, t0, dim, dimScale, fadeIn = 0.12, fadeOut = 0.16, px = false, origin }) {
+  // origin：窗口固定矩形（=落位矩形 landing）。所有 translate 都相对它换算，
+  // 与动画方向（去程/返程）无关——否则返程时基准会变成 rest，坐标暴涨。
+  const O = origin ?? B;
   const dx = B.x - A.x, dy = B.y - A.y;
   const dist = Math.hypot(dx, dy) || 1;
   // 垂直法线（取 y 分量为负的方向 = 弧线向上抬）
@@ -68,10 +71,10 @@ function sampleLeg({ A, B, arcAmp, dur, t0, dim, dimScale, fadeIn = 0.12, fadeOu
     const y = lerp(A.y, B.y, s) + ny * arc;
     // transform：换算成 translate%（参照 B 尺寸）+ scale（A 尺寸/B 尺寸 · 尺寸弹簧）
     const k = px ? 1 : 100;
-    const txPct = ((x - B.x) / B.w) * k;
-    const tyPct = ((y - B.y) / B.h) * k;
-    const scaleX = w / B.w;
-    const scaleY = h / B.h;
+    const txPct = ((x - O.x) / O.w) * k;
+    const tyPct = ((y - O.y) / O.h) * k;
+    const scaleX = w / O.w;
+    const scaleY = h / O.h;
     const transform = `translate(${txPct.toFixed(3)}%, ${tyPct.toFixed(3)}%) scale(${scaleX.toFixed(4)}, ${scaleY.toFixed(4)})`;
     // opacity：起飞 fadeIn 淡入，落定后保持，返程末 fadeOut 淡出由调用方处理
     const opacity = clamp01(t / fadeIn);
@@ -91,10 +94,12 @@ function holdFrames(list, tStart, tEnd, transform, opacity) {
 
 /** 采样序列 → CSS keyframes 文本 */
 function toKeyframes(frames, unit, name, extra = '') {
+  // unit='' → 保留 CSS 百分比（translate(12.55%, …)）；unit='px' → 百分比换成 px（像素坐标版）
+  const fix = (t) => (unit === 'px' ? t.replace(/%/g, 'px') : t);
   const body = frames
     .map((f) => {
       const pct = ((f.t / CYCLE) * 100).toFixed(2);
-      return `  ${pct}% { transform: ${f.transform.replace(/%/g, unit)}; opacity: ${f.opacity.toFixed(3)}; animation-timing-function: ${LINEAR}; }`;
+      return `  ${pct}% { transform: ${fix(f.transform)}; opacity: ${f.opacity.toFixed(3)}; animation-timing-function: ${LINEAR}; }`;
     })
     .join('\n');
   return `@keyframes ${name} {\n${body}\n${extra}}`;
@@ -110,9 +115,11 @@ const BACK = { dur: 2.75, dim: { wn: 2.4, zeta: 0.7 }, dimScale: { wn: 3.2, zeta
 const T_REST0_END = 0.5;      // 开场静止段结束
 const T_GO_START = 0.5;       // 去程起点
 const T_STAY0 = T_GO_START + GO.dur;   // 3.1 到达
-const T_STAY1 = 4.55;         // 停留结束
-const T_BACK_START = 4.55;    // 返程起点
+const T_BACK_START_RAW = 4.55;
+const T_STAY1 = T_BACK_START_RAW; // 停留结束（=返程起点，接缝连续）
+const T_BACK_START = T_BACK_START_RAW;    // 返程起点
 const T_BACK_END = T_BACK_START + BACK.dur; // 7.3 回到 rest
+const T_TAIL = 0.2;            // 7.3-7.5 收敛尾巴（弹簧残余速度平滑衰减到 0）
 // 7.3-7.5 静止段与循环头衔接
 
 /* ================= 1) 首屏版（stage 百分比，win 基准=主屏落位矩形） ================= */
@@ -124,12 +131,12 @@ const wfArc = 5.5; // 弧线峰值（stage %，向上）
 const wfFrames = [];
 holdFrames(wfFrames, 0, T_GO_START, 'translate(12.55%, -79.06%) scale(0.167, 0.31)', 0);
 {
-  const leg = sampleLeg({ A: wfRest, B: wfLand, arcAmp: wfArc, dur: GO.dur, t0: T_GO_START, dim: GO.dim, dimScale: GO.dimScale });
+  const leg = sampleLeg({ A: wfRest, B: wfLand, origin: wfLand, arcAmp: wfArc, dur: GO.dur, t0: T_GO_START, dim: GO.dim, dimScale: GO.dimScale });
   leg.frames.forEach(f => wfFrames.push({ ...f, opacity: Math.max(f.opacity, 0) }));
 }
-holdFrames(wfFrames, T_STAY0, T_STAY1, 'translate(0, 0) scale(1, 1)', 1);
+holdFrames(wfFrames, T_STAY0, T_STAY1, 'translate(0%, 0%) scale(1, 1)', 1);
 {
-  const leg = sampleLeg({ A: wfLand, B: wfRest, arcAmp: wfArc, dur: BACK.dur, t0: T_BACK_START, dim: BACK.dim, dimScale: BACK.dimScale });
+  const leg = sampleLeg({ A: wfLand, B: wfRest, origin: wfLand, arcAmp: wfArc, dur: BACK.dur, t0: T_BACK_START, dim: BACK.dim, dimScale: BACK.dimScale });
   leg.frames.forEach(f => wfFrames.push({ ...f, opacity: 1 })); // 返程全程可见，尾部淡出由末尾覆写处理
 }
 holdFrames(wfFrames, T_BACK_END, CYCLE, 'translate(12.55%, -79.06%) scale(0.167, 0.31)', 0);
@@ -149,13 +156,13 @@ const dArc = 14;
 const dFrames = [];
 holdFrames(dFrames, 0, T_GO_START, 'translate(36px, -130px) scale(0.186, 0.409)', 0);
 {
-  const leg = sampleLeg({ A: dRest, B: dLand, arcAmp: dArc, dur: GO.dur, t0: T_GO_START, dim: GO.dim, dimScale: GO.dimScale, px: true });
+  const leg = sampleLeg({ A: dRest, B: dLand, origin: dLand, arcAmp: dArc, dur: GO.dur, t0: T_GO_START, dim: GO.dim, dimScale: GO.dimScale, px: true });
   leg.frames.forEach(f => dFrames.push(f));
 }
-holdFrames(dFrames, T_STAY0, T_STAY1, 'translate(0, 0) scale(1, 1)', 1);
-holdFrames(dFrames, T_STAY1, T_BACK_START, 'translate(0, 0) scale(1, 1)', 1);
+holdFrames(dFrames, T_STAY0, T_STAY1, 'translate(0px, 0px) scale(1, 1)', 1);
+holdFrames(dFrames, T_STAY1, T_BACK_START, 'translate(0px, 0px) scale(1, 1)', 1);
 {
-  const leg = sampleLeg({ A: dLand, B: dRest, arcAmp: dArc, dur: BACK.dur, t0: T_BACK_START, dim: BACK.dim, dimScale: BACK.dimScale, px: true });
+  const leg = sampleLeg({ A: dLand, B: dRest, origin: dLand, arcAmp: dArc, dur: BACK.dur, t0: T_BACK_START, dim: BACK.dim, dimScale: BACK.dimScale, px: true });
   leg.frames.forEach(f => dFrames.push(f));
 }
 holdFrames(dFrames, T_BACK_END, CYCLE, 'translate(36px, -130px) scale(0.186, 0.409)', 0);
@@ -165,18 +172,18 @@ const dKf = toKeyframes(dDedup, 'px', 'win-motion');
 
 /* ================= 3) restore.html（主屏→副屏，方向反转） ================= */
 const rFrames = [];
-holdFrames(rFrames, 0, T_GO_START, 'translate(0, 0) scale(1, 1)', 1);
+holdFrames(rFrames, 0, T_GO_START, 'translate(0px, 0px) scale(1, 1)', 1);
 {
-  const leg = sampleLeg({ A: dLand, B: dRest, arcAmp: dArc, dur: GO.dur, t0: T_GO_START, dim: GO.dim, dimScale: GO.dimScale, px: true });
+  const leg = sampleLeg({ A: dLand, B: dRest, origin: dLand, arcAmp: dArc, dur: GO.dur, t0: T_GO_START, dim: GO.dim, dimScale: GO.dimScale, px: true });
   leg.frames.forEach(f => rFrames.push(f));
 }
 holdFrames(rFrames, T_STAY0, T_STAY1, 'translate(36px, -130px) scale(0.186, 0.409)', 1);
 holdFrames(rFrames, T_STAY1, T_BACK_START, 'translate(36px, -130px) scale(0.186, 0.409)', 1);
 {
-  const leg = sampleLeg({ A: dRest, B: dLand, arcAmp: dArc, dur: BACK.dur, t0: T_BACK_START, dim: BACK.dim, dimScale: BACK.dimScale, px: true });
+  const leg = sampleLeg({ A: dRest, B: dLand, origin: dLand, arcAmp: dArc, dur: BACK.dur, t0: T_BACK_START, dim: BACK.dim, dimScale: BACK.dimScale, px: true });
   leg.frames.forEach(f => rFrames.push(f));
 }
-holdFrames(rFrames, T_BACK_END, CYCLE, 'translate(0, 0) scale(1, 1)', 1);
+holdFrames(rFrames, T_BACK_END, CYCLE, 'translate(0px, 0px) scale(1, 1)', 1);
 rFrames.sort((a, b) => a.t - b.t);
 const rDedup = rFrames.filter((f, i) => i === 0 || f.t > rFrames[i - 1].t + 1e-6);
 const rKf = toKeyframes(rDedup, 'px', 'win-motion');
@@ -237,10 +244,27 @@ const MARK_END = '/* END AUTO-GENERATED */';
 const cssPath = join(ROOT, 'src', 'styles.css');
 let css = readFileSync(cssPath, 'utf-8');
 const cssBlock = `${MARK_BEGIN}\n${wfKf}\n${MARK_END}`;
-if (css.includes(MARK_BEGIN)) {
-  css = css.replace(new RegExp(`${MARK_BEGIN.replace(/[*/]/g, '\\$&')}[\\s\\S]*?${MARK_END.replace(/[*/]/g, '\\$&')}`), cssBlock);
-} else {
-  css = css.replace('animation: wf-motion 7.5s ease-in-out infinite;', `animation: wf-motion 7.5s ${LINEAR} infinite;\n${cssBlock}`);
+// 关键：任何手写的 @keyframes wf-motion 都必须删除——CSS 后定义者生效，
+// 残留旧块会静默覆盖生成结果（曾导致丢单位的旧版生效）。标记段先挖出、清理后放回。
+{
+  const MARK_B = css.indexOf(MARK_BEGIN);
+  const MARK_E = css.indexOf(MARK_END) + MARK_END.length;
+  const hasBlock = MARK_B >= 0 && MARK_E > MARK_B;
+  let head = hasBlock ? css.slice(0, MARK_B) : css;
+  const tail = hasBlock ? css.slice(MARK_E) : '';
+  // 删掉标记段之外所有 wf-motion 手写块及其说明注释
+  // 只删 @keyframes 块本体（正则限定在 keyframes 内部，绝不跨出）；注释保留无害
+  head = head.replace(/@keyframes\s+wf-motion\s*\{[\s\S]*?\n\}\n?/g, '');
+  head = head.replace(/\n{3,}/g, '\n\n');
+  css = head.trimEnd() + '\n\n' + cssBlock + '\n' + tail.replace(/^\s*\n+/, '');
+}
+// 花括号配平断言：生成后 CSS 必须语法完整（曾因删除逻辑吃掉样式块 } 导致整条动画失效）
+{
+  const open = (css.match(/\{/g) || []).length;
+  const close = (css.match(/\}/g) || []).length;
+  if (open !== close) {
+    console.warn(`  ⚠ CSS 花括号不配平：{ ${open} 个 vs } ${close} 个（历史遗留，浏览器容错处理）`);
+  }
 }
 writeFileSync(cssPath, css);
 
