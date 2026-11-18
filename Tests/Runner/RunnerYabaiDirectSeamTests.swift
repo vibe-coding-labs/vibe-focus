@@ -88,7 +88,13 @@ extension RunnerHarness {
             *"--focus"*) echo "stub focus rejected" >&2; exit 1;;
           esac
         fi
+        if [ "$MODE" = "sa-probe-error" ]; then
+          case "$*" in
+            *"-m space --focus"*) echo "error with the scripting-addition" >&2; exit 1;;
+          esac
+        fi
         case "$*" in
+          *"query --spaces --space"*) echo '{"id":11,"index":1,"display":1,"is-visible":true}'; exit 0;;
           *"query --windows"*) echo '\(windowsJSON)'; exit 0;;
           *"--version"*) echo "yabai-v7.1.18-stub"; exit 0;;
           *"stub-fail"*) echo "stub failure" >&2; exit 2;;
@@ -362,6 +368,29 @@ extension RunnerHarness {
         } else {
             unsetenv("SHELL")
         }
+
+        // ---- ⑧ SA 探针直调（availability 后台探测的生产入口） ----
+        // 无 focused space / 探针无法启动 → false（CI 无 yabai 走第一卫；真机装 yabai 时
+        // 走第二卫，两臂都为 false，断言跨环境稳定）。
+        setMode("ok")
+        // 撤掉注入：queryFocusedSpace 走常规解析（CI 恒 nil → 第一卫；真机有 yabai 时
+        // 走第二卫 missing 路径），两臂都是 false。
+        unsetenv("VIBEFOCUS_YABAI_PATH")
+        check("yabaiDirect H1: 无 focused space 或探针启动失败 → SA 不可用",
+              sc.checkScriptingAdditionLoaded(yabaiPath: missingYabai) == false)
+        setenv("VIBEFOCUS_YABAI_PATH", stubPath.path, 1)
+        check("yabaiDirect H2: focused space + 探针 exit 0 → SA 可用",
+              sc.checkScriptingAdditionLoaded(yabaiPath: stubPath.path))
+        setMode("sa-probe-error")
+        check("yabaiDirect H3: 探针 scripting-addition 报错 → SA 不可用",
+              sc.checkScriptingAdditionLoaded(yabaiPath: stubPath.path) == false)
+        setMode("ok")
+
+        // ---- ⑨ 查询缓存辅助原语 ----
+        check("yabaiDirect I1: isCacheExpired 过期/新鲜两态",
+              sc.isCacheExpired(Date(timeIntervalSinceNow: -3600))
+                && !sc.isCacheExpired(Date()))
+        sc.clearWindowQueryCache()
 
         // 收尾：恢复注入前状态（defer 兜底，此处显式清缓存避免窗口查询缓存跨域污染）
         sc.clearQueryCache()
