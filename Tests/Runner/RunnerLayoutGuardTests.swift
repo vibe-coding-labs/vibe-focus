@@ -58,20 +58,24 @@ extension RunnerHarness {
             return
         }
 
-        // --- C. 有授权（CI runner 常态）：前台非他属 app 时走 applyLayoutAction 降级/自摆。
-        //     前台是他属 app（真机用户窗口）时一律跳过——实摆会移动用户窗口。 ---
+        // --- C. 有授权（CI runner 常态）：只要前台 app 没有可摆的窗，就走
+        //     applyLayoutAction 的降级链（不产生任何窗口移动）。
+        //     前台是他属 app 且有在屏 layer0 窗口（真机用户窗口）→ 一律跳过。 ---
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let frontIsSelfOrNil = frontPID == nil || frontPID == getpid()
-        guard frontIsSelfOrNil else {
-            check("layoutGuard: 前台为他属 app，跳过 applyLayoutAction 实摆（防真机误移）", true)
+        let cgSnapshot = cgWindowListAll()
+        let foreignVisibleWindows = frontPID.map { pid -> Int in
+            pid == getpid()
+                ? 0
+                : ToggleFocusBranching.cgListFocusCandidates(snapshot: cgSnapshot, ownerPID: pid).count
+        } ?? 0
+        guard foreignVisibleWindows == 0 else {
+            check("layoutGuard: 前台为他属 app 且有在屏窗，跳过 applyLayoutAction 实摆（防真机误移）", true)
             return
         }
         // 本进程在屏候选数决定预期：0 → 必然降级 false；>0（自建/覆盖层窗）→ 可能真的
         // 摆自己的窗（无用户影响），只断言调用完成且结果自洽。
         let ownCandidates = frontPID.map {
-            ToggleFocusBranching.cgListFocusCandidates(
-                snapshot: cgWindowListAll(), ownerPID: $0
-            ).count
+            ToggleFocusBranching.cgListFocusCandidates(snapshot: cgSnapshot, ownerPID: $0).count
         } ?? 0
         // operationID 传 nil 走 makeOperationID 分支；显式传值走另一分支——两种都要过
         let nilOp = wm.applyLayoutAction(.leftHalf, triggerSource: "runner-guard")

@@ -136,16 +136,21 @@ extension RunnerHarness {
         check("apiGuard: capture 采集前置失败 → 409（或环境可采 → 200）",
               capture.statusCode == 409 || capture.statusCode == 200)
 
-        // --- D3. layout 合法 preset：前台是他属 app 时跳过（防真机误移用户窗口）；
-        //     否则走真实分发 → 无焦点窗 409 / 自摆本进程窗 200 ---
+        // --- D3. layout 合法 preset：前台是他属 app 且有在屏窗时跳过（防真机误移用户
+        //     窗口）；否则走真实分发 → 无焦点窗 409 / 自摆本进程窗 200 ---
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let frontIsSelfOrNil = frontPID == nil || frontPID == getpid()
-        if frontIsSelfOrNil {
+        let cgSnapshot = cgWindowListAll()
+        let foreignVisibleWindows = frontPID.map { pid -> Int in
+            pid == getpid()
+                ? 0
+                : ToggleFocusBranching.cgListFocusCandidates(snapshot: cgSnapshot, ownerPID: pid).count
+        } ?? 0
+        if foreignVisibleWindows == 0 {
             let layoutValid = call("POST", "/api/v1/windows/layout", body: #"{"preset":"leftHalf"}"#)
             check("apiGuard: layout 合法 preset → 409 降级或 200 自摆（不发散）",
                   layoutValid.statusCode == 409 || layoutValid.statusCode == 200)
         } else {
-            check("apiGuard: 前台为他属 app，跳过 layout 实摆（防真机误移）", true)
+            check("apiGuard: 前台为他属 app 且有在屏窗，跳过 layout 实摆（防真机误移）", true)
         }
 
         // --- D4. settings 批量坏项（缺 value）→ 400 逐项 bad_request，零设置写入 ---
