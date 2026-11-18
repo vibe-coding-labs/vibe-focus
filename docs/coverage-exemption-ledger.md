@@ -317,3 +317,69 @@ CI runner 无 yabai、无 AX 授权、无真实终端/IDE 进程，故「真机�
   与 `runSettingsSnapshotRenderTests` 两个域）：崩点在 `SettingsWindowController.shared`
   首次构建 SwiftUI 全树，而非 `renderWindowToPNG`。属 CI 无窗口服务器的环境限制，
   归口径③（真机可跑，CI 不可达）。
+
+---
+
+## 2026-11-19 覆盖率收口轮（分支 `test/coverage-100`）
+
+> **目标（用户 2026-11-19）**：把单元测试覆盖率补到 100%。
+> **结论**：字面 llvm-cov 100.00% 在本工程**物理不可达**（结构性原因见下）；本轮按台账顶部
+> 三项口径（① CLI 可提缝面 + ② 真机 E2E 通道 + ③ 物理不可达逐项归因）继续收口，
+> 新增 9 组可提缝面直测，CI 实测多覆盖 64 行（+0.15pp）。
+
+### 本轮新增断言（全 CLI 直测，零真机副作用）
+
+| 目标 | 覆盖点 | 域文件 |
+|---|---|---|
+| MCP `tools/call` 路由 | `handleMessage` 分支：`content[text]` + `isError` 包裹、未知工具仍回合法 JSON-RPC result（此前只直测 `handleToolCall`，路由层零覆盖） | RunnerAgentAccessTests |
+| `AgentApiRequestDecoder` | `decodeWindowID` NSNumber 桥接分支（小数取整 / 超 UInt32 / Bool / 字符串拒绝）、`parseJSONObject` 空数据与非对象 JSON | 同上 |
+| `AgentSettingValue.displayValue` | 五态字符串化逐字（变更留痕与 GET 回显的唯一口径） | RunnerAgentSettingsWriteTests |
+| iTerm2 捕获方言 | app 名→bundle 映射、ASID bounds 就近匹配、多 pane tab/session 排序落库（此前只测 Terminal tty 直查） | RunnerCaptureSeamTests |
+| `ScreenGeometry.isEmpty` | 空表 / 非空两态 | RunnerCoordinateGeometryTests |
+| `RestoreSpaceTopology` | `unavailable` / `available` / `available([])` 三态语义 | RunnerRestoreOrchestrationTests |
+| `RestoreWindowOperating` 默认实现 | `visibleFrameForDisplay` = SpaceController display→NSScreen→quartz 换算（有无屏两态） | 同上 |
+| 收敛默认参数 | `waitForRelayout` / `convergeFrame` / `convergeFramePolling` 省略 sleep 闭包的生产默认路径 | RunnerRestoreOrchestrationTests / RunnerConvergencePipelineTests |
+| 远程会话匹配 | 标题后缀多命中 → nil（歧义不押注） | RunnerSessionRestoreTests |
+
+### 实测取证
+
+- **门禁**：run `44363011818`（提交 `bd2ca4a`）success，`VibeFocusTestRunner: 4037 checks,
+  4037 passed, 0 failed`（上一轮 4015，本批 +22）；16 个域按 CI 无 yabai/AX 清单跳过。
+- **覆盖率**：run `44363029597` success；llvm-cov report TOTAL **41794 行 / 9885 missed /
+  76.35%**（上一轮 merge/integration 同 41794 行 / 9949 missed / 76.20%，**+64 行**）。
+  LCOV 全口径 63583 行 / 11539 missed / 81.85%；LCOV Sources-only 31031 / 7730 / 75.09%。
+- **靶点逐行复核（LCOV DA，前→后）**：`MCPProtocol` 21→4（路由包 109–115 全部执行）；
+  `AgentSettingsCatalog` 10→1（displayValue 50–58 全部执行）；`AgentApiCore` 9→1
+  （NSNumber 桥接 139–145 全部执行）；`RestoreSwitchOrchestration` 9→0（拓扑两态 +
+  默认几何实现）；`SessionRestoreController` 20→15（iTerm 分支 77–79）；`RemoteSessionProbe`
+  1→0（多命中叉口 101）；`ScreenGeometry` 1→0（`isEmpty`）；`FrameConvergence` 4→1。
+- 覆盖率逐域跑存在环境性波动（如 `SpaceController+Context` 33→77 属域执行面变化），
+  上述靶点均按 DA 行逐条核对，非总量摊派。
+
+### 本轮确认的测量假象（不是未覆盖）
+
+- `AgentSettingsCatalog.swift:306`（`return "settings_key_unknown"`）DA 恒 0，但
+  `apply(key:"no.such.key")` 断言 PASS——返回值必须经该行，属内联/归因假象。
+- `FrameConvergence.swift:250`（`convergeFramePolling` 的 sleep 默认闭包）同理：断言
+  PASS（省略 sleep 的默认路径已执行），DA 仍 0——默认参数闭包被归因到调用方。
+- 另有死存储消除类（如「已 nil 再赋 nil」的 `spaceExact = nil`）在 llvm-cov 上永远 0。
+
+### 为什么字面 100% 不可达（结构性）
+
+1. **B 态（真机 E2E 通道，约 9000 行）**：CI runner 无 yabai、无 AX 授权、无真实终端/
+   IDE/WindowServer 会话。AX 写、space 查询、网格建窗、会话恢复、气泡面板等整文件在
+   CI 恒走守卫早退（`WindowManager+MoveWindow`/`Toggle+Routes`/`TerminalGridController`/
+   `SessionRestoreExecutor`/`InputBubbleController` 等），其覆盖由口径②真机 E2E 承担。
+   本轮 coverage 逐域失败的 12 个域也全部是这类环境前置（yabai 不可用 / 真实 comm 链 /
+   真窗口管线），与本批新增断言无关。
+2. **C 态（C1~C7 豁免）**：生命周期胶水（重入即重复启动）、真实模态弹窗（CLI runModal
+   挂死）、系统授权（拉起系统 UI / 提权）、真实发声（打扰用户）、信号真身（执行即杀
+   进程）、渲染树绑定（脱离渲染树求值 SIGTRAP）、生产状态禁写（污染运行中实例）——
+   单测执行这些代码会写坏测试进程或用户机器，台账逐项有替代验证通道。
+3. **测量通道本身的损失**：逐域隔离下冻结/超时域不产 profraw；内联、死存储、默认参数
+   闭包会产生「已执行但 DA:0」的行。因此即使把可测面全部写满，llvm-cov 也不会显示
+   100.00%。
+
+**验收口径不变**（用户 2026-09-20 签字）：① CLI 可提缝面 100% + ② 真机 E2E 通道全绿 +
+③ 物理不可达逐项归因；字面 100% 不作为验收要求。本轮未发现新的 A 态（可提缝未清）项，
+残余 missed 均为上述 B/C 态与测量假象。
