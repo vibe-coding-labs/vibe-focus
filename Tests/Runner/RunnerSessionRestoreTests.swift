@@ -293,6 +293,13 @@ extension RunnerHarness {
               RemoteSessionProbe.matchSession(remoteCWD: nil, paneTitle: nil, entries: [pool[2]])?.sessionID == "sid-uniq")
         check("探针匹配: 多项目无信号 → nil（宁缺毋错）",
               RemoteSessionProbe.matchSession(remoteCWD: nil, paneTitle: nil, entries: pool) == nil)
+        // 标题后缀命中多个（不同前缀的同名项目）→ 同样宁缺毋错
+        let ambiguous = [
+            RemoteSessionEntry(projectDir: "-work-a-chat-show", sessionID: "sid-a", cwd: nil),
+            RemoteSessionEntry(projectDir: "-work-b-chat-show", sessionID: "sid-b", cwd: nil),
+        ]
+        check("探针匹配: 标题后缀多命中 → nil（不押注）",
+              RemoteSessionProbe.matchSession(remoteCWD: nil, paneTitle: "chat-show", entries: ambiguous) == nil)
     }
 
     // MARK: 恢复命令构建

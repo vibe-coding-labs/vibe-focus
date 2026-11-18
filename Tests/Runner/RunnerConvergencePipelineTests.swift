@@ -330,6 +330,18 @@ extension RunnerHarness {
             check("convergeFrame C6: attempts=0 归一 1 轮 mismatched",
                   outcome == .mismatched(attempts: 1, lastFrame: CGRect(x: 0, y: 0, width: 1, height: 1)))
         }
+
+        // C7. 省略 sleep 参数：默认 usleep(0) 实现可调用（生产调用方默认路径）。
+        do {
+            let outcome = FrameConvergence.convergeFrame(
+                attempts: 1, settleMicros: 0,
+                write: { true },
+                read: { CGRect(x: 0, y: 0, width: 1, height: 1) },
+                isConverged: { _ in true }
+            )
+            check("convergeFrame C7: 省略 sleep → 默认实现直通收敛",
+                  outcome == .converged(attempt: 1, frame: CGRect(x: 0, y: 0, width: 1, height: 1)))
+        }
     }
 
     // MARK: CoordinateKit 真实实现直测（访问器与 NSScreen 依赖函数，Batch 11）

@@ -387,6 +387,16 @@ extension RunnerHarness {
               outcome == .converged(attempt: 1, frame: CGRect(x: 0, y: 0, width: 10, height: 10)) && writes == 1)
     }
     do {
+        // 生产调用方省略 sleep 参数 → 走默认 usleep 实现（首查即收敛，零睡眠）
+        let outcome = FrameConvergence.convergeFramePolling(
+            attempts: 1, intervalMs: 25, budgetMs: 400,
+            write: { true },
+            read: { CGRect(x: 0, y: 0, width: 10, height: 10) },
+            isConverged: { _ in true })
+        check("轮询收敛: 省略 sleep → 默认实现可调用且首查收敛",
+              outcome == .converged(attempt: 1, frame: CGRect(x: 0, y: 0, width: 10, height: 10)))
+    }
+    do {
         var writes = 0
         var reads = 0
         var sleeps = 0
@@ -716,6 +726,14 @@ extension RunnerHarness {
             isSame: { _, _ in true },
             sleep: { _ in }, pollSleep: { _ in naps += 1 })
         check("重摆等待: 首读 nil 重置 prev → 第二对相等即稳定（睡 2 次）", naps == 2)
+    }
+    do {
+        // 生产调用方省略 sleep/pollSleep → 默认实现走真实 usleep（预算 1ms，零可感耗时）
+        FrameConvergence.waitForRelayout(
+            minSettleMicros: 0, intervalMs: 1, budgetMs: 1,
+            read: { CGRect(x: 0, y: 0, width: 1, height: 1) },
+            isSame: { _, _ in true })
+        check("重摆等待: 省略 sleep/pollSleep → 默认实现可调用不崩", true)
     }
 
     // MARK: SARecoveryVerdict（SA 恢复状态机：结局裁决 + 重试策略，真实实现）
