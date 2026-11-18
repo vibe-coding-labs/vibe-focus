@@ -4,6 +4,20 @@ import Foundation
 
 // MARK: - 终端网格 · AppleScript 建窗与自动化通道（2026-09-07 从 TerminalGridController 拆分，行为不变）
 
+/// 建窗单格编排的宿主依赖缝（2026-11-19 覆盖率补齐）：终端就绪探针、实例守卫、
+/// AppleScript 执行、睡眠、CG 定位/回读、纠偏写原语全可注入。默认 nil → 生产真实
+/// 实现（osascript fork / 进程表扫描 / yabai 写）；Runner 注入假实现穷尽建窗
+/// 成功/守卫拒绝/挂起快失败/重试耗尽/定位失败/漂移纠偏六路（零 fork、零真实等待）。
+struct TerminalCellCreateEnvironment {
+    var ensureTerminalRunning: (String, String) async -> Bool
+    var instanceRefusal: (String, Bool) -> String?
+    var runScript: (String) async -> YabaiClient.YabaiResult?
+    var sleepNanos: (UInt64) async -> Void
+    var cgWindowID: (String, CGRect?, Set<UInt32>) -> UInt32?
+    var cgWindowBounds: (UInt32) -> CGRect?
+    var placeWindow: (UInt32, CGRect, String) async -> Bool
+}
+
 extension TerminalGridController {
 
     func runScript(_ script: String) async -> YabaiClient.YabaiResult? {
@@ -156,15 +170,48 @@ extension TerminalGridController {
         command: String?,
         frame: CGRect,
         op: String,
-        excluding: Set<UInt32> = []
+        excluding: Set<UInt32> = [],
+        environment: TerminalCellCreateEnvironment? = nil
     ) async -> (cgWindowID: UInt32?, corrected: Bool, appleScriptID: String?) {
         let isIterm = TerminalAutomationScript.usesITermDialect(appBundleID)
         let script = isIterm
             ? TerminalAutomationScript.itermCreateWindow(command: command, quartzFrame: frame)
             : TerminalAutomationScript.terminalCreateWindow(command: command, quartzFrame: frame)
 
+        // 宿主点收口：environment 非 nil 全走注入（显式 if/else——nil 返回值的
+        // 语义（放行/未就绪）不能被 Optional.map 的 nil 合并吞掉）。
+        func runScriptInjected(_ script: String) async -> YabaiClient.YabaiResult? {
+            if let environment { return await environment.runScript(script) }
+            return await runScript(script)
+        }
+        func sleepFor(_ nanos: UInt64) async {
+            if let environment {
+                await environment.sleepNanos(nanos)
+            } else {
+                try? await Task.sleep(nanoseconds: nanos)
+            }
+        }
+        func refusalFor(_ bundleID: String) -> String? {
+            if let environment { return environment.instanceRefusal(bundleID, true) }
+            return automationInstanceRefusal(appBundleID: bundleID, allowNotRunning: true)
+        }
+        func locateCGWindow(_ bundleID: String, near bounds: CGRect?, excluding claimed: Set<UInt32>) -> UInt32? {
+            if let environment { return environment.cgWindowID(bundleID, bounds, claimed) }
+            return cgWindowID(forBundleID: bundleID, nearBounds: bounds, excluding: claimed)
+        }
+        func readGlobalBounds(_ windowID: UInt32) -> CGRect? {
+            if let environment { return environment.cgWindowBounds(windowID) }
+            return cgWindowBounds(for: windowID)
+        }
+
         // 终端未运行 → 自动拉起再建窗（失败才走 notRunning 拒绝链，如实告知）
-        guard await ensureTerminalRunning(appBundleID: appBundleID, op: op) else {
+        let terminalReady: Bool
+        if let environment {
+            terminalReady = await environment.ensureTerminalRunning(appBundleID, op)
+        } else {
+            terminalReady = await ensureTerminalRunning(appBundleID: appBundleID, op: op)
+        }
+        guard terminalReady else {
             let appName = TerminalSelectionResolver.knownNames[appBundleID] ?? appBundleID
             lastScriptError = "已尝试自动启动 \(appName) 但等待超时仍未检测到实例——请手动启动后重试"
             return (nil, false, nil)
@@ -172,11 +219,11 @@ extension TerminalGridController {
         var created: YabaiClient.YabaiResult?
         var failedAttempts = 0
         while created == nil {
-            if let refusal = automationInstanceRefusal(appBundleID: appBundleID, allowNotRunning: true) {
+            if let refusal = refusalFor(appBundleID) {
                 lastScriptError = refusal
                 return (nil, false, nil)
             }
-            let result = await runScript(script)
+            let result = await runScriptInjected(script)
             if let result, result.exitCode == 0 {
                 created = result
                 break
@@ -196,11 +243,11 @@ extension TerminalGridController {
                 "retryInMs": String(delay / 1_000_000),
                 "detail": lastScriptError ?? "-"
             ])
-            try? await Task.sleep(nanoseconds: delay)
+            await sleepFor(delay)
         }
         guard let result = created else { return (nil, false, nil) }
         let appleScriptID = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        try? await Task.sleep(nanoseconds: Self.interWindowDelayNanos)
+        await sleepFor(Self.interWindowDelayNanos)
 
         // 回读+CG 定位带退避重试：iTerm2 新窗注册懒建立（1~3s，冷启动更久），
         // 单发判定会误杀刚建好的窗口（2026-09-12 用户实测冷启动 3s 后建网格第 2 格失败）。
@@ -211,7 +258,7 @@ extension TerminalGridController {
             let boundsScript = isIterm
                 ? TerminalAutomationScript.itermGetBounds(windowID: appleScriptID)
                 : TerminalAutomationScript.terminalGetBounds(windowID: UInt32(appleScriptID) ?? 0)
-            readback = (await runScript(boundsScript))
+            readback = (await runScriptInjected(boundsScript))
                 .flatMap { TerminalAutomationScript.parseBounds($0.stdout) }
 
             // CG window id：Terminal 的 AppleScript id == CGWindowNumber；iTerm2 按落点 bounds 就近匹配
@@ -219,7 +266,7 @@ extension TerminalGridController {
             if !isIterm, let id = UInt32(appleScriptID) {
                 cgID = id
             } else {
-                cgID = cgWindowID(forBundleID: appBundleID, nearBounds: readback, excluding: excluding)
+                cgID = locateCGWindow(appBundleID, near: readback, excluding: excluding)
             }
 
             if TerminalAutomationScript.cellLocateSettled(readback: readback, cgID: cgID) { break }
@@ -232,7 +279,7 @@ extension TerminalGridController {
                 "readback": readback.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil",
                 "cgID": cgID.map { String($0) } ?? "nil",
             ])
-            try? await Task.sleep(nanoseconds: delay)
+            await sleepFor(delay)
         }
 
         // 收敛判定用 CG 全局真值而非 AppleScript 回读：Terminal 的 bounds 是
@@ -241,7 +288,7 @@ extension TerminalGridController {
         // Terminal 网格 corrections cells=1/6、六窗散落双屏）。CG bounds 对所有
         // 终端都是全局 quartz，统一以它为准；readback 仅用于定位重试的就近匹配。
         var actual = readback
-        if let cgID, let global = cgWindowBounds(for: cgID) {
+        if let cgID, let global = readGlobalBounds(cgID) {
             actual = global
         }
         let converged = actual.map { CoordinateKit.isFrameConverged(actual: $0, target: frame, tolerance: 10) } ?? false
@@ -265,9 +312,14 @@ extension TerminalGridController {
             "readback": actual.map { "\($0.origin.x),\($0.origin.y),\($0.width)x\($0.height)" } ?? "nil"
         ])
         // B313：纠偏 yabai fork 下放窗口作业队列（见 TerminalGridController.swift 文件头注记）
-        let corrected = await WindowWorkExecutor.run {
-            WindowManager.shared.placeWindow(windowID: cgID, frame: frame, operationID: op)
-        } ?? false
+        let corrected: Bool
+        if let environment {
+            corrected = await environment.placeWindow(cgID, frame, op)
+        } else {
+            corrected = await WindowWorkExecutor.run {
+                WindowManager.shared.placeWindow(windowID: cgID, frame: frame, operationID: op)
+            } ?? false
+        }
         return (cgID, corrected, appleScriptID)
     }
 

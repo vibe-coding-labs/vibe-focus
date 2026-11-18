@@ -491,6 +491,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runHookPromptSubmitSeamTests") { runHookPromptSubmitSeamTests() }
         runDomain("runHookWindowMoveSeamTests") { runHookWindowMoveSeamTests() }
         runDomain("runSpaceDeliverySeamTests") { runSpaceDeliverySeamTests() }
+        runDomain("runTerminalCellCreateSeamTests") { runTerminalCellCreateSeamTests() }
         runDomain("runGateSweepTests") { runGateSweepTests() }
         runDomain("runTargetResolveTailTests") { runTargetResolveTailTests() }
         runDomain("runSpaceReadOnlySweepTests") { runSpaceReadOnlySweepTests() }
