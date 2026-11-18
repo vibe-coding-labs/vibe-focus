@@ -5,12 +5,34 @@
 import AppKit
 import Foundation
 
+/// TerminalContext 窗口匹配的宿主依赖缝（2026-11-19 覆盖率补齐）：
+/// osascript / ps 的 shell 调用可注入。默认 nil → 生产 runShellCommand（真 fork）；
+/// Runner 注入脚本化 stdout 直测四路匹配的命中/落空/合成身份分支（零 fork）。
+struct TerminalMatchEnvironment {
+    /// (executable, args) → stdout
+    var runShellCommand: (String, [String]) -> String?
+}
+
 extension WindowManager {
+
+    /// shell 调用原语：注入优先，默认生产实现。
+    private func matchShell(
+        _ executable: String,
+        _ args: [String],
+        environment: TerminalMatchEnvironment?
+    ) -> String? {
+        if let environment { return environment.runShellCommand(executable, args) }
+        return runShellCommand(executable, args: args)
+    }
 
     /// 通过 ITERM_SESSION_ID 用 iTerm2 AppleScript API 查找窗口
     /// ITERM_SESSION_ID 格式: w{N}t{N}p{N}:{UUID}
     /// 遍历 iTerm2 所有窗口的 session，匹配 UUID 部分找到目标窗口
-    func matchiTerm2WindowBySessionID(itermSessionID: String, windows: [WindowIdentity]) -> WindowIdentity? {
+    func matchiTerm2WindowBySessionID(
+        itermSessionID: String,
+        windows: [WindowIdentity],
+        environment: TerminalMatchEnvironment? = nil
+    ) -> WindowIdentity? {
         // P-INST-90: iTerm2 session UUID 窗口匹配耗时（runShellCommand /bin/bash -c osascript fork 遍历 iTerm2 windows/tabs/sessions 匹配 UUID；findWindowByTerminalContext P-INST-39 的 iTerm2 AppleScript 策略子归因；osascript IPC 到 iTerm2 进程是主要成本）。
         #if PERF_INSTRUMENT
         let mtwStart = Date()
@@ -52,7 +74,8 @@ extension WindowManager {
             return ""
         end tell'
         """
-        let result = runShellCommand("/bin/bash", args: ["-c", script])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let result = matchShell("/bin/bash", ["-c", script], environment: environment)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if !result.isEmpty, let windowID = UInt32(result) {
             log(
@@ -83,7 +106,12 @@ extension WindowManager {
 
     /// 通过 Shell 命令查询 Terminal.app 窗口，按 TTY 精确匹配
     /// Terminal.app 不在 CGWindowList 中暴露窗口标题，用 osascript 获取 TTY→窗口ID 映射
-    func matchTerminalWindowByAppleScript(tty: String, terminalPID: Int32, windows: [WindowIdentity]) -> WindowIdentity? {
+    func matchTerminalWindowByAppleScript(
+        tty: String,
+        terminalPID: Int32,
+        windows: [WindowIdentity],
+        environment: TerminalMatchEnvironment? = nil
+    ) -> WindowIdentity? {
         // P-INST-91: Terminal.app TTY 窗口匹配耗时（runShellCommand /bin/bash -c osascript fork 遍历 Terminal windows/tabs 按 tty 匹配；findWindowByTerminalContext P-INST-39 的 Terminal AppleScript 策略子归因；osascript IPC 到 Terminal.app 是主要成本）。
         #if PERF_INSTRUMENT
         let mtwaStart = Date()
@@ -124,7 +152,8 @@ extension WindowManager {
             return ""
         end tell'
         """
-        let scriptResult = runShellCommand("/bin/bash", args: ["-c", script])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let scriptResult = matchShell("/bin/bash", ["-c", script], environment: environment)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if !scriptResult.isEmpty, let windowID = UInt32(scriptResult) {
             log(
@@ -155,7 +184,11 @@ extension WindowManager {
     }
 
     /// 通过 TTY 上的进程 command 在候选窗口中精确匹配
-    func matchWindowByTTYProcess(tty: String, windows: [WindowIdentity]) -> WindowIdentity? {
+    func matchWindowByTTYProcess(
+        tty: String,
+        windows: [WindowIdentity],
+        environment: TerminalMatchEnvironment? = nil
+    ) -> WindowIdentity? {
         // P-INST-55: matchWindowByTTYProcess 耗时（ps -t fork + 命令匹配；findWindowByTerminalContext P-INST-39 的 TTY 策略子归因；底层 ps fork P-INST-49 slow-op 覆盖）。
         #if PERF_INSTRUMENT
         let mwtpStart = Date()
@@ -169,7 +202,7 @@ extension WindowManager {
         let ttyName = String(fullTTY.dropFirst(5))
 
         // 获取该 TTY 上的进程
-        let psOutput = runShellCommand("/bin/ps", args: ["-t", ttyName, "-o", "command="])
+        let psOutput = matchShell("/bin/ps", ["-t", ttyName, "-o", "command="], environment: environment)
         guard let psOutput else {
             log(
                 "[WindowManager] matchWindowByTTYProcess: ps returned no output",
@@ -195,7 +228,7 @@ extension WindowManager {
     /// 通过 ps 命令解析指定 PID 进程关联的 TTY 设备
     /// Claude Code (node) 由终端启动，ps -o tty= 可返回有效 TTY（如 ttys001）
     /// 即使 hook-forwarder 自身 tty 命令返回 "not a tty"
-    func resolveTTY(forPID pid: Int32) -> String? {
+    func resolveTTY(forPID pid: Int32, environment: TerminalMatchEnvironment? = nil) -> String? {
         // P-INST-56: resolveTTY 耗时（ps -o tty= fork；findWindowByTerminalContext P-INST-39 进程树 TTY 解析子归因）。
         #if PERF_INSTRUMENT
         let rtStart = Date()
@@ -211,7 +244,7 @@ extension WindowManager {
             level: .debug,
             fields: ["pid": String(pid)]
         )
-        let output = runShellCommand("/bin/ps", args: ["-o", "tty=", "-p", String(pid)])
+        let output = matchShell("/bin/ps", ["-o", "tty=", "-p", String(pid)], environment: environment)
         let tty = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if tty.isEmpty || tty == "??" || tty == "?" {
             log(
