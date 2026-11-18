@@ -1,9 +1,12 @@
 // Tests/Runner/RunnerPostMoveRecordTests.swift — 覆盖率批次 33：move_to_main 收尾落记录。
 // saveToggleRecordForMainMove 是 moveWindowToMainScreen 的收尾职责之一（另一职责
 // verifyAndCorrectPostMoveSize 需要真实 AX 窗与真实移动，留待真机 E2E）：本域用
-// 幽灵 windowID + 注入身份的 SpaceContext 直测记录构造与落库，断言 origFrame/
-// targetFrame/来源 space/display 字段全部按入参落库，测毕立刻 clear 不残留。
-// （ToggleEngine.shared 是生产 store——Runner 现有多域同样如此，clear 后零残留。）
+// 幽灵 windowID + 注入身份的 SpaceContext 直测记录构造与落库，覆盖：
+//   ① 主屏外 origFrame → 记录正常落库（orig/target frame、来源 space/display、身份）；
+//   ② origFrame 落在主屏 → 拒收门拦截（ToggleEngine.shouldRejectSave，数据异常防护）；
+//   ③ 单屏机（singleDisplay=true）→ 主屏内 origFrame 也放行（同屏最大化常态）。
+// 测毕立刻 clear，不留残余记录。（ToggleEngine.shared 是生产 store——Runner 现有多域
+// 同样如此，clear 后零残留。）
 
 import AppKit
 import Foundation
@@ -25,7 +28,8 @@ extension RunnerHarness {
             windowNumber: Int(windowID),
             title: "postmove-record"
         )
-        let origFrame = CGRect(x: 120, y: 160, width: 900, height: 700)
+        // 主屏外坐标（Cocoa 全域负方向），保证不被 shouldRejectSave 拒收
+        let origFrame = CGRect(x: -5000, y: -5000, width: 900, height: 700)
         let targetFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let context = SpaceContext(
             sourceSpaceIndex: .yabai(3),
@@ -34,6 +38,7 @@ extension RunnerHarness {
             sourceDisplaySpaceIndex: 4
         )
 
+        // --- ① 正常落库 ---
         let saveMs = wm.saveToggleRecordForMainMove(
             identity: identity,
             windowID: windowID,
@@ -59,21 +64,44 @@ extension RunnerHarness {
         check("postMoveRecord: 身份字段透传",
               record?.pid == getpid() && record?.bundleIdentifier == "com.vibefocus.runner")
 
-        // 单屏标记分支：reason/sessionID 空值形态也不崩
+        // --- ② 主屏内 origFrame（非单屏）→ 拒收门拦截，记录不落库 ---
+        ToggleEngine.shared.clear(windowID: windowID)
+        guard let mainFrame = CoordinateKit.primaryScreen?.frame ?? NSScreen.screens.first?.frame else {
+            check("postMoveRecord: 无 NSScreen 环境，跳过错屏/单屏断言", true)
+            return
+        }
+        let onMainOrig = CGRect(
+            x: mainFrame.midX - 100, y: mainFrame.midY - 100, width: 200, height: 200)
+        _ = wm.saveToggleRecordForMainMove(
+            identity: identity,
+            windowID: windowID,
+            origFrame: onMainOrig,
+            spaceContext: context,
+            targetFrame: targetFrame,
+            targetDisplayIndex: 1,
+            reason: .userPromptSubmit,
+            sessionID: nil,
+            op: "ut-postmove-reject",
+            singleDisplay: false
+        )
+        check("postMoveRecord: 主屏内 origFrame → 拒收门拦截零落库",
+              ToggleEngine.shared.load(windowID: windowID) == nil)
+
+        // --- ③ 单屏机：主屏内 origFrame 放行（同屏最大化常态） ---
         let singleMs = wm.saveToggleRecordForMainMove(
             identity: identity,
             windowID: windowID,
-            origFrame: origFrame,
+            origFrame: onMainOrig,
             spaceContext: context,
             targetFrame: targetFrame,
             targetDisplayIndex: nil,
             reason: .agentCommand,
             sessionID: nil,
-            op: "ut-postmove-record-single",
+            op: "ut-postmove-single",
             singleDisplay: true
         )
         check("postMoveRecord: 单屏/空 session 分支保存成功", singleMs >= 0)
-        check("postMoveRecord: 二次保存覆盖同一窗口记录",
-              ToggleEngine.shared.load(windowID: windowID)?.targetFrame == targetFrame)
+        check("postMoveRecord: 单屏分支记录落库且帧一致",
+              ToggleEngine.shared.load(windowID: windowID)?.origFrame == onMainOrig)
     }
 }
