@@ -39,8 +39,9 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
 |------|------|--------------|
 | `windowID` / `pid` | 窗口身份 | 按 windowID 直接定位（无 PID fallback 链） |
 | `origFrame` | 源屏上的原始位置（Quartz 全局坐标） | frame 直写的目标 |
-| `sourceSpace` | 窗口原来在哪个 Space（yabai 全局索引，0=无信息） | 源屏预切回的目标 space |
-| `sourceYabaiDisp` | 窗口原来在哪块屏（yabai 1-based） | 查该屏当前可见 space |
+| `sourceSpace` | 窗口原来在哪个 Space（toggle 时刻的 yabai 全局索引，0=无信息） | 旧路径回退值；fresh 路径下仅作漂移比对基线 |
+| `sourceYabaiDisp` | 窗口原来在哪块屏（yabai 1-based） | fresh 拓扑不可用时的回退屏号 |
+| `sourceDispSpace` | 窗口在原屏上是该屏的第几个 Space（display-local 序号，1-based） | **fresh 拓扑下回译真正的还原目标**（用户语义的「第 N 个工作区」） |
 | `targetFrame` | 主屏上的位置 | `isValid` 数据校验 |
 
 ## ToggleEngine.restore() 的步骤（与代码一一对应）
@@ -51,15 +52,25 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
    float/--move 全部静默无效，快速失败 `.moveFailedRetryable`（record 保留），
    避免白白切换源屏视角
 4. **preMoveSpace 基准**：记录当前 focused space（供第 6 步视角守卫）
-5. **源屏预切回（spaceExact 的关键）**：源屏当前可见 space ≠ sourceSpace 时，
-   双层切回 sourceSpace（是否切/初始 spaceExact 由 `sourceSpacePreSwitch` 纯函数裁决）：
-   ① `canControlSpaces` 为真先 `focusSpace`（SA 直切，**不依赖源 space 上有窗口**，
-   源 space 已空也能精确切回）；② 直切失败/不可用降级 `refocusWindowOnSpace`
-   （聚焦带动，偏好非最小化候选，不依赖 SA）。切回命令成功后用
-   `ConditionPolling.waitUntil` **等到位**：轮询源屏可见 space 真切回（800ms 预算，
-   `ignoreCache` 绕过查询缓存），早满足早返回，超时如实 `spaceExact=false`。
-   两层全失败（SA 失效 + 源 space 空，物理极限）→ `spaceExact=false`，窗口将落在
-   源屏可见 space（位置恢复但 space 不精确），结局如实上报，不静默。
+5. **还原目标解析 + 源屏预切回（spaceExact 的关键）**：
+   - **fresh 拓扑解析**（2026-11-03）：`RestoreSpaceTargetResolver` 用「几何屏
+     （origFrame → `sourceDisplayForFrame`，存在时优先）+ fresh `query --spaces`
+     （恒 `ignoreCache`） + `sourceDispSpace` 本地序号」回译实际还原目标：
+     record 的 `sourceSpace` 是 toggle 时刻的全局索引，任一屏增删 Space 都会整体位移；
+     按本地序号回译才是用户语义里的「原工作区」。回译结果与 `spaceIndexShifted`、
+     完整拓扑串一起进 `completed` 日志与 `restore_success` 审计，落错可回溯。
+   - **判定**（`freshSourceSpacePreSwitch` 纯函数）：源屏可见 space == 目标 → 不切；
+     ≠ → 双层切回；目标屏/space 在 fresh 拓扑里定位不到（拔屏/索引漂移）→ 不盲切、
+     `spaceExact=false` 如实降级；可见性未知 → 仍尝试幂等切回，由切后轮询裁决。
+   - **双层切回**：① `canControlSpaces` 为真先 `focusSpace`（SA 直切，**不依赖源 space
+     上有窗口**）；② 直切失败/不可用降级 `refocusWindowOnSpace`（聚焦带动，偏好非
+     最小化候选，不依赖 SA）。切回命令成功后用 `ConditionPolling.waitUntil` **等到位**：
+     轮询源屏可见 space 真切回**回译目标**（800ms 预算，`ignoreCache`），早满足早返回，
+     超时如实 `spaceExact=false`。两层全失败（SA 失效 + 源 space 空，物理极限）→
+     `spaceExact=false`，窗口落在源屏可见 space（位置恢复但 space 不精确），结局如实
+     上报，不静默。
+   - **回退**：`query --spaces` 失败时逐字走旧路径（2s 缓存 + record 全局索引），
+     历史行为与序列锁不变。
    > SA 可用性由无副作用探针实测（`saProbeVerdict`）：对当前 space 发
    > `space --focus`，按 stderr 分类裁决——旧「query 含 display 字段」判据在 v7
    > 恒真（query 不依赖 SA），2026-09-02 E2E 实测揭穿后重写。
@@ -69,6 +80,14 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
    （2 轮，每轮 400ms 落定）。macOS 窗口归属跟随物理位置自动回源 display。
    > 为什么不用 `window --space`：yabai v7 float 布局下静默失效
    > （exit 0 但窗口不动，Tests/AXMoveValidation.swift T3 实测）。
+7.5 **落位 space 复核（2026-11-03）**：frame 收敛只证明坐标对——「工作区 2 的窗口
+   还原到工作区 3 的对应位置」正是**同坐标不同 space**，旧日志会同时出现
+   `frameOK=true` 与 `spaceExact=true`，用户看到的是错工作区。move 后按 windowID
+   查一次窗口真实所属 space（`windowSpaceIndex`，恒 `ignoreCache`）：首查即等于目标 →
+   `landingChecks=1`；不等 → 50ms/300ms 补看（异步落定，避免把瞬态当结论）；查询失败
+   → 未知（不轮询、不判错）。结局 `spaceExact` 由 `landingSpaceExact` 以真实落位为准
+   （已知落位优先于预切回轮询结论；未知时沿用预切回结论），`completed` 日志与
+   `restore_success` 审计同时写 `targetSpace` / `landedSpace` / `spaceIndexShifted`。
 8. **结局裁决（诚实结局，2026-09-02）**：
    - frame 收敛 → 清 record + 审计 `restore_success`（含 `spaceExact` 字段）→ `.restored`
    - frame 未收敛且 origFrame 仍在某块现有屏 → **保留 record** +
@@ -108,6 +127,11 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
    降级「聚焦窗口带动」通道。检查 SA：`yabai --load-sa`（需 admin）。
 3. **显示器热拔/分辨率变更**后 origFrame 可能落在屏外 → `.moveFailedPermanent`，
    record 清除属预期行为（stuck 解堵接管）。
+4. **原工作区已被删除**（源屏只剩更少的 Space）：本地序号回译失配，fresh 路径判定
+   `targetUnresolvable` → 不盲切，`spaceExact=false`（旧行为可能切到别的屏的同名
+   全局索引，落错工作区）。
+5. **落位复核查询失败**（yabai 瞬时不可用）：`landedSpace=unknown`，结局沿用预切回
+   结论并在日志标注——未知不等于落错，也不会伪装成精确。
 
 ## 回归防护
 
@@ -120,6 +144,9 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
   双层切回编排 `RestoreSwitchOrchestration` 假通道注入分支穷尽 + 各纯决策；CLT-only
   环境无 Swift Testing 运行时的执行通道，覆盖率经 `scripts/coverage_test_runner.sh`
   产出 llvm-cov 真实数字——编排层/ConditionPolling 实测 100%）
+- `Tests/Runner/RunnerRestoreSpaceTargetTests.swift`（2026-11-03）：还原目标解析
+  （索引漂移/几何屏优先/屏消失/本地序号失配）、fresh 预切回裁决、落位复核与
+  `landingSpaceExact` 裁决、performRestore 集成（落位错 → restored(false)）
 - `Tests/AXMoveValidation.swift`（机制断言脚本，改移动机制前必跑）
 
 ## 涉及的文件清单（当前）
@@ -132,6 +159,8 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
 | `Sources/Toggle/ToggleEngine+Restore.swift` | **唯一执行体** + RestoreOutcome |
 | `Sources/Toggle/ToggleEngine.swift` | record save/load/clear |
 | `Sources/Toggle/RestoreSwitchOrchestration.swift` | 双层切回编排（通道 protocol 化可注入，llvm-cov 100%） |
+| `Sources/Toggle/RestoreSpaceTargetResolver.swift` | 还原目标解析（全局索引 ↔ display-local 回译、fresh 拓扑取证，纯函数） |
+| `Sources/Space/SpaceController+Query.swift` | 查询层（fresh 拓扑 / 几何屏 / 窗口落位 space） |
 | `Sources/App/VoiceAnnouncementManager+RestoreOutcome.swift` | 结局播报（RestoreAnnouncementPlan 纯决策 + 发声接线） |
 | `Sources/Window/WindowManager+MoveWindow.swift` | toggle 搬运 + moveWindowToFrameViaYabai |
 | `Sources/Window/WindowManager+MoveWindow+PostMove.swift` | post-move 校验 + record 保存 |

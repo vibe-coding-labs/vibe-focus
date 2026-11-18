@@ -1,0 +1,101 @@
+name: Verify (macOS)
+
+# 特征分支的真实门禁通道（2026-11-03）。
+#
+# 背景：开发会话跑在 Linux 主机，无 Swift 工具链且工程依赖 AppKit，
+# AGENTS.md 规定的三道门禁无法本机执行。此工作流把门禁搬到 macOS runner：
+#   swift build（零警告）→ bash Tests/run_all_tests.sh → swift run VibeFocusTestRunner
+#
+# 只由本特征分支的 push 触发（不挂 main / 不挂 PR），合并进 main 后可用
+# workflow_dispatch 手动跑；不会给日常提交带来额外消耗。
+
+on:
+  push:
+    branches:
+      - fix/restore-space-observability
+  workflow_dispatch:
+    inputs:
+      domains:
+        description: '只跑指定 Runner 域（逗号分隔的 runXxxTests；留空=全量）'
+        required: false
+        default: ''
+      watchdog_minutes:
+        description: 'Runner 看门狗分钟数（默认 65；CI 无 yabai/AX 时全量约 60-80 分钟）'
+        required: false
+        default: '65'
+
+jobs:
+  gates:
+    runs-on: macos-latest
+    # 全量 Runner 在无 yabai/AX 的 runner 上约 60-80 分钟（2026-11-03 实测：25 分钟
+    # 只跑到第 55/285 个域）。看门狗与作业上限同步放宽；覆盖率报告统一由
+    # test/coverage-sprint 线的 coverage-verify.yml 产出，本工作流只做门禁（不重复跑）。
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            .build-coverage
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
+      # Csqlite3/module.modulemap 硬编码了开发机的 CLT SDK 路径
+      # （MacOSX26.2.sdk/usr/include/sqlite3.h）；GitHub runner 的 CLT SDK 不含
+      # usr/include 头文件，构建时报 header not found。CI 侧把 Xcode SDK 的同名头
+      # 软链到该路径（不改仓库构建配置，避免影响并行会话）。
+      - name: Prepare SQLite header for hardcoded CLT path
+        run: |
+          target="/Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sqlite3.h"
+          if [ ! -f "$target" ]; then
+            sdk="$(xcrun --sdk macosx --show-sdk-path)"
+            test -f "$sdk/usr/include/sqlite3.h"
+            sudo mkdir -p "$(dirname "$target")"
+            sudo ln -sf "$sdk/usr/include/sqlite3.h" "$target"
+          fi
+          ls -l "$target"
+
+      - name: swift build (zero warnings)
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee build.log
+          if grep -n "warning:" build.log; then
+            echo "::error::swift build 出现警告（门禁要求零警告）"
+            exit 1
+          fi
+
+      - name: Standalone tests
+        run: bash Tests/run_all_tests.sh
+
+      - name: Runner tests
+        env:
+          NSUnbufferedIO: "YES"
+          VIBEFOCUS_RUNNER_DOMAINS: ${{ inputs.domains }}
+          # CI 无 yabai/AX/真实终端进程的整域跳过（真机门禁不设此变量，全跑）：
+          # - HookWalk: 依赖真实终端进程 comm 链
+          # - AgentAccessLoopback: 写类 handler 触真机窗口/yabai，主线程阻塞后 HTTP 级联超时
+          # - SpaceSwitch/SpaceQueryYabai: 需要运行中的 yabai
+          # - WorkspaceAndSessionRender: activeSessionList 在无会话 runner 上挂起
+          # - SettingsCommonSectionRender: customAudioFileRows 后停摆 21 分钟（terminalGrid/
+          #   claudeHook 段依赖真实终端/配置探测），41622369160 实测
+          # - RegistryFindPID: 改名夹具依赖真实 comm 链，CI 进程链不匹配
+          VIBEFOCUS_RUNNER_SKIP_DOMAINS: runHookWalkTests,runAgentAccessLoopbackTests,runSpaceSwitchTests,runSpaceQueryYabaiTests,runWorkspaceAndSessionRenderTests,runSettingsCommonSectionRenderTests,runRegistryFindPIDTests
+          # push 触发时 inputs.* 为空，此兜底即默认值——必须与 inputs 默认（65）一致，
+          # 否则 push 运行仍按 25 分钟被杀（2026-11-03 实测：41622369160 即在 25 分整被杀）。
+          WATCHDOG_MINUTES: ${{ inputs.watchdog_minutes || '65' }}
+        run: |
+          # CI 机器没有 yabai/AX 授权，个别真机依赖用例可能进入长等待；看门狗兜底
+          # 并保留截止前的无缓冲输出（最后一段 === 域名 === 即卡住位置）。
+          # 定向回归：workflow_dispatch 传 domains=<逗号分隔域方法名>。
+          swift build --product VibeFocusTestRunner
+          .build/debug/VibeFocusTestRunner &
+          pid=$!
+          ( sleep $((10#$WATCHDOG_MINUTES * 60)); kill -9 "$pid" 2>/dev/null ) &
+          watchdog=$!
+          wait "$pid"; status=$?
+          kill "$watchdog" 2>/dev/null || true
+          exit $status

@@ -105,6 +105,40 @@ final class FakeRestoreChannels: RestoreSpaceChanneling {
         return ignoreCache ? visibleSpaceAfterSwitch : visibleSpace
     }
 
+    // MARK: fresh 拓扑 / 几何屏 / 落位复核（2026-11-03 restore 取证加固）
+    //
+    // 默认值刻意保持「旧路径」：spaceTopology=.unavailable、landingSpace=nil。
+    // 三者均不写 seq/calls——既有 S1-S4 精确序列锁与 calls 断言不受影响。
+
+    /// fresh space 拓扑；默认 unavailable → performSourcePreSwitch 逐字回退旧路径。
+    var spaceTopology: RestoreSpaceTopology = .unavailable
+    /// origFrame 的几何 yabai display（nil=映射失败 → 解析器回退 record 屏）
+    var geometricSourceDisplay: Int?
+    /// 落位复核返回的窗口 space（nil=查询失败）
+    var landingSpace: Int?
+    /// 落位复核按调用顺序取值（模拟「补看后落定」时序）；空则退回 landingSpace
+    var landingSpaceQueue: [Int?] = []
+
+    private(set) var topologyQueries = 0
+    private(set) var geometricDisplayQueries = 0
+    private(set) var landingSpaceQueries = 0
+
+    func querySpaceTopology() -> RestoreSpaceTopology {
+        topologyQueries += 1
+        return spaceTopology
+    }
+
+    func sourceDisplayForFrame(_ frame: CGRect) -> Int? {
+        geometricDisplayQueries += 1
+        return geometricSourceDisplay
+    }
+
+    func windowSpaceIndex(windowID: UInt32) -> Int? {
+        landingSpaceQueries += 1
+        guard !landingSpaceQueue.isEmpty else { return landingSpace }
+        return landingSpaceQueue.removeFirst()
+    }
+
     func setWindowFloat(_ windowID: UInt32, operationID: String?, knownWindowInfo: YabaiWindowInfo?) -> SpaceController.FloatToggleOutcome {
         calls.append("float")
         seq?.add("float")
@@ -144,6 +178,9 @@ final class FakeWindows: RestoreWindowOperating {
     var findResult: AXUIElement?
     var moveResult = true
     var displayContextResult: (yabaiIndex: Int?, displayID: UInt32?) = (yabaiIndex: 2, displayID: nil)
+    /// 源屏可视帧（origFrame 屏外 clamp 退让）；nil = 屏不存在 → 跳过 clamp。
+    /// 注入缝让 clamp 分支在无真机/无 NSScreen 的 CI 通道也能确定性执行。
+    var visibleFrameResult: CGRect?
     let frameTolerance: CGFloat = 20
     var seq: RestoreSeqLog?
     private(set) var moveCalls: [(windowID: UInt32, stage: String)] = []
@@ -167,6 +204,10 @@ final class FakeWindows: RestoreWindowOperating {
     func displayContext(for frame: CGRect) -> (yabaiIndex: Int?, displayID: UInt32?) {
         seq?.add("displayContext")
         return displayContextResult
+    }
+
+    func visibleFrameForDisplay(_ displayIndex: Int) -> CGRect? {
+        visibleFrameResult
     }
 }
 
@@ -194,6 +235,8 @@ final class FakeAuditor: RestoreAuditing {
 @MainActor final class RunnerHarness {
     var passed = 0
     var failed = 0
+    /// 环境不具备而整域跳过的计数（不计 PASS/FAIL，汇总单列）。
+    var skipped = 0
     func check(_ name: String, _ condition: Bool) {
         if condition { passed += 1; print("  PASS: \(name)") }
         else { failed += 1; print("  FAIL: \(name)") }
@@ -233,6 +276,38 @@ final class FakeAuditor: RestoreAuditing {
         }
     }
 
+    /// 域过滤（2026-11-03）：CI 机器缺 yabai/AX，部分真机域会进入长等待；用
+    /// `VIBEFOCUS_RUNNER_DOMAINS=runA,runB` 只跑指定域，便于定向回归与覆盖率采集。
+    /// 未设置或为空 = 全量（真机门禁口径不变）。
+    private lazy var requestedDomains: Set<String>? = {
+        guard let raw = ProcessInfo.processInfo.environment["VIBEFOCUS_RUNNER_DOMAINS"] else { return nil }
+        let names = raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return names.isEmpty ? nil : Set(names)
+    }()
+
+    /// 环境跳过域（2026-11-03）：CI 无 yabai/AX/真实终端进程，个别整域集成用例
+    /// 会级联超时（主线程被真机调用阻塞 → 后续 HTTP 全超时）。由 workflow 显式列出，
+    /// 本机/真机不设该变量即全跑。跳过不计 PASS/FAIL，汇总单列，避免「绿=全过」误读。
+    private lazy var skippedDomains: Set<String> = {
+        guard let raw = ProcessInfo.processInfo.environment["VIBEFOCUS_RUNNER_SKIP_DOMAINS"] else { return [] }
+        return Set(raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty })
+    }()
+
+    func runDomain(_ name: String, _ body: () -> Void) {
+        if let requested = requestedDomains, !requested.contains(name) { return }
+        if skippedDomains.contains(name) {
+            skipped += 1
+            print("  SKIP: \(name)（环境不具备：\(ProcessInfo.processInfo.environment["VIBEFOCUS_SKIP_REASON"] ?? "见 VIBEFOCUS_RUNNER_SKIP_DOMAINS")）")
+            return
+        }
+        print("=== \(name) ===")
+        body()
+    }
+
     func runAllTests() {
         // 全局静音保险丝（2026-09-26 用户明令）：非 UI E2E 模式拔掉气泡自动唤起三开关
         // ——防任何单例 tick/观察者把气泡打到共享机器用户的前台窗（Runner 域偏好，
@@ -242,161 +317,162 @@ final class FakeAuditor: RestoreAuditing {
             InputBubblePreferences.autoShowOnFocus = false
             InputBubblePreferences.autoShowOnMoveToMain = false
         }
-        runRestoreOrchestrationTests()
-        runRestoreStageTests()
-        runRestoreStageClampTests()
-        runLayoutGridTests()
-        runGridTargetE2E()
-        runGridTargetLogicTests()
-        runGridSpaceE2E()
-        runSizeE2E()
-        runAXWriteE2E()
-        runBubblePanelE2E()
-        runFloatSettleE2E()
-        runConvergencePipelineTests()
-        runTitleE2E()
-        runTerminalGridUnitTests()
-        runGridTargetResolveInstanceTests()
-        runBubblePanelGeometryTests()
-        runShellRunnerTests()
-        runRemoteDeployTests()
-        runJournalAppendTests()
-        runJournalProductionPathTests()
-        runLocatorParseEdgeTests()
-        runRecordExitTests()
-        runJournalB145Tests()
-        runJournalFDTests()
-        runHelperInstallTests()
-        runB134SmallTopUps()
-        runDisplayWorkAreaTests()
-        runTerminalDialectTests()
-        runSoundVoiceHookTests()
-        runRegistryStoreTests()
-        runStorePreferenceKVTests()
-        runCGWindowEntryEdgeTests()
-        runRegistryPurgeTests()
-        runHookWalkTests()
-        runRestoreInFlightTests()
-        runRegistryFindPIDTests()
-        runWindowMoveExecuteTests()
-        runHookInstallHomeTests()
-        runHookClaudeSettingsHomeTests()
-        runSettingsSectionRenderTests()
-        runAgentAccessTests()
-        runAgentAccessLoopbackTests()
-        runMCPRegistrationTests()
-        runAgentSettingsWriteTests()
-        runAgentOnboardingTests()
-        runAuditBubbleSessionRestoreTests()
-        runAuditWindowHotkeyTests()
-        runSoundVoiceChannelSemanticsTests()
-        runSettingsSectionDeepRenderTests()
-        runSettingsSectionDeepRender2Tests()
-        runLayoutSectionRenderTests()
-        runTGEmptySnapshotRenderTests()
-        runSessionListsAndWorkspaceRenderTests()
-        runSessionListsAndSettingsUIRenderTests()
-        runSettingsCommonSectionRenderTests()
-        runWorkspaceAndSessionRenderTests()
-        runAllSectionsRenderTests()
-        runSoundSectionDeepRenderTests()
-        runLANViewDeepRenderTests()
-        runSettingsSectionStateRenderTests()
-        runSettingsSectionDeepRender3Tests()
-        runHotKeyOfflineRouteTests()
-        runHookModelsTests()
-        runSpaceIndexTests()
-        runSpaceContextTests()
-        runSpaceQueryShapeTests()
-        runSpaceSwitchQueryShapeTests()
-        runYabaiUtilsTests()
-        runCoordinateTypesTests()
-        runSpaceIdentityTests()
-        runScreenIndexPrefsMigrationTests()
-        runYabaiModelTests()
-        runPruneExpiryTests()
-        runSessionRestoreTests()
-        runSessionRestoreCoverageTopUps()
-        runSessionRestoreControllerTests()
-        runAutoRestoreTaskBodyTests()
-        runSessionRestoreExecutorTests()
-        runSessionRestoreE2E()
-        runUsageTableTests()
-        runPureSweepA()
-        runPureSweepB()
-        runAppIdentityTests()
-        runHotKeyDisplayTests()
-        runHotKeyEventMatchTests()
-        runHotKeyRealMachineE2E()
-        runToggleDecisionTests()
-        runSingleDisplayToggleTests()
-        runStuckRoutingTests()
-        runAXSelfHealTests()
-        runWatcherSpawnTests()
-        runRemoteInstallTests()
-        runForwarderBehaviorTests()
-        runSpoolDrainTests()
-        runInputBubbleTests()
-        runInputBubbleMarkdownTests()
-        runInputBubbleHistoryPanelViewTests()
-        runBubbleHotkeyRecorderTests()
-        runBubbleResizeTests()
-        runBubbleScrollPolicyTests()
-        runBubbleHistoryTests()
-        runBubbleHistoryPanelTests()
-        runBubbleHistorySearchTests()
-        runBubbleHistoryPanelKeyTests()
-        runBubblePanelPureTests()
-        runBubbleActivationPlanTests()
-        runPerfMonitorTests()
-        runPerfPureTailTests()
-        runMenuBarTests()
-        runSpaceSwitchTests()
-        runSpaceQueryYabaiTests()
-        runSpaceRefreshThrottleTests()
-        runSpaceFloatSkipTests()
-        runYabaiPathDiscoveryTests()
-        runSpoolDrainLifecycleTests()
-        runVoiceLLMSummaryTests()
-        runOverlaySignalTests()
-        runStorageSweepTests()
-        runHookInstallSweepTests()
-        runDoctorYabaiSweepTests()
-        runDecisionPrefSweepTests()
-        runRegistryGeomSweepTests()
-        runServerWidgetSweepTests()
-        runDrawGuardSweepTests()
-        runBubbleMouseNavSweepTests()
-        runRemoteResolvedSweepTests()
-        runOverlayQuerySweepTests()
-        runSignalNavTailTests()
-        runRestoreGuardSweepTests()
-        runGateSweepTests()
-        runTargetResolveTailTests()
-        runSpaceReadOnlySweepTests()
-        runTerminalRegistryCoverageTests()
-        runSessionActivityCoverageTests()
-        runSessionActivityPruneParseTests()
-        runSessionActivityPersistTests()
-        runAuditLoggerCoverageTests()
-        runPrefModelsCoverageTests()
-        runScreenIndexPrefsSandboxTests()
-        runOverlayWakeRebuildTests()
-        runAppVersionTests()
-        runWindowWorkExecutorTests()
-        runNativeSpaceBridgeTests()
-        runNotificationPosterTests()
-        runSigtermGracefulTests()
-        runDockBadgeTests()
-        runVoicePrefsPersistenceTests()
-        runBubbleClipboardIOTests()
-        runDiagnosticsTests()
-        runScreenPositionTests()
-        runLoginItemRefreshTests()
-        runTitleEditorChannelTests()
-        runVoiceQueueAdvanceTests()
-        runKeyEventPosterTests()
-        runBubbleIdleGuardTests()
+        runDomain("runRestoreOrchestrationTests") { runRestoreOrchestrationTests() }
+        runDomain("runRestoreStageTests") { runRestoreStageTests() }
+        runDomain("runRestoreStageClampTests") { runRestoreStageClampTests() }
+        runDomain("runRestoreSpaceTargetTests") { runRestoreSpaceTargetTests() }
+        runDomain("runLayoutGridTests") { runLayoutGridTests() }
+        runDomain("runGridTargetE2E") { runGridTargetE2E() }
+        runDomain("runGridTargetLogicTests") { runGridTargetLogicTests() }
+        runDomain("runGridSpaceE2E") { runGridSpaceE2E() }
+        runDomain("runSizeE2E") { runSizeE2E() }
+        runDomain("runAXWriteE2E") { runAXWriteE2E() }
+        runDomain("runBubblePanelE2E") { runBubblePanelE2E() }
+        runDomain("runFloatSettleE2E") { runFloatSettleE2E() }
+        runDomain("runConvergencePipelineTests") { runConvergencePipelineTests() }
+        runDomain("runTitleE2E") { runTitleE2E() }
+        runDomain("runTerminalGridUnitTests") { runTerminalGridUnitTests() }
+        runDomain("runGridTargetResolveInstanceTests") { runGridTargetResolveInstanceTests() }
+        runDomain("runBubblePanelGeometryTests") { runBubblePanelGeometryTests() }
+        runDomain("runShellRunnerTests") { runShellRunnerTests() }
+        runDomain("runRemoteDeployTests") { runRemoteDeployTests() }
+        runDomain("runJournalAppendTests") { runJournalAppendTests() }
+        runDomain("runJournalProductionPathTests") { runJournalProductionPathTests() }
+        runDomain("runLocatorParseEdgeTests") { runLocatorParseEdgeTests() }
+        runDomain("runRecordExitTests") { runRecordExitTests() }
+        runDomain("runJournalB145Tests") { runJournalB145Tests() }
+        runDomain("runJournalFDTests") { runJournalFDTests() }
+        runDomain("runHelperInstallTests") { runHelperInstallTests() }
+        runDomain("runB134SmallTopUps") { runB134SmallTopUps() }
+        runDomain("runDisplayWorkAreaTests") { runDisplayWorkAreaTests() }
+        runDomain("runTerminalDialectTests") { runTerminalDialectTests() }
+        runDomain("runSoundVoiceHookTests") { runSoundVoiceHookTests() }
+        runDomain("runRegistryStoreTests") { runRegistryStoreTests() }
+        runDomain("runStorePreferenceKVTests") { runStorePreferenceKVTests() }
+        runDomain("runCGWindowEntryEdgeTests") { runCGWindowEntryEdgeTests() }
+        runDomain("runRegistryPurgeTests") { runRegistryPurgeTests() }
+        runDomain("runHookWalkTests") { runHookWalkTests() }
+        runDomain("runRestoreInFlightTests") { runRestoreInFlightTests() }
+        runDomain("runRegistryFindPIDTests") { runRegistryFindPIDTests() }
+        runDomain("runWindowMoveExecuteTests") { runWindowMoveExecuteTests() }
+        runDomain("runHookInstallHomeTests") { runHookInstallHomeTests() }
+        runDomain("runHookClaudeSettingsHomeTests") { runHookClaudeSettingsHomeTests() }
+        runDomain("runSettingsSectionRenderTests") { runSettingsSectionRenderTests() }
+        runDomain("runAgentAccessTests") { runAgentAccessTests() }
+        runDomain("runAgentAccessLoopbackTests") { runAgentAccessLoopbackTests() }
+        runDomain("runMCPRegistrationTests") { runMCPRegistrationTests() }
+        runDomain("runAgentSettingsWriteTests") { runAgentSettingsWriteTests() }
+        runDomain("runAgentOnboardingTests") { runAgentOnboardingTests() }
+        runDomain("runAuditBubbleSessionRestoreTests") { runAuditBubbleSessionRestoreTests() }
+        runDomain("runAuditWindowHotkeyTests") { runAuditWindowHotkeyTests() }
+        runDomain("runSoundVoiceChannelSemanticsTests") { runSoundVoiceChannelSemanticsTests() }
+        runDomain("runSettingsSectionDeepRenderTests") { runSettingsSectionDeepRenderTests() }
+        runDomain("runSettingsSectionDeepRender2Tests") { runSettingsSectionDeepRender2Tests() }
+        runDomain("runLayoutSectionRenderTests") { runLayoutSectionRenderTests() }
+        runDomain("runTGEmptySnapshotRenderTests") { runTGEmptySnapshotRenderTests() }
+        runDomain("runSessionListsAndWorkspaceRenderTests") { runSessionListsAndWorkspaceRenderTests() }
+        runDomain("runSessionListsAndSettingsUIRenderTests") { runSessionListsAndSettingsUIRenderTests() }
+        runDomain("runSettingsCommonSectionRenderTests") { runSettingsCommonSectionRenderTests() }
+        runDomain("runWorkspaceAndSessionRenderTests") { runWorkspaceAndSessionRenderTests() }
+        runDomain("runAllSectionsRenderTests") { runAllSectionsRenderTests() }
+        runDomain("runSoundSectionDeepRenderTests") { runSoundSectionDeepRenderTests() }
+        runDomain("runLANViewDeepRenderTests") { runLANViewDeepRenderTests() }
+        runDomain("runSettingsSectionStateRenderTests") { runSettingsSectionStateRenderTests() }
+        runDomain("runSettingsSectionDeepRender3Tests") { runSettingsSectionDeepRender3Tests() }
+        runDomain("runHotKeyOfflineRouteTests") { runHotKeyOfflineRouteTests() }
+        runDomain("runHookModelsTests") { runHookModelsTests() }
+        runDomain("runSpaceIndexTests") { runSpaceIndexTests() }
+        runDomain("runSpaceContextTests") { runSpaceContextTests() }
+        runDomain("runSpaceQueryShapeTests") { runSpaceQueryShapeTests() }
+        runDomain("runSpaceSwitchQueryShapeTests") { runSpaceSwitchQueryShapeTests() }
+        runDomain("runYabaiUtilsTests") { runYabaiUtilsTests() }
+        runDomain("runCoordinateTypesTests") { runCoordinateTypesTests() }
+        runDomain("runSpaceIdentityTests") { runSpaceIdentityTests() }
+        runDomain("runScreenIndexPrefsMigrationTests") { runScreenIndexPrefsMigrationTests() }
+        runDomain("runYabaiModelTests") { runYabaiModelTests() }
+        runDomain("runPruneExpiryTests") { runPruneExpiryTests() }
+        runDomain("runSessionRestoreTests") { runSessionRestoreTests() }
+        runDomain("runSessionRestoreCoverageTopUps") { runSessionRestoreCoverageTopUps() }
+        runDomain("runSessionRestoreControllerTests") { runSessionRestoreControllerTests() }
+        runDomain("runAutoRestoreTaskBodyTests") { runAutoRestoreTaskBodyTests() }
+        runDomain("runSessionRestoreExecutorTests") { runSessionRestoreExecutorTests() }
+        runDomain("runSessionRestoreE2E") { runSessionRestoreE2E() }
+        runDomain("runUsageTableTests") { runUsageTableTests() }
+        runDomain("runPureSweepA") { runPureSweepA() }
+        runDomain("runPureSweepB") { runPureSweepB() }
+        runDomain("runAppIdentityTests") { runAppIdentityTests() }
+        runDomain("runHotKeyDisplayTests") { runHotKeyDisplayTests() }
+        runDomain("runHotKeyEventMatchTests") { runHotKeyEventMatchTests() }
+        runDomain("runHotKeyRealMachineE2E") { runHotKeyRealMachineE2E() }
+        runDomain("runToggleDecisionTests") { runToggleDecisionTests() }
+        runDomain("runSingleDisplayToggleTests") { runSingleDisplayToggleTests() }
+        runDomain("runStuckRoutingTests") { runStuckRoutingTests() }
+        runDomain("runAXSelfHealTests") { runAXSelfHealTests() }
+        runDomain("runWatcherSpawnTests") { runWatcherSpawnTests() }
+        runDomain("runRemoteInstallTests") { runRemoteInstallTests() }
+        runDomain("runForwarderBehaviorTests") { runForwarderBehaviorTests() }
+        runDomain("runSpoolDrainTests") { runSpoolDrainTests() }
+        runDomain("runInputBubbleTests") { runInputBubbleTests() }
+        runDomain("runInputBubbleMarkdownTests") { runInputBubbleMarkdownTests() }
+        runDomain("runInputBubbleHistoryPanelViewTests") { runInputBubbleHistoryPanelViewTests() }
+        runDomain("runBubbleHotkeyRecorderTests") { runBubbleHotkeyRecorderTests() }
+        runDomain("runBubbleResizeTests") { runBubbleResizeTests() }
+        runDomain("runBubbleScrollPolicyTests") { runBubbleScrollPolicyTests() }
+        runDomain("runBubbleHistoryTests") { runBubbleHistoryTests() }
+        runDomain("runBubbleHistoryPanelTests") { runBubbleHistoryPanelTests() }
+        runDomain("runBubbleHistorySearchTests") { runBubbleHistorySearchTests() }
+        runDomain("runBubbleHistoryPanelKeyTests") { runBubbleHistoryPanelKeyTests() }
+        runDomain("runBubblePanelPureTests") { runBubblePanelPureTests() }
+        runDomain("runBubbleActivationPlanTests") { runBubbleActivationPlanTests() }
+        runDomain("runPerfMonitorTests") { runPerfMonitorTests() }
+        runDomain("runPerfPureTailTests") { runPerfPureTailTests() }
+        runDomain("runMenuBarTests") { runMenuBarTests() }
+        runDomain("runSpaceSwitchTests") { runSpaceSwitchTests() }
+        runDomain("runSpaceQueryYabaiTests") { runSpaceQueryYabaiTests() }
+        runDomain("runSpaceRefreshThrottleTests") { runSpaceRefreshThrottleTests() }
+        runDomain("runSpaceFloatSkipTests") { runSpaceFloatSkipTests() }
+        runDomain("runYabaiPathDiscoveryTests") { runYabaiPathDiscoveryTests() }
+        runDomain("runSpoolDrainLifecycleTests") { runSpoolDrainLifecycleTests() }
+        runDomain("runVoiceLLMSummaryTests") { runVoiceLLMSummaryTests() }
+        runDomain("runOverlaySignalTests") { runOverlaySignalTests() }
+        runDomain("runStorageSweepTests") { runStorageSweepTests() }
+        runDomain("runHookInstallSweepTests") { runHookInstallSweepTests() }
+        runDomain("runDoctorYabaiSweepTests") { runDoctorYabaiSweepTests() }
+        runDomain("runDecisionPrefSweepTests") { runDecisionPrefSweepTests() }
+        runDomain("runRegistryGeomSweepTests") { runRegistryGeomSweepTests() }
+        runDomain("runServerWidgetSweepTests") { runServerWidgetSweepTests() }
+        runDomain("runDrawGuardSweepTests") { runDrawGuardSweepTests() }
+        runDomain("runBubbleMouseNavSweepTests") { runBubbleMouseNavSweepTests() }
+        runDomain("runRemoteResolvedSweepTests") { runRemoteResolvedSweepTests() }
+        runDomain("runOverlayQuerySweepTests") { runOverlayQuerySweepTests() }
+        runDomain("runSignalNavTailTests") { runSignalNavTailTests() }
+        runDomain("runRestoreGuardSweepTests") { runRestoreGuardSweepTests() }
+        runDomain("runGateSweepTests") { runGateSweepTests() }
+        runDomain("runTargetResolveTailTests") { runTargetResolveTailTests() }
+        runDomain("runSpaceReadOnlySweepTests") { runSpaceReadOnlySweepTests() }
+        runDomain("runTerminalRegistryCoverageTests") { runTerminalRegistryCoverageTests() }
+        runDomain("runSessionActivityCoverageTests") { runSessionActivityCoverageTests() }
+        runDomain("runSessionActivityPruneParseTests") { runSessionActivityPruneParseTests() }
+        runDomain("runSessionActivityPersistTests") { runSessionActivityPersistTests() }
+        runDomain("runAuditLoggerCoverageTests") { runAuditLoggerCoverageTests() }
+        runDomain("runPrefModelsCoverageTests") { runPrefModelsCoverageTests() }
+        runDomain("runScreenIndexPrefsSandboxTests") { runScreenIndexPrefsSandboxTests() }
+        runDomain("runOverlayWakeRebuildTests") { runOverlayWakeRebuildTests() }
+        runDomain("runAppVersionTests") { runAppVersionTests() }
+        runDomain("runWindowWorkExecutorTests") { runWindowWorkExecutorTests() }
+        runDomain("runNativeSpaceBridgeTests") { runNativeSpaceBridgeTests() }
+        runDomain("runNotificationPosterTests") { runNotificationPosterTests() }
+        runDomain("runSigtermGracefulTests") { runSigtermGracefulTests() }
+        runDomain("runDockBadgeTests") { runDockBadgeTests() }
+        runDomain("runVoicePrefsPersistenceTests") { runVoicePrefsPersistenceTests() }
+        runDomain("runBubbleClipboardIOTests") { runBubbleClipboardIOTests() }
+        runDomain("runDiagnosticsTests") { runDiagnosticsTests() }
+        runDomain("runScreenPositionTests") { runScreenPositionTests() }
+        runDomain("runLoginItemRefreshTests") { runLoginItemRefreshTests() }
+        runDomain("runTitleEditorChannelTests") { runTitleEditorChannelTests() }
+        runDomain("runVoiceQueueAdvanceTests") { runVoiceQueueAdvanceTests() }
+        runDomain("runKeyEventPosterTests") { runKeyEventPosterTests() }
+        runDomain("runBubbleIdleGuardTests") { runBubbleIdleGuardTests() }
         runUIGated("BubbleSubmitPipeline") {
             runBubbleSubmitPipelineTests()
         }
@@ -412,150 +488,151 @@ final class FakeAuditor: RestoreAuditing {
         runUIGated("BubbleCoverageFinale") {
             runBubbleCoverageFinaleTests()
         }
-        runYabaiAsyncAndVoicePersistTests()
+        runDomain("runYabaiAsyncAndVoicePersistTests") { runYabaiAsyncAndVoicePersistTests() }
         runUIGated("AutoShowStart") {
             runAutoShowStartTests()
         }
-        runVoiceDelegateCallbackTests()
-        runAXWriteRetryTests()
-        runSpaceMoveSkipTests()
-        runSpaceQueryReadOnlyTests()
-        runTargetResolveTests()
-        runHookTestAndAXReadTests()
-        runLoginItemCleanupTests()
-        runAXWriteFailPathTests()
-        runRestoreGuardTests()
-        runCodexTestEventTests()
-        runScriptExecutorTests()
-        runAppDelegateInstanceTests()
-        runAppDelegateTerminateTests()
-        runAppDelegateLaunchStepTests()
-        runInstalledVersionTests()
-        runHotKeyTriggerGuardTests()
-        runPlayAudioFileRealWavTests()
-        runInstallationsFailPathTests()
-        runCaptureFocusedWindowTests()
-        runAppleScriptDirectedTests()
-        runBubbleButtonCursorTests()
-        runSelectionRefreshTests()
-        runHotKeyManagerStateTests()
+        runDomain("runVoiceDelegateCallbackTests") { runVoiceDelegateCallbackTests() }
+        runDomain("runAXWriteRetryTests") { runAXWriteRetryTests() }
+        runDomain("runSpaceMoveSkipTests") { runSpaceMoveSkipTests() }
+        runDomain("runSpaceQueryReadOnlyTests") { runSpaceQueryReadOnlyTests() }
+        runDomain("runTargetResolveTests") { runTargetResolveTests() }
+        runDomain("runHookTestAndAXReadTests") { runHookTestAndAXReadTests() }
+        runDomain("runLoginItemCleanupTests") { runLoginItemCleanupTests() }
+        runDomain("runAXWriteFailPathTests") { runAXWriteFailPathTests() }
+        runDomain("runRestoreGuardTests") { runRestoreGuardTests() }
+        runDomain("runCodexTestEventTests") { runCodexTestEventTests() }
+        runDomain("runScriptExecutorTests") { runScriptExecutorTests() }
+        runDomain("runAppDelegateInstanceTests") { runAppDelegateInstanceTests() }
+        runDomain("runAppDelegateTerminateTests") { runAppDelegateTerminateTests() }
+        runDomain("runAppDelegateLaunchStepTests") { runAppDelegateLaunchStepTests() }
+        runDomain("runInstalledVersionTests") { runInstalledVersionTests() }
+        runDomain("runHotKeyTriggerGuardTests") { runHotKeyTriggerGuardTests() }
+        runDomain("runPlayAudioFileRealWavTests") { runPlayAudioFileRealWavTests() }
+        runDomain("runInstallationsFailPathTests") { runInstallationsFailPathTests() }
+        runDomain("runCaptureFocusedWindowTests") { runCaptureFocusedWindowTests() }
+        runDomain("runAppleScriptDirectedTests") { runAppleScriptDirectedTests() }
+        runDomain("runBubbleButtonCursorTests") { runBubbleButtonCursorTests() }
+        runDomain("runSelectionRefreshTests") { runSelectionRefreshTests() }
+        runDomain("runHotKeyManagerStateTests") { runHotKeyManagerStateTests() }
         runUIGated("BubbleHistoryPanelGuard") {
             runBubbleHistoryPanelGuardTests()
         }
-        runToggleEngineStoreTests()
-        runBubblePreferencesBranchTests()
-        runBindingVerifierTests()
-        runSettingsDesignSystemTests()
-        runSessionRestoreStoreIOTests()
-        runAuditLoggerTests()
-        runCrashContextTests()
-        runCrashContextBootstrapTests()
-        runCrashFatalCaptureTests()
-        runVoiceAnnouncementTests()
-        runHookPrefsSweepTests()
-        runSpoolProcessTests()
-        runHookDispatchTests()
-        runHookServerPortGuardTests()
-        runHookServerRestartGuardTests()
-        runToggleFallbackTests()
-        runStuckRouteEarlyExitTests()
-        runToggleDecisionInputTests()
-        runWindowCoreReadTests()
-        runClaudeCodeFindingTests()
-        runResolveWindowEdgeTests()
-        runCrashSnapshotBufferTests()
-        runTerminalContextMatchTests()
-        runDiagnosticsSamplerTests()
-        runAutomationGuardTests()
-        runBindingResolutionTests()
-        runFocusResolutionTests()
-        runGeneratorDoctorTailTests()
-        runDoctorReportTailTests()
-        runPrimaryScreenAuditTests()
-        runLANSettingsViewTests()
-        runBacktraceSamplerTests()
-        runOverlaySpaceQueryTests()
-        runInstanceGuardTests()
-        runBubblePreferencesIOTests()
-        runBubbleFollowNavTests()
-        runBubbleDraftFlushTests()
-        runLayoutPreferencesTests()
-        runSessionRestoreModelCountsTests()
-        runTerminalRegistryIdentityTests()
-        runCoordinateScreenQueryTests()
-        runBindingsStoreCoverageTests()
-        runTerminalScriptStragglerTests()
-        runLANLegacyBindingsTests()
-        runAnnouncementDescriptionTests()
-        runCrashIPSParserTests()
-        runCrashForensicsIOTests()
-        runSessionStartNoContextTests()
-        runItermEnumerateSessionsScriptTests()
-        runDiagnosticsSmallTests()
-        runLayoutManagerProbeTests()
-        runMoveToMainIdentityWrapperTests()
-        runWindowQueryTests()
-        runHookGuardTests()
-        runCrashSignalTests()
-        runSARecoveryStateTests()
-        runSARecoveryGateTests()
-        runSessionSnapshotDerivedTests()
-        runCapturableWindowTests()
-        runBundleIDMappingTests()
-        runJoinPanesTests()
-        runPaneResolveTests()
-        runAuditLoggerPureMemoryTests()
-        runTitleEditorServiceTests()
-        runLocatorSeamTests()
-        runHookTestPureTests()
-        runCrashIOReadTests()
-        runBubbleAutoShowOrchestrationTests()
-        runLLMSummaryFallbackTests()
-        runBubbleHistoryPanelViewTests()
-        runReadOnlySweepTests()
-        runCaptureSeamTests()
-        runSettingsViewSectionBodyTests()
-        runSoundRulesBodyTests()
-        runSoundPrefsClampTests()
-        runWorkspaceSectionBranchTests()
-        runGridSectionPanelTests()
-        runSettingsRenderPilotTests()
+        runDomain("runToggleEngineStoreTests") { runToggleEngineStoreTests() }
+        runDomain("runBubblePreferencesBranchTests") { runBubblePreferencesBranchTests() }
+        runDomain("runBindingVerifierTests") { runBindingVerifierTests() }
+        runDomain("runSettingsDesignSystemTests") { runSettingsDesignSystemTests() }
+        runDomain("runSessionRestoreStoreIOTests") { runSessionRestoreStoreIOTests() }
+        runDomain("runAuditLoggerTests") { runAuditLoggerTests() }
+        runDomain("runCrashContextTests") { runCrashContextTests() }
+        runDomain("runCrashContextBootstrapTests") { runCrashContextBootstrapTests() }
+        runDomain("runCrashFatalCaptureTests") { runCrashFatalCaptureTests() }
+        runDomain("runVoiceAnnouncementTests") { runVoiceAnnouncementTests() }
+        runDomain("runHookPrefsSweepTests") { runHookPrefsSweepTests() }
+        runDomain("runSpoolProcessTests") { runSpoolProcessTests() }
+        runDomain("runHookDispatchTests") { runHookDispatchTests() }
+        runDomain("runHookServerPortGuardTests") { runHookServerPortGuardTests() }
+        runDomain("runHookServerRestartGuardTests") { runHookServerRestartGuardTests() }
+        runDomain("runToggleFallbackTests") { runToggleFallbackTests() }
+        runDomain("runStuckRouteEarlyExitTests") { runStuckRouteEarlyExitTests() }
+        runDomain("runToggleDecisionInputTests") { runToggleDecisionInputTests() }
+        runDomain("runWindowCoreReadTests") { runWindowCoreReadTests() }
+        runDomain("runClaudeCodeFindingTests") { runClaudeCodeFindingTests() }
+        runDomain("runResolveWindowEdgeTests") { runResolveWindowEdgeTests() }
+        runDomain("runCrashSnapshotBufferTests") { runCrashSnapshotBufferTests() }
+        runDomain("runTerminalContextMatchTests") { runTerminalContextMatchTests() }
+        runDomain("runDiagnosticsSamplerTests") { runDiagnosticsSamplerTests() }
+        runDomain("runAutomationGuardTests") { runAutomationGuardTests() }
+        runDomain("runBindingResolutionTests") { runBindingResolutionTests() }
+        runDomain("runFocusResolutionTests") { runFocusResolutionTests() }
+        runDomain("runGeneratorDoctorTailTests") { runGeneratorDoctorTailTests() }
+        runDomain("runDoctorReportTailTests") { runDoctorReportTailTests() }
+        runDomain("runPrimaryScreenAuditTests") { runPrimaryScreenAuditTests() }
+        runDomain("runLANSettingsViewTests") { runLANSettingsViewTests() }
+        runDomain("runBacktraceSamplerTests") { runBacktraceSamplerTests() }
+        runDomain("runOverlaySpaceQueryTests") { runOverlaySpaceQueryTests() }
+        runDomain("runInstanceGuardTests") { runInstanceGuardTests() }
+        runDomain("runBubblePreferencesIOTests") { runBubblePreferencesIOTests() }
+        runDomain("runBubbleFollowNavTests") { runBubbleFollowNavTests() }
+        runDomain("runBubbleDraftFlushTests") { runBubbleDraftFlushTests() }
+        runDomain("runLayoutPreferencesTests") { runLayoutPreferencesTests() }
+        runDomain("runSessionRestoreModelCountsTests") { runSessionRestoreModelCountsTests() }
+        runDomain("runTerminalRegistryIdentityTests") { runTerminalRegistryIdentityTests() }
+        runDomain("runCoordinateScreenQueryTests") { runCoordinateScreenQueryTests() }
+        runDomain("runBindingsStoreCoverageTests") { runBindingsStoreCoverageTests() }
+        runDomain("runTerminalScriptStragglerTests") { runTerminalScriptStragglerTests() }
+        runDomain("runLANLegacyBindingsTests") { runLANLegacyBindingsTests() }
+        runDomain("runAnnouncementDescriptionTests") { runAnnouncementDescriptionTests() }
+        runDomain("runCrashIPSParserTests") { runCrashIPSParserTests() }
+        runDomain("runCrashForensicsIOTests") { runCrashForensicsIOTests() }
+        runDomain("runSessionStartNoContextTests") { runSessionStartNoContextTests() }
+        runDomain("runItermEnumerateSessionsScriptTests") { runItermEnumerateSessionsScriptTests() }
+        runDomain("runDiagnosticsSmallTests") { runDiagnosticsSmallTests() }
+        runDomain("runLayoutManagerProbeTests") { runLayoutManagerProbeTests() }
+        runDomain("runMoveToMainIdentityWrapperTests") { runMoveToMainIdentityWrapperTests() }
+        runDomain("runWindowQueryTests") { runWindowQueryTests() }
+        runDomain("runHookGuardTests") { runHookGuardTests() }
+        runDomain("runCrashSignalTests") { runCrashSignalTests() }
+        runDomain("runSARecoveryStateTests") { runSARecoveryStateTests() }
+        runDomain("runSARecoveryGateTests") { runSARecoveryGateTests() }
+        runDomain("runSessionSnapshotDerivedTests") { runSessionSnapshotDerivedTests() }
+        runDomain("runCapturableWindowTests") { runCapturableWindowTests() }
+        runDomain("runBundleIDMappingTests") { runBundleIDMappingTests() }
+        runDomain("runJoinPanesTests") { runJoinPanesTests() }
+        runDomain("runPaneResolveTests") { runPaneResolveTests() }
+        runDomain("runAuditLoggerPureMemoryTests") { runAuditLoggerPureMemoryTests() }
+        runDomain("runTitleEditorServiceTests") { runTitleEditorServiceTests() }
+        runDomain("runLocatorSeamTests") { runLocatorSeamTests() }
+        runDomain("runHookTestPureTests") { runHookTestPureTests() }
+        runDomain("runCrashIOReadTests") { runCrashIOReadTests() }
+        runDomain("runBubbleAutoShowOrchestrationTests") { runBubbleAutoShowOrchestrationTests() }
+        runDomain("runLLMSummaryFallbackTests") { runLLMSummaryFallbackTests() }
+        runDomain("runBubbleHistoryPanelViewTests") { runBubbleHistoryPanelViewTests() }
+        runDomain("runReadOnlySweepTests") { runReadOnlySweepTests() }
+        runDomain("runCaptureSeamTests") { runCaptureSeamTests() }
+        runDomain("runSettingsViewSectionBodyTests") { runSettingsViewSectionBodyTests() }
+        runDomain("runSoundRulesBodyTests") { runSoundRulesBodyTests() }
+        runDomain("runSoundPrefsClampTests") { runSoundPrefsClampTests() }
+        runDomain("runWorkspaceSectionBranchTests") { runWorkspaceSectionBranchTests() }
+        runDomain("runGridSectionPanelTests") { runGridSectionPanelTests() }
+        runDomain("runSettingsRenderPilotTests") { runSettingsRenderPilotTests() }
         runUIGated("SettingsWindowController") {
             runSettingsWindowControllerTests()
         }
-        runSettingsSnapshotRenderTests()
-        runHookPayloadBuilderTests()
-        runHookTestFailurePathTests()
-        runMiscStragglerTests()
-        runScreenMinimapViewTests()
-        runSettingsTerminalGridTabRenderTests()
-        runScreenIndexPrefsTests()
-        runSettingsDGroupTests()
-        runLLMRequestTests()
-        runSettingsPrefUpdateTests()
-        runPerfInstanceTests()
-        runMinimapLabelTests()
-        runSoundGateSilentTests()
-        runTitleEditorAXWriteTests()
-        runSoundResolveAndCrashStateTests()
-        runFindingMakeIdentityTests()
-        runFindingMatchedIdentityTests()
-        runStoreDatabaseTests()
-        runTitleEditorCaptureTests()
-        runAudioEngineProtocolTests()
-        runSoundScreenPrefsResidueTests()
-        runReadOnlyTailTests()
-        runSessionActivityWriteTests()
-        runSettingsFullRenderTests()
-        runSpaceDisplayLocalTests()
-        runGridSnapshotRowTests()
-        runBStateSweepTests()
-        runAXDirectMoveTests()
-        runOverlayWindowE2ETests()
+        runDomain("runSettingsSnapshotRenderTests") { runSettingsSnapshotRenderTests() }
+        runDomain("runHookPayloadBuilderTests") { runHookPayloadBuilderTests() }
+        runDomain("runHookTestFailurePathTests") { runHookTestFailurePathTests() }
+        runDomain("runMiscStragglerTests") { runMiscStragglerTests() }
+        runDomain("runScreenMinimapViewTests") { runScreenMinimapViewTests() }
+        runDomain("runSettingsTerminalGridTabRenderTests") { runSettingsTerminalGridTabRenderTests() }
+        runDomain("runScreenIndexPrefsTests") { runScreenIndexPrefsTests() }
+        runDomain("runSettingsDGroupTests") { runSettingsDGroupTests() }
+        runDomain("runLLMRequestTests") { runLLMRequestTests() }
+        runDomain("runSettingsPrefUpdateTests") { runSettingsPrefUpdateTests() }
+        runDomain("runPerfInstanceTests") { runPerfInstanceTests() }
+        runDomain("runMinimapLabelTests") { runMinimapLabelTests() }
+        runDomain("runSoundGateSilentTests") { runSoundGateSilentTests() }
+        runDomain("runTitleEditorAXWriteTests") { runTitleEditorAXWriteTests() }
+        runDomain("runSoundResolveAndCrashStateTests") { runSoundResolveAndCrashStateTests() }
+        runDomain("runFindingMakeIdentityTests") { runFindingMakeIdentityTests() }
+        runDomain("runFindingMatchedIdentityTests") { runFindingMatchedIdentityTests() }
+        runDomain("runStoreDatabaseTests") { runStoreDatabaseTests() }
+        runDomain("runTitleEditorCaptureTests") { runTitleEditorCaptureTests() }
+        runDomain("runAudioEngineProtocolTests") { runAudioEngineProtocolTests() }
+        runDomain("runSoundScreenPrefsResidueTests") { runSoundScreenPrefsResidueTests() }
+        runDomain("runReadOnlyTailTests") { runReadOnlyTailTests() }
+        runDomain("runSessionActivityWriteTests") { runSessionActivityWriteTests() }
+        runDomain("runSettingsFullRenderTests") { runSettingsFullRenderTests() }
+        runDomain("runSpaceDisplayLocalTests") { runSpaceDisplayLocalTests() }
+        runDomain("runGridSnapshotRowTests") { runGridSnapshotRowTests() }
+        runDomain("runBStateSweepTests") { runBStateSweepTests() }
+        runDomain("runAXDirectMoveTests") { runAXDirectMoveTests() }
+        runDomain("runOverlayWindowE2ETests") { runOverlayWindowE2ETests() }
         runPerfWatchdogTests()   // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰
     // MARK: 汇总
 
-    print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed")
+    let skippedNote = skipped > 0 ? ", \(skipped) domains skipped" : ""
+    print("\nVibeFocusTestRunner: \(passed + failed) checks, \(passed) passed, \(failed) failed\(skippedNote)")
     exit(failed == 0 ? 0 : 1)
     }
 }

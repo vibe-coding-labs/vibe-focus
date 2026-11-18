@@ -184,6 +184,8 @@ extension ToggleEngine {
             "recordWindowID": String(record.windowID),
             "pid": String(record.pid),
             "sourceSpace": String(record.sourceSpace),
+            "sourceDispSpace": String(record.sourceDispSpace),
+            "sourceYabaiDisp": String(record.sourceYabaiDisp),
             "triggerSource": triggerSource,
             "origFrame": QuartzRect(record.origFrame).description,
             "targetFrame": QuartzRect(record.targetFrame).description
@@ -214,12 +216,22 @@ extension ToggleEngine {
             }
         }
 
+        // 5.5 落位 space 复核（2026-11-03）：frame 收敛只证明坐标对——「工作区 2 的窗口
+        // 还原到工作区 3 的对应位置」正是同坐标不同 space。以窗口真实所属 space 为地面
+        // 真值裁决结局，并与目标一起写进 completed 日志/审计（错工作区可回溯定位）。
+        let landing = preMove.targetSpace.map { targetSpace in
+            PerfMonitor.shared.measure("restore.landing") {
+                Self.verifyLandingSpace(windowID: windowID, targetSpace: targetSpace, channels: channels, trace: trace)
+            }
+        }
+
         return PerfMonitor.shared.measure("restore.tail") {
             Self.performSuccessTail(
                 record: record, windowID: windowID, triggerSource: triggerSource, trace: trace,
                 spaceExact: spaceExact, frameOK: frameOK, moveMs: moveMs, lookupMs: lookupMs, queryMs: queryMs,
                 preMove: preMove,
-                windows: windows, channels: channels, records: records, auditor: auditor)
+                windows: windows, channels: channels, records: records, auditor: auditor,
+                landed: landing)
         }
     }
 }
