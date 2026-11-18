@@ -87,8 +87,14 @@ extension RunnerHarness {
             }
             return box.value ?? (statusCode: -1, body: Data())
         }()
-        check("apiGuard: 错误 token → 401",
-              (ClaudeHookPreferences.authToken ?? "").isEmpty || badToken.statusCode == 401)
+        // token 门只认 server 实例上的 configuredToken（未起服 = nil → 门放行）。
+        // 逐域覆盖率进程内本域不起服；全量 Runner 里前面的 HTTP 壳域会起服 → 401 生效。
+        if let expected = server.configuredToken, !expected.isEmpty {
+            check("apiGuard: 起服后错误 token → 401", badToken.statusCode == 401)
+        } else {
+            check("apiGuard: 未起服（configuredToken=nil）→ token 门放行（非 401）",
+                  badToken.statusCode != 401)
+        }
 
         // --- B. L0 读端点：三份只读体构造 ---
         let status = call("GET", "/api/v1/status")
@@ -130,16 +136,16 @@ extension RunnerHarness {
         check("apiGuard: capture 采集前置失败 → 409（或环境可采 → 200）",
               capture.statusCode == 409 || capture.statusCode == 200)
 
-        // --- D3. layout 合法 preset：无焦点窗降级 409；前台有他属窗时跳过实摆 ---
+        // --- D3. layout 合法 preset：前台是他属 app 时跳过（防真机误移用户窗口）；
+        //     否则走真实分发 → 无焦点窗 409 / 自摆本进程窗 200 ---
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let frontCandidates = frontPID.map {
-            ToggleFocusBranching.cgListFocusCandidates(snapshot: cgWindowListAll(), ownerPID: $0).count
-        } ?? 0
-        if frontCandidates == 0 {
+        let frontIsSelfOrNil = frontPID == nil || frontPID == getpid()
+        if frontIsSelfOrNil {
             let layoutValid = call("POST", "/api/v1/windows/layout", body: #"{"preset":"leftHalf"}"#)
-            check("apiGuard: layout 合法 preset 无焦点窗 → 409", layoutValid.statusCode == 409)
+            check("apiGuard: layout 合法 preset → 409 降级或 200 自摆（不发散）",
+                  layoutValid.statusCode == 409 || layoutValid.statusCode == 200)
         } else {
-            check("apiGuard: 前台有他属窗，跳过 layout 实摆（防真机误移）", true)
+            check("apiGuard: 前台为他属 app，跳过 layout 实摆（防真机误移）", true)
         }
 
         // --- D4. settings 批量坏项（缺 value）→ 400 逐项 bad_request，零设置写入 ---
