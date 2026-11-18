@@ -447,6 +447,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runForwarderBehaviorTests") { runForwarderBehaviorTests() }
         runDomain("runSpoolDrainTests") { runSpoolDrainTests() }
         runDomain("runInputBubbleTests") { runInputBubbleTests() }
+        runDomain("runInputBubbleHistoryNavSeamTests") { runInputBubbleHistoryNavSeamTests() }
         runDomain("runInputBubbleMarkdownTests") { runInputBubbleMarkdownTests() }
         runDomain("runInputBubbleHistoryPanelViewTests") { runInputBubbleHistoryPanelViewTests() }
         runDomain("runBubbleHotkeyRecorderTests") { runBubbleHotkeyRecorderTests() }

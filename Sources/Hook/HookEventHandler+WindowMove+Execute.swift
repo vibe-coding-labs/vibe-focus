@@ -12,7 +12,7 @@ import Foundation
 /// （零真实移窗、零声音、零角标、零注册库写）。
 struct HookMoveExecuteEnvironment {
     /// (identity, sessionID) -> 是否移动成功
-    var moveToMain: (WindowIdentity, String) async -> Bool
+    var moveToMain: @MainActor (WindowIdentity, String) async -> Bool
     var autoShowOnMoveToMain: () -> Bool
     var bubbleIdle: () -> Bool
     /// (windowID, pid, appName)
