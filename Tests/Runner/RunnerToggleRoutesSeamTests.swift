@@ -38,6 +38,13 @@ final class ToggleRoutesSeamState: @unchecked Sendable {
     var savedRecords: [(windowID: UInt32, origFrame: CGRect, targetFrame: CGRect, targetDisplayIndex: Int?)] = []
     var perfMetrics: [String] = []
     var perfSnapshots: [String] = []
+    var screensList: [NSScreen] = []
+    var mainScreenNil = false
+    var nsScreenNil = false
+    var focusResult = true
+    var identityCalls = 0
+    var pipelineArgs: [(windowID: UInt32, ax: AXUIElement?, orig: CGRect?)] = []
+    var sourceFrames: [CGRect?] = []
 }
 
 extension RunnerHarness {
@@ -47,37 +54,43 @@ extension RunnerHarness {
             return
         }
         let state = ToggleRoutesSeamState()
+        state.screensList = [screen]
         let fakeAX = AXUIElementCreateSystemWide()
         let secondaryVisible = CGRect(x: 1440, y: 0, width: 1440, height: 900)
 
         func makeEnv() -> ToggleRoutesEnvironment {
             ToggleRoutesEnvironment(
-                screens: { [screen] },
+                screens: { state.screensList },
                 frontmostPID: { state.frontmostPID },
                 focusedWindow: { _ in fakeAX },
                 windowHandle: { _ in state.handle },
                 queryWindow: { _ in state.windowInfo },
                 querySpaces: { state.spaces },
-                nsScreen: { _ in screen },
+                nsScreen: { _ in state.nsScreenNil ? nil : screen },
                 cgWindowBounds: { _ in state.bounds },
                 floatAndSettle: { _, _, _ in state.floatCalls += 1 },
-                moveFrame: { windowID, frame, _, stage, _ in
+                moveFrame: { windowID, frame, _, stage, source in
                     state.moveCalls.append((windowID, frame, stage))
+                    state.sourceFrames.append(source)
                     if !state.moveResults.isEmpty { return state.moveResults.removeFirst() }
                     return state.moveResult
                 },
-                mainScreen: { screen },
+                mainScreen: { state.mainScreenNil ? nil : screen },
                 quartzVisibleFrame: { _ in secondaryVisible },
                 hasAccessibilityPermission: { state.axTrusted },
                 notifyPermission: { state.notifyCalls += 1 },
-                captureIdentity: { state.identity },
-                moveToMainPipeline: { _, _, _ in
+                captureIdentity: {
+                    state.identityCalls += 1
+                    return state.identity
+                },
+                moveToMainPipeline: { identity, ax, orig in
                     state.pipelineCalls += 1
+                    state.pipelineArgs.append((identity.windowID, ax, orig))
                     return state.pipelineResult
                 },
                 focusWindow: { _ in
                     state.focusCalls += 1
-                    return true
+                    return state.focusResult
                 },
                 captureSpaceContext: { _, _ in
                     SpaceContext(
@@ -113,6 +126,13 @@ extension RunnerHarness {
             state.savedRecords = []
             state.perfMetrics = []
             state.perfSnapshots = []
+            state.screensList = [screen]
+            state.mainScreenNil = false
+            state.nsScreenNil = false
+            state.focusResult = true
+            state.identityCalls = 0
+            state.pipelineArgs = []
+            state.sourceFrames = []
         }
 
         // ===== moveStuckWindowToSecondaryScreen =====
@@ -148,6 +168,28 @@ extension RunnerHarness {
             operationID: "ut-stuck-d", triggerSource: "ut", windowID: 8101, environment: makeEnv())
         check("toggleRoutes D1: 传入 knownWindowID → 不经前台解析直接移动",
               state.moveCalls.count == 1)
+
+        // A2. 前台 PID 在但 AX 句柄解析不到 → 同样早退
+        reset()
+        state.handle = nil
+        wm.moveStuckWindowToSecondaryScreen(operationID: "ut-stuck-e", triggerSource: "ut", environment: makeEnv())
+        check("toggleRoutes A2: 有前台 PID 无窗口句柄 → 早退（零 float 零移动）",
+              state.moveCalls.isEmpty && state.floatCalls == 0)
+
+        // B4. 目标屏映射失败且无回退屏 → 副屏缺失早退
+        reset()
+        state.nsScreenNil = true
+        state.screensList = []
+        wm.moveStuckWindowToSecondaryScreen(operationID: "ut-stuck-f", triggerSource: "ut", environment: makeEnv())
+        check("toggleRoutes B4: 无可映射副屏且无回退屏 → 早退（零 float 零移动）",
+              state.moveCalls.isEmpty && state.floatCalls == 0)
+
+        // C3. 回滚也失败 → rollback.failed
+        reset()
+        state.moveResults = [false, false]
+        wm.moveStuckWindowToSecondaryScreen(operationID: "ut-stuck-h", triggerSource: "ut", environment: makeEnv())
+        check("toggleRoutes C3: 回滚失败 → move.rollback.failed 仍落快照",
+              state.perfMetrics == ["move.rollback.failed"] && state.perfSnapshots == ["rollback"])
 
         // ===== moveToMainScreen =====
         reset()
@@ -204,5 +246,58 @@ extension RunnerHarness {
         wm.maximizeFocusedWindowOnSingleDisplay(operationID: "ut-max-e", environment: makeEnv())
         check("toggleRoutes F6: 直写失败 → 不落记录、不回补焦点（recordKept）",
               state.savedRecords.isEmpty && state.focusCalls == 0)
+
+        // E5. 已知身份/AX/orig 透传管线，跳过身份捕获
+        reset()
+        let knownOrig = CGRect(x: 10, y: 20, width: 640, height: 480)
+        wm.moveToMainScreen(
+            operationID: "ut-main-e", knownIdentity: state.identity,
+            knownWindowAX: fakeAX, knownOrigFrame: knownOrig, environment: makeEnv())
+        check("toggleRoutes E5: knownIdentity/AX/orig 原样透传管线且零身份捕获",
+              state.identityCalls == 0 && state.pipelineArgs.count == 1
+              && state.pipelineArgs[0].windowID == 8101
+              && state.pipelineArgs[0].ax != nil
+              && state.pipelineArgs[0].orig == knownOrig)
+
+        // E6. 焦点回补失败不影响管线结果记账
+        reset()
+        state.focusResult = false
+        wm.moveToMainScreen(operationID: "ut-main-f", environment: makeEnv())
+        check("toggleRoutes E6: 焦点回补失败仍只尝试一次",
+              state.pipelineCalls == 1 && state.focusCalls == 1)
+
+        // F7. 无主屏 → 早退
+        reset()
+        state.mainScreenNil = true
+        wm.maximizeFocusedWindowOnSingleDisplay(operationID: "ut-max-f", environment: makeEnv())
+        check("toggleRoutes F7: 无主屏 → 早退（零 float 零移动零记录）",
+              state.floatCalls == 0 && state.moveCalls.isEmpty && state.savedRecords.isEmpty)
+
+        // F8. 实时 bounds 读不到但已知 orig 帧 → 照常最大化
+        reset()
+        state.bounds = nil
+        wm.maximizeFocusedWindowOnSingleDisplay(
+            operationID: "ut-max-g", knownIdentity: state.identity,
+            knownOrigFrame: knownOrig, environment: makeEnv())
+        check("toggleRoutes F8: knownOrigFrame 兜底 → 照常 float + 直写 + 落记录",
+              state.floatCalls == 1 && state.moveCalls.count == 1
+              && state.savedRecords.count == 1 && state.savedRecords[0].origFrame == knownOrig)
+
+        // F9. 窗口无 display → 源屏可视区缺失（直写收到 nil source）
+        reset()
+        state.windowInfo = YabaiWindowInfo(
+            id: 8101, pid: 4242, app: "Terminal", title: "t",
+            space: 1, display: nil,
+            frame: YabaiWindowInfo.Frame(x: 0, y: 0, w: 900, h: 700),
+            isFloatingRaw: false, hasAXReferenceRaw: true)
+        wm.maximizeFocusedWindowOnSingleDisplay(operationID: "ut-max-h", environment: makeEnv())
+        check("toggleRoutes F9: 源窗无 display → 直写源屏可视区为 nil",
+              state.moveCalls.count == 1 && state.sourceFrames.count == 1
+              && state.sourceFrames[0] == nil)
+        state.windowInfo = YabaiWindowInfo(
+            id: 8101, pid: 4242, app: "Terminal", title: "t",
+            space: 1, display: 1,
+            frame: YabaiWindowInfo.Frame(x: 0, y: 0, w: 900, h: 700),
+            isFloatingRaw: false, hasAXReferenceRaw: true)
     }
 }
