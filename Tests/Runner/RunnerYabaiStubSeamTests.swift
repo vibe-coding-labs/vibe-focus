@@ -81,6 +81,16 @@ extension RunnerHarness {
             *"-m query --windows --window "*) echo "unexpected window query failure" >&2; exit 1;;
           esac
         fi
+        if [ "$MODE" = "sa-probe-error" ]; then
+          case "$*" in
+            *"-m space --focus"*) echo "error with the scripting-addition" >&2; exit 1;;
+          esac
+        fi
+        if [ "$MODE" = "mc-block" ]; then
+          case "$*" in
+            *"-m space --focus"*) echo "mission-control is active" >&2; exit 1;;
+          esac
+        fi
         if [ "$MODE" = "bad-json" ]; then
           case "$*" in
             *"-m query"*) echo "this is not json"; exit 0;;
@@ -96,9 +106,10 @@ extension RunnerHarness {
           *"--version"*) echo "yabai-v7.1.18-stub"; exit 0;;
           *"stub-slow"*) sleep 0.2; exit 0;;
           *"stub-stderr"*) echo "stub stderr line" >&2; echo "stub stdout line"; exit 3;;
+          *"stub-sa-error"*) echo "error with the scripting-addition" >&2; exit 1;;
           *"stub-fail"*) echo "stub failure" >&2; exit 2;;
           *"--load-sa"*) echo "stub load-sa unavailable" >&2; exit 3;;
-          *"-m space --focus"*) echo "stub space focus blocked" >&2; exit 3;;
+          *"--focus"*) exit 0;;
         esac
         exit 3
         """
@@ -270,11 +281,94 @@ extension RunnerHarness {
         check("yabaiStub: runProcess 慢路径 ≥50ms",
               sc.runProcess(executable: "/bin/sleep", arguments: ["0.06"])?.exitCode == 0)
 
-        // ---- M. toggle 焦点三分支解析：零候选窗 → yabai 探针（pid 不匹配）→ AX 兜底 ----
+        // ---- M. focusSpace 四态（替身成功/控制权缺失/命令失败/非 yabai 标识） ----
+        sc.isEnabled = true
+        sc.canControlSpaces = true
+        check("yabaiStub: focusSpace 非 yabai 标识 → false",
+              sc.focusSpace(.nativeID(42)) == false)
+        check("yabaiStub: focusSpace 替身成功", sc.focusSpace(.yabaiIndex(2)) == true)
+        sc.canControlSpaces = false
+        check("yabaiStub: focusSpace 控制权缺失 → false 并写错误",
+              sc.focusSpace(.yabaiIndex(2)) == false
+              && (sc.lastErrorMessage ?? "").contains("cross-space control"))
+        sc.canControlSpaces = true
+        setMode("fail")
+        check("yabaiStub: focusSpace 命令失败 → false",
+              sc.focusSpace(.yabaiIndex(2)) == false)
+        setMode("ok")
+
+        // ---- N. queryWindowsOnSpace 首查成功 / 失败重试后 nil ----
+        check("yabaiStub: queryWindowsOnSpace 解码",
+              sc.queryWindowsOnSpace(2, operationID: "stub")?.count == 2)
+        setMode("fail")
+        check("yabaiStub: queryWindowsOnSpace 失败重试后 nil",
+              sc.queryWindowsOnSpace(2, operationID: "stub-fail") == nil)
+        setMode("ok")
+
+        // ---- O. refocusWindowOnSpace：无候选 / 落位成功 / 查询失败 ----
+        check("yabaiStub: refocusWindowOnSpace 无候选 → false",
+              sc.refocusWindowOnSpace(99, operationID: "stub") == false)
+        check("yabaiStub: refocusWindowOnSpace 落位成功",
+              sc.refocusWindowOnSpace(1, operationID: "stub") == true)
+        setMode("fail")
+        check("yabaiStub: refocusWindowOnSpace 查询失败 → false",
+              sc.refocusWindowOnSpace(1, operationID: "stub-fail") == false)
+        setMode("ok")
+
+        // ---- P. focusedWindowID 解码 / 失败 ----
+        check("yabaiStub: focusedWindowID 解码", sc.focusedWindowID(operationID: "stub") == 3220)
+        setMode("fail")
+        check("yabaiStub: focusedWindowID 失败 → nil", sc.focusedWindowID(operationID: "stub-fail") == nil)
+        setMode("ok")
+
+        // ---- Q. 未启用时 focusedDisplayIndex 早退（Query 最后一行空分支） ----
+        sc.isEnabled = false
+        check("yabaiStub: focusedDisplayIndex 未启用 → nil", sc.focusedDisplayIndex() == nil)
+        sc.isEnabled = true
+
+        // ---- R. SA 无副作用探针四分支（不触发任何恢复/提权） ----
+        check("yabaiStub: SA 探针 exit 0 → loaded",
+              sc.checkScriptingAdditionLoaded(yabaiPath: stubPath.path))
+        setMode("sa-probe-error")
+        check("yabaiStub: SA 探针 scripting-addition → unavailable",
+              !sc.checkScriptingAdditionLoaded(yabaiPath: stubPath.path))
+        setMode("mc-block")
+        check("yabaiStub: SA 探针 mission-control → unavailable",
+              !sc.checkScriptingAdditionLoaded(yabaiPath: stubPath.path))
+        setMode("no-focus")
+        check("yabaiStub: SA 探针无聚焦 space → false",
+              !sc.checkScriptingAdditionLoaded(yabaiPath: stubPath.path))
+        setMode("ok")
+        check("yabaiStub: SA 探针启动失败 → false",
+              !sc.checkScriptingAdditionLoaded(yabaiPath: plainFile.path))
+
+        // ---- S. 静默恢复仅走失败臂（替身 --load-sa 恒非零，不写持久化 verdict） ----
+        let savedRecovered = sc.scriptingAdditionRecoverySucceeded
+        sc.scriptingAdditionRecoverySucceeded = false
+        sc.attemptSilentSARecovery(yabaiPath: stubPath.path)
+        check("yabaiStub: 静默恢复非 SIP 失败不误报成功",
+              sc.scriptingAdditionRecoverySucceeded == false)
+        sc.scriptingAdditionRecoverySucceeded = savedRecovered
+
+        // ---- T. runYabaiVariants SA 错误臂：异步恢复被 didAttempt 短路，零提权零真实恢复 ----
+        sc.didAttemptScriptingAdditionRecovery = true
+        let saFailed = sc.runYabaiVariants(
+            variants: [["stub-sa-error"]], operation: "stubSA", operationID: "stub")
+        check("yabaiStub: SA 错误变体触发一次恢复标记后仍失败",
+              !saFailed.success && saFailed.failure != nil)
+
+        // ---- U. toggle 焦点三分支解析：优先选「自有 layer0 在屏窗为 0」的 app，
+        //     强制走 yabai 探针（pid 不匹配）→ AX 兜底两分支 ----
         do {
+            let snapshot = cgWindowListAll()
+            let zeroCandidateApp = NSWorkspace.shared.runningApplications.first { app in
+                app.processIdentifier != getpid()
+                && ToggleFocusBranching.cgListFocusCandidates(
+                    snapshot: snapshot, ownerPID: app.processIdentifier).isEmpty
+            }
             var toggleContext: [String: String] = [:]
             let resolution = WindowManager.shared.resolveFocusedWindowForToggle(
-                frontApp: NSRunningApplication.current,
+                frontApp: zeroCandidateApp ?? NSRunningApplication.current,
                 cachedMainScreen: screens.first,
                 toggleContext: &toggleContext)
             check("yabaiStub: toggle 三分支解析来源合法",
@@ -284,6 +378,14 @@ extension RunnerHarness {
                   && toggleContext["focusedWindowSource"] == resolution.source)
             check("yabaiStub: toggle 解析进度字段已填充",
                   toggleContext["focusedWindowAxMs"] != nil)
+            if zeroCandidateApp != nil {
+                check("yabaiStub: 零候选前台 → yabai 探针已执行",
+                      toggleContext["candidatesCount"] == "0" && toggleContext["yabaiProbeMs"] != nil)
+                check("yabaiStub: 零候选前台 → pid 不匹配回落 AX",
+                      resolution.source == "ax" && toggleContext["axProbeMs"] != nil)
+            } else {
+                check("yabaiStub: 无零候选 app 时保持基础断言", true)
+            }
         }
     }
 }
