@@ -328,6 +328,41 @@ extension RunnerHarness {
         check("yabaiDirect F6: now 默认闭包返回当前时刻",
               abs(env.now().timeIntervalSinceNow) < 5)
 
+        // ---- ⑦ yabaiPath 常规解析成功链 + 路径缓存（不经注入缝时的生产分支） ----
+        // 把替身目录前置进 PATH、SHELL 固定为 /bin/bash，让 findViaUserShell /
+        // findViaBashWhich 的 `which yabai` 真实命中替身（只做 which，不执行替身命令）。
+        // 若宿主 mac 已装真实 yabai，同样命中成功臂——断言只要求「解析到真实存在的路径」。
+        unsetenv("VIBEFOCUS_YABAI_PATH")
+        let savedPathC = getenv("PATH").map { String(cString: $0) }
+        let savedShellC = getenv("SHELL").map { String(cString: $0) }
+        let fallbackPATH = savedPathC ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        setenv("PATH", "\(dir.path):\(fallbackPATH)", 1)
+        setenv("SHELL", "/bin/bash", 1)
+
+        let shellFound = YabaiClient.findViaUserShell()
+        check("yabaiDirect G1: findViaUserShell 命中 PATH 内 yabai",
+              shellFound != nil && FileManager.default.fileExists(atPath: shellFound!))
+        let whichFound = YabaiClient.findViaBashWhich()
+        check("yabaiDirect G2: findViaBashWhich 命中 PATH 内 yabai",
+              whichFound != nil && FileManager.default.fileExists(atPath: whichFound!))
+        let resolvedPath = YabaiClient.yabaiPath()
+        check("yabaiDirect G3: 常规解析 → 非 nil 且入缓存",
+              resolvedPath != nil && FileManager.default.fileExists(atPath: resolvedPath!))
+        check("yabaiDirect G4: 第二次解析命中缓存（同一路径）",
+              YabaiClient.yabaiPath() == resolvedPath)
+
+        setenv("VIBEFOCUS_YABAI_PATH", stubPath.path, 1)
+        if let savedPathC {
+            setenv("PATH", savedPathC, 1)
+        } else {
+            unsetenv("PATH")
+        }
+        if let savedShellC {
+            setenv("SHELL", savedShellC, 1)
+        } else {
+            unsetenv("SHELL")
+        }
+
         // 收尾：恢复注入前状态（defer 兜底，此处显式清缓存避免窗口查询缓存跨域污染）
         sc.clearQueryCache()
     }
