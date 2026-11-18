@@ -9,7 +9,7 @@ import Foundation
 // Terminal 诊断回读二次执行 / AX 不可写早退 / 两个 tty 捕获函数的三种结果。
 // 纪律：零真实 AppleScript 执行、零授权弹窗（不构造 -1743 用例）。
 
-final class TitleScriptMockExecutor: AppleScriptExecuting, @unchecked Sendable {
+final class TitleScriptMockExecutor: TitleEditorService.AppleScriptExecuting, @unchecked Sendable {
     var results: [(stringValue: String?, errorNumber: Int?)] = []
     var sources: [String] = []
 

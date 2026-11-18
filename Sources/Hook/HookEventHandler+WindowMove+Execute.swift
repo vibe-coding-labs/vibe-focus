@@ -6,6 +6,23 @@
 import AppKit
 import Foundation
 
+/// 执行半区的宿主依赖缝（2026-11-19 覆盖率补齐）：窗口移动、气泡自动弹出
+/// 三态（开关/占用/召唤）、完成音与角标、失败 touch 全可注入。默认 nil →
+/// 生产真实实现；Runner 注入假实现直测成功/失败两臂及其副作用
+/// （零真实移窗、零声音、零角标、零注册库写）。
+struct HookMoveExecuteEnvironment {
+    /// (identity, sessionID) -> 是否移动成功
+    var moveToMain: (WindowIdentity, String) async -> Bool
+    var autoShowOnMoveToMain: () -> Bool
+    var bubbleIdle: () -> Bool
+    /// (windowID, pid, appName)
+    var summonBubble: (UInt32, pid_t, String?) -> Void
+    /// (项目名, 目标 bundleID, 目标 appName)
+    var celebrate: (String?, String?, String?) -> Void
+    /// (sessionID, message)
+    var touch: (String, String) -> Void
+}
+
 @MainActor
 extension HookEventHandler {
 
@@ -23,7 +40,8 @@ extension HookEventHandler {
         triggerName: String,
         source: String,
         bindingAge: TimeInterval? = nil,
-        onComplete: (() -> Void)? = nil
+        onComplete: (() -> Void)? = nil,
+        environment: HookMoveExecuteEnvironment? = nil
     ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-47: moveWindowToMainScreenAndRespond 总耗时 + outcome（hook 移动核心执行；
         // 区分 moved 含 moveWindowToMainScreen P-INST-3 vs move_failed skip；
@@ -50,13 +68,18 @@ extension HookEventHandler {
         // B180：移动下放窗口作业串行队列（实测 16/16 次 >200ms、max 8.7s 主线程
         // 占用）；await 期间主线程解放，响应仍在移动完成后返回——hook 契约不变。
         // 0.1.5 预算熔断：nil=作业超预算被熔断（挂死类），按移动失败诚实应答。
-        let moved = (await WindowWorkExecutor.run {
-            WindowManager.shared.moveWindowToMainScreen(
-                identity: identity,
-                reason: .claudeSessionEnd,
-                sessionID: payload.sessionID
-            )
-        }) ?? false
+        let moved: Bool
+        if let environment {
+            moved = await environment.moveToMain(identity, payload.sessionID)
+        } else {
+            moved = (await WindowWorkExecutor.run {
+                WindowManager.shared.moveWindowToMainScreen(
+                    identity: identity,
+                    reason: .claudeSessionEnd,
+                    sessionID: payload.sessionID
+                )
+            }) ?? false
+        }
         if moved {
             outcome = "moved"
             onComplete?()
@@ -69,33 +92,44 @@ extension HookEventHandler {
             )
             // B162：移动到主屏自动弹出气泡（设置可关；目标窗=刚被移动的会话绑定窗，
             // 决策门纯函数直测在 RunnerInputBubbleTests）。
+            let autoShowEnabled = environment.map { $0.autoShowOnMoveToMain() }
+                ?? InputBubblePreferences.autoShowOnMoveToMain
+            let bubbleIdle = environment.map { $0.bubbleIdle() }
+                ?? InputBubbleController.shared.isIdle
             let autoShowOutcome = InputBubbleAutoShowGate.decideMoveToMainAutoShow(
-                autoShowEnabled: InputBubblePreferences.autoShowOnMoveToMain,
-                phaseIdle: InputBubbleController.shared.isIdle
+                autoShowEnabled: autoShowEnabled,
+                phaseIdle: bubbleIdle
             )
             if case .summon = autoShowOutcome {
-                InputBubbleController.shared.summonForMovedWindow(
-                    windowID: identity.windowID,
-                    pid: identity.pid,
-                    appName: identity.appName
-                )
+                if let environment {
+                    environment.summonBubble(identity.windowID, identity.pid, identity.appName)
+                } else {
+                    InputBubbleController.shared.summonForMovedWindow(
+                        windowID: identity.windowID,
+                        pid: identity.pid,
+                        appName: identity.appName
+                    )
+                }
             } else {
                 log("[HookEventHandler] move-to-main bubble auto-show skip", level: .debug, fields: [
                     "outcome": String(describing: autoShowOutcome),
                     "windowID": String(identity.windowID)
                 ])
             }
-            Task { @MainActor in
-                SoundManager.shared.playCompletionSound(
-                    projectName: ProjectSoundResolver.projectName(
-                        claudeProjectDir: payload.terminalCtx?.claudeProjectDir,
-                        cwd: payload.cwd
+            let projectName = ProjectSoundResolver.projectName(
+                claudeProjectDir: payload.terminalCtx?.claudeProjectDir,
+                cwd: payload.cwd
+            )
+            if let environment {
+                environment.celebrate(projectName, identity.bundleIdentifier, identity.appName)
+            } else {
+                Task { @MainActor in
+                    SoundManager.shared.playCompletionSound(projectName: projectName)
+                    DockBadgeManager.shared.showBadge(
+                        targetBundleID: identity.bundleIdentifier,
+                        targetAppName: identity.appName
                     )
-                )
-                DockBadgeManager.shared.showBadge(
-                    targetBundleID: identity.bundleIdentifier,
-                    targetAppName: identity.appName
-                )
+                }
             }
             return (
                 200,
@@ -108,10 +142,12 @@ extension HookEventHandler {
         }
 
         outcome = "move_failed"
-        SessionWindowRegistry.shared.touch(
-            sessionID: payload.sessionID,
-            message: "\(triggerName) 命中绑定，但移动窗口失败"
-        )
+        let failMessage = "\(triggerName) 命中绑定，但移动窗口失败"
+        if let environment {
+            environment.touch(payload.sessionID, failMessage)
+        } else {
+            SessionWindowRegistry.shared.touch(sessionID: payload.sessionID, message: failMessage)
+        }
         log(
             "[HookEventHandler] \(triggerName) [\(source)] window move failed",
             level: .error,
