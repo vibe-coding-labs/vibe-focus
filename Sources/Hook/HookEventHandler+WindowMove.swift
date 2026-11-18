@@ -15,7 +15,9 @@ struct HookWindowMoveEnvironment {
     var cgWindows: () -> [CGWindowEntry]
     var isOnMainScreen: (UInt32) -> Bool
     var isInCooldown: (UInt32) -> Bool
-    var moveAndRespond: (WindowIdentity, ClaudeHookPayload, String, Double, () -> Void) async -> (statusCode: Int, response: ClaudeHookResponse)
+    /// @MainActor：镜像生产 `moveWindowToMainScreenAndRespond`（Execute 文件 @MainActor
+    /// extension）的隔离——onComplete 闭包不跨隔离域传递，StrictConcurrency 下零 warning。
+    var moveAndRespond: @MainActor (WindowIdentity, ClaudeHookPayload, String, Double, () -> Void) async -> (statusCode: Int, response: ClaudeHookResponse)
 }
 
 @MainActor

@@ -57,14 +57,14 @@ enum MoveChannelPolicy {
 /// AX 直写通道的宿主依赖缝（默认 nil → 真实 CGWindowList/AX/写原语；
 /// Runner 注入假实现直测写序与收敛裁决，零 AX 写入、零窗口移动）。
 struct AXDirectMoveEnvironment {
-    var ownerPID: @MainActor (UInt32) -> Int32?
-    var axWindows: @MainActor (Int32) -> [AXUIElement]?
-    var matchAXWindow: @MainActor ([AXUIElement], UInt32) -> AXUIElement?
-    var isSettable: @MainActor (AXUIElement, String) -> Bool
-    var cgWindowBounds: @MainActor (UInt32) -> CGRect?
-    var writeMove: @MainActor (CGRect, AXUIElement) -> Void
-    var writeResize: @MainActor (CGRect, AXUIElement) -> Void
-    var pollSleep: @MainActor (UInt32) -> Void
+    var ownerPID: (UInt32) -> Int32?
+    var axWindows: (Int32) -> [AXUIElement]?
+    var matchAXWindow: ([AXUIElement], UInt32) -> AXUIElement?
+    var isSettable: (AXUIElement, String) -> Bool
+    var cgWindowBounds: (UInt32) -> CGRect?
+    var writeMove: (CGRect, AXUIElement) -> Void
+    var writeResize: (CGRect, AXUIElement) -> Void
+    var pollSleep: (UInt32) -> Void
 }
 
 extension WindowManager {
