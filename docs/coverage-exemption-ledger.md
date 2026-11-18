@@ -438,3 +438,56 @@ CI runner 无 yabai、无 AX 授权、无真实终端/IDE 进程，故「真机�
 
 **验收口径不变**：字面 100% 仍物理不可达；本轮可测面增量已全部落库，残余项逐行归入
 B/C 态，无新增豁免需求。
+
+### 2026-11-19 收口第三轮（批次 37–42，分支 `test/coverage-100e`）
+
+> 起点 `226622c` / run `44413980265`：Sources-only 31,801 行 / 5,534 missed / **82.60%**。
+> 本批 4 个提交（`69971b4`、`61d547f`、`3538233`、`14b77e8`）新增 5 组域 + 1 处假红修复，
+> 终测 run `44417368728`（`14b77e8`）：Sources-only **31,819 行 / 5,465 missed / 82.82%**
+> （**−69 missed / +0.22pp**）；全口径 LCOV 68,506 行 / 9,408 missed / **86.27%**
+> （起点 68,113 / 9,481 / 86.08%）。行数 +18 来自给移主屏执行半区提缝时新增的
+> 环境 struct 与显式 if/else 接线，非生产逻辑扩张。
+
+#### 本批新增断言与靶点
+
+| 目标 | 覆盖点 | 域（CI checks） |
+|---|---|---|
+| 气泡自动弹出 tick | 焦点门 summon、同窗不重弹、气泡占用、开关关闭、非终端清 lastSeen 后重弹、无活跃绑定/同窗补绑定、hookPull 到达、userAction 有/无绑定、外部移动、开面板改绑、自动隐藏、同窗保持、移动开关关、多窗只弹跨越窗 | `RunnerInputBubbleTickSeamTests`（21） |
+| 标题写入通道本体 | 不支持 bundle 不构脚本、非定向成功、定向 matched、定向未命中（判据先于错误号）、脚本报错、Terminal 诊断回读二次执行/回读为空、AX 元素不可写、iTerm2 当前会话与 Terminal 前窗 tab 的 tty 捕获三态 | `RunnerTitleEditorChannelsSeamTests`（14） |
+| 移主屏执行半区 | 成功 200/`window_focused`/handled、身份与会话透传、onComplete 恰一次、气泡直弹、项目名解析 + 目标 bundleID、零失败 touch、开关关闭、非空闲不弹、409/`window_move_failed`、失败 touch 带触发名、失败臂零庆祝 | `RunnerHookMoveExecuteSeamTests`（11） |
+| 气泡历史翻阅执行半区 | 首次 `moveTo` 展示条目并 stash 现场 + 光标跳尾、换条目不重写 stash、越界消费不动作、`exitToStashed` 还原清空、`.none` 不消费、`setNavText` 独立换文本 | `RunnerInputBubbleHistoryNavSeamTests`（7） |
+| toggle 路由补口 | 有前台 PID 无句柄早退、无可映射副屏且无回退屏早退、回滚失败落 `move.rollback.failed`、knownIdentity/AX/orig 三件透传且零身份捕获、焦点回补失败仍只尝试一次、无主屏早退、knownOrigFrame 兜底照常落记录、源窗 display nil | `RunnerToggleRoutesSeamTests`（25） |
+| srSeam 假分发修正 | 假 AppleScript 按 `sessions of t` / `tty of t` 区分 iTerm/Terminal 枚举——修复 Terminal 窗被判无 pane 的确定性假红（断言面不变） | `RunnerSessionRestoreExecutorSeamTests`（19） |
+
+#### 逐文件变化（起点 → 终测，missed）
+
+`HookEventHandler+WindowMove+Execute` 47→**14**、`WindowManager+Toggle+Routes` 100→**86**、
+`TitleEditorService+Channels` 57→**47**、`ScreenOverlayManager+Display` 54→**42**
+（后者非本批靶点，属第二轮已记录的域执行面抖动）。
+
+#### 剩余项归因（逐行复核）
+
+| 文件 | 残余 missed | 归因 |
+|---|---|---|
+| `HookEventHandler+WindowMove+Execute` | 14（`107-112,126-133`） | 真实气泡召唤（`summonForMovedWindow`）与真实完成音/角标 `Task` —— 出声与真面板（C4/B 态） |
+| `TitleEditorService+Channels` | 47（`99-100,199-256,261`） | 真实 `NSAppleScript` 执行与真实 AX 属性写（生产 else 臂）——CI 无授权弹窗/无真实终端（B 态） |
+| `WindowManager+Toggle+Routes` | 86 | 各路由的真实窗口原语闭包（float/frame 直写/AX）与生产 else 臂；路由判定与失败/回滚分支已由本批与既有 seam 覆盖 |
+| `WindowManager+MoveWindow` | 100 | `moveWindowToMainScreen` 的 deps 接线闭包（只在真实移动时执行）+ yabai/AX 生产臂——B 态 |
+| `CoordinateKit+Screen` | 13（`24,41,78,173-176,186-191`） | 零屏/多屏分支：单屏 CI runner 结构性不可达（精确几何换算与包含判定已由纯函数域覆盖） |
+| `AgentCLI` 本地直读映射 | 26（`340-348,359,365-370,378-379,398-399,417-418`） | `runWindowsList`/`runSessionsList` 的行映射需要 runner 上真有 layer0 在屏窗 / 有 session-activity 文件；`runViaAPI` 的 curl 失败与 HTTP 错误臂需要本机 app 不在跑（B 态） |
+| `ScreenIndexPreferences` load/save 生产三源 | 58 | 沙箱守卫刻意短路（`isProductionAppProcess` false）——测试进程绝不读写用户真实 SQLite/plist/defaults；沙箱文件读写与 legacy 迁移已由既有域覆盖 |
+
+#### 实测取证
+
+- **覆盖率** run `44417368728` success：`coverage-report.txt` TOTAL 42,842 行 / 7,404
+  missed / 82.72%（全口径 llvm-cov report）。
+- **新域逐域**（同一 run 内隔离执行）：`InputBubbleHistoryNavSeam` 7/7、
+  `SessionRestoreExecutorSeam` 19/19、`ToggleRoutesSeam` 25/25、
+  `HookMoveExecuteSeam` 11/11、`TitleEditorChannelsSeam` 14/14、
+  `InputBubbleTickSeam` 21/21 —— 全绿。
+- **环境失败集合**：本 run 的 24 条 FAIL 与起点 run `44413980265` 完全同一集合
+  （`runHookWalkTests` 真实 comm 链 7 条 + yabai 缺失前置 / overlay / `runAsync` 等），
+  无新增失败；真机门禁仍按 AGENTS.md 在全量 Runner 上验收。
+
+**验收口径不变**：字面 100% 仍物理不可达（B/C 态 + 测量通道损失），本批可测面增量已
+全部落库，无新增豁免需求。
