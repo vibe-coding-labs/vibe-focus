@@ -10,6 +10,17 @@ import Foundation
 //   TitleEditorService+Channels.swift       — 写入通道：AX / AppleScript（Terminal/iTerm2）/ 权限弹窗
 //   TitleEditorService+TTYWriter.swift      — TTY OSC 序列写入通道
 
+/// 标题写入编排的宿主依赖缝（2026-11-19 覆盖率补齐）：窗口身份查询与三条写入
+/// 通道（AX / AppleScript / TTY）全可注入。默认 nil → 生产真实实现；
+/// Runner 注入假实现穷尽去重/空标题/三路写/iTerm2 跳过 TTY 分支
+/// （零 AX 写、零 AppleScript/TTY fork）。
+struct TitleEditorEnvironment {
+    var windowHandle: (AXUIElement) -> UInt32?
+    var applyViaAX: (String, AXUIElement) -> Bool
+    var applyViaAppleScript: (String, String, String?) -> Bool
+    var applyViaTTY: (String, pid_t) -> Bool
+}
+
 @MainActor
 /// Service for programmatically setting terminal window titles via escape sequences.
 final class TitleEditorService {
@@ -24,7 +35,8 @@ final class TitleEditorService {
     var hasShownAutomationPermissionAlert = false
 
     /// Tracks windows the user has manually renamed via Ctrl+T — autoSetTitle skips these
-    private var userRenamedWindowIDs: Set<UInt32> = []
+    /// （internal 供 Runner 直测「用户命名优先」跳过分支）
+    var userRenamedWindowIDs: Set<UInt32> = []
 
     // MARK: - Public API
 
@@ -191,7 +203,10 @@ final class TitleEditorService {
     /// ## 行为约束
     /// - userRenamedWindowIDs 命中即跳过：用户手动命名（Ctrl+T）优先于自动命名，
     ///   且该标记进程内永久有效（不随 hook 事件清除）。
-    func autoSetTitle(cwd: String?, pid: pid_t, bundleID: String, window: AXUIElement) {
+    func autoSetTitle(
+        cwd: String?, pid: pid_t, bundleID: String, window: AXUIElement,
+        environment: TitleEditorEnvironment? = nil
+    ) {
         // P-INST-250: autoSetTitle 编排耗时（windowHandle AX 查询 + userRenamedWindowIDs 检查 + applyTitle P-INST-40 三路 AX/AppleScript/TTY 写；SessionStart hook 路径调用，归因 title 阶段延迟；slow-op ≥50ms warn）。
         #if PERF_INSTRUMENT
         let astStart = Date()
@@ -200,7 +215,13 @@ final class TitleEditorService {
             if durMs >= 50 { log("[TitleEditorService] autoSetTitle slow", level: .warn, fields: ["pid": String(pid), "bundleID": bundleID, "durationMs": String(durMs)]) }
         }
         #endif
-        if let windowID = WindowManager.shared.windowHandle(for: window),
+        let resolvedHandle: UInt32?
+        if let environment {
+            resolvedHandle = environment.windowHandle(window)
+        } else {
+            resolvedHandle = WindowManager.shared.windowHandle(for: window)
+        }
+        if let windowID = resolvedHandle,
            userRenamedWindowIDs.contains(windowID) {
             log("[TitleEditorService] autoSetTitle: skipping, user has manually renamed this window", fields: ["windowID": String(windowID)])
             return
@@ -218,7 +239,7 @@ final class TitleEditorService {
             ]
         )
 
-        applyTitle(title, to: window, pid: pid, bundleID: bundleID)
+        applyTitle(title, to: window, pid: pid, bundleID: bundleID, environment: environment)
     }
 
     /// SessionStart 自动标题模板（纯函数）：项目名取 cwd 末段，cwd 空/nil 兜底 "Claude"。
@@ -243,12 +264,13 @@ final class TitleEditorService {
     /// - 三路独立成功/失败，全量结果落一行日志便于归因哪一路失效。
     /// - 定向写入（2026-09-07 v2）：targetTTY（弹框前捕获的会话 tty）为两终端统一寻址键；
     ///   nil 时回退 front window 旧语义（capture 失败的保守路径，日志可见）。
-    private func applyTitle(
+    func applyTitle(
         _ newTitle: String,
         to window: AXUIElement,
         pid: pid_t,
         bundleID: String,
-        targetTTY: String? = nil
+        targetTTY: String? = nil,
+        environment: TitleEditorEnvironment? = nil
     ) {
         // P-INST-40: applyTitle 耗时（AX write + AppleScript fork + TTY fork 三路写；SessionStart autoSetTitle 隐含阻塞，归因 handleSessionStart 的 title 阶段）。
         let applyTitleStart = Date()
@@ -258,8 +280,18 @@ final class TitleEditorService {
             return
         }
 
-        let axSuccess = applyViaAX(trimmed, to: window)
-        let scriptSuccess = applyViaAppleScript(trimmed, bundleID: bundleID, targetTTY: targetTTY)
+        let axSuccess: Bool
+        if let environment {
+            axSuccess = environment.applyViaAX(trimmed, window)
+        } else {
+            axSuccess = applyViaAX(trimmed, to: window)
+        }
+        let scriptSuccess: Bool
+        if let environment {
+            scriptSuccess = environment.applyViaAppleScript(trimmed, bundleID, targetTTY)
+        } else {
+            scriptSuccess = applyViaAppleScript(trimmed, bundleID: bundleID, targetTTY: targetTTY)
+        }
 
         // For iTerm2, AppleScript sets session-level name which overrides OSC sequences —
         // skip TTY to avoid a brief flash where OSC overwrites before iTerm2 applies the session name.
@@ -271,6 +303,8 @@ final class TitleEditorService {
                 "[TitleEditorService] applyTitle: skipping TTY for iTerm2 (AppleScript session name overrides OSC)",
                 level: .debug
             )
+        } else if let environment {
+            ttySuccess = environment.applyViaTTY(trimmed, pid)
         } else {
             ttySuccess = applyViaTTY(trimmed, pid: pid)
         }
