@@ -387,6 +387,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runSpaceSwitchQueryShapeTests") { runSpaceSwitchQueryShapeTests() }
         runDomain("runYabaiUtilsTests") { runYabaiUtilsTests() }
         runDomain("runCoordinateTypesTests") { runCoordinateTypesTests() }
+        runDomain("runCoordinateGeometryTests") { runCoordinateGeometryTests() }
         runDomain("runSpaceIdentityTests") { runSpaceIdentityTests() }
         runDomain("runScreenIndexPrefsMigrationTests") { runScreenIndexPrefsMigrationTests() }
         runDomain("runYabaiModelTests") { runYabaiModelTests() }

@@ -101,15 +101,33 @@ enum TerminalGridPlanner {
 
     /// 把任意 frames 按 row-major 排序（先按 y 分带，带内按 x）。
     /// 捕获乱序窗口列表后统一编号用。
+    ///
+    /// 分带口径与 inferGrid 相同（midY 升序贪心归并到首个 |Δ| ≤ tolerance 的带），
+    /// 但排序键显式使用「带号 → midX → 输入序」：旧实现把 pairwise tolerance 直接
+    /// 当 sort 比较器，带间不满足传递性（y=100/130/160、tol=40 时 A~B、B~C 同带
+    /// 而 A≁C），sort 结果依赖比较顺序，窗口编号可能漂移。带号是预计算的稳定整数
+    /// 键，同带内按 x，同位置按输入序，结果确定。
     static func rowMajorOrder(_ frames: [CGRect], tolerance: CGFloat = 40) -> [CGRect] {
         guard !frames.isEmpty else { return [] }
-        let sorted = frames.sorted { lhs, rhs in
-            if abs(lhs.midY - rhs.midY) > tolerance {
-                return lhs.midY < rhs.midY
+        // 原始下标 → 行带号（贪心聚类，与 inferGrid 同口径）
+        var bandAnchors: [CGFloat] = []
+        var bandOf = [Int](repeating: 0, count: frames.count)
+        for index in frames.indices.sorted(by: { frames[$0].midY < frames[$1].midY }) {
+            let midY = frames[index].midY
+            if let band = bandAnchors.firstIndex(where: { abs($0 - midY) <= tolerance }) {
+                bandOf[index] = band
+            } else {
+                bandAnchors.append(midY)
+                bandOf[index] = bandAnchors.count - 1
             }
-            return lhs.midX < rhs.midX
         }
-        return sorted
+        return frames.indices.sorted { lhs, rhs in
+            if bandOf[lhs] != bandOf[rhs] { return bandOf[lhs] < bandOf[rhs] }
+            if frames[lhs].midX != frames[rhs].midX {
+                return frames[lhs].midX < frames[rhs].midX
+            }
+            return lhs < rhs
+        }.map { frames[$0] }
     }
 
     /// 恢复时把记录 frame 拉回可视区（分辨率/菜单栏变化后 frame 可能越界）。

@@ -69,7 +69,8 @@ final class ToggleEngine: ToggleRecordStore, @unchecked Sendable {
         #endif
         // 验证 origFrame 不在主屏上 — 如果 origFrame 在主屏，说明数据异常。
         // 单屏机（singleDisplay=true，同屏最大化）orig 在主屏是常态，绕行拒收门。
-        let mainScreen = NSScreen.screens.first { $0.frame.origin == .zero }
+        // 主屏唯一事实源（origin .zero 契约），不再裸枚举 screens.first。
+        let mainScreen = CoordinateKit.primaryScreen
         if !singleDisplay,
            Self.shouldRejectSave(origFrame: origFrame, mainScreenFrame: mainScreen?.frame) {
             log(

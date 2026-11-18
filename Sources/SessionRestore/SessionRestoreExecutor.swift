@@ -50,7 +50,8 @@ final class SessionRestoreExecutor {
             }
         }
         let existingDisplayIDs = Set(displayIDByYabaiIndex.values)
-        let primaryDisplayID = NSScreen.screens.first { $0.frame.origin == .zero }
+        // 主屏唯一事实源（origin .zero 契约）
+        let primaryDisplayID = CoordinateKit.primaryScreen
             .flatMap { CoordinateKit.cgDisplayID(for: $0) }
 
         // 3. 活窗观测（会话在跑的绝不动）
@@ -289,9 +290,9 @@ final class SessionRestoreExecutor {
         }
         _ = SpaceController.shared.setWindowFloat(windowID, operationID: op)
         // 泊靠屏：目标屏之外的任一屏（跨屏 frame 直写必入目标屏当前可见 space）
-        if let parkingScreen = NSScreen.screens.first(where: {
-            SpaceController.shared.exactYabaiDisplayIndex(for: $0) != displayIndex
-        }), info.display == displayIndex {
+        if let parkingScreen = SpaceController.shared.parkingScreen(
+            excludingYabaiDisplayIndex: displayIndex
+        ), info.display == displayIndex {
             // 同屏错位：先泊到其它屏，再写回（此刻目标屏正显示目标 space）
             let parkingBase = CoordinateKit.quartzVisibleFrame(of: parkingScreen)
             _ = SpaceController.shared.runYabai(

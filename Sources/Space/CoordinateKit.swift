@@ -139,6 +139,57 @@ enum CoordinateKit {
         mainScreenFrame.contains(CGPoint(x: rect.midX, y: rect.midY))
     }
 
+    // MARK: 全局坐标互转（矩形/点，唯一事实源）
+    // Quartz（主屏左上原点、y 向下）↔ Cocoa/AppKit（主屏左下原点、y 向上）。
+    // 矩形必须用 maxY 参与换算（点直接用 y）——此前 displayContext /
+    // displayContextDisplayID / matchYabaiDisplayIndices / HookWindowRecord.isValid /
+    // InputBubbleLayout 各自内联 `primaryHeight - rect.maxY`，任一处写错就是
+    // 「副屏窗口判成主屏」类静默错配。主屏高度由调用方注入
+    // （热路径用 CoordinateKit.mainScreenHeight，纯测试可传夹具值）。
+
+    /// Quartz 全局点 → Cocoa 全局点。
+    static func cocoaPoint(fromQuartz point: CGPoint, primaryHeight: CGFloat) -> CGPoint {
+        CGPoint(x: point.x, y: primaryHeight - point.y)
+    }
+
+    /// Cocoa 全局点 → Quartz 全局点。
+    static func quartzPoint(fromCocoa point: CGPoint, primaryHeight: CGFloat) -> CGPoint {
+        CGPoint(x: point.x, y: primaryHeight - point.y)
+    }
+
+    /// Quartz 全局矩形 → Cocoa 全局矩形：y = 主屏高 − 矩形 maxY（顶边翻到底边）。
+    static func cocoaRect(fromQuartz rect: CGRect, primaryHeight: CGFloat) -> CGRect {
+        CGRect(
+            x: rect.minX,
+            y: primaryHeight - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
+
+    /// Cocoa 全局矩形 → Quartz 全局矩形（与 cocoaRect 同式互逆）。
+    static func quartzRect(fromCocoa rect: CGRect, primaryHeight: CGFloat) -> CGRect {
+        CGRect(
+            x: rect.minX,
+            y: primaryHeight - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
+
+    /// Quartz 矩形所在屏的数组下标（纯函数，屏帧由调用方注入）。
+    /// 判定算法唯一实现在 `ScreenGeometry`（中心命中优先、相交兜底、按屏序），
+    /// 本函数仅为既有调用方保留的便捷入口。
+    static func screenIndex(containingQuartz rect: CGRect, primaryHeight: CGFloat, screenFrames: [CGRect]) -> Int? {
+        ScreenGeometry(cocoaFrames: screenFrames)
+            .index(containingQuartz: rect, primaryHeight: primaryHeight)
+    }
+
+    /// Cocoa 矩形所在屏的数组下标（纯函数，委托 `ScreenGeometry`）。
+    static func screenIndex(containing rect: CGRect, in screenFrames: [CGRect]) -> Int? {
+        ScreenGeometry(cocoaFrames: screenFrames).index(containingCocoa: rect)
+    }
+
     // MARK: 窗口帧收敛判据（唯一事实源）
     // 四个判据均为纯数学（无 NSScreen/AppKit 触碰），nonisolated 使非隔离纯模块
     // （FrameConvergence 等）可直连——漂移公式由此唯一，调用方不再内联副本。

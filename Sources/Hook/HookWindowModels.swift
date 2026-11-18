@@ -196,8 +196,14 @@ struct ToggleRecord: Equatable {
     /// displayCount 默认 2 = 历史双屏语义（既有调用方/测试零改动）。
     func isValid(mainScreenFrame: CGRect, displayCount: Int = 2) -> Bool {
         let mainScreenHeight = mainScreenFrame.height
-        let origCocoaCenter = CGPoint(x: origFrame.midX, y: mainScreenHeight - origFrame.midY)
-        let tgtCocoaCenter = CGPoint(x: targetFrame.midX, y: mainScreenHeight - targetFrame.midY)
+        let origCocoaCenter = CoordinateKit.cocoaPoint(
+            fromQuartz: CGPoint(x: origFrame.midX, y: origFrame.midY),
+            primaryHeight: mainScreenHeight
+        )
+        let tgtCocoaCenter = CoordinateKit.cocoaPoint(
+            fromQuartz: CGPoint(x: targetFrame.midX, y: targetFrame.midY),
+            primaryHeight: mainScreenHeight
+        )
         let origOnMain = mainScreenFrame.contains(origCocoaCenter)
         let targetOnMain = mainScreenFrame.contains(tgtCocoaCenter)
         if displayCount <= 1 {

@@ -242,18 +242,17 @@ enum InputBubbleLayout {
 
     /// CG 全局坐标（top-left 原点）y → AppKit 全局坐标 y。
     /// 主屏高度 = NSScreen.screens 首元素（含菜单栏主屏）frame.height，由调用方传入。
+    /// 换算单源在 CoordinateKit.cocoaPoint（本函数只保留气泡域命名）。
     static func appKitY(fromCGY cgY: CGFloat, primaryScreenHeight: CGFloat) -> CGFloat {
-        primaryScreenHeight - cgY
+        CoordinateKit.cocoaPoint(
+            fromQuartz: CGPoint(x: 0, y: cgY),
+            primaryHeight: primaryScreenHeight
+        ).y
     }
 
     /// CG 全局 frame → AppKit 全局 frame（仅 y 翻转；x 同轴）。
     static func appKitFrame(fromCGFrame cgFrame: CGRect, primaryScreenHeight: CGFloat) -> CGRect {
-        CGRect(
-            x: cgFrame.origin.x,
-            y: appKitY(fromCGY: cgFrame.maxY, primaryScreenHeight: primaryScreenHeight),
-            width: cgFrame.width,
-            height: cgFrame.height
-        )
+        CoordinateKit.cocoaRect(fromQuartz: cgFrame, primaryHeight: primaryScreenHeight)
     }
 
     /// 锚点 = 目标窗 minX/minY + margin（气泡坐在窗内左下），再双轴夹进 visibleFrame。
