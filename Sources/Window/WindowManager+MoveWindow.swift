@@ -15,13 +15,13 @@ import Foundation
 /// yabai 发令 / AX resize 解析与写原语 / 轮询睡眠全可注入。默认 nil → 生产真实
 /// 实现；Runner 注入假实现直测写序、AX→yabai 降级与收敛裁决（零 fork、零真实窗口移动）。
 struct YabaiMoveEnvironment {
-    var queryWindow: @MainActor (UInt32) -> YabaiWindowInfo?
-    var cgWindowBounds: @MainActor (UInt32) -> CGRect?
-    var runYabai: @MainActor ([String]) -> Void
-    var findAXWindow: @MainActor (Int32, UInt32) -> AXUIElement?
-    var isSettable: @MainActor (AXUIElement, String) -> Bool
-    var resizeViaAX: @MainActor (CGRect, AXUIElement) -> Bool
-    var pollSleep: @MainActor (UInt32) -> Void
+    var queryWindow: (UInt32) -> YabaiWindowInfo?
+    var cgWindowBounds: (UInt32) -> CGRect?
+    var runYabai: ([String]) -> Void
+    var findAXWindow: (Int32, UInt32) -> AXUIElement?
+    var isSettable: (AXUIElement, String) -> Bool
+    var resizeViaAX: (CGRect, AXUIElement) -> Bool
+    var pollSleep: (UInt32) -> Void
 }
 
 // MARK: - Window Move Operations
@@ -74,8 +74,21 @@ extension WindowManager {
         frame: CGRect,
         op: String,
         stage: String,
+        sourceVisibleFrame: CGRect?
+    ) -> Bool {
+        moveWindowToFrameViaYabai(
+            windowID: windowID, frame: frame, op: op, stage: stage,
+            sourceVisibleFrame: sourceVisibleFrame, environment: nil)
+    }
+
+    /// 带宿主依赖缝的实现体（environment 非 nil 时查询/写原语/轮询全走注入）。
+    func moveWindowToFrameViaYabai(
+        windowID: UInt32,
+        frame: CGRect,
+        op: String,
+        stage: String,
         sourceVisibleFrame: CGRect?,
-        environment: YabaiMoveEnvironment? = nil
+        environment: YabaiMoveEnvironment?
     ) -> Bool {
         let segStart = Date()
         var axResizeWriteMs = 0

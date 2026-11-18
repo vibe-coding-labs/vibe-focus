@@ -13,7 +13,7 @@ struct LayoutApplyEnvironment {
     var frontmostApplication: @MainActor () -> NSRunningApplication?
     var mainScreen: @MainActor () -> NSScreen?
     /// 返回（焦点窗解析结果, 追加到日志 context 的探针字段）
-    var resolveFocusedWindow: @MainActor (NSRunningApplication?, NSScreen?) -> (ToggleWindowResolution, [String: String])
+    var resolveFocusedWindow: @MainActor (NSRunningApplication?, NSScreen?) -> (WindowManager.ToggleWindowResolution, [String: String])
     var cgWindowFrame: @MainActor (UInt32) -> CGRect?
     var isNativeFullscreen: @MainActor (AXUIElement) -> Bool
     var displayContextDisplayID: @MainActor (CGRect) -> UInt32?
