@@ -93,6 +93,7 @@ extension RunnerHarness {
           *"--version"*) echo "yabai-v7.1.18-stub"; exit 0;;
           *"stub-fail"*) echo "stub failure" >&2; exit 2;;
           *"stub-hang"*) sleep 3; exit 0;;
+          *"--load-sa"*) echo "loaded"; exit 0;;
           *"--focus"*) exit 0;;
         esac
         exit 3
@@ -193,9 +194,10 @@ extension RunnerHarness {
         check("yabaiDirect B4: 不可管理窗口 → Carbon 兜底路径（幽灵窗 false）",
               sc.focusWindow(4_000_001, knownWindowInfo: unmanaged) == false)
 
+        // 替身只回 id 4000001/4000002：用不在表内的 id 触发 queryWindow nil → no_window。
         sc.clearQueryCache()
         check("yabaiDirect B5: 未知窗口 → queryWindow nil → no_window false",
-              sc.focusWindow(4_000_001, knownWindowInfo: nil) == false)
+              sc.focusWindow(4_000_999, knownWindowInfo: nil) == false)
 
         // ---- ③ focusWindowByCGWindowID 未命中 ----
         check("yabaiDirect C1: CG 列表无此 windowID → false（幽灵窗安全路径）",
@@ -236,6 +238,53 @@ extension RunnerHarness {
               sc.availability == .unavailable && sc.canControlSpaces == false
                 && !(sc.lastErrorMessage ?? "").isEmpty)
 
+        // ---- ④b attemptSilentSARecovery 成功落账 + 状态机闸门 ----
+        // 直接读写 UserDefaults.standard 的恢复结局键（生产事实源），测试后原样还原；
+        // 先清空以绕开宿主机器既有的历史结局，保证 CI/开发机双环境确定。
+        let defaults = UserDefaults.standard
+        let savedVerdict = defaults.string(forKey: "saRecoveryVerdict")
+        let savedVerdictAt = defaults.object(forKey: "saRecoveryVerdictAt")
+        let savedLegacyFailedAt = defaults.object(forKey: "scriptingAdditionRecoveryFailedAt")
+        defaults.removeObject(forKey: "saRecoveryVerdict")
+        defaults.removeObject(forKey: "saRecoveryVerdictAt")
+        defaults.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
+
+        let savedRecovered = sc.scriptingAdditionRecoverySucceeded
+        let savedCanControlForD5 = sc.canControlSpaces
+        let savedMessageForD5 = sc.lastErrorMessage
+        sc.scriptingAdditionRecoverySucceeded = false
+
+        sc.attemptSilentSARecovery(yabaiPath: stubPath.path)
+        check("yabaiDirect D5: --load-sa 成功 → 恢复标志/可控 + 落账 succeeded",
+              sc.scriptingAdditionRecoverySucceeded && sc.canControlSpaces
+                && defaults.string(forKey: "saRecoveryVerdict") == "succeeded")
+
+        // succeeded 结局 → autoRecoveryAllowed false → 再次调用直接早退（不再 fork）。
+        sc.canControlSpaces = false
+        sc.lastErrorMessage = "sentinel-untouched"
+        sc.attemptSilentSARecovery(yabaiPath: stubPath.path)
+        check("yabaiDirect D6: succeeded 状态机闸门 → 直接早退（状态保持）",
+              sc.canControlSpaces == false && sc.lastErrorMessage == "sentinel-untouched")
+
+        sc.scriptingAdditionRecoverySucceeded = savedRecovered
+        sc.canControlSpaces = savedCanControlForD5
+        sc.lastErrorMessage = savedMessageForD5
+        if let savedVerdict {
+            defaults.set(savedVerdict, forKey: "saRecoveryVerdict")
+        } else {
+            defaults.removeObject(forKey: "saRecoveryVerdict")
+        }
+        if let savedVerdictAt {
+            defaults.set(savedVerdictAt, forKey: "saRecoveryVerdictAt")
+        } else {
+            defaults.removeObject(forKey: "saRecoveryVerdictAt")
+        }
+        if let savedLegacyFailedAt {
+            defaults.set(savedLegacyFailedAt, forKey: "scriptingAdditionRecoveryFailedAt")
+        } else {
+            defaults.removeObject(forKey: "scriptingAdditionRecoveryFailedAt")
+        }
+
         // ---- ⑤ 快照列表响应体 + 空树 AX 文本 ----
         let snapshotsBody = ClaudeHookServer.buildSnapshotsBody()
         let snapshotsObj = (try? JSONSerialization.jsonObject(with: snapshotsBody)) as? [String: Any]
@@ -248,6 +297,36 @@ extension RunnerHarness {
         let ownApp = AXUIElementCreateApplication(getpid())
         check("yabaiDirect E2: terminalScreenText(本进程空树) → nil（降级兜底）",
               WindowManager.terminalScreenText(of: ownApp) == nil)
+
+        // ---- ⑥ SessionRestoreEnvironment 默认实现接线（生产注入缝的 else 臂） ----
+        // 仅调用无外部副作用的默认闭包：真实拉起应用/建窗（ensureTerminalRunning /
+        // createTerminalCell）保持 B 态不碰。
+        let env = SessionRestoreEnvironment()
+        let defaultScreens = env.screens()
+        check("yabaiDirect F1: screens 默认闭包透传 NSScreen.screens",
+              defaultScreens.count == NSScreen.screens.count)
+        if let main = defaultScreens.first {
+            check("yabaiDirect F2: cgDisplayID/primaryDisplayID/quartzVisibleFrame 默认接线",
+                  env.cgDisplayID(main) != nil && env.primaryDisplayID() != nil
+                    && env.quartzVisibleFrame(main).width > 0)
+            _ = env.exactYabaiDisplayIndex(main)
+        }
+        _ = env.automationInstanceRefusal("com.apple.Terminal", false)
+        _ = env.automationInstanceRefusal("com.apple.Terminal", true)
+        _ = env.querySpaces()
+        _ = env.queryAllWindows()
+        check("yabaiDirect F3: queryWindow 幽灵窗默认闭包 → nil",
+              env.queryWindow(4_000_001) == nil)
+        check("yabaiDirect F4: bundleIdentifierOfPID 幽灵 pid → nil",
+              env.bundleIdentifierOfPID(pid_t(999_999_999)) == nil)
+        check("yabaiDirect F5: classifyTTY 幽灵 tty → 降级 shell 分类",
+              env.classifyTTY("/dev/ttys999").kind == .shell)
+        _ = env.focusSpace(.yabai(1), "op-env-default")
+        env.setWindowFloat(4_000_001, "op-env-default")
+        _ = env.parkingScreen(excludingYabaiDisplayIndex: 1)
+        env.runYabai(["-m", "query", "--spaces"], "env-default", "op-env-default")
+        check("yabaiDirect F6: now 默认闭包返回当前时刻",
+              abs(env.now().timeIntervalSinceNow) < 5)
 
         // 收尾：恢复注入前状态（defer 兜底，此处显式清缓存避免窗口查询缓存跨域污染）
         sc.clearQueryCache()
