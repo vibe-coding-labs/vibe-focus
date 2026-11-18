@@ -3,6 +3,31 @@ import ApplicationServices.HIServices
 import CoreGraphics
 import Foundation
 
+// MARK: - 摆位宿主依赖缝
+/// applyLayoutAction 的宿主依赖（权限/焦点窗解析/屏幕/可用区/AX 写入/跨屏写/
+/// 提示音/审计）。默认 nil 走实例真实方法；Runner 注入假实现即可在 CLI 直测
+/// 全部分支判定（零 AX 写入、零窗口移动、零提权弹框）。
+struct LayoutApplyEnvironment {
+    var hasAccessibilityPermission: @MainActor () -> Bool
+    var notifyPermissionRequired: @MainActor () -> Void
+    var frontmostApplication: @MainActor () -> NSRunningApplication?
+    var mainScreen: @MainActor () -> NSScreen?
+    /// 返回（焦点窗解析结果, 追加到日志 context 的探针字段）
+    var resolveFocusedWindow: @MainActor (NSRunningApplication?, NSScreen?) -> (ToggleWindowResolution, [String: String])
+    var cgWindowFrame: @MainActor (UInt32) -> CGRect?
+    var isNativeFullscreen: @MainActor (AXUIElement) -> Bool
+    var displayContextDisplayID: @MainActor (CGRect) -> UInt32?
+    var nsScreenForDisplayID: @MainActor (UInt32) -> NSScreen?
+    var screens: @MainActor () -> [NSScreen]
+    var visibleFrame: @MainActor (NSScreen) -> CGRect
+    var snapGap: @MainActor () -> CGFloat
+    var resolveAX: @MainActor (WindowIdentity) -> AXUIElement?
+    var applyFrame: @MainActor (CGRect, AXUIElement, String) -> Bool
+    var floatWriteFrame: @MainActor (UInt32, CGRect, String) -> Bool
+    var beep: @MainActor () -> Void
+    var record: @MainActor (String) -> Void
+}
+
 // MARK: - Rectangle 式摆位执行
 /// 把焦点窗口摆到 LayoutAction 指定的布局位置。目标 frame 由 LayoutFrameCalculator
 /// 计算（可见区扣 menu bar/Dock），写入复用既有两条路径：
@@ -23,6 +48,17 @@ extension WindowManager {
         triggerSource: String = "menu",
         operationID: String? = nil
     ) -> Bool {
+        applyLayoutAction(action, triggerSource: triggerSource, operationID: operationID, environment: nil)
+    }
+
+    /// 带宿主依赖缝的实现体（environment 非 nil 时全部宿主点走注入，
+    /// 供 Runner 在 CLI 直测分支判定；生产调用恒为 nil）。
+    func applyLayoutAction(
+        _ action: LayoutAction,
+        triggerSource: String,
+        operationID: String?,
+        environment: LayoutApplyEnvironment?
+    ) -> Bool {
         let op = operationID ?? makeOperationID(prefix: "layout-\(action.rawValue)")
         let startedAt = Date()
         defer {
@@ -33,9 +69,14 @@ extension WindowManager {
             ])
         }
 
-        guard hasAccessibilityPermission() else {
+        let trusted = environment?.hasAccessibilityPermission() ?? hasAccessibilityPermission()
+        guard trusted else {
             log("applyLayoutAction failed: accessibility not granted", level: .error, fields: ["op": op])
-            notifyAccessibilityPermissionRequired()
+            if let environment {
+                environment.notifyPermissionRequired()
+            } else {
+                notifyAccessibilityPermissionRequired()
+            }
             return false
         }
 
@@ -44,32 +85,53 @@ extension WindowManager {
             "source": triggerSource,
             "action": action.rawValue
         ]
-        let resolution = resolveFocusedWindowForToggle(
-            frontApp: NSWorkspace.shared.frontmostApplication,
-            cachedMainScreen: getMainScreen(),
-            toggleContext: &context
-        )
+        let resolution: ToggleWindowResolution
+        if let environment {
+            let (resolved, extraContext) = environment.resolveFocusedWindow(
+                environment.frontmostApplication(), environment.mainScreen())
+            resolution = resolved
+            context.merge(extraContext) { _, new in new }
+        } else {
+            resolution = resolveFocusedWindowForToggle(
+                frontApp: NSWorkspace.shared.frontmostApplication,
+                cachedMainScreen: getMainScreen(),
+                toggleContext: &context
+            )
+        }
         guard let windowID = resolution.windowID, let identity = resolution.identity else {
             log("applyLayoutAction: no focused window", level: .debug, fields: ["op": op])
-            NSSound.beep()
+            layoutBeep(environment)
             return false
         }
 
-        guard let windowFrame = resolution.windowFrame ?? cgWindowFrame(forWindowID: windowID) else {
+        let liveFrame: CGRect?
+        if let environment {
+            liveFrame = environment.cgWindowFrame(windowID)
+        } else {
+            liveFrame = cgWindowFrame(forWindowID: windowID)
+        }
+        guard let windowFrame = resolution.windowFrame ?? liveFrame else {
             log("applyLayoutAction: cannot read window frame", level: .error, fields: ["op": op, "windowID": String(windowID)])
-            NSSound.beep()
+            layoutBeep(environment)
             return false
         }
 
-        if let ax = resolution.windowAX, isNativeFullscreen(ax) {
+        if let ax = resolution.windowAX,
+           environment?.isNativeFullscreen(ax) ?? isNativeFullscreen(ax) {
             log("applyLayoutAction: skip native fullscreen window", fields: ["op": op, "windowID": String(windowID)])
-            NSSound.beep()
+            layoutBeep(environment)
             return false
         }
 
         // 窗口当前屏：displayContext 判定（Quartz→Cocoa 变换后匹配 NSScreen）
-        let sourceScreen = displayContext(for: windowFrame).displayID
-            .flatMap { CoordinateKit.nsScreen(forCGDisplayID: $0) } ?? getMainScreen()
+        let sourceScreen: NSScreen?
+        if let environment {
+            sourceScreen = environment.displayContextDisplayID(windowFrame)
+                .flatMap { environment.nsScreenForDisplayID($0) } ?? environment.mainScreen()
+        } else {
+            sourceScreen = displayContext(for: windowFrame).displayID
+                .flatMap { CoordinateKit.nsScreen(forCGDisplayID: $0) } ?? getMainScreen()
+        }
         guard let sourceScreen else {
             log("applyLayoutAction: cannot resolve source screen", level: .error, fields: ["op": op])
             return false
@@ -78,10 +140,10 @@ extension WindowManager {
         let targetScreen: NSScreen
         switch action {
         case .nextDisplay:
-            let screens = NSScreen.screens
+            let screens = environment?.screens() ?? NSScreen.screens
             guard screens.count > 1, let currentIndex = screens.firstIndex(of: sourceScreen) else {
                 log("applyLayoutAction: nextDisplay requires >1 screen", level: .debug, fields: ["op": op])
-                NSSound.beep()
+                layoutBeep(environment)
                 return false
             }
             targetScreen = screens[(currentIndex + 1) % screens.count]
@@ -93,33 +155,39 @@ extension WindowManager {
         // P40UG visibleFrame 谎报整屏，窗口写不进顶部 25px；insets 由 TerminalGrid
         // 编排学习缓存，无缓存时行为不变）。解算口径集中在 ScreenWorkArea，
         // 与网格编排共用同一事实源。
-        let visibleFrame = ScreenWorkArea.plan(for: targetScreen).planningFrame
+        let visibleFrame = environment?.visibleFrame(targetScreen)
+            ?? ScreenWorkArea.plan(for: targetScreen).planningFrame
         guard let targetFrame = LayoutFrameCalculator.frame(
             for: action,
             visibleFrame: visibleFrame,
             windowFrame: windowFrame,
-            gap: LayoutPreferences.snapGap
+            gap: environment?.snapGap() ?? LayoutPreferences.snapGap
         ) else {
             log("applyLayoutAction: frame calculation failed", level: .error, fields: ["op": op])
             return false
         }
 
         let crossing = targetScreen !== sourceScreen
-        let ok = crossing
-            ? moveCrossDisplay(
-                windowID: windowID,
+        let ok: Bool
+        if crossing {
+            ok = environment?.floatWriteFrame(windowID, targetFrame, op)
+                ?? moveCrossDisplay(
+                    windowID: windowID,
+                    identity: identity,
+                    resolution: resolution,
+                    sourceScreen: sourceScreen,
+                    targetFrame: targetFrame,
+                    op: op
+                )
+        } else {
+            ok = moveSameDisplay(
                 identity: identity,
                 resolution: resolution,
-                sourceScreen: sourceScreen,
                 targetFrame: targetFrame,
-                op: op
+                op: op,
+                environment: environment
             )
-            : moveSameDisplay(
-                identity: identity,
-                resolution: resolution,
-                targetFrame: targetFrame,
-                op: op
-            )
+        }
 
         log("[WindowManager] applyLayoutAction result", fields: [
             "op": op,
@@ -128,22 +196,45 @@ extension WindowManager {
             "ok": String(ok),
             "targetFrame": QuartzRect(targetFrame).description
         ])
-        CrashContextRecorder.shared.record("layout_apply op=\(op) action=\(action.rawValue) ok=\(ok)")
+        let audit = "layout_apply op=\(op) action=\(action.rawValue) ok=\(ok)"
+        if let environment {
+            environment.record(audit)
+        } else {
+            CrashContextRecorder.shared.record(audit)
+        }
         if !ok {
-            NSSound.beep()
+            layoutBeep(environment)
         }
         return ok
+    }
+
+    private func layoutBeep(_ environment: LayoutApplyEnvironment?) {
+        if let environment {
+            environment.beep()
+        } else {
+            NSSound.beep()
+        }
     }
 
     private func moveSameDisplay(
         identity: WindowIdentity,
         resolution: ToggleWindowResolution,
         targetFrame: CGRect,
-        op: String
+        op: String,
+        environment: LayoutApplyEnvironment?
     ) -> Bool {
-        guard let ax = resolution.windowAX ?? resolveWindow(identity: identity) else {
+        let ax: AXUIElement?
+        if let environment {
+            ax = resolution.windowAX ?? environment.resolveAX(identity)
+        } else {
+            ax = resolution.windowAX ?? resolveWindow(identity: identity)
+        }
+        guard let ax else {
             log("applyLayoutAction: cannot resolve AX", level: .error, fields: ["op": op])
             return false
+        }
+        if let environment {
+            return environment.applyFrame(targetFrame, ax, op)
         }
         return apply(frame: targetFrame, to: ax, operationID: op, stage: "layout_apply", windowID: identity.windowID)
     }

@@ -94,7 +94,12 @@ extension RunnerHarness {
             }
         }
         env.focusSpace = { space, _ in
-            if case .yabai(let index) = space { state.focusCalls.append(index) }
+            switch space {
+            case .yabaiIndex(let index):
+                state.focusCalls.append(index)
+            case .nativeID:
+                break
+            }
             return true
         }
         env.createTerminalCell = { app, command, frame, _, excluding in
