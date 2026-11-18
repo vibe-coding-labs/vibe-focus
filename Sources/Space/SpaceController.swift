@@ -170,7 +170,9 @@ final class SpaceController: ObservableObject, @unchecked Sendable {
 
     /// 后台探测结果 → 主线程状态应用（原 refreshAvailability 的状态变更段原样搬移）。
     @MainActor
-    private func applyAvailability(probe: AvailabilityProbe) {
+    // 覆盖批次 43：private → internal，供 Runner 直测四态状态应用（launch 失败 / SA 已载 /
+    // SA 缺失 / 非零退出）；生产入口仍是 refreshAvailability 的后台回调，行为不变。
+    func applyAvailability(probe: AvailabilityProbe) {
         let yabaiPath = probe.yabaiPath
         var raResult = "applied"
         defer {
