@@ -35,6 +35,20 @@ enum SessionBindingOutcome {
     case none
 }
 
+/// 会话绑定解析的宿主依赖缝（2026-11-19 覆盖率补齐）：绑定查找 / 活性校验 /
+/// 落库绑定 / 前台窗捕获 / 终端判定 / 远程自愈全可注入。默认 nil → 生产真实
+/// 实现（SessionWindowRegistry / WindowManager / TerminalRegistry）；
+/// Runner 注入假实现穷尽四态分支（零注册库写、零 AX、零远程解析）。
+struct SessionBindingEnvironment {
+    var binding: (String) -> WindowState?
+    var verifyBinding: (WindowState) -> Bool
+    /// (sessionID, identity, terminalCtx, cwd, model)
+    var bind: (String, WindowIdentity, TerminalContext?, String?, String?) -> Void
+    var captureFocused: () -> WindowIdentity?
+    var isTerminalBundleID: (String) -> Bool
+    var resolveRemoteBinding: (String, String) -> WindowIdentity?
+}
+
 @MainActor
 extension HookEventHandler {
 
@@ -59,9 +73,47 @@ extension HookEventHandler {
     /// - Parameter traceID: 调用方追踪标识（Stop/SessionEnd 传 triggerName，UPS 传 traceID）
     func resolveSessionBinding(
         payload: ClaudeHookPayload,
-        traceID: String
+        traceID: String,
+        environment: SessionBindingEnvironment? = nil
     ) -> SessionBindingOutcome {
-        let existing = SessionWindowRegistry.shared.binding(for: payload.sessionID)
+        func existingBinding() -> WindowState? {
+            if let environment { return environment.binding(payload.sessionID) }
+            return SessionWindowRegistry.shared.binding(for: payload.sessionID)
+        }
+        func verify(_ state: WindowState) -> Bool {
+            if let environment { return environment.verifyBinding(state) }
+            return SessionWindowRegistry.shared.verifyBinding(state)
+        }
+        func bind(_ identity: WindowIdentity) {
+            if let environment {
+                environment.bind(payload.sessionID, identity, payload.terminalCtx, payload.cwd, payload.model)
+                return
+            }
+            SessionWindowRegistry.shared.bind(
+                sessionID: payload.sessionID,
+                windowIdentity: identity,
+                terminalTTY: payload.terminalCtx?.tty,
+                terminalSessionID: payload.terminalCtx?.termSessionID,
+                itermSessionID: payload.terminalCtx?.itermSessionID,
+                cwd: payload.cwd,
+                model: payload.model,
+                bindingType: .remote
+            )
+        }
+        func captureFocused() -> WindowIdentity? {
+            if let environment { return environment.captureFocused() }
+            return WindowManager.shared.captureFocusedWindowIdentity()
+        }
+        func isTerminalBundleID(_ bundleID: String) -> Bool {
+            if let environment { return environment.isTerminalBundleID(bundleID) }
+            return TerminalRegistry.isTerminalBundleID(bundleID)
+        }
+        func remoteBinding(label: String) -> WindowIdentity? {
+            if let environment { return environment.resolveRemoteBinding(label, payload.sessionID) }
+            return resolveRemoteBinding(label: label, sessionID: payload.sessionID)
+        }
+
+        let existing = existingBinding()
 
         switch Self.decideSessionBindingStep(
             hasBinding: existing != nil,
@@ -80,7 +132,7 @@ extension HookEventHandler {
                     "app": binding.appName ?? "unknown"
                 ]
             )
-            if SessionWindowRegistry.shared.verifyBinding(binding) {
+            if verify(binding) {
                 log(
                     "[HookEventHandler] resolveSessionBinding: binding verified",
                     level: .debug,
@@ -120,18 +172,9 @@ extension HookEventHandler {
             // 前台应用误绑；Stop/SessionEnd 不做此绑定（claude 自行完成时用户
             // 可能在看别处，聚焦窗无意义）。
             if case .userPromptSubmit = payload.event,
-               let focused = WindowManager.shared.captureFocusedWindowIdentity(),
-               TerminalRegistry.isTerminalBundleID(focused.bundleIdentifier ?? "") {
-                SessionWindowRegistry.shared.bind(
-                    sessionID: payload.sessionID,
-                    windowIdentity: focused,
-                    terminalTTY: payload.terminalCtx?.tty,
-                    terminalSessionID: payload.terminalCtx?.termSessionID,
-                    itermSessionID: payload.terminalCtx?.itermSessionID,
-                    cwd: payload.cwd,
-                    model: payload.model,
-                    bindingType: .remote
-                )
+               let focused = captureFocused(),
+               isTerminalBundleID(focused.bundleIdentifier ?? "") {
+                bind(focused)
                 log(
                     "[HookEventHandler] resolveSessionBinding: auto-bound to focused terminal window",
                     level: .info,
@@ -142,25 +185,16 @@ extension HookEventHandler {
                         "title": focused.title ?? "nil"
                     ]
                 )
-                guard let boundNow = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+                guard let boundNow = existingBinding() else {
                     return .none
                 }
                 return .bound(boundNow)
             }
-            guard let identity = resolveRemoteBinding(label: label, sessionID: payload.sessionID) else {
+            guard let identity = remoteBinding(label: label) else {
                 return .none
             }
-            SessionWindowRegistry.shared.bind(
-                sessionID: payload.sessionID,
-                windowIdentity: identity,
-                terminalTTY: payload.terminalCtx?.tty,
-                terminalSessionID: payload.terminalCtx?.termSessionID,
-                itermSessionID: payload.terminalCtx?.itermSessionID,
-                cwd: payload.cwd,
-                model: payload.model,
-                bindingType: .remote
-            )
-            guard let healed = SessionWindowRegistry.shared.binding(for: payload.sessionID) else {
+            bind(identity)
+            guard let healed = existingBinding() else {
                 log(
                     "[HookEventHandler] resolveSessionBinding: heal registered but binding lost immediately",
                     level: .warn,
@@ -174,7 +208,7 @@ extension HookEventHandler {
             }
             // 与既有绑定同一门槛：自愈产物也必须通过活性校验才交付
             // （历史 UPS 路径自愈后不校验，属两路漂移；Stop 路径本就校验，行为不变）
-            guard SessionWindowRegistry.shared.verifyBinding(healed) else {
+            guard verify(healed) else {
                 log(
                     "[HookEventHandler] resolveSessionBinding: healed binding verification failed",
                     level: .warn,
@@ -220,7 +254,8 @@ extension HookEventHandler {
     func resolveWindowIdentity(
         payload: ClaudeHookPayload,
         traceID: String,
-        startedAt: Date
+        startedAt: Date,
+        environment: SessionBindingEnvironment? = nil
     ) -> WindowIdentity? {
         // P-INST-32: resolveWindowIdentity 耗时（startedAt 由调用方传入；verifyBinding CGWindowList ~5ms，resolveRemoteBinding 远程自愈偶发）。
         defer {
@@ -230,7 +265,7 @@ extension HookEventHandler {
                 "durationMs": String(elapsedMilliseconds(since: startedAt))
             ])
         }
-        switch resolveSessionBinding(payload: payload, traceID: traceID) {
+        switch resolveSessionBinding(payload: payload, traceID: traceID, environment: environment) {
         case .bound(let state), .healed(let state):
             return WindowIdentity(from: state)
         case .verificationFailed, .healLost, .none:
