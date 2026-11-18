@@ -301,12 +301,27 @@ final class FakeAuditor: RestoreAuditing {
             .filter { !$0.isEmpty })
     }()
 
+    /// CI 无 yabai 环境且非 UI E2E：overlay 自动刷新 Timer 会把主线程拖进
+    /// fallback 查询风暴（runAllTests 注释）。真机门禁不受此保险丝影响。
+    private var isCINonUI: Bool {
+        ProcessInfo.processInfo.environment["CI"] == "true"
+            && ProcessInfo.processInfo.environment["VIBEFOCUS_UI_E2E"] != "1"
+    }
+
     func runDomain(_ name: String, _ body: () -> Void) {
         if let requested = requestedDomains, !requested.contains(name) { return }
         if skippedDomains.contains(name) {
             skipped += 1
             print("  SKIP: \(name)（环境不具备：\(ProcessInfo.processInfo.environment["VIBEFOCUS_SKIP_REASON"] ?? "见 VIBEFOCUS_RUNNER_SKIP_DOMAINS")）")
             return
+        }
+        if isCINonUI {
+            // 逐域重新挂起（防一次启动保险丝被中途撤销）：toggle 收尾经
+            // WindowManager+Toggle 调 resumeAutomaticRefreshes，残留 Timer 在
+            // 无 yabai 的 CI 上以 0.35s 周期风暴主线程，把后续只读域拖成
+            // 27 分钟（2026-11-18 Verify 44234779399：runYabaiAsyncAndVoice
+            // PersistTests 04:09:32 resume → runSpaceQueryReadOnlyTests 卡到 04:36）。
+            ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "runner_ci_domain")
         }
         print("=== \(name) ===")
         body()
@@ -320,11 +335,14 @@ final class FakeAuditor: RestoreAuditing {
             InputBubblePreferences.isEnabled = false
             InputBubblePreferences.autoShowOnFocus = false
             InputBubblePreferences.autoShowOnMoveToMain = false
+        }
+        if isCINonUI {
             // 纵深防御 2：设置页渲染域会初始化 ScreenOverlayManager，其自动刷新
             // Timer 一旦跑起来，无 yabai 的 CI（displayIndex 永不缓存 → fallback
             // 查询）会与同步 yabai 桥的 RunLoop 泵自激，卡死后续只读域
             // （2026-11-18 Verify 实测 runSpaceQueryShapeTests 首查卡 46 分钟）。
-            ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "runner_non_ui")
+            // 仅 CI 生效：真机有 yabai，保持生产刷新语义不变。
+            ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "runner_ci")
         }
         runDomain("runRestoreOrchestrationTests") { runRestoreOrchestrationTests() }
         runDomain("runRestoreStageTests") { runRestoreStageTests() }
