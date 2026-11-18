@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices.HIServices
 import Foundation
 @testable import VibeFocusKit
 

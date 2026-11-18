@@ -7,6 +7,19 @@ import Foundation
 // 1. verifyAndCorrectPostMoveSize — 移动后 size 漂移校验与重写（对抗 yabai 异步 re-tile）
 // 2. saveToggleRecordForMainMove  — 保存 toggle record 供 restore 回原位
 
+/// move_to_main 收尾的宿主依赖缝（2026-11-19 覆盖率补齐）：CG 回读、size 重写、
+/// settle 睡眠、屏上下文与 toggle record 落账全可注入。默认 nil → 生产真实实现；
+/// Runner 注入假实现直测无漂移/重写收敛/重写耗尽/回读失败/记录字段推导
+/// （零 AX 写、零真实睡眠、零记录库写）。
+struct PostMoveEnvironment {
+    var cgWindowBounds: (UInt32) -> CGRect?
+    var writeSize: (AXUIElement, CGRect) -> Void
+    var settle: (useconds_t) -> Void
+    /// 帧所在屏的 yabai display 索引（记录推导 fallback 用）
+    var displayYabaiIndex: (CGRect) -> Int?
+    var saveToggleRecord: (WindowIdentity, UInt32, CGRect, SpaceContext, CGRect, Int?, WindowMoveReason, String?, Bool) -> Void
+}
+
 extension WindowManager {
 
     /// 移动后一致性校验：读最终 frame，size 漂移超阈值则重写（最多 2 次 + 回读验证）。
@@ -30,15 +43,20 @@ extension WindowManager {
         targetFrame: CGRect,
         origFrame: CGRect,
         mainScreen: NSScreen,
-        op: String
+        op: String,
+        environment: PostMoveEnvironment? = nil
     ) -> Int {
         let postMoveCheckStart = Date()
+        func readBounds() -> CGRect? {
+            if let environment { return environment.cgWindowBounds(windowID) }
+            return cgWindowBounds(for: windowID)
+        }
         // P3.5: 移除 usleep(30_000) + frame read 改 CGWindowList（非阻塞）。P3.1 positionFirst +
         // setWindowFloat（move_to_main 窗口已 floating，floatMs=0 skipped）后 yabai 无 re-tile，压测
         // sizeDrift 恒 0（postMoveCheck 从未 rewrite），30ms usleep 等 re-tile 冗余。apply phase2 已
         // usleep 25ms + sizeReadbackMatched 验证，紧随的 CGWindowList 读 frame 时 WindowServer 已更新。
         // drift check + rewrite 保留兜底偶发（memory feedback_apply_float_order）。
-        if let finalFrame = cgWindowBounds(for: windowID) {
+        if let finalFrame = readBounds() {
             let sizeDrift = CoordinateKit.sizeDrift(finalFrame.size, targetFrame.size)
             log("[WindowManager] moveWindowToMainScreen: post-move frame check", fields: [
                 "op": op,
@@ -70,15 +88,19 @@ extension WindowManager {
                     write: {
                         rewriteAttemptNo += 1
                         rewriteAttemptStart = Date()
-                        var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
-                        if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
-                            _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
+                        if let environment {
+                            environment.writeSize(windowAX, targetFrame)
+                        } else {
+                            var rewriteSize = CGSize(width: targetFrame.width, height: targetFrame.height)
+                            if let rewriteValue = AXValueCreate(.cgSize, &rewriteSize) {
+                                _ = AXUIElementSetAttributeValue(windowAX, kAXSizeAttribute as CFString, rewriteValue)
+                            }
                         }
                         // AX 结果照历史吞掉（兜底路径，读回判据说话）。
                         return true
                     },
                     read: {
-                        guard let postRewriteFrame = cgWindowBounds(for: windowID) else { return nil }
+                        guard let postRewriteFrame = readBounds() else { return nil }
                         let postDrift = CoordinateKit.sizeDrift(postRewriteFrame.size, targetFrame.size)
                         log("[WindowManager] moveWindowToMainScreen: post-rewrite check", fields: [
                             "op": op, "windowID": String(windowID),
@@ -89,7 +111,14 @@ extension WindowManager {
                         ])
                         return postRewriteFrame
                     },
-                    isConverged: { CoordinateKit.isSizeConverged(actual: $0.size, target: targetFrame.size, tolerance: frameTolerance) }
+                    isConverged: { CoordinateKit.isSizeConverged(actual: $0.size, target: targetFrame.size, tolerance: frameTolerance) },
+                    sleep: { micros in
+                        if let environment {
+                            environment.settle(micros)
+                        } else {
+                            usleep(micros)
+                        }
+                    }
                 )
                 if case .mismatched = outcome {
                     log("[WindowManager] moveWindowToMainScreen: post-rewrite exhausted", level: .warn, fields: [
@@ -120,28 +149,42 @@ extension WindowManager {
         reason: WindowMoveReason,
         sessionID: String?,
         op: String,
-        singleDisplay: Bool = false
+        singleDisplay: Bool = false,
+        environment: PostMoveEnvironment? = nil
     ) -> Int {
         let saveStart = Date()
         let sourceSpaceIndex = spaceContext.sourceSpaceIndex ?? .yabai(0)
-        let sourceContext = displayContext(for: origFrame)
-        let sourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex ?? sourceContext.yabaiIndex.map { .yabai($0) } ?? .yabai(0)
-        ToggleEngine.shared.save(
-            windowID: windowID,
-            pid: identity.pid,
-            bundleIdentifier: identity.bundleIdentifier,
-            appName: identity.appName,
-            origFrame: origFrame,
-            sourceSpace: sourceSpaceIndex,
-            sourceDisplay: sourceDisplay,
-            sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? .yabai(0),
-            sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
-            targetFrame: targetFrame,
-            targetDisplay: targetDisplayIndex ?? 0,
-            sessionID: sessionID,
-            reason: reason,
-            singleDisplay: singleDisplay
-        )
+        let sourceYabaiIndex: Int?
+        if let environment {
+            sourceYabaiIndex = environment.displayYabaiIndex(origFrame)
+        } else {
+            sourceYabaiIndex = displayContext(for: origFrame).yabaiIndex
+        }
+        let sourceDisplay: DisplayIdentifier = spaceContext.sourceDisplayIndex
+            ?? sourceYabaiIndex.map { .yabai($0) } ?? .yabai(0)
+        if let environment {
+            environment.saveToggleRecord(
+                identity, windowID, origFrame, spaceContext, targetFrame,
+                targetDisplayIndex, reason, sessionID, singleDisplay
+            )
+        } else {
+            ToggleEngine.shared.save(
+                windowID: windowID,
+                pid: identity.pid,
+                bundleIdentifier: identity.bundleIdentifier,
+                appName: identity.appName,
+                origFrame: origFrame,
+                sourceSpace: sourceSpaceIndex,
+                sourceDisplay: sourceDisplay,
+                sourceYabaiDisp: spaceContext.sourceDisplayIndex ?? .yabai(0),
+                sourceDispSpace: spaceContext.sourceDisplaySpaceIndex ?? 0,
+                targetFrame: targetFrame,
+                targetDisplay: targetDisplayIndex ?? 0,
+                sessionID: sessionID,
+                reason: reason,
+                singleDisplay: singleDisplay
+            )
+        }
         let saveMs = elapsedMilliseconds(since: saveStart)
 
         log("[WindowManager] moveWindowToMainScreen: ToggleRecord saved", fields: [
