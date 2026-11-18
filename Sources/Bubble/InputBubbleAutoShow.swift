@@ -99,6 +99,38 @@ enum InputBubbleAutoShowGate {
 // 热路径零 AX：前台非终端时只做清标记；终端前台时用 CGWindowList（非阻塞）取该 app 最顶层
 // onscreen 窗口——与注册表键同源（windowHandle = _AXUIElementGetWindow = CGWindowID）。
 
+/// tick 编排的宿主依赖缝（2026-11-19 覆盖率补齐）：前台 app / 前台身份 /
+/// CGWindowList / 主屏判定 / 气泡控制器 / 活跃绑定 / 归因账本 / 偏好 / 崩溃记账全可注入。
+/// 默认 nil → 生产真实实现；Runner 注入假实现穷尽 summon / 各 skip / 到达弹出 /
+/// 到达改绑 / 基线落账分支（零真面板、零 CGWindowList、零数据库读）。
+struct InputBubbleAutoShowEnvironment {
+    struct FrontIdentity {
+        var name: String?
+        var bundleID: String?
+    }
+
+    struct Preferences {
+        var autoShowOnFocus: Bool
+        var autoShowOnMoveToMain: Bool
+        var autoHide: Bool
+    }
+
+    var frontmostApp: () -> NSRunningApplication?
+    /// nil = 本次 tick 无前台身份（跳过 B305 身份缓存读取）
+    var frontIdentity: () -> FrontIdentity?
+    var cgWindows: () -> [CGWindowEntry]
+    var isOnMainScreen: (CGRect) -> Bool
+    var isIdle: () -> Bool
+    var targetWindowID: () -> UInt32?
+    var summon: () -> Void
+    var summonForMovedWindow: (UInt32, pid_t, String?) -> Void
+    var retargetForMovedWindow: (UInt32, pid_t, String?) -> Void
+    var hasLiveSessionBinding: (UInt32) -> Bool
+    var recentMover: (UInt32) -> InputBubbleArrivalMover?
+    var preferences: () -> Preferences
+    var recordCrashEvent: (String) -> Void
+}
+
 @MainActor
 final class InputBubbleAutoShow {
     static let shared = InputBubbleAutoShow()
@@ -189,9 +221,67 @@ final class InputBubbleAutoShow {
         }
     }
 
-    func tick() {
+    func tick(environment: InputBubbleAutoShowEnvironment? = nil) {
         let controller = InputBubbleController.shared
-        let front = frontmostAppProvider.map { $0() } ?? NSWorkspace.shared.frontmostApplication
+        let front: NSRunningApplication?
+        if let environment {
+            front = environment.frontmostApp()
+        } else {
+            front = frontmostAppProvider.map { $0() } ?? NSWorkspace.shared.frontmostApplication
+        }
+        func windows() -> [CGWindowEntry] {
+            if let environment { return environment.cgWindows() }
+            return cgWindowListAll()
+        }
+        func isOnMain(_ bounds: CGRect) -> Bool {
+            if let environment { return environment.isOnMainScreen(bounds) }
+            return CoordinateKit.isOnMainScreen(bounds)
+        }
+        func hasLive(_ windowID: UInt32) -> Bool {
+            if let environment { return environment.hasLiveSessionBinding(windowID) }
+            return SessionWindowRegistry.shared.hasLiveSessionBinding(windowID: windowID)
+        }
+        func bubbleIsIdle() -> Bool {
+            if let environment { return environment.isIdle() }
+            return controller.isIdle
+        }
+        func bubbleTargetWindowID() -> UInt32? {
+            if let environment { return environment.targetWindowID() }
+            return controller.target?.windowID
+        }
+        func summonBubble() {
+            if let environment { environment.summon() } else { controller.summon() }
+        }
+        func summonMoved(windowID: UInt32, pid: pid_t, appName: String?) {
+            if let environment {
+                environment.summonForMovedWindow(windowID, pid, appName)
+            } else {
+                controller.summonForMovedWindow(windowID: windowID, pid: pid, appName: appName)
+            }
+        }
+        func retargetMoved(windowID: UInt32, pid: pid_t, appName: String?) {
+            if let environment {
+                environment.retargetForMovedWindow(windowID, pid, appName)
+            } else {
+                controller.retargetForMovedWindow(windowID: windowID, pid: pid, appName: appName)
+            }
+        }
+        func recentMover(_ windowID: UInt32) -> InputBubbleArrivalMover? {
+            if let environment { return environment.recentMover(windowID) }
+            return MoveToMainAttributionLedger.shared.recentMover(windowID: windowID)
+        }
+        func recordCrash(_ event: String) {
+            if let environment { environment.recordCrashEvent(event) } else { CrashContextRecorder.shared.record(event) }
+        }
+        let prefs: InputBubbleAutoShowEnvironment.Preferences
+        if let environment {
+            prefs = environment.preferences()
+        } else {
+            prefs = InputBubbleAutoShowEnvironment.Preferences(
+                autoShowOnFocus: InputBubblePreferences.autoShowOnFocus,
+                autoShowOnMoveToMain: InputBubblePreferences.autoShowOnMoveToMain,
+                autoHide: InputBubblePreferences.autoHide)
+        }
         // B305：前台身份缓存（决策表 InputBubbleFrontIdentityPlan，Runner 直测）。
         // localizedName/bundleIdentifier/processIdentifier 的读取都可能走 LaunchServices
         // 同步 XPC——装机实锤每秒 tick 重复读导致主线程 STALL 单次 1~7s（热键 tap/Carbon
@@ -200,34 +290,40 @@ final class InputBubbleAutoShow {
         // 二级 pid 对账兜底 AppKit 换包装，双变才全量重读回写。
         var identityName: String?
         var identityBundleID: String?
-        let currentObjectID = front.map { ObjectIdentifier($0) }
-        if InputBubbleFrontIdentityPlan.identityHit(
-            currentObjectID: currentObjectID,
-            cachedObjectID: frontIdentityObjectID
-        ) {
-            // 一级命中：整拍零属性读取
-            identityName = frontIdentityName
-            identityBundleID = frontIdentityBundleID
+        if let environment {
+            let injected = environment.frontIdentity()
+            identityName = injected?.name
+            identityBundleID = injected?.bundleID
         } else {
-            // 一级未命中：读一次 pid 对账（此读为可接受成本，且结果必须回写防下次重读）
-            let currentPID = front?.processIdentifier
-            switch InputBubbleFrontIdentityPlan.source(cachedPID: frontIdentityPID, currentPID: currentPID) {
-            case .cachedByPID:
+            let currentObjectID = front.map { ObjectIdentifier($0) }
+            if InputBubbleFrontIdentityPlan.identityHit(
+                currentObjectID: currentObjectID,
+                cachedObjectID: frontIdentityObjectID
+            ) {
+                // 一级命中：整拍零属性读取
                 identityName = frontIdentityName
                 identityBundleID = frontIdentityBundleID
-                frontIdentityObjectID = currentObjectID
-            case .readFresh:
-                identityName = front?.localizedName
-                identityBundleID = front?.bundleIdentifier
-                frontIdentityObjectID = currentObjectID
-                frontIdentityPID = currentPID
-                frontIdentityName = identityName
-                frontIdentityBundleID = identityBundleID
-            case .none:
-                break
-            case .cached:
-                // 一级未命中时 pid 命中只会得到 .cachedByPID，此分支不可达
-                break
+            } else {
+                // 一级未命中：读一次 pid 对账（此读为可接受成本，且结果必须回写防下次重读）
+                let currentPID = front?.processIdentifier
+                switch InputBubbleFrontIdentityPlan.source(cachedPID: frontIdentityPID, currentPID: currentPID) {
+                case .cachedByPID:
+                    identityName = frontIdentityName
+                    identityBundleID = frontIdentityBundleID
+                    frontIdentityObjectID = currentObjectID
+                case .readFresh:
+                    identityName = front?.localizedName
+                    identityBundleID = front?.bundleIdentifier
+                    frontIdentityObjectID = currentObjectID
+                    frontIdentityPID = currentPID
+                    frontIdentityName = identityName
+                    frontIdentityBundleID = identityBundleID
+                case .none:
+                    break
+                case .cached:
+                    // 一级未命中时 pid 命中只会得到 .cachedByPID，此分支不可达
+                    break
+                }
             }
         }
         let frontIsTerminal = TerminalRegistry.isTerminalOrIDEApp(
@@ -241,12 +337,12 @@ final class InputBubbleAutoShow {
         var terminalWindows: [CGWindowEntry] = []
         var currentOnMain: [UInt32: Bool] = [:]
         if frontIsTerminal, let frontApp = front {
-            terminalWindows = cgWindowListAll().filter {
+            terminalWindows = windows().filter {
                 $0.ownerPID == frontApp.processIdentifier && $0.layer == 0 && $0.isOnScreen
             }
             for entry in terminalWindows {
                 guard let bounds = entry.bounds else { continue }
-                currentOnMain[entry.windowID] = CoordinateKit.isOnMainScreen(bounds)
+                currentOnMain[entry.windowID] = isOnMain(bounds)
             }
         }
         // top = 被扫窗的 z 序最前（CGWindowList 首位）；v1 的单窗观测变量已随 B185 全扫版退役
@@ -255,14 +351,14 @@ final class InputBubbleAutoShow {
         // 使命完结删除——真信号（summon/arrival suppressed）各有专属日志。
         let topWindowID = terminalWindows.first?.windowID
         let windowChanged = topWindowID != nil && topWindowID != lastEvaluatedWindowID
-        let hasLive = topWindowID.map { SessionWindowRegistry.shared.hasLiveSessionBinding(windowID: $0) } ?? false
+        let hasLiveBinding = topWindowID.map { hasLive($0) } ?? false
 
         let outcome = InputBubbleAutoShowGate.decide(
-            autoShowEnabled: InputBubblePreferences.autoShowOnFocus,
-            phaseIdle: controller.isIdle,
+            autoShowEnabled: prefs.autoShowOnFocus,
+            phaseIdle: bubbleIsIdle(),
             frontIsTerminal: frontIsTerminal,
             windowChanged: windowChanged,
-            hasLiveSessionBinding: hasLive
+            hasLiveSessionBinding: hasLiveBinding
         )
 
         switch outcome {
@@ -272,8 +368,8 @@ final class InputBubbleAutoShow {
                 "windowID": topWindowID.map(String.init) ?? "nil",
                 "bundleID": identityBundleID ?? "nil"
             ])
-            CrashContextRecorder.shared.record("input_bubble_autoshow windowID=\(topWindowID.map(String.init) ?? "nil")")
-            controller.summon()
+            recordCrash("input_bubble_autoshow windowID=\(topWindowID.map(String.init) ?? "nil")")
+            summonBubble()
             return
         case .skipNotTerminal:
             lastEvaluatedWindowID = nil
@@ -295,11 +391,11 @@ final class InputBubbleAutoShow {
         for entry in terminalWindows {
             guard let nowOnMain = currentOnMain[entry.windowID] else { continue }
             let arrivalOutcome = InputBubbleAutoShowGate.decideMoveToMainArrival(
-                moveToMainEnabled: InputBubblePreferences.autoShowOnMoveToMain,
+                moveToMainEnabled: prefs.autoShowOnMoveToMain,
                 lastSeenOnMain: onMainBaselineByWindow[entry.windowID],
                 nowOnMain: nowOnMain,
-                arrivalMover: MoveToMainAttributionLedger.shared.recentMover(windowID: entry.windowID),
-                hasLiveSessionBinding: SessionWindowRegistry.shared.hasLiveSessionBinding(windowID: entry.windowID))
+                arrivalMover: recentMover(entry.windowID),
+                hasLiveSessionBinding: hasLive(entry.windowID))
             if case .summon = arrivalOutcome {
                 arrivedEntry = entry
                 break
@@ -318,29 +414,29 @@ final class InputBubbleAutoShow {
             ])
         }
         if let arrived = arrivedEntry, let frontApp = front {
-            if controller.isIdle {
+            if bubbleIsIdle() {
                 log("[InputBubble] move-to-main auto-show summon", fields: [
                     "windowID": String(arrived.windowID),
                     "bundleID": identityBundleID ?? "nil"
                 ])
-                CrashContextRecorder.shared.record("input_bubble_autoshow_move windowID=\(arrived.windowID)")
-                controller.summonForMovedWindow(
+                recordCrash("input_bubble_autoshow_move windowID=\(arrived.windowID)")
+                summonMoved(
                     windowID: arrived.windowID,
                     pid: frontApp.processIdentifier,
                     appName: identityName
                 )
             } else {
                 let disposition = InputBubbleAutoShowGate.decideArrivalWhileBubbleOpen(
-                    autoHide: InputBubblePreferences.autoHide,
-                    openForWindowID: controller.target?.windowID,
+                    autoHide: prefs.autoHide,
+                    openForWindowID: bubbleTargetWindowID(),
                     arrivedWindowID: arrived.windowID)
                 log("[InputBubble] move-to-main arrival while bubble open", fields: [
                     "windowID": String(arrived.windowID),
-                    "openFor": (controller.target?.windowID).map(String.init) ?? "nil",
+                    "openFor": bubbleTargetWindowID().map(String.init) ?? "nil",
                     "disposition": String(describing: disposition)
                 ])
                 if case .retarget = disposition {
-                    controller.retargetForMovedWindow(
+                    retargetMoved(
                         windowID: arrived.windowID,
                         pid: frontApp.processIdentifier,
                         appName: identityName
@@ -357,7 +453,7 @@ final class InputBubbleAutoShow {
         // B160 诊断：终端前台且未弹出时落一行（归因 tick 链路；summon 分支已有专属日志）。
         // B165 降 debug：此行终端前台稳态下每秒一条（skipSameWindow 常态），INFO 级
         // 意味着生产日志每天 8.6 万行同值洪水、淹没真信号——与 P-INST-119 日志自激同病。
-        if frontIsTerminal, outcome != .summon, controller.isIdle {
+        if frontIsTerminal, outcome != .summon, bubbleIsIdle() {
             log("[InputBubble] auto-show tick skip", level: .debug, fields: [
                 "outcome": String(describing: outcome),
                 "topWindowID": topWindowID.map(String.init) ?? "nil",

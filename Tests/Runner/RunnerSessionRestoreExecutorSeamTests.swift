@@ -130,7 +130,10 @@ extension RunnerHarness {
         env.now = { state.clock }
         env.runAppleScript = { script in
             state.scripts.append(script)
-            if script.contains("repeat with w in windows") {
+            // 两个枚举脚本都含 "repeat with w in windows" 与 "repeat with t in tabs of w"，
+            // 必须用各自独有的字段访问区分——否则 Terminal 枚举会吃到 iTerm 会话行，
+            // parseTerminalTabTTYs 因首列非数字整行丢弃，Terminal 窗被判无 pane（CI 实测假红）。
+            if script.contains("sessions of t") {
                 // iTerm2 枚举：502 与 505 各匹配 2/1 个 session；504 故意不匹配
                 return """
                 asid-502|1|1|/dev/ttys010|2000,0,2800,600|tab-a
@@ -138,7 +141,7 @@ extension RunnerHarness {
                 asid-505|1|1|/dev/ttys020|5000,0,5800,600|busy
                 """
             }
-            if script.contains("repeat with t in tabs of w") {
+            if script.contains("tty of t") {
                 // Terminal 枚举：503 两 tab；506 一个 tty
                 return "503|/dev/ttys001\n503|/dev/ttys002\n506|/dev/ttys003"
             }
