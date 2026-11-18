@@ -26,7 +26,9 @@ extension RunnerHarness {
             req.httpMethod = method
             if let body { req.httpBody = Data(body.utf8) }
             if let token { req.setValue(token, forHTTPHeaderField: "X-VibeFocus-Token") }
-            req.timeoutInterval = 5
+            // 20s：handler 在 MainActor，窗口动作会同步 fork yabai（缺失时也有数百 ms
+            // 回落），5s 在 CI 实测会打出 -1（假失败），见 2026-11-03 逐域日志。
+            req.timeoutInterval = 20
             let sem = DispatchSemaphore(value: 0)
             URLSession.shared.dataTask(with: req) { data, resp, _ in
                 res.status = (resp as? HTTPURLResponse)?.statusCode ?? -1
@@ -49,12 +51,21 @@ extension RunnerHarness {
         let savedEnabled = AgentAccessPreferences.isEnabled
         let savedWindowOps = AgentAccessPreferences.allowWindowOps
         let savedCreate = AgentAccessPreferences.allowCreateWindows
+        // 挂起 overlay 自动刷新：refreshTimer 每拍同步 fork yabai 查 space，主线程被
+        // 抢占后 HTTP 应答动辄超时（2026-11-03 CI 逐域日志实证：notify/space 假 -1）。
+        // 只停定时器，不动 overlay 窗口与用户偏好。
+        let overlayManager = ScreenOverlayManager.shared
+        let overlayWasSuspended = overlayManager.automaticRefreshSuspended
+        overlayManager.suspendAutomaticRefreshes(reason: "runner: agent loopback")
         defer {
             LANHookPreferences.lanMode = savedLAN
             AgentAccessPreferences.isEnabled = savedEnabled
             AgentAccessPreferences.allowWindowOps = savedWindowOps
             AgentAccessPreferences.allowCreateWindows = savedCreate
             ClaudeHookServer.shared.stop()
+            if !overlayWasSuspended {
+                overlayManager.resumeAutomaticRefreshes(reason: "runner: agent loopback done")
+            }
         }
         LANHookPreferences.lanMode = false
 
@@ -121,6 +132,8 @@ extension RunnerHarness {
         do {
             AgentAccessPreferences.allowWindowOps = true
             AgentAccessPreferences.allowCreateWindows = false
+            // 前序段落的合法 POST 会占用 60s/30 次写配额；本段 10+ 连发，先清窗。
+            AgentWriteRateLimiter.resetForTesting()
 
             let noID = http("POST", port, "/api/v1/windows/move-main", token: "tk-agent-loopback", body: "{}")
             check("loop: move-main 缺 windowId→400", noID.status == 400 && noID.code == "bad_request")
@@ -137,15 +150,16 @@ extension RunnerHarness {
             // 合法 preset 会真摆用户前台窗（真机域）——刻意不 POST。
 
             let emptyNotify = http("POST", port, "/api/v1/notify", token: "tk-agent-loopback", body: "{\"text\":\"  \"}")
-            check("loop: notify 空文本→400", emptyNotify.status == 400)
+            check("loop: notify 空文本→400（实际 \(emptyNotify.status)/\(emptyNotify.code ?? "-")）",
+                  emptyNotify.status == 400)
             let notify = http("POST", port, "/api/v1/notify", token: "tk-agent-loopback", body: "{\"text\":\"loopback 测试\"}")
-            check("loop: notify 合法→Runner 无 bundle id 通知器短路 409",
+            check("loop: notify 合法→Runner 无 bundle id 通知器短路 409（实际 \(notify.status)/\(notify.code ?? "-")）",
                   notify.status == 409 && notify.code == "notify_failed")
 
             let space0 = http("POST", port, "/api/v1/space/switch", token: "tk-agent-loopback", body: "{\"space\":0}")
-            check("loop: space 0→400", space0.status == 400)
+            check("loop: space 0→400（实际 \(space0.status)/\(space0.code ?? "-")）", space0.status == 400)
             let ghostSpace = http("POST", port, "/api/v1/space/switch", token: "tk-agent-loopback", body: "{\"space\":64}")
-            check("loop: 幽灵 space→不崩溃（200/409 随 yabai 态）",
+            check("loop: 幽灵 space→不崩溃（200/409 随 yabai 态；实际 \(ghostSpace.status)/\(ghostSpace.code ?? "-")）",
                   ghostSpace.status == 200 || ghostSpace.status == 409)
 
             // L2 只在关态验证（开态真执行 = 真机域留白）
@@ -158,6 +172,7 @@ extension RunnerHarness {
         // ⚠️curl 同步阻塞所在线程，而 server handler 在主线程——必须在后台线程跑
         // CLI、主线程泵 RunLoop 应答（同线程必死锁：curl 30s 超时 exit 28，实测）。
         do {
+            AgentWriteRateLimiter.resetForTesting()
             let tmp = NSTemporaryDirectory() + "vf-agentcli-\(UUID().uuidString.prefix(8))"
             try? FileManager.default.createDirectory(atPath: tmp + "/.vibefocus", withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(atPath: tmp) }

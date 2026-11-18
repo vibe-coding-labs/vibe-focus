@@ -276,9 +276,14 @@ final class FakeAuditor: RestoreAuditing {
         }
     }
 
-    /// 域过滤（2026-11-03）：CI 机器缺 yabai/AX，部分真机域会进入长等待；用
-    /// `VIBEFOCUS_RUNNER_DOMAINS=runA,runB` 只跑指定域，便于定向回归与覆盖率采集。
-    /// 未设置或为空 = 全量（真机门禁口径不变）。
+    /// UI 域注册：既走域过滤（逐域采集时只在选中进程里求值），又保留弹窗门。
+    /// 未选中时 runDomain 直接返回，不会落到 runUIGated 的 skip 分支。
+    func runDomainUIGated(_ name: String, _ body: () -> Void) {
+        runDomain(name) { runUIGated(name, body) }
+    }
+
+    /// 域过滤（2026-11-03）：CI 覆盖/定向回归用 `VIBEFOCUS_RUNNER_DOMAINS=runA,runB`
+    /// 只跑指定域；未设置或为空 = 全量（真机门禁口径不变）。
     private lazy var requestedDomains: Set<String>? = {
         guard let raw = ProcessInfo.processInfo.environment["VIBEFOCUS_RUNNER_DOMAINS"] else { return nil }
         let names = raw.split(separator: ",")
@@ -287,9 +292,8 @@ final class FakeAuditor: RestoreAuditing {
         return names.isEmpty ? nil : Set(names)
     }()
 
-    /// 环境跳过域（2026-11-03）：CI 无 yabai/AX/真实终端进程，个别整域集成用例
-    /// 会级联超时（主线程被真机调用阻塞 → 后续 HTTP 全超时）。由 workflow 显式列出，
-    /// 本机/真机不设该变量即全跑。跳过不计 PASS/FAIL，汇总单列，避免「绿=全过」误读。
+    /// CI 无 yabai/AX/真实终端进程时的整域跳过名单（`VIBEFOCUS_RUNNER_SKIP_DOMAINS`）；
+    /// 真机门禁不设此变量 = 全跑。跳过计入 skipped，汇总单列。
     private lazy var skippedDomains: Set<String> = {
         guard let raw = ProcessInfo.processInfo.environment["VIBEFOCUS_RUNNER_SKIP_DOMAINS"] else { return [] }
         return Set(raw.split(separator: ",")
@@ -355,11 +359,13 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runRestoreInFlightTests") { runRestoreInFlightTests() }
         runDomain("runRegistryFindPIDTests") { runRegistryFindPIDTests() }
         runDomain("runWindowMoveExecuteTests") { runWindowMoveExecuteTests() }
+        runDomain("runWindowResolutionFallbackTests") { runWindowResolutionFallbackTests() }
         runDomain("runHookInstallHomeTests") { runHookInstallHomeTests() }
         runDomain("runHookClaudeSettingsHomeTests") { runHookClaudeSettingsHomeTests() }
         runDomain("runSettingsSectionRenderTests") { runSettingsSectionRenderTests() }
         runDomain("runAgentAccessTests") { runAgentAccessTests() }
         runDomain("runAgentAccessLoopbackTests") { runAgentAccessLoopbackTests() }
+        runDomain("runAgentAPIDispatchTests") { runAgentAPIDispatchTests() }
         runDomain("runMCPRegistrationTests") { runMCPRegistrationTests() }
         runDomain("runAgentSettingsWriteTests") { runAgentSettingsWriteTests() }
         runDomain("runAgentOnboardingTests") { runAgentOnboardingTests() }
@@ -372,11 +378,15 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runTGEmptySnapshotRenderTests") { runTGEmptySnapshotRenderTests() }
         runDomain("runSessionListsAndWorkspaceRenderTests") { runSessionListsAndWorkspaceRenderTests() }
         runDomain("runSessionListsAndSettingsUIRenderTests") { runSessionListsAndSettingsUIRenderTests() }
+        runDomain("runSessionLivePanelRenderTests") { runSessionLivePanelRenderTests() }
+        runDomain("runTerminalGridSettingsLogicTests") { runTerminalGridSettingsLogicTests() }
+        runDomain("runSpaceQueryCacheTests") { runSpaceQueryCacheTests() }
         runDomain("runSettingsCommonSectionRenderTests") { runSettingsCommonSectionRenderTests() }
         runDomain("runWorkspaceAndSessionRenderTests") { runWorkspaceAndSessionRenderTests() }
         runDomain("runAllSectionsRenderTests") { runAllSectionsRenderTests() }
         runDomain("runSoundSectionDeepRenderTests") { runSoundSectionDeepRenderTests() }
         runDomain("runLANViewDeepRenderTests") { runLANViewDeepRenderTests() }
+        runDomain("runSettingsSectionStateMatrixTests") { runSettingsSectionStateMatrixTests() }
         runDomain("runSettingsSectionStateRenderTests") { runSettingsSectionStateRenderTests() }
         runDomain("runSettingsSectionDeepRender3Tests") { runSettingsSectionDeepRender3Tests() }
         runDomain("runHotKeyOfflineRouteTests") { runHotKeyOfflineRouteTests() }
@@ -433,6 +443,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runSpaceRefreshThrottleTests") { runSpaceRefreshThrottleTests() }
         runDomain("runSpaceFloatSkipTests") { runSpaceFloatSkipTests() }
         runDomain("runYabaiPathDiscoveryTests") { runYabaiPathDiscoveryTests() }
+        runDomain("runSpoolDrainSeamTests") { runSpoolDrainSeamTests() }
         runDomain("runSpoolDrainLifecycleTests") { runSpoolDrainLifecycleTests() }
         runDomain("runVoiceLLMSummaryTests") { runVoiceLLMSummaryTests() }
         runDomain("runOverlaySignalTests") { runOverlaySignalTests() }
@@ -468,29 +479,38 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runVoicePrefsPersistenceTests") { runVoicePrefsPersistenceTests() }
         runDomain("runBubbleClipboardIOTests") { runBubbleClipboardIOTests() }
         runDomain("runDiagnosticsTests") { runDiagnosticsTests() }
+        runDomain("runDiagnosticPathTests") { runDiagnosticPathTests() }
         runDomain("runScreenPositionTests") { runScreenPositionTests() }
         runDomain("runLoginItemRefreshTests") { runLoginItemRefreshTests() }
         runDomain("runTitleEditorChannelTests") { runTitleEditorChannelTests() }
+        runDomain("runTTYWriterErrorBranchTests") { runTTYWriterErrorBranchTests() }
+        runDomain("runVoiceQueueTests") { runVoiceQueueTests() }
         runDomain("runVoiceQueueAdvanceTests") { runVoiceQueueAdvanceTests() }
         runDomain("runKeyEventPosterTests") { runKeyEventPosterTests() }
+        runDomain("runHotKeyCarbonEventTests") { runHotKeyCarbonEventTests() }
+        runDomain("runHotKeyFallbackMonitorTests") { runHotKeyFallbackMonitorTests() }
+        runDomain("runHotKeyShortcutValidationTests") { runHotKeyShortcutValidationTests() }
         runDomain("runBubbleIdleGuardTests") { runBubbleIdleGuardTests() }
-        runUIGated("BubbleSubmitPipeline") {
+        runDomainUIGated("BubbleSubmitPipeline") {
             runBubbleSubmitPipelineTests()
         }
-        runUIGated("BubbleLifecyclePanel") {
+        runDomainUIGated("BubbleLifecyclePanel") {
             runBubbleLifecyclePanelTests()
         }
-        runUIGated("BubbleCoverageSweep") {
+        runDomainUIGated("BubbleHistoryPanelController") {
+            runBubbleHistoryPanelControllerTests()
+        }
+        runDomainUIGated("BubbleCoverageSweep") {
             runBubbleCoverageSweepTests()
         }
-        runUIGated("BubbleCoverageTail") {
+        runDomainUIGated("BubbleCoverageTail") {
             runBubbleCoverageTailTests()
         }
-        runUIGated("BubbleCoverageFinale") {
+        runDomainUIGated("BubbleCoverageFinale") {
             runBubbleCoverageFinaleTests()
         }
         runDomain("runYabaiAsyncAndVoicePersistTests") { runYabaiAsyncAndVoicePersistTests() }
-        runUIGated("AutoShowStart") {
+        runDomainUIGated("AutoShowStart") {
             runAutoShowStartTests()
         }
         runDomain("runVoiceDelegateCallbackTests") { runVoiceDelegateCallbackTests() }
@@ -516,7 +536,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runBubbleButtonCursorTests") { runBubbleButtonCursorTests() }
         runDomain("runSelectionRefreshTests") { runSelectionRefreshTests() }
         runDomain("runHotKeyManagerStateTests") { runHotKeyManagerStateTests() }
-        runUIGated("BubbleHistoryPanelGuard") {
+        runDomainUIGated("BubbleHistoryPanelGuard") {
             runBubbleHistoryPanelGuardTests()
         }
         runDomain("runToggleEngineStoreTests") { runToggleEngineStoreTests() }
@@ -597,7 +617,24 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runWorkspaceSectionBranchTests") { runWorkspaceSectionBranchTests() }
         runDomain("runGridSectionPanelTests") { runGridSectionPanelTests() }
         runDomain("runSettingsRenderPilotTests") { runSettingsRenderPilotTests() }
-        runUIGated("SettingsWindowController") {
+        runDomain("runSettingsCoverageRenderTests") { runSettingsCoverageRenderTests() }
+        // 单分区独立成域：避免 B288 一次渲染 8 段被其中一段拖到整域超时（零 profraw）。
+        runDomain("runSettingsRenderOverlaySectionTests") { runSettingsRenderOverlaySectionTests() }
+        runDomain("runSettingsRenderWorkspaceSectionTests") { runSettingsRenderWorkspaceSectionTests() }
+        runDomain("runSettingsRenderAntiDisturbTests") { runSettingsRenderAntiDisturbTests() }
+        runDomain("runSettingsRenderProjectRulesTests") { runSettingsRenderProjectRulesTests() }
+        runDomain("runSettingsRenderCustomAudioTests") { runSettingsRenderCustomAudioTests() }
+        runDomain("runSettingsRenderCodexTests") { runSettingsRenderCodexTests() }
+        runDomain("runSettingsRenderPermissionsDuplicatesTests") { runSettingsRenderPermissionsDuplicatesTests() }
+        // 每个 tab 独立成域：B239 单域全 tab 循环在 CI 超时会连带丢掉已渲染 tab 的 profraw。
+        runDomain("runSettingsTabGeneralRenderTests") { runSettingsTabGeneralRenderTests() }
+        runDomain("runSettingsTabWorkspaceRenderTests") { runSettingsTabWorkspaceRenderTests() }
+        runDomain("runSettingsTabOrchestrationRenderTests") { runSettingsTabOrchestrationRenderTests() }
+        runDomain("runSettingsTabClaudeIntegrationRenderTests") { runSettingsTabClaudeIntegrationRenderTests() }
+        runDomain("runSettingsTabCodexIntegrationRenderTests") { runSettingsTabCodexIntegrationRenderTests() }
+        runDomain("runSettingsTabAgentAccessRenderTests") { runSettingsTabAgentAccessRenderTests() }
+        runDomain("runSettingsTabAppearanceRenderTests") { runSettingsTabAppearanceRenderTests() }
+        runDomainUIGated("SettingsWindowController") {
             runSettingsWindowControllerTests()
         }
         runDomain("runSettingsSnapshotRenderTests") { runSettingsSnapshotRenderTests() }
@@ -629,7 +666,9 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runBStateSweepTests") { runBStateSweepTests() }
         runDomain("runAXDirectMoveTests") { runAXDirectMoveTests() }
         runDomain("runOverlayWindowE2ETests") { runOverlayWindowE2ETests() }
-        runPerfWatchdogTests()   // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰
+        // B244：看门狗最后启动——冻结主线程的采样类测试已跑完，零干扰。
+        // 2026-11-03：登记为独立域（原先直接调用），逐域覆盖率采集下也只跑一次。
+        runDomain("runPerfWatchdogTests") { runPerfWatchdogTests() }
     // MARK: 汇总
 
     let skippedNote = skipped > 0 ? ", \(skipped) domains skipped" : ""
@@ -688,6 +727,12 @@ private func acquireE2ELockOrExit() {
 }
 
 acquireE2ELockOrExit()
+
+// 逐域隔离模式（VIBEFOCUS_RUNNER_DOMAINS）每个进程只跑一个域，没有前序域帮忙
+// 初始化 AppKit——DockBadge 的 dockTile、气泡收尾的 activationPolicy 等直接摸
+// NSApp 的代码会因隐式解包 nil 崩溃（2026-11-03 逐域采集实测两处）。单进程全量
+// 模式本来就由前面的域完成初始化，这里补上不改变任何可见行为（不建窗口/不置前）。
+_ = NSApplication.shared
 
 MainActor.assumeIsolated {
     RunnerHarness().runAllTests()

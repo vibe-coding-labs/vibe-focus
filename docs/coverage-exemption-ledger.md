@@ -236,3 +236,84 @@ InputBubbleController+Panel(34, 拖拽调宽=气泡通道) · SessionRestoreCont
 - [ ] B299 豁免增改补签：①Support+Diagnostics 残 20 行改判 C7-装机态（触发=破坏装机：无 caps 二进制/缺 codesign/删证书/mdfind 失效；替代验证=--diagnose 冒烟）；②Finding 残 15 行（前台环境态）/StateStore+Database 残 2 行（HOME 污染风险）留白注记；③门禁环境注记（显示器休眠致 yabai 聚合查询截断，Runner 须 `caffeinate -d`；全绿实证 3596/3596）。②B300（main 8341f62）：B 态五项清账（Tracker 100%/ShellRunner 9→1/Planner 6→1/Locator 6→2/ToggleEngine 6→2，均为单测可达行而非新豁免；B 态余量真机域归既有 E2E 通道）；③门禁环境纪律补全：先 `caffeinate -u` 唤醒再 `-d` 压住（-d 不唤醒已睡屏幕）。Runner 3614/3614 全绿。④B301（main 4848a28）：Overlay 家族 E2E 通道（`VIBEFOCUS_OVERLAY_E2E=1`），家族 352→188 missed；SIGUSR1 处理体归 C5、空延迟表功能关死体、SpaceQuery 注入不可达归 C7；⑤ScreenIndexPreferences 66 行=并行线 0.0.81 沙箱修复新代码，待其责任线重审。Runner 默认门禁 3619/3619+E2E 模式 3628/3628 全绿。**已三次向用户提请（AskUserQuestion 均未应答），待确认后勾选**。
 - [ ] B312 补签提请（2026-09-21）：①ScreenIndexPreferences 残 60 行改判 C7-装机态（0.0.81 沙箱守卫本体，强提缝=写真实 plist 违反生产禁写）；②SoundManager 残 12 行归因 C4/装机态/防御臂；③B311 豁免清单（上节）一并提请。Runner 3839/3839，Sources 纯净 74.76%。
 - [x] 用户签字：已确认签署（用户于 2026-09-20 验收对话中裁决「可测面 100% + E2E + 豁免台账」口径并确认签署） 日期：2026-09-20
+
+---
+
+## 2026-11-03 CI 逐域覆盖率冲刺（分支 `test/coverage-sprint`）
+
+> **背景**：本会话在 Linux 主机（无 Swift 工具链、工程依赖 AppKit/碳素），AGENTS.md 门禁
+> （`swift build` 零警告 + Standalone + Runner）只能在 macOS 执行。为把「可提缝面 100%」
+> 的度量真正跑起来，新增 GitHub macOS 通道 `.github/workflows/coverage-verify.yml`：
+> 构建零警告 → Standalone → **逐域隔离 + llvm-cov 全量覆盖率**（artifact：
+> `coverage-report.txt` / `coverage.lcov`）。
+
+### 采集机制（本轮新增，均为测量通道改动，不改生产语义）
+
+| 机制 | 目的 | 位置 |
+|---|---|---|
+| `VIBEFOCUS_PER_DOMAIN_RUN=1` 逐域独立进程 | 单域挂起/崩溃只损失该域 profraw，不再整轮归零 | `scripts/coverage_test_runner.sh` |
+| 域清单从 `runDomain("…")` 注册表提取、按注册顺序去重 | 新域免维护第二份清单 | 同上 |
+| `VIBEFOCUS_PER_DOMAIN_TIMEOUT`（默认 120s，CI 180s）+ `…_TIMEOUT_OVERRIDES` | 合法慢域（真实 curl 打环 300s）单独放宽，其余按时兜底 | 同上 + workflow |
+| UI 域子进程结束后回收 `/tmp/vibefocus-e2e.lock` | SIGKILL 超时域不会让后续 UI 域连锁 exit 3（实测 7 域连锁归零） | 同上 |
+| 逐域进程启动 `_ = NSApplication.shared` | 隔离进程里 NSApp 为 nil，摸 AppKit 的域会隐式解包崩溃 | `Tests/Runner/main.swift` |
+| 互斥锁释放/看门狗预算 | 全局 80 分钟预算耗尽即停后续域，已采 profraw 照常出报告 | workflow |
+
+### 测试手法修正（2026-11-03 实测取证）
+
+- **AX 自读死锁**：主线程对**自身进程** `AXUIElementCreateApplication(ownPID)` +
+  `CopyAttributeValue` 会自阻塞（AX 应答需要主线程 run loop，而线程正卡在调用里）——
+  `BubbleSubmitPipeline` 整域 120s 超时零 profraw 的根因。修法：后台线程探测 + 主线程
+  有界等待并泵 RunLoop；需要「AX 必失败」时改用**幽灵 pid 999999**（不存在进程，AX 立即
+  返回错误），顺带覆盖 `resolveWindow` 四级退化链的 none 尾路。
+- **渲染域逐 tab 拆进程**：设置页 7 个 tab 同进程连续渲染时，每次 `onAppear`（登录项
+  AppleScript / SMAppService / spaceAvailability / 安装扫描 mdfind）在 CI 实测 2~28s，
+  累计 >120s 超时。修法：拆成 7 个逐 tab 独立域（`runSettingsTab*RenderTests`）。
+- **快照渲染改自建离屏窗**：共享设置窗在 CI 上 `cacheDisplay` 触发
+  `AttributeGraph: cycle detected` 硬崩（Trace/BPT trap）。修法：`NSWindow` + 纯 `NSView`
+  自建离屏窗，独占覆盖 layer / 非 layer / 空 bounds 三分支。
+- **合成 Carbon 事件**（新域 `runHotKeyCarbonEventTests`）：`CreateEvent` +
+  `SetEventParameter(typeEventHotKeyID)` 直投 `handleHotKeyEvent`，覆盖缺参/签名不符/
+  未知 id/录制外分派；主 toggle 键只走去重门 skip 臂，**不注册任何系统热键、不进入
+  .accept 真搬窗路径**。
+
+### 新增域（本批）
+
+| 域 | 覆盖目标 | 真机安全边界 |
+|---|---|---|
+| `runWindowResolutionFallbackTests` | `resolveWindow` 四级退化链（fast→exactID_scan→windowNumber→title→none） | 幽灵 pid，零真实窗口读写，无 env 门 |
+| `BubbleHistoryPanelController`（UI 门） | 历史面板控制器：open/refresh/搜索/范围/展开/复制/删除/填充/回车填充/清空两段确认/关闭 | 真开我方 NSPanel；用户 2 分钟内有输入则诚实跳过 |
+| `runHotKeyCarbonEventTests` | Carbon 处理器装配 + 事件分派分支 | 零系统热键注册、零真实 HID |
+
+### 口径说明
+
+CI runner 无 yabai、无 AX 授权、无真实终端/IDE 进程，故「真机域」（AX 写、space 查询、
+网格建窗、会话恢复）在 CI 上只能走到守卫/早退分支，**CI 数字天然低于真机基线**
+（真机 Sources 纯净基线 74.76%，2026-09-21 B312）。CI 数字只用于「缺口定位 + 可提缝面
+趋势」，发布验收仍按本台账顶部口径①+②+③。
+
+### 2026-11-03 第二轮实测（提交 `8d11028`，run 41648375399）
+
+- **总量**：`llvm-cov report` TOTAL **40974 行 / 11437 missed / 72.09%**（上一轮 12464 missed / 69.58%，
+  本轮多覆盖 1027 行）。LCOV 全口径（含 Tests）60935 行 / 12898 missed / 78.83%。
+- **锁回收验证**：全程 0 次「另一个真机 E2E 正在运行」，UI 域不再连锁归零。
+  唯一超时域 `runAgentAccessLoopbackTests`（真实 curl 打环，300s 覆盖值，该域无 profraw）。
+- **新域首验全绿**：`runWindowResolutionFallbackTests` 4/4、`runHotKeyCarbonEventTests` 9/9、
+  `BubbleHistoryPanelController` 23/23（历史面板控制器全链在 CI 真渲染通过）。
+
+### 本轮定位并修复的假覆盖 / 硬崩（CI 取证）
+
+- **游离 `@EnvironmentObject` 求值 fatal**：`runSettingsCoverageRenderTests` 与
+  `runSettingsRenderPermissionsDuplicatesTests` 直接求值 `view.layoutHotKeySection` /
+  `view.permissionsSection`，二者读的是 **SettingsView 自身的** `@EnvironmentObject
+  hotKeyManager`——注入到子视图无效，CI 上 `Fatal error: No ObservableObject of type
+  HotKeyManager found` → Trace/BPT（整域 profraw 连同断言丢失）。修法：把整棵
+  SettingsView 交给 SwiftUI 求值（外层 `.environmentObject` + 选中 tab + ImageRenderer）。
+- **同实例 body 缓存造成的「假通过」**：`runSettingsCoverageRenderTests` 复用同一个
+  `SettingsView` 连渲染四种播报模式，体感「四模式全渲染出图」全 PASS，但实测
+  `SettingsView+VoiceAnnouncementSection.swift` 第 30~205 行**整段 0 覆盖**——游离的
+  `@StateObject` 不订阅 `@Published`，SwiftUI 直接命中首次（mode=.none）的 body 缓存。
+  修法：每次渲染新建 `SettingsView()` 实例；该域覆盖率随后应由 42.83% 明显抬升。
+- **共享设置窗在 CI 离屏布局触发 `AttributeGraph: cycle detected`**（`SettingsWindowController`
+  与 `runSettingsSnapshotRenderTests` 两个域）：崩点在 `SettingsWindowController.shared`
+  首次构建 SwiftUI 全树，而非 `renderWindowToPNG`。属 CI 无窗口服务器的环境限制，
+  归口径③（真机可跑，CI 不可达）。

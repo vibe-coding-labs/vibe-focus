@@ -51,6 +51,51 @@ extension RunnerHarness {
         check("remoteInstall: label = remote- + host 点转横杠",
               ClaudeHookPreferences.machineLabel(forHost: "192.168.1.12") == "remote-192-168-1-12")
 
+        // ===== hookConfigJSON 形状（B170 hosts 候选数组分支直测）=====
+        do {
+            func parse(_ s: String) -> [String: Any]? {
+                (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any]
+            }
+            let single = parse(ClaudeHookPreferences.hookConfigJSON(
+                host: "10.0.0.5", port: 39277, token: "tok", machineLabel: "remote-10-0-0-5"))
+            check("remoteInstall: hookConfigJSON 单 host 四字段且无 hosts 键",
+                  single?["host"] as? String == "10.0.0.5"
+                      && single?["port"] as? Int == 39277
+                      && single?["token"] as? String == "tok"
+                      && single?["machine_label"] as? String == "remote-10-0-0-5"
+                      && single?["hosts"] == nil)
+            let multi = parse(ClaudeHookPreferences.hookConfigJSON(
+                host: "10.0.0.5", port: 39277, token: "tok",
+                machineLabel: "remote-10-0-0-5", extraHosts: ["10.0.0.6", "10.0.0.7"]))
+            check("remoteInstall: hookConfigJSON extraHosts → hosts 候选数组（主 host 不变）",
+                  (multi?["hosts"] as? [String]) == ["10.0.0.6", "10.0.0.7"]
+                      && multi?["host"] as? String == "10.0.0.5")
+
+            // 脚本层：labelOverride 优先于派生；extraHosts 里的主 host 被滤掉；
+            // codex 事件清单随两个开关如实增减（Stop 恒装）。
+            let savedAuto = ClaudeHookPreferences.autoRestoreOnPromptSubmit
+            let savedSessionEnd = ClaudeHookPreferences.triggerOnSessionEnd
+            defer {
+                ClaudeHookPreferences.autoRestoreOnPromptSubmit = savedAuto
+                ClaudeHookPreferences.triggerOnSessionEnd = savedSessionEnd
+            }
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = false
+            ClaudeHookPreferences.triggerOnSessionEnd = false
+            let minimal = ClaudeHookPreferences.generateRemoteInstallScript(
+                host: "10.0.0.5", port: 39277, token: "tok",
+                labelOverride: "custom-label", extraHosts: ["10.0.0.5", "10.0.0.9"])
+            check("remoteInstall: labelOverride 生效", minimal.contains("Machine label: custom-label"))
+            check("remoteInstall: extraHosts 备选进 hosts 数组",
+                  minimal.contains("\"hosts\": [") && minimal.contains("\"10.0.0.9\""))
+            check("remoteInstall: codex 事件默认三件（开关关时不追加）",
+                  minimal.contains("(codex events: SessionStart + Stop + PermissionRequest)"))
+            ClaudeHookPreferences.autoRestoreOnPromptSubmit = true
+            ClaudeHookPreferences.triggerOnSessionEnd = true
+            let full = ClaudeHookPreferences.generateRemoteInstallScript(host: "10.0.0.5", port: 39277, token: "tok")
+            check("remoteInstall: codex 事件随开关追加 UserPromptSubmit/SessionEnd",
+                  full.contains("(codex events: SessionStart + Stop + PermissionRequest + UserPromptSubmit + SessionEnd)"))
+        }
+
         // ===== 生成物字符串契约（不执行）=====
         let helper = ClaudeHookPreferences.generateRemoteHelperScriptContent()
         check("remoteInstall: forwarder 读 config 且带鉴权头/terminal_ctx 注入/正确端点",

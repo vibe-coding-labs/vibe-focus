@@ -22,6 +22,8 @@ extension RunnerHarness {
             else { UserDefaults.standard.removeObject(forKey: RemoteSpoolHosts.hostsKey) }
             drainer.inFlight = []
             drainer.pendingReplay = []
+            // 收尾：按已还原的偏好重建轮询定时器（避免测试期置的 true 留下 2s 周期 ssh）
+            drainer.applyPreferences()
         }
         ClaudeHookPreferences.isEnabled = false
 

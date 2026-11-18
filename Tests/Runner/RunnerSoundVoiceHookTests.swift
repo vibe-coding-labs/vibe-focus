@@ -436,6 +436,31 @@ extension RunnerHarness {
         check("transcript: 解码（旧→新序、text 块提取、tool_use/user/坏行/元数据行跳过、纯字符串兼容）",
               texts == ["我先看下文件。", "纯字符串内容形状", "你想用方案 A 还是 B？"])
 
+        // appendTextBlocks 直测：nil/空串/空白、纯字符串形状、块数组按 blockType 过滤、
+        // 非 String 的 text / 缺 text 块静默跳过（防御性公共尾，Claude/codex 共用）
+        do {
+            var acc: [String] = []
+            TranscriptTailReader.appendTextBlocks(nil, blockType: "text", into: &acc)
+            check("transcript: appendTextBlocks nil → 不追加", acc.isEmpty)
+            TranscriptTailReader.appendTextBlocks("   ", blockType: "text", into: &acc)
+            check("transcript: appendTextBlocks 空白纯字符串 → 不追加", acc.isEmpty)
+            TranscriptTailReader.appendTextBlocks("  hi  ", blockType: "text", into: &acc)
+            check("transcript: appendTextBlocks 纯字符串去首尾空白", acc == ["hi"])
+            acc.removeAll()
+            let blocks: [[String: Any]] = [
+                ["type": "text", "text": " a "],
+                ["type": "text", "text": "   "],
+                ["type": "text"],
+                ["type": "text", "text": 42],
+                ["type": "tool_use", "text": " skipped "],
+            ]
+            TranscriptTailReader.appendTextBlocks(blocks, blockType: "text", into: &acc)
+            check("transcript: appendTextBlocks 块数组按类型过滤且跳过空/坏块", acc == ["a"])
+            acc.removeAll()
+            TranscriptTailReader.appendTextBlocks(42, blockType: "text", into: &acc)
+            check("transcript: appendTextBlocks 非法 content 类型 → 不追加", acc.isEmpty)
+        }
+
         check("transcript: isQuestionLike 问号判定（全角/半角真、句号/空白假）",
               TranscriptTailReader.isQuestionLike("选 A 还是 B？")
               && TranscriptTailReader.isQuestionLike("continue?  ")

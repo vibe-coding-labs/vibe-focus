@@ -100,6 +100,20 @@ extension RunnerHarness {
         check("分类: 空 ps → shell 无 pid",
               PaneClassifier.classify(processLines: []).kind == .shell
               && PaneClassifier.classify(processLines: []).pid == nil)
+
+        // isLoginShell 直测：basename 集合 + 登录 shell 前导 '-' + 路径形 + 非 shell 拒绝
+        check("分类: isLoginShell 常见 shell 全收（含前导 - 与路径形）",
+              PaneClassifier.isLoginShell(commandLine: "zsh")
+              && PaneClassifier.isLoginShell(commandLine: "-zsh")
+              && PaneClassifier.isLoginShell(commandLine: "/bin/bash")
+              && PaneClassifier.isLoginShell(commandLine: "fish -l")
+              && PaneClassifier.isLoginShell(commandLine: "pwsh"))
+        check("分类: isLoginShell 非 shell 拒绝（claude/ssh/空串/前缀同形）",
+              !PaneClassifier.isLoginShell(commandLine: "claude --resume x")
+              && !PaneClassifier.isLoginShell(commandLine: "ssh u@h")
+              && !PaneClassifier.isLoginShell(commandLine: "")
+              && !PaneClassifier.isLoginShell(commandLine: "zshrc")
+              && !PaneClassifier.isLoginShell(commandLine: "my-zsh"))
     }
 
     // MARK: pane 枚举解析
@@ -718,6 +732,13 @@ extension RunnerHarness {
               == "ssh -p 2200 -t u@h " + SessionCommandBuilder.shellQuoted("cd '/r' && claude --resume sid-9"))
         check("port: sshCommand 缺 → nil", SessionPaneSnapshot(kind: .remoteSSH).sshTargetPort == nil)
         check("port: -p 显式端口解析", SessionPaneSnapshot(kind: .remoteSSH, sshCommand: "ssh -p 2200 u@h").sshTargetPort == "2200")
+        // parseTarget 直测：isSSHProcess 门 + 目标三态（user@host / host / 带端口）
+        check("parseTarget: 非 ssh 进程 → nil", SessionCommandBuilder.parseTarget(from: "vim foo") == nil)
+        check("parseTarget: 空串 → nil", SessionCommandBuilder.parseTarget(from: "") == nil)
+        check("parseTarget: user@host 形态", SessionCommandBuilder.parseTarget(from: "ssh u@h")?.destinationArg == "u@h")
+        let parsedPort = SessionCommandBuilder.parseTarget(from: "ssh -p 2200 -t cc@1.2.3.4")
+        check("parseTarget: -p/目标次序任意（-t 在中间）",
+              parsedPort?.destinationArg == "cc@1.2.3.4" && parsedPort?.port == "2200")
 
         // E. SessionRestoreStore 落库往返（临时 WindowStateStore 隔离，零触生产库）
         do {

@@ -23,6 +23,13 @@ extension RunnerHarness {
                   AgentSettingsCatalog.readonlyKeys.contains("hook.token")
                       && AgentSettingsCatalog.readonlyKeys.contains("agentAccess.enabled")
                       && AgentSettingsCatalog.readonlyKeys.contains("permissions.accessibility"))
+            // typeName 五态是 GET /settings 的类型字段事实源（Agent 侧据此决定解析）
+            check("catalog: typeName 五态逐字",
+                  AgentSettingValueKind.bool.typeName == "bool"
+                      && AgentSettingValueKind.int(range: 0...1).typeName == "int"
+                      && AgentSettingValueKind.double(range: 0...1).typeName == "double"
+                      && AgentSettingValueKind.option(cases: ["a"]).typeName == "option"
+                      && AgentSettingValueKind.text(maxLength: 3).typeName == "text")
         }
 
         // MARK: B. 校验器矩阵（纯函数；normalize=校验+归一化同路径）
