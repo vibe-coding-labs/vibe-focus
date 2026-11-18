@@ -329,7 +329,7 @@ extension RunnerHarness {
               env.classifyTTY("/dev/ttys999").kind == .shell)
         _ = env.focusSpace(.yabai(1), "op-env-default")
         env.setWindowFloat(4_000_001, "op-env-default")
-        _ = env.parkingScreen(excludingYabaiDisplayIndex: 1)
+        _ = env.parkingScreen(1)
         env.runYabai(["-m", "query", "--spaces"], "env-default", "op-env-default")
         check("yabaiDirect F6: now 默认闭包返回当前时刻",
               abs(env.now().timeIntervalSinceNow) < 5)
