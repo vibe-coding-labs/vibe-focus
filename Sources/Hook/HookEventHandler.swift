@@ -1,6 +1,21 @@
 import Foundation
 import Cocoa
 
+/// UserPromptSubmit 编排的宿主依赖缝（2026-11-19 覆盖率补齐）：开关/身份解析/
+/// toggle 记录读写/CG 读回/在途与冷却注册表全可注入。默认 nil → 生产真实实现；
+/// Runner 注入假实现穷尽十路决策分支（零 DB 写、零窗口查询）。
+struct HookPromptSubmitEnvironment {
+    var autoRestoreEnabled: () -> Bool
+    var resolveIdentity: (ClaudeHookPayload, String) -> WindowIdentity?
+    var loadToggleRecord: (UInt32) -> ToggleRecord?
+    var clearToggleRecord: (UInt32) -> Void
+    var cgWindowBounds: (UInt32) -> CGRect?
+    var restoreInFlight: (UInt32) -> Bool
+    var isOnMainScreen: (UInt32) -> Bool
+    var isInCooldown: (UInt32) -> Bool
+    var cooldownRemaining: (UInt32) -> Int
+}
+
 @MainActor
 final class HookEventHandler {
     static let shared = HookEventHandler()
@@ -39,7 +54,8 @@ final class HookEventHandler {
     /// 移动创建、成功即清除，每次回跳需一次新的移动作凭证）+ UPS 限流闸前置
     /// + 双通道在途去重。
     func handleUserPromptSubmit(
-        payload: ClaudeHookPayload
+        payload: ClaudeHookPayload,
+        environment: HookPromptSubmitEnvironment? = nil
     ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         let traceID = makeOperationID(prefix: "ups")
         // P-INST-29: handleUserPromptSubmit 总耗时（hook 同步响应延迟；defer 统一记，outcome 见各路径 code 字段，用 traceID 关联）。
@@ -69,7 +85,9 @@ final class HookEventHandler {
         // disabled → 无身份 → 限流 → 已在主屏 → 冷却 → 搬窗。
 
         // 门 0：自动恢复总开关。
-        guard ClaudeHookPreferences.autoRestoreOnPromptSubmit else {
+        let autoRestoreEnabled = environment.map { $0.autoRestoreEnabled() }
+            ?? ClaudeHookPreferences.autoRestoreOnPromptSubmit
+        guard autoRestoreEnabled else {
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
                 message: "UserPromptSubmit 收到（自动恢复已关闭）"
@@ -78,7 +96,13 @@ final class HookEventHandler {
         }
 
         // 门 1：解析窗口身份。
-        guard let identity = resolveWindowIdentity(payload: payload, traceID: traceID, startedAt: Date()) else {
+        let resolvedIdentity: WindowIdentity?
+        if let environment {
+            resolvedIdentity = environment.resolveIdentity(payload, traceID)
+        } else {
+            resolvedIdentity = resolveWindowIdentity(payload: payload, traceID: traceID, startedAt: Date())
+        }
+        guard let identity = resolvedIdentity else {
             log(
                 "[HookEventHandler] UserPromptSubmit: window identity resolution failed",
                 level: .warn,
@@ -108,9 +132,21 @@ final class HookEventHandler {
         // 链路）与 ⌃Q 手动；已在原位的陈旧记录仅清理不移动；在途去重保留——语义见
         // HookEventHandler+PromptSubmit+Decision 头注与 docs/log-audit-2026-09-29.md
         // 第十一轮。
-        let toggleRecord = ToggleEngine.shared.load(windowID: identity.windowID)
+        let toggleRecord: ToggleRecord?
+        if let environment {
+            toggleRecord = environment.loadToggleRecord(identity.windowID)
+        } else {
+            toggleRecord = ToggleEngine.shared.load(windowID: identity.windowID)
+        }
         // 仅在有记录时做一次 CG 读回（已在原位检测）；无记录零额外查询。
-        let currentFrameForGate: CGRect? = toggleRecord != nil ? cgWindowBounds(for: identity.windowID) : nil
+        let currentFrameForGate: CGRect?
+        if toggleRecord == nil {
+            currentFrameForGate = nil
+        } else if let environment {
+            currentFrameForGate = environment.cgWindowBounds(identity.windowID)
+        } else {
+            currentFrameForGate = cgWindowBounds(for: identity.windowID)
+        }
         let recordGate = AutoRestoreRecordGate.evaluate(
             record: toggleRecord,
             now: now,
@@ -118,7 +154,11 @@ final class HookEventHandler {
             tolerance: WindowManager.shared.frameTolerance
         )
         if recordGate == .alreadyAtOriginalFrame, let staleRecord = toggleRecord {
-            ToggleEngine.shared.clear(windowID: identity.windowID)
+            if let environment {
+                environment.clearToggleRecord(identity.windowID)
+            } else {
+                ToggleEngine.shared.clear(windowID: identity.windowID)
+            }
             log(
                 "[HookEventHandler] UserPromptSubmit: window already at original position, clearing stale toggle record",
                 fields: [
@@ -129,10 +169,21 @@ final class HookEventHandler {
                 ]
             )
         }
-        let restoreAlreadyActive = RestoreInFlightRegistry.shared.isRecent(windowID: identity.windowID)
-        let onMain = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
-        let inCooldown = MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID)
-        let cooldownRemaining = inCooldown ? MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID) : 0
+        let restoreAlreadyActive: Bool
+        let onMain: Bool
+        let inCooldown: Bool
+        let cooldownRemaining: Int
+        if let environment {
+            restoreAlreadyActive = environment.restoreInFlight(identity.windowID)
+            onMain = environment.isOnMainScreen(identity.windowID)
+            inCooldown = environment.isInCooldown(identity.windowID)
+            cooldownRemaining = inCooldown ? environment.cooldownRemaining(identity.windowID) : 0
+        } else {
+            restoreAlreadyActive = RestoreInFlightRegistry.shared.isRecent(windowID: identity.windowID)
+            onMain = WindowManager.shared.isWindowOnMainScreen(windowID: identity.windowID)
+            inCooldown = MoveCooldownRegistry.shared.isInCooldown(windowID: identity.windowID)
+            cooldownRemaining = inCooldown ? MoveCooldownRegistry.shared.remainingSeconds(windowID: identity.windowID) : 0
+        }
         // B198: 绑定成功后的环境感知行（窗在主/副屏），注入本函数全部后续响应。
         let envContext = Self.makeUPSAdditionalContext(identityResolved: true, onMainScreen: onMain)
 
