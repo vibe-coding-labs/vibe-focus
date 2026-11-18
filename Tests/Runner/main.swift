@@ -561,6 +561,7 @@ final class FakeAuditor: RestoreAuditing {
         }
         runDomain("runLayoutGuardTests") { runLayoutGuardTests() }
         runDomain("runPostMoveRecordTests") { runPostMoveRecordTests() }
+        runDomain("runAgentApiGuardSweepTests") { runAgentApiGuardSweepTests() }
         runDomain("runAppleScriptDirectedTests") { runAppleScriptDirectedTests() }
         runDomain("runBubbleButtonCursorTests") { runBubbleButtonCursorTests() }
         runDomain("runSelectionRefreshTests") { runSelectionRefreshTests() }
