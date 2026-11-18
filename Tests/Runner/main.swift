@@ -320,6 +320,11 @@ final class FakeAuditor: RestoreAuditing {
             InputBubblePreferences.isEnabled = false
             InputBubblePreferences.autoShowOnFocus = false
             InputBubblePreferences.autoShowOnMoveToMain = false
+            // 纵深防御 2：设置页渲染域会初始化 ScreenOverlayManager，其自动刷新
+            // Timer 一旦跑起来，无 yabai 的 CI（displayIndex 永不缓存 → fallback
+            // 查询）会与同步 yabai 桥的 RunLoop 泵自激，卡死后续只读域
+            // （2026-11-18 Verify 实测 runSpaceQueryShapeTests 首查卡 46 分钟）。
+            ScreenOverlayManager.shared.suspendAutomaticRefreshes(reason: "runner_non_ui")
         }
         runDomain("runRestoreOrchestrationTests") { runRestoreOrchestrationTests() }
         runDomain("runRestoreStageTests") { runRestoreStageTests() }
