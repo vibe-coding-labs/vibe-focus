@@ -12,7 +12,7 @@ import Foundation
 final class LayoutSeamState: @unchecked Sendable {
     var permission = true
     var notified = 0
-    var resolution: ToggleWindowResolution!
+    var resolution: WindowManager.ToggleWindowResolution!
     var liveFrame: CGRect? = CGRect(x: 100, y: 100, width: 800, height: 600)
     var fullscreen = false
     var displayID: UInt32? = 1
@@ -38,8 +38,8 @@ extension RunnerHarness {
             appName: "Test", windowNumber: nil, title: "t")
         let fakeAX = AXUIElementCreateSystemWide()
 
-        func resolution(windowID: UInt32?, ax: AXUIElement?, frame: CGRect?) -> ToggleWindowResolution {
-            ToggleWindowResolution(
+        func resolution(windowID: UInt32?, ax: AXUIElement?, frame: CGRect?) -> WindowManager.ToggleWindowResolution {
+            WindowManager.ToggleWindowResolution(
                 windowID: windowID,
                 windowAX: ax,
                 identity: windowID == nil ? nil : identity,

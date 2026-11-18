@@ -4,6 +4,24 @@ import Carbon
 import CoreFoundation
 import Foundation
 
+/// 快捷键录制/应用编排的宿主依赖缝（2026-11-19 覆盖率补齐）：校验、Carbon 注册、
+/// 持久化、提示音、审计与通知全可注入。默认 nil → 生产真实实现；Runner 注入假实现
+/// 直测改键四态（无变化/校验失败/注册失败回滚/成功）+ 摆位重复/撞车 + 气泡撞车
+/// （零 Carbon 全局注册、零 UserDefaults 写）。
+struct HotKeyApplyEnvironment {
+    var validationError: (HotKeyConfiguration) -> String?
+    /// @MainActor：注册结果要写回 shortcutStatusIsError（回滚判定输入），
+    /// 与调用点同隔离域，测试闭包可直接持有 manager。
+    var registerHotKey: @MainActor () -> Void
+    var saveHotKey: (HotKeyConfiguration) -> Void
+    var saveLayoutTable: () -> Void
+    var setBubbleHotKey: (HotKeyConfiguration) -> Void
+    var layoutActionsEnabled: () -> Bool
+    var beep: () -> Void
+    var record: (String) -> Void
+    var notify: (Notification.Name) -> Void
+}
+
 // MARK: - HotKey Manager
 /// Manages global hotkey registration, accessibility permissions, and shortcut recording.
 @MainActor
@@ -115,7 +133,7 @@ public final class HotKeyManager: ObservableObject {
         }
     }
 
-    func applyShortcut(_ hotKey: HotKeyConfiguration) {
+    func applyShortcut(_ hotKey: HotKeyConfiguration, environment: HotKeyApplyEnvironment? = nil) {
         // P-INST-220: 快捷键应用端到端耗时（validate + registerHotKey P-INST-140 + NSSound.beep + saveStoredHotKey P-INST-189 + NotificationCenter；用户设置 UI 改快捷键触发，含 beep 反馈）。
         #if PERF_INSTRUMENT
         let asStart = Date()
@@ -124,42 +142,86 @@ public final class HotKeyManager: ObservableObject {
         }
         #endif
         log("[HotKey] applyShortcut requested: \(hotKey.displayString) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifiers)")
-        CrashContextRecorder.shared.record("hotkey_apply_requested key=\(hotKey.displayString)")
+        recordHotKeyEvent("hotkey_apply_requested key=\(hotKey.displayString)", environment: environment)
 
         if hotKey == currentHotKey {
             shortcutStatusMessage = "快捷键未变化：\(hotKey.displayString)"
             shortcutStatusIsError = false
-            CrashContextRecorder.shared.record("hotkey_apply_no_change key=\(hotKey.displayString)")
+            recordHotKeyEvent("hotkey_apply_no_change key=\(hotKey.displayString)", environment: environment)
             return
         }
 
-        if let validationError = Self.validationError(for: hotKey) {
+        let validation: String?
+        if let environment {
+            validation = environment.validationError(hotKey)
+        } else {
+            validation = Self.validationError(for: hotKey)
+        }
+        if let validationError = validation {
             shortcutStatusMessage = validationError
             shortcutStatusIsError = true
-            NSSound.beep()
-            CrashContextRecorder.shared.record("hotkey_apply_validation_failed key=\(hotKey.displayString)")
+            beepHotKey(environment)
+            recordHotKeyEvent("hotkey_apply_validation_failed key=\(hotKey.displayString)", environment: environment)
             return
         }
 
         let previousHotKey = currentHotKey
         currentHotKey = hotKey
-        registerHotKey()
+        registerHotKeyInjected(environment)
 
         if shortcutStatusIsError {
             currentHotKey = previousHotKey
-            registerHotKey()
+            registerHotKeyInjected(environment)
             shortcutStatusMessage = "快捷键已恢复为 \(currentHotKey.displayString)"
             shortcutStatusIsError = true
-            NSSound.beep()
-            CrashContextRecorder.shared.record("hotkey_apply_rollback key=\(previousHotKey.displayString)")
+            beepHotKey(environment)
+            recordHotKeyEvent("hotkey_apply_rollback key=\(previousHotKey.displayString)", environment: environment)
             return
         }
 
-        saveStoredHotKey(hotKey)
+        if let environment {
+            environment.saveHotKey(hotKey)
+        } else {
+            saveStoredHotKey(hotKey)
+        }
         shortcutStatusMessage = "快捷键已更新：\(hotKey.displayString)"
         shortcutStatusIsError = false
-        NotificationCenter.default.post(name: .hotKeyConfigurationDidChange, object: nil)
-        CrashContextRecorder.shared.record("hotkey_apply_success key=\(hotKey.displayString)")
+        notifyHotKey(.hotKeyConfigurationDidChange, environment)
+        recordHotKeyEvent("hotkey_apply_success key=\(hotKey.displayString)", environment: environment)
+    }
+
+    // MARK: - 注入原语（environment nil → 生产真实通道）
+
+    private func registerHotKeyInjected(_ environment: HotKeyApplyEnvironment?) {
+        if let environment {
+            environment.registerHotKey()
+        } else {
+            registerHotKey()
+        }
+    }
+
+    private func recordHotKeyEvent(_ audit: String, environment: HotKeyApplyEnvironment?) {
+        if let environment {
+            environment.record(audit)
+        } else {
+            CrashContextRecorder.shared.record(audit)
+        }
+    }
+
+    private func beepHotKey(_ environment: HotKeyApplyEnvironment?) {
+        if let environment {
+            environment.beep()
+        } else {
+            NSSound.beep()
+        }
+    }
+
+    private func notifyHotKey(_ name: Notification.Name, _ environment: HotKeyApplyEnvironment?) {
+        if let environment {
+            environment.notify(name)
+        } else {
+            NotificationCenter.default.post(name: name, object: nil)
+        }
     }
 
     func resetToDefaultShortcut() {
@@ -299,9 +361,19 @@ public final class HotKeyManager: ObservableObject {
     /// 录制摆位动作热键。返回错误信息（nil = 成功）。
     /// 校验链：修饰键/系统冲突（validate）→ 表内组合键重复 → 与主 toggle 键撞车。
     @discardableResult
-    func applyLayoutShortcut(_ hotKey: HotKeyConfiguration, for action: LayoutAction) -> String? {
+    func applyLayoutShortcut(
+        _ hotKey: HotKeyConfiguration,
+        for action: LayoutAction,
+        environment: HotKeyApplyEnvironment? = nil
+    ) -> String? {
         log("[HotKey] applyLayoutShortcut requested: \(action.rawValue) \(hotKey.displayString)")
-        if let validationError = Self.validationError(for: hotKey) {
+        let validation: String?
+        if let environment {
+            validation = environment.validationError(hotKey)
+        } else {
+            validation = Self.validationError(for: hotKey)
+        }
+        if let validationError = validation {
             return validationError
         }
 
@@ -316,10 +388,14 @@ public final class HotKeyManager: ObservableObject {
         }
 
         layoutTable = updated
-        saveStoredLayoutTable()
-        registerHotKey()
-        NotificationCenter.default.post(name: .layoutHotKeyTableDidChange, object: nil)
-        CrashContextRecorder.shared.record("layout_hotkey_apply action=\(action.rawValue) key=\(hotKey.displayString)")
+        if let environment {
+            environment.saveLayoutTable()
+        } else {
+            saveStoredLayoutTable()
+        }
+        registerHotKeyInjected(environment)
+        notifyHotKey(.layoutHotKeyTableDidChange, environment)
+        recordHotKeyEvent("layout_hotkey_apply action=\(action.rawValue) key=\(hotKey.displayString)", environment: environment)
         return nil
     }
 
@@ -346,23 +422,34 @@ public final class HotKeyManager: ObservableObject {
     /// 录制气泡唤起热键。返回错误信息（nil = 成功）。
     /// 校验链：修饰键/系统冲突（validate）→ 与主 toggle 键撞车 → 与摆位键撞车。
     @discardableResult
-    func applyBubbleShortcut(_ hotKey: HotKeyConfiguration) -> String? {
+    func applyBubbleShortcut(_ hotKey: HotKeyConfiguration, environment: HotKeyApplyEnvironment? = nil) -> String? {
         log("[HotKey] applyBubbleShortcut requested: \(hotKey.displayString)")
-        if let validationError = Self.validationError(for: hotKey) {
+        let validation: String?
+        if let environment {
+            validation = environment.validationError(hotKey)
+        } else {
+            validation = Self.validationError(for: hotKey)
+        }
+        if let validationError = validation {
             return validationError
         }
         if hotKey.keyCode == currentHotKey.keyCode && hotKey.modifiers == currentHotKey.modifiers {
             return "组合键与主开关快捷键 \(currentHotKey.displayString) 冲突"
         }
-        if LayoutPreferences.isEnabled,
+        let layoutEnabled = environment.map { $0.layoutActionsEnabled() } ?? LayoutPreferences.isEnabled
+        if layoutEnabled,
            LayoutAction.allCases.contains(where: { layoutTable.hotKey(for: $0) == hotKey }) {
             return "组合键已被摆位快捷键占用：\(hotKey.displayString)"
         }
 
-        InputBubblePreferences.hotKey = hotKey
-        registerHotKey()
-        NotificationCenter.default.post(name: .inputBubbleHotKeyDidChange, object: nil)
-        CrashContextRecorder.shared.record("bubble_hotkey_apply key=\(hotKey.displayString)")
+        if let environment {
+            environment.setBubbleHotKey(hotKey)
+        } else {
+            InputBubblePreferences.hotKey = hotKey
+        }
+        registerHotKeyInjected(environment)
+        notifyHotKey(.inputBubbleHotKeyDidChange, environment)
+        recordHotKeyEvent("bubble_hotkey_apply key=\(hotKey.displayString)", environment: environment)
         return nil
     }
 
