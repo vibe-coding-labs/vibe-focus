@@ -7,6 +7,36 @@ import Foundation
 // B191：@MainActor 摘除——体内只有 AX/CG/yabai/NSWorkspace 快照读，无主线程专属
 // 依赖；调用者 performToggleCore 已下放 WindowWorkExecutor（B191）。
 
+/// toggle 路由三个动作的宿主依赖缝（2026-11-19 覆盖率补齐）：前台窗解析、
+/// yabai 查询、屏/可视区映射、float 脱管、frame 直写、AX 权限、身份捕获、
+/// 记录落账与回滚计数全可注入。默认 nil → 生产真实实现；Runner 注入假实现
+/// 直测三分支编排（零真实窗口移动、零 AX 写入、零文件快照）。
+struct ToggleRoutesEnvironment {
+    var screens: () -> [NSScreen]
+    var frontmostPID: () -> pid_t?
+    var focusedWindow: (pid_t) -> AXUIElement?
+    var windowHandle: (AXUIElement) -> UInt32?
+    var queryWindow: (UInt32) -> YabaiWindowInfo?
+    var querySpaces: () -> [YabaiSpaceInfo]
+    var nsScreen: (Int) -> NSScreen?
+    var cgWindowBounds: (UInt32) -> CGRect?
+    var floatAndSettle: (UInt32, String, YabaiWindowInfo?) -> Void
+    var moveFrame: (UInt32, CGRect, String, String, CGRect?) -> Bool
+    var mainScreen: () -> NSScreen?
+    var quartzVisibleFrame: (NSScreen) -> CGRect
+    var hasAccessibilityPermission: () -> Bool
+    var notifyPermission: () -> Void
+    var captureIdentity: () -> WindowIdentity?
+    var moveToMainPipeline: (WindowIdentity, AXUIElement?, CGRect?) -> Bool
+    var focusWindow: (UInt32) -> Bool
+    var captureSpaceContext: (UInt32, String) -> SpaceContext
+    var saveSingleDisplayRecord: (WindowIdentity, UInt32, CGRect, SpaceContext, CGRect, Int?) -> Void
+    var displayIDForScreen: (NSScreen) -> UInt32?
+    var displayIndexOfDisplayID: (UInt32?) -> Int?
+    var recordPerf: (String, Double) -> Void
+    var writePerfSnapshot: (String) -> Void
+}
+
 extension WindowManager {
 
     /// 卡死解堵：窗口在主屏但没有有效 toggle record（上一轮 restore 已消费）时，
@@ -28,7 +58,7 @@ extension WindowManager {
     /// 原实现曾把 NSScreen screenArrayIndex（0-based）当 yabai display index（1-based）
     /// 用，副屏被当成主屏导致 stuck 死循环（toggle-00000138）。现目标屏只用于取
     /// frame，索引换算集中在 CoordinateKit.nsScreen(forYabaiDisplayIndex:)。
-    func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String, windowID knownWindowID: UInt32? = nil) {
+    func moveStuckWindowToSecondaryScreen(operationID: String, triggerSource: String, windowID knownWindowID: UInt32? = nil, environment: ToggleRoutesEnvironment? = nil) {
         // P-INST-10: stuck 路径总耗时（defer 汇总，所有 return 路径）+ AX lookup 耗时。
         #if PERF_INSTRUMENT
         let stuckStart = Date()
@@ -39,9 +69,18 @@ extension WindowManager {
         }
         #endif
         let axLookupStart = Date()
-        let axResolvedID: UInt32? = knownWindowID ?? NSWorkspace.shared.frontmostApplication
-            .flatMap { focusedWindow(for: $0.processIdentifier) }
-            .flatMap { windowHandle(for: $0) }
+        let axResolvedID: UInt32?
+        if let knownWindowID {
+            axResolvedID = knownWindowID
+        } else if let environment {
+            axResolvedID = environment.frontmostPID()
+                .flatMap { environment.focusedWindow($0) }
+                .flatMap { environment.windowHandle($0) }
+        } else {
+            axResolvedID = NSWorkspace.shared.frontmostApplication
+                .flatMap { focusedWindow(for: $0.processIdentifier) }
+                .flatMap { windowHandle(for: $0) }
+        }
         let axLookupMs = elapsedMilliseconds(since: axLookupStart)
         guard let windowID = axResolvedID else {
             log("[WindowManager] moveStuckWindowToSecondaryScreen: no focused window", level: .warn, fields: [
@@ -53,8 +92,13 @@ extension WindowManager {
         let spaceController = SpaceController.shared
 
         let queryStart = Date()
-        let windowInfo = spaceController.queryWindow(windowID: windowID)
-        let spaces = spaceController.querySpaces()
+        let windowInfo: YabaiWindowInfo?
+        if let environment {
+            windowInfo = environment.queryWindow(windowID)
+        } else {
+            windowInfo = spaceController.queryWindow(windowID: windowID)
+        }
+        let spaces = environment.map { $0.querySpaces() } ?? spaceController.querySpaces()
         let queryMs = elapsedMilliseconds(since: queryStart)
 
         // 目标屏：与当前 display 不同且有可见 space 的 display → NSScreen；
@@ -62,9 +106,19 @@ extension WindowManager {
         let currentDisplay = windowInfo?.display
         // B234 提纯：选择谓词落 ToggleFocusBranching 纯内核（Runner 穷尽锁定），此处只消费。
         let targetYabaiDisplay = ToggleFocusBranching.stuckTargetYabaiDisplay(currentDisplay: currentDisplay, spaces: spaces)
-        let targetScreen = targetYabaiDisplay.flatMap { SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: $0) }
-            ?? NSScreen.screens.first(where: { $0.frame.origin != .zero })
-        guard let targetScreen else {
+        let mappedScreen: NSScreen?
+        if let targetYabaiDisplay {
+            if let environment {
+                mappedScreen = environment.nsScreen(targetYabaiDisplay)
+            } else {
+                mappedScreen = SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: targetYabaiDisplay)
+            }
+        } else {
+            mappedScreen = nil
+        }
+        let fallbackScreen = (environment.map { $0.screens() } ?? NSScreen.screens)
+            .first(where: { $0.frame.origin != .zero })
+        guard let targetScreen = mappedScreen ?? fallbackScreen else {
             log("[WindowManager] moveStuckWindowToSecondaryScreen: no secondary screen", level: .warn, fields: [
                 "op": operationID, "windowID": String(windowID)
             ])
@@ -75,28 +129,59 @@ extension WindowManager {
         // 序列唯一出口 FloatSettle（Batch 6 收敛）：已 float 零等待（skippedNoOp 无
         // 重摆），真 toggle 时等稳定代等固定；查询缓存失效随原语恒清。
         // B193 残窗防护基准：float/移动前的原帧快照（失败回滚用）。
-        let origFrameBeforeMove = cgWindowBounds(for: windowID)
+        let origFrameBeforeMove: CGRect?
+        if let environment {
+            origFrameBeforeMove = environment.cgWindowBounds(windowID)
+        } else {
+            origFrameBeforeMove = cgWindowBounds(for: windowID)
+        }
         let moveStart = Date()
-        floatAndSettle(windowID: windowID, operationID: operationID, knownWindowInfo: windowInfo)
+        if let environment {
+            environment.floatAndSettle(windowID, operationID, windowInfo)
+        } else {
+            floatAndSettle(windowID: windowID, operationID: operationID, knownWindowInfo: windowInfo)
+        }
         // 2026-09-06 尺寸保真修复：解堵 = 把卡住的窗口挪去副屏，**保持窗口当前尺寸**
         // （位置放副屏可视区原点、整框向内夹紧；窗口大于副屏可视区时才收窄）。
         // 旧实现目标 = 副屏整屏可视区（3440x1440），任何窗口一解堵就被放大成
         // 整屏——用户主诉「移动窗口连尺寸都搞错了」的直接来源（观测堆栈+E2E 复现：
         // 系统设置抢焦点后 toggle 误入 stuck 路由，普通窗口被撑满整副屏）。
-        let secondaryVisible = CoordinateKit.quartzVisibleFrame(of: targetScreen)
+        let visibleFrameOf: (NSScreen) -> CGRect = { screen in
+            environment.map { $0.quartzVisibleFrame(screen) } ?? CoordinateKit.quartzVisibleFrame(of: screen)
+        }
+        let secondaryVisible = visibleFrameOf(targetScreen)
+        let currentBoundsAfterFloat: CGRect?
+        if let environment {
+            currentBoundsAfterFloat = environment.cgWindowBounds(windowID)
+        } else {
+            currentBoundsAfterFloat = cgWindowBounds(for: windowID)
+        }
         let targetFrame = CoordinateKit.clampFrame(
-            cgWindowBounds(for: windowID) ?? secondaryVisible,
+            currentBoundsAfterFloat ?? secondaryVisible,
             into: secondaryVisible
         )
-        let moved = moveWindowToFrameViaYabai(
-            windowID: windowID,
-            frame: targetFrame,
-            op: operationID,
-            stage: "move_to_secondary_stuck",
-            // 源屏=主屏（stuck 窗口必在主屏）；尺寸保持后目标 ≤ 当前尺寸（缩小序），
-            // 此参数仅供判定兜底 + 缩小序源屏先行判定。
-            sourceVisibleFrame: CoordinateKit.quartzVisibleFrame(of: getMainScreen() ?? targetScreen)
-        )
+        let mainScreenForSource: NSScreen?
+        if let environment {
+            mainScreenForSource = environment.mainScreen()
+        } else {
+            mainScreenForSource = getMainScreen()
+        }
+        let moved: Bool
+        if let environment {
+            moved = environment.moveFrame(
+                windowID, targetFrame, operationID, "move_to_secondary_stuck",
+                visibleFrameOf(mainScreenForSource ?? targetScreen))
+        } else {
+            moved = moveWindowToFrameViaYabai(
+                windowID: windowID,
+                frame: targetFrame,
+                op: operationID,
+                stage: "move_to_secondary_stuck",
+                // 源屏=主屏（stuck 窗口必在主屏）；尺寸保持后目标 ≤ 当前尺寸（缩小序），
+                // 此参数仅供判定兜底 + 缩小序源屏先行判定。
+                sourceVisibleFrame: CoordinateKit.quartzVisibleFrame(of: mainScreenForSource ?? targetScreen)
+            )
+        }
         let moveMs = elapsedMilliseconds(since: moveStart)
         log(
             "[WindowManager] moveStuckWindowToSecondaryScreen: frame move",
@@ -115,12 +200,18 @@ extension WindowManager {
         // B193 残窗防护：stuck 移动失败同样回滚原帧（宁可没解堵，不可留残窗）。
         if case .rollback(let rollbackFrame) = MoveRollbackPlan.decide(
             movedOK: moved, didModifyWindow: true, origFrame: origFrameBeforeMove) {
-            let rolledBack = moveWindowToFrameViaYabai(
-                windowID: windowID,
-                frame: rollbackFrame,
-                op: operationID,
-                stage: "move_to_secondary_rollback",
-                sourceVisibleFrame: nil)
+            let rolledBack: Bool
+            if let environment {
+                rolledBack = environment.moveFrame(
+                    windowID, rollbackFrame, operationID, "move_to_secondary_rollback", nil)
+            } else {
+                rolledBack = moveWindowToFrameViaYabai(
+                    windowID: windowID,
+                    frame: rollbackFrame,
+                    op: operationID,
+                    stage: "move_to_secondary_rollback",
+                    sourceVisibleFrame: nil)
+            }
             log("[WindowManager] moveStuck rollback", level: rolledBack ? .info : .error, fields: [
                 "op": operationID,
                 "windowID": String(windowID),
@@ -128,8 +219,14 @@ extension WindowManager {
                 "rolledBack": String(rolledBack)
             ])
             // B194：同 move_to_main 回滚——计数 + 即时落快照。
-            PerfMonitor.shared.record(rolledBack ? "move.rollback.ok" : "move.rollback.failed", durationMs: 0)
-            PerfMonitor.shared.writeSnapshot(reason: "rollback")
+            let metric = rolledBack ? "move.rollback.ok" : "move.rollback.failed"
+            if let environment {
+                environment.recordPerf(metric, 0)
+                environment.writePerfSnapshot("rollback")
+            } else {
+                PerfMonitor.shared.record(metric, durationMs: 0)
+                PerfMonitor.shared.writeSnapshot(reason: "rollback")
+            }
         }
     }
 
@@ -158,7 +255,7 @@ extension WindowManager {
     ///   - knownIdentity: Pre-resolved window identity (avoids redundant AX queries)
     ///   - knownWindowAX: Pre-resolved AXUIElement (avoids redundant AX queries)
     ///   - knownOrigFrame: Pre-captured original frame (avoids reading post-space-move frame)
-    func moveToMainScreen(operationID: String? = nil, triggerSource: String = "unknown", knownIdentity: WindowIdentity? = nil, knownWindowAX: AXUIElement? = nil, knownOrigFrame: CGRect? = nil) {
+    func moveToMainScreen(operationID: String? = nil, triggerSource: String = "unknown", knownIdentity: WindowIdentity? = nil, knownWindowAX: AXUIElement? = nil, knownOrigFrame: CGRect? = nil, environment: ToggleRoutesEnvironment? = nil) {
         let op = operationID ?? makeOperationID(prefix: "move")
         let startedAt = Date()
         log(
@@ -169,7 +266,7 @@ extension WindowManager {
             ]
         )
 
-        let axTrusted = hasAccessibilityPermission()
+        let axTrusted = environment.map { $0.hasAccessibilityPermission() } ?? hasAccessibilityPermission()
 
         if !axTrusted {
             log(
@@ -181,12 +278,24 @@ extension WindowManager {
             )
             CrashContextRecorder.shared.record("move_to_main_ax_denied op=\(op)")
             logDiagnostics("ax_trusted_false_move")
-            notifyAccessibilityPermissionRequired()
+            if let environment {
+                environment.notifyPermission()
+            } else {
+                notifyAccessibilityPermissionRequired()
+            }
             return
         }
         // 复用 toggle 入口已解析的 identity（knownIdentity），省 captureFocusedWindowIdentity 的 4 个 AX
         // 调用（focusedWindow + windowHandle + windowNumber + title），副屏窗口时全阻塞。
-        guard let identity = knownIdentity ?? captureFocusedWindowIdentity() else {
+        let resolvedIdentity: WindowIdentity?
+        if let knownIdentity {
+            resolvedIdentity = knownIdentity
+        } else if let environment {
+            resolvedIdentity = environment.captureIdentity()
+        } else {
+            resolvedIdentity = captureFocusedWindowIdentity()
+        }
+        guard let identity = resolvedIdentity else {
             log(
                 "[WindowManager] move_to_main failed: focused window identity missing",
                 level: .error,
@@ -197,20 +306,26 @@ extension WindowManager {
             CrashContextRecorder.shared.record("move_to_main_failed_identity_missing op=\(op)")
             return
         }
-        let moved = moveWindowToMainScreen(
-            identity: identity,
-            reason: .manualHotkey,
-            sessionID: nil,
-            operationID: op,
-            knownWindowAX: knownWindowAX,
-            knownOrigFrame: knownOrigFrame
-        )
+        let moved: Bool
+        if let environment {
+            moved = environment.moveToMainPipeline(identity, knownWindowAX, knownOrigFrame)
+        } else {
+            moved = moveWindowToMainScreen(
+                identity: identity,
+                reason: .manualHotkey,
+                sessionID: nil,
+                operationID: op,
+                knownWindowAX: knownWindowAX,
+                knownOrigFrame: knownOrigFrame
+            )
+        }
         MoveCooldownRegistry.shared.clearCooldown(windowID: identity.windowID)
         if moved {
             // P-INST-4: focusMs 诊断 move_to_main 结尾的 AX raise+focus 隐藏开销（内部含 findWindowByPID
             // AX 查找 + CGWindowListCopyWindowInfo 全扫，主屏窗口应 <20ms，若高说明跨屏阻塞未消除）。
             let focusStart = Date()
-            let focusOK = focusWindowByCGWindowID(identity.windowID)
+            let focusOK = environment.map { $0.focusWindow(identity.windowID) }
+                ?? focusWindowByCGWindowID(identity.windowID)
             let focusMs = elapsedMilliseconds(since: focusStart)
             log(
                 "MOVED AND MAXIMIZED ON TARGET SCREEN",
@@ -257,7 +372,8 @@ extension WindowManager {
         operationID: String? = nil,
         triggerSource: String = "unknown",
         knownIdentity: WindowIdentity? = nil,
-        knownOrigFrame: CGRect? = nil
+        knownOrigFrame: CGRect? = nil,
+        environment: ToggleRoutesEnvironment? = nil
     ) {
         let op = operationID ?? makeOperationID(prefix: "max")
         let startedAt = Date()
@@ -269,7 +385,8 @@ extension WindowManager {
             ]
         )
 
-        guard hasAccessibilityPermission() else {
+        let axTrusted = environment.map { $0.hasAccessibilityPermission() } ?? hasAccessibilityPermission()
+        guard axTrusted else {
             log(
                 "[WindowManager] single_display_maximize failed: accessibility denied",
                 level: .warn,
@@ -277,10 +394,22 @@ extension WindowManager {
             )
             CrashContextRecorder.shared.record("single_display_maximize_ax_denied op=\(op)")
             logDiagnostics("ax_trusted_false_single_display_maximize")
-            notifyAccessibilityPermissionRequired()
+            if let environment {
+                environment.notifyPermission()
+            } else {
+                notifyAccessibilityPermissionRequired()
+            }
             return
         }
-        guard let identity = knownIdentity ?? captureFocusedWindowIdentity() else {
+        let resolvedIdentity: WindowIdentity?
+        if let knownIdentity {
+            resolvedIdentity = knownIdentity
+        } else if let environment {
+            resolvedIdentity = environment.captureIdentity()
+        } else {
+            resolvedIdentity = captureFocusedWindowIdentity()
+        }
+        guard let identity = resolvedIdentity else {
             log(
                 "[WindowManager] single_display_maximize failed: focused window identity missing",
                 level: .error,
@@ -293,7 +422,13 @@ extension WindowManager {
 
         // float 脱管前的原帧快照（restore 目标=原网格单元帧）；两来源都拿不到时
         // 宁可不动——没有 orig 的最大化不可回退，等于把用户的网格布局毁掉。
-        guard let origFrame = knownOrigFrame ?? cgWindowBounds(for: windowID) else {
+        let liveBounds: CGRect?
+        if let environment {
+            liveBounds = environment.cgWindowBounds(windowID)
+        } else {
+            liveBounds = cgWindowBounds(for: windowID)
+        }
+        guard let origFrame = knownOrigFrame ?? liveBounds else {
             log(
                 "[WindowManager] single_display_maximize failed: cannot snapshot original frame",
                 level: .error,
@@ -301,9 +436,20 @@ extension WindowManager {
             )
             return
         }
-        let spaceContext = spaceController.captureSpaceContext(windowID: windowID, operationID: op)
+        let spaceContext: SpaceContext
+        if let environment {
+            spaceContext = environment.captureSpaceContext(windowID, op)
+        } else {
+            spaceContext = spaceController.captureSpaceContext(windowID: windowID, operationID: op)
+        }
 
-        guard let mainScreen = getMainScreen() else {
+        let mainScreen: NSScreen?
+        if let environment {
+            mainScreen = environment.mainScreen()
+        } else {
+            mainScreen = getMainScreen()
+        }
+        guard let mainScreen else {
             log(
                 "[WindowManager] single_display_maximize failed: no main screen",
                 level: .error,
@@ -311,23 +457,48 @@ extension WindowManager {
             )
             return
         }
-        let targetFrame = CoordinateKit.quartzVisibleFrame(of: mainScreen)
+        let targetFrame = environment.map { $0.quartzVisibleFrame(mainScreen) }
+            ?? CoordinateKit.quartzVisibleFrame(of: mainScreen)
 
         // 源屏可视区（单屏下=主屏自己）：与 move_to_main 管线 P2 同源，供写序判定。
-        let windowInfo = spaceController.queryWindow(windowID: windowID, ignoreCache: false)
-        let sourceVisibleFrame = windowInfo?.display
-            .flatMap { SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: $0) }
-            .map { CoordinateKit.quartzVisibleFrame(of: $0) }
+        let windowInfo: YabaiWindowInfo?
+        if let environment {
+            windowInfo = environment.queryWindow(windowID)
+        } else {
+            windowInfo = spaceController.queryWindow(windowID: windowID, ignoreCache: false)
+        }
+        let sourceScreen: NSScreen?
+        if let display = windowInfo?.display {
+            if let environment {
+                sourceScreen = environment.nsScreen(display)
+            } else {
+                sourceScreen = SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: display)
+            }
+        } else {
+            sourceScreen = nil
+        }
+        let sourceVisibleFrame = sourceScreen.map { screen in
+            environment.map { $0.quartzVisibleFrame(screen) } ?? CoordinateKit.quartzVisibleFrame(of: screen)
+        }
 
-        floatAndSettle(windowID: windowID, operationID: op, knownWindowInfo: windowInfo)
+        if let environment {
+            environment.floatAndSettle(windowID, op, windowInfo)
+        } else {
+            floatAndSettle(windowID: windowID, operationID: op, knownWindowInfo: windowInfo)
+        }
         let moveStart = Date()
-        let moved = moveWindowToFrameViaYabai(
-            windowID: windowID,
-            frame: targetFrame,
-            op: op,
-            stage: "single_display_maximize",
-            sourceVisibleFrame: sourceVisibleFrame
-        )
+        let moved: Bool
+        if let environment {
+            moved = environment.moveFrame(windowID, targetFrame, op, "single_display_maximize", sourceVisibleFrame)
+        } else {
+            moved = moveWindowToFrameViaYabai(
+                windowID: windowID,
+                frame: targetFrame,
+                op: op,
+                stage: "single_display_maximize",
+                sourceVisibleFrame: sourceVisibleFrame
+            )
+        }
         let moveMs = elapsedMilliseconds(since: moveStart)
         log(
             "[WindowManager] single_display_maximize: frame move",
@@ -345,22 +516,29 @@ extension WindowManager {
         if moved {
             // B193 残窗防护同款：写失败不动记录（recordKept 语义）——只有真实
             // 最大化成功才落单屏记录，restore 才有可信的回退目标。
-            _ = saveToggleRecordForMainMove(
-                identity: identity,
-                windowID: windowID,
-                origFrame: origFrame,
-                spaceContext: spaceContext,
-                targetFrame: targetFrame,
-                targetDisplayIndex: displayIndex(forDisplayID: displayID(for: mainScreen)),
-                reason: .manualHotkey,
-                sessionID: nil,
-                op: op,
-                singleDisplay: true
-            )
+            if let environment {
+                let screenDisplayID = environment.displayIDForScreen(mainScreen)
+                environment.saveSingleDisplayRecord(
+                    identity, windowID, origFrame, spaceContext, targetFrame,
+                    environment.displayIndexOfDisplayID(screenDisplayID))
+            } else {
+                _ = saveToggleRecordForMainMove(
+                    identity: identity,
+                    windowID: windowID,
+                    origFrame: origFrame,
+                    spaceContext: spaceContext,
+                    targetFrame: targetFrame,
+                    targetDisplayIndex: displayIndex(forDisplayID: displayID(for: mainScreen)),
+                    reason: .manualHotkey,
+                    sessionID: nil,
+                    op: op,
+                    singleDisplay: true
+                )
+            }
         }
         MoveCooldownRegistry.shared.clearCooldown(windowID: windowID)
         if moved {
-            let focusOK = focusWindowByCGWindowID(windowID)
+            let focusOK = environment.map { $0.focusWindow(windowID) } ?? focusWindowByCGWindowID(windowID)
             log(
                 "SINGLE DISPLAY MAXIMIZED",
                 fields: [
