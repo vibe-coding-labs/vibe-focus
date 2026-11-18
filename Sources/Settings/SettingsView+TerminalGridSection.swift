@@ -271,34 +271,35 @@ extension SettingsView {
     /// 屏标签/胶囊挂接统一走精确解析器（几何匹配 + 1s 缓存，Batch 33/34）。
     @MainActor
     private func applyGridMinimapScreens(spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]]) {
+        // 解析器在主线程先取值，纯装配函数不捕获任何 actor 隔离状态。
+        let descriptors: [(screen: NSScreen, displayID: UInt32, yabaiIndex: Int?)] =
+            NSScreen.screens.map { screen in
+                (screen,
+                 CoordinateKit.cgDisplayID(for: screen) ?? 0,
+                 SpaceController.shared.exactYabaiDisplayIndex(for: screen))
+            }
         gridMinimapScreens = Self.inputScreens(
-            from: NSScreen.screens,
+            from: descriptors,
             spacesByYabaiDisplay: spacesByYabaiDisplay,
-            yabaiIndex: { SpaceController.shared.exactYabaiDisplayIndex(for: $0) },
-            displayID: { CoordinateKit.cgDisplayID(for: $0) ?? 0 },
             mainDisplayID: CGMainDisplayID()
         )
     }
 
-    /// 屏快照纯装配（不碰 @State，Runner 可直测）：NSScreen → InputScreen 列表。
-    /// 解析器以闭包注入，测试可给固定夹具；生产侧闭包仍走精确解析器。
+    /// 屏快照纯装配（不碰 @State、不捕获 actor 状态，Runner 可直测）：
+    /// 屏 + 已解析的 displayID/yabai 序号 → InputScreen 列表。
     static func inputScreens(
-        from screens: [NSScreen],
+        from descriptors: [(screen: NSScreen, displayID: UInt32, yabaiIndex: Int?)],
         spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]],
-        yabaiIndex: (NSScreen) -> Int?,
-        displayID: (NSScreen) -> UInt32,
         mainDisplayID: UInt32
     ) -> [ScreenLayoutMapper.InputScreen] {
-        screens.map { screen in
-            let id = displayID(screen)
-            let yIndex = yabaiIndex(screen)
-            return ScreenLayoutMapper.InputScreen(
-                displayID: id,
-                name: screen.localizedName,
-                cocoaFrame: screen.frame,
-                isMain: id == mainDisplayID,
-                spaces: yIndex.flatMap { spacesByYabaiDisplay[$0] } ?? [],
-                yabaiDisplayIndex: yIndex
+        descriptors.map { descriptor in
+            ScreenLayoutMapper.InputScreen(
+                displayID: descriptor.displayID,
+                name: descriptor.screen.localizedName,
+                cocoaFrame: descriptor.screen.frame,
+                isMain: descriptor.displayID == mainDisplayID,
+                spaces: descriptor.yabaiIndex.flatMap { spacesByYabaiDisplay[$0] } ?? [],
+                yabaiDisplayIndex: descriptor.yabaiIndex
             )
         }
     }

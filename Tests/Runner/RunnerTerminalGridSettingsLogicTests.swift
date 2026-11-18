@@ -58,11 +58,11 @@ extension RunnerHarness {
         // MARK: C. 快照装配（纯函数；异步 @State 落账不在无窗容器内可观测）
         do {
             let screens = NSScreen.screens
+            let descriptors: [(screen: NSScreen, displayID: UInt32, yabaiIndex: Int?)] =
+                screens.map { (screen: $0, displayID: UInt32(42), yabaiIndex: Int?(1)) }
             let assembled = SettingsView.inputScreens(
-                from: screens,
+                from: descriptors,
                 spacesByYabaiDisplay: [1: [ScreenLayoutMapper.InputSpace(yabaiIndex: 3, isVisible: true)]],
-                yabaiIndex: { _ in 1 },
-                displayID: { _ in 42 },
                 mainDisplayID: 42
             )
             check("gridSettings: 快照装配数量与屏数一致（CI 至少一屏）",
