@@ -11,6 +11,19 @@ import Foundation
 // 注意：runShellCommand 虽与 move 无关，但被 TitleEditor/TerminalContext 多处调用，
 // 保留在 WindowManager 命名空间原位（搬动需同步评估全部调用方，本轮不做）。
 
+/// yabai 写通道的宿主依赖缝（2026-11-19 覆盖率补齐）：queryWindow / CG 读回 /
+/// yabai 发令 / AX resize 解析与写原语 / 轮询睡眠全可注入。默认 nil → 生产真实
+/// 实现；Runner 注入假实现直测写序、AX→yabai 降级与收敛裁决（零 fork、零真实窗口移动）。
+struct YabaiMoveEnvironment {
+    var queryWindow: @MainActor (UInt32) -> YabaiWindowInfo?
+    var cgWindowBounds: @MainActor (UInt32) -> CGRect?
+    var runYabai: @MainActor ([String]) -> Void
+    var findAXWindow: @MainActor (Int32, UInt32) -> AXUIElement?
+    var isSettable: @MainActor (AXUIElement, String) -> Bool
+    var resizeViaAX: @MainActor (CGRect, AXUIElement) -> Bool
+    var pollSleep: @MainActor (UInt32) -> Void
+}
+
 // MARK: - Window Move Operations
 extension WindowManager {
 
@@ -61,7 +74,8 @@ extension WindowManager {
         frame: CGRect,
         op: String,
         stage: String,
-        sourceVisibleFrame: CGRect?
+        sourceVisibleFrame: CGRect?,
+        environment: YabaiMoveEnvironment? = nil
     ) -> Bool {
         let segStart = Date()
         var axResizeWriteMs = 0
@@ -73,7 +87,12 @@ extension WindowManager {
         // 「持有 AX 引用可管理」。不可管理 → AX 直写通道（收敛读回语义与本函数一致）。
         // 管理窗一次 queryWindow 命中缓存 ~0ms，行为零改动。查询结果顺手复用给
         // resize 的 AX 解析（省一次 fork）。
-        let yabaiWindowInfo = spaceController.queryWindow(windowID: windowID, ignoreCache: false)
+        let yabaiWindowInfo: YabaiWindowInfo?
+        if let environment {
+            yabaiWindowInfo = environment.queryWindow(windowID)
+        } else {
+            yabaiWindowInfo = spaceController.queryWindow(windowID: windowID, ignoreCache: false)
+        }
         if MoveChannelPolicy.channel(yabaiManageable: yabaiWindowInfo?.isManageableByYabai == true) == .axDirect {
             log("[WindowManager] moveWindowToFrameViaYabai: yabai-blind window, AX direct channel", level: .info, fields: [
                 "op": op, "stage": stage, "windowID": String(windowID),
@@ -87,7 +106,11 @@ extension WindowManager {
                 sourceVisibleFrame: sourceVisibleFrame)
         }
         // 写前 frame 快照：顺序判定依据（查询失败走历史顺序，见 FrameConvergence.writeOrder）。
-        let preWriteBounds = cgWindowBounds(for: windowID)
+        func readBounds() -> CGRect? {
+            if let environment { return environment.cgWindowBounds(windowID) }
+            return cgWindowBounds(for: windowID)
+        }
+        let preWriteBounds = readBounds()
         let writeOrder = FrameConvergence.writeOrder(
             currentSize: preWriteBounds?.size,
             targetSize: frame.size,
@@ -102,29 +125,42 @@ extension WindowManager {
         ])
         let applyMove = {
             yabaiSendCount += 1
-            _ = self.spaceController.runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
-                operation: "\(stage).move(windowID=\(windowID))",
-                operationID: op
-            )
+            let args = ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"]
+            if let environment {
+                environment.runYabai(args)
+            } else {
+                _ = self.spaceController.runYabai(
+                    arguments: args,
+                    operation: "\(stage).move(windowID=\(windowID))",
+                    operationID: op
+                )
+            }
         }
         let applyResize = {
             yabaiSendCount += 1
-            _ = self.spaceController.runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
-                operation: "\(stage).resize(windowID=\(windowID))",
-                operationID: op
-            )
+            let args = ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"]
+            if let environment {
+                environment.runYabai(args)
+            } else {
+                _ = self.spaceController.runYabai(
+                    arguments: args,
+                    operation: "\(stage).resize(windowID=\(windowID))",
+                    operationID: op
+                )
+            }
         }
         // 段间等待逻辑在 FrameWriteExecutor.waitForPhase（Batch 3 提取，含超时告警）。
         // AX resize 通道（同屏 resize 无 fork）：窗口 AX 解析失败/属性不可写时 fallback yabai。
         // 解析顺序：yabai queryWindow(pid) → findWindowByPID（queryWindow 走流程内缓存常命中）。
         func resolveAXForResize() -> AXUIElement? {
             guard let pid = yabaiWindowInfo?.pid.map({ pid_t($0) }) else { return nil }
+            if let environment { return environment.findAXWindow(pid, windowID) }
             return findWindowByPID(pid, windowID: windowID)
         }
         let axWindow = resolveAXForResize().flatMap { ax -> AXUIElement? in
-            isAttributeSettable(ax, attribute: kAXSizeAttribute) ? ax : nil
+            let settable = environment.map { $0.isSettable(ax, kAXSizeAttribute) }
+                ?? isAttributeSettable(ax, attribute: kAXSizeAttribute)
+            return settable ? ax : nil
         }
         log("[WindowManager] moveWindowToFrameViaYabai: resize channel", level: .debug, fields: [
             "op": op, "stage": stage, "windowID": String(windowID),
@@ -138,7 +174,12 @@ extension WindowManager {
             if let ax = axWindow, !axResizeUnreliable {
                 axResizeSendCount += 1
                 let writeStart = Date()
-                let axOK = resizeViaAX(targetFrame: frame, window: ax, windowID: windowID, op: op, stage: stage)
+                let axOK: Bool
+                if let environment {
+                    axOK = environment.resizeViaAX(frame, ax)
+                } else {
+                    axOK = resizeViaAX(targetFrame: frame, window: ax, windowID: windowID, op: op, stage: stage)
+                }
                 axResizeWriteMs += elapsedMilliseconds(since: writeStart)
                 if !axOK { axResizeUnreliable = true }
             } else {
@@ -153,7 +194,7 @@ extension WindowManager {
         // 写丢失不再干等整轮预算。
         let executor = FrameWriteExecutor(
             deps: .init(
-                read: { cgWindowBounds(for: windowID) },
+                read: { readBounds() },
                 applyMove: applyMove,
                 applyResizeAdaptive: applyResizeBestChannel,
                 applyResizeRobust: applyResize
@@ -161,7 +202,8 @@ extension WindowManager {
             tolerance: frameTolerance,
             op: op,
             stage: stage,
-            windowID: windowID
+            windowID: windowID,
+            pollSleep: environment?.pollSleep ?? { usleep(useconds_t($0) * 1_000) }
         )
         let run = executor.run(target: frame, order: writeOrder)
         let outcome = run.outcome
