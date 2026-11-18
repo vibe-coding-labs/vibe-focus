@@ -67,6 +67,13 @@ extension RunnerHarness {
             check("decode: windowId 零拒绝", AgentApiRequestDecoder.decodeWindowID(["windowId": 0]) == nil)
             check("decode: windowId 负数拒绝", AgentApiRequestDecoder.decodeWindowID(["windowId": -5]) == nil)
             check("decode: windowId 缺失拒绝", AgentApiRequestDecoder.decodeWindowID([:]) == nil)
+            // NSNumber 桥接分支：JSON 小数/超大数/Bool 都是 agent 手误常见来源
+            check("decode: windowId 小数走 NSNumber 取整", AgentApiRequestDecoder.decodeWindowID(["windowId": 5.5]) == 5)
+            check("decode: windowId 超 UInt32 拒绝", AgentApiRequestDecoder.decodeWindowID(["windowId": 5_000_000_000.0]) == nil)
+            check("decode: windowId Bool 拒绝（防桥成 1）", AgentApiRequestDecoder.decodeWindowID(["windowId": true]) == nil)
+            check("decode: windowId 字符串拒绝", AgentApiRequestDecoder.decodeWindowID(["windowId": "3220"]) == nil)
+            check("decode: 空 body → 空对象", AgentApiRequestDecoder.parseJSONObject(Data())?.isEmpty == true)
+            check("decode: 非对象 JSON → nil", AgentApiRequestDecoder.parseJSONObject(Data("[]".utf8)) == nil)
 
             check("decode: float 缺 on 拒绝", AgentApiRequestDecoder.decodeFloat(["windowId": 1]) == nil)
             check("decode: float 合法", AgentApiRequestDecoder.decodeFloat(["windowId": 7, "on": true])?.on == true)
@@ -181,6 +188,23 @@ extension RunnerHarness {
             check("mcp: 工具 schema 含 name/description/inputSchema", tools.allSatisfy { $0["name"] != nil && $0["description"] != nil && $0["inputSchema"] != nil })
             check("mcp: ping 回空 result", jsonDict(MCPProtocol.handleMessage(Data("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}".utf8), performAPI: fakeAPI))["result"] != nil)
             check("mcp: 未知方法→methodNotFound", (jsonDict(MCPProtocol.handleMessage(Data("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"evil\"}".utf8), performAPI: fakeAPI))["error"] as? [String: Any])?["code"] as? Int == -32601)
+
+            // tools/call 路由：handler 分支的 content/isError 包裹形状（host 按此渲染）
+            let callResp = jsonDict(MCPProtocol.handleMessage(
+                Data("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"vibefocus_status\"}}".utf8),
+                performAPI: fakeAPI))
+            let callResult = callResp["result"] as? [String: Any] ?? [:]
+            let callContent = callResult["content"] as? [[String: Any]] ?? []
+            check("mcp: tools/call 路由回 content[text]+isError:false",
+                  callResult["isError"] as? Bool == false
+                  && callContent.count == 1
+                  && callContent.first?["type"] as? String == "text"
+                  && !((callContent.first?["text"] as? String) ?? "").isEmpty)
+            let badCall = jsonDict(MCPProtocol.handleMessage(
+                Data("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"vibefocus_hack\"}}".utf8),
+                performAPI: fakeAPI))
+            check("mcp: tools/call 未知工具→JSON-RPC result 内 isError:true",
+                  (badCall["result"] as? [String: Any])?["isError"] as? Bool == true)
 
             // tools/call：缺必填 / 未知工具 / 白名单 / 成功与失败
             var capturedPath = ""

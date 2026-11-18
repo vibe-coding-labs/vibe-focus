@@ -503,6 +503,8 @@ extension RunnerHarness {
             check("screenGeom: 空表 → primaryIndex nil / primaryHeight 0",
                   ScreenGeometry(cocoaFrames: []).primaryIndex == nil
                   && ScreenGeometry(cocoaFrames: []).primaryHeight == 0)
+            check("screenGeom: isEmpty 空表 true / 非空 false",
+                  ScreenGeometry(cocoaFrames: []).isEmpty && !geometry.isEmpty)
             check("screenGeom: primaryHeight 取主屏高度", geometry.primaryHeight == 1117)
 
             check("screenGeom: Quartz 三屏归属（含负 y / 负 x）",

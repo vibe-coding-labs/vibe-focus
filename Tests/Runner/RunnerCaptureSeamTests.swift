@@ -109,7 +109,30 @@ extension RunnerHarness {
         check("capture: 远程 pane 命中探针会话",
               sut.store.snapshots().last?.windows.first?.panes.first?.sessionID == "r-233")
 
-        // 6) restoreLayout：空库诚实失败（命中快照即真重建窗口=动用户桌面，归真机 E2E 不碰）
+        // 6) iTerm2 分支：app 名→bundle 映射 → iTerm session 枚举 → bounds 就近匹配
+        //    → 多 pane 落库（Terminal 走 window id 直查，iTerm 走 ASID 匹配，两条路径分开锁）
+        sut.captureDependencies.queryAllWindows = { [terminalWindow(id: 40, app: "iTerm2")] }
+        sut.captureDependencies.bundleIDOf = { _ in "com.googlecode.iterm2" }
+        sut.captureDependencies.appleScript = { script in
+            script.contains("com.googlecode.iterm2")
+                ? "9001|1|1|/dev/ttys040|0,0,800,600|prompt\n9001|1|2|/dev/ttys041|0,0,800,600|second\n"
+                : ""
+        }
+        sut.captureDependencies.classifyTTY = { _ in
+            PaneClassifier.Classification(kind: .shell, pid: nil, sshCommand: nil, sshTarget: nil)
+        }
+        let r7 = runCapture { await sut.captureCurrentLayout(name: "B233-iTerm") }
+        check("capture: iTerm2 窗成功", r7.ok && r7.message.contains("已捕获 1 窗"))
+        let iTermPanes = sut.store.snapshots().last?.windows.first?.panes ?? []
+        // tty 不透传快照层（见 case 4 注），以 session 名（title）锁 pane 排序与落库
+        check("capture: iTerm 双 pane 落库（tab/session 排序）",
+              iTermPanes.count == 2
+                  && iTermPanes[0].title == "prompt"
+                  && iTermPanes[1].title == "second")
+        check("capture: iTerm 落库 appBundleID 为 iTerm 映射",
+              sut.store.snapshots().last?.windows.first?.appBundleID == "com.googlecode.iterm2")
+
+        // 7) restoreLayout：空库诚实失败（命中快照即真重建窗口=动用户桌面，归真机 E2E 不碰）
         let r6 = runCapture { await sut.restoreLayout(snapshotID: "nonexistent-b233") }
         check("capture: 无快照恢复诚实失败", !r6.ok && r6.message.contains("没有可恢复的布局快照"))
     }

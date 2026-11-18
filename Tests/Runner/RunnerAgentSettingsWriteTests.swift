@@ -30,6 +30,13 @@ extension RunnerHarness {
                       && AgentSettingValueKind.double(range: 0...1).typeName == "double"
                       && AgentSettingValueKind.option(cases: ["a"]).typeName == "option"
                       && AgentSettingValueKind.text(maxLength: 3).typeName == "text")
+            // displayValue 是变更留痕/GET 回显的唯一字符串化口径（五态逐字）
+            check("catalog: displayValue 五态逐字",
+                  AgentSettingValue.bool(true).displayValue == "true"
+                      && AgentSettingValue.int(3).displayValue == "3"
+                      && AgentSettingValue.double(0.5).displayValue == "0.5"
+                      && AgentSettingValue.option("left").displayValue == "left"
+                      && AgentSettingValue.text("hello").displayValue == "hello")
         }
 
         // MARK: B. 校验器矩阵（纯函数；normalize=校验+归一化同路径）

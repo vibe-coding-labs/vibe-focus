@@ -8,6 +8,39 @@ import Foundation
 
 extension RunnerHarness {
     func runRestoreOrchestrationTests() {
+    // MARK: RestoreSpaceTopology（fresh 拓扑两态语义）
+
+    do {
+        let spaces = [YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true)]
+        check("topology: unavailable → spaces nil / isAvailable false",
+              RestoreSpaceTopology.unavailable.spaces == nil
+              && !RestoreSpaceTopology.unavailable.isAvailable)
+        check("topology: available → spaces 原样 / isAvailable true",
+              RestoreSpaceTopology.available(spaces).spaces == spaces
+              && RestoreSpaceTopology.available(spaces).isAvailable)
+        // 空拓扑仍是「可用」——查询成功但没有任何 space，调用方须得到 false 而非 nil。
+        check("topology: available([]) → spaces 空数组 / isAvailable true",
+              RestoreSpaceTopology.available([]).spaces == []
+              && RestoreSpaceTopology.available([]).isAvailable)
+    }
+
+    // MARK: RestoreWindowOperating 默认可见帧实现（生产铁径：yabai display → NSScreen）
+
+    do {
+        // FakeWindows 覆写了 visibleFrameForDisplay；这里用只实现必需成员的假件
+        // 走 protocol extension 默认实现（SpaceController display → NSScreen 换算）。
+        // 有无屏两种 CI 环境都必须与 SpaceController 同一口径：有屏时非 nil 且一致，
+        // 无屏时诚实回 nil（不做硬编码非 nil 假设）。
+        let defaultImpl = DefaultVisibleFrameOperating()
+        if let screen = SpaceController.shared.exactNSScreen(forYabaiDisplayIndex: 1) {
+            check("restore: 默认 visibleFrameForDisplay 走生产几何换算",
+                  defaultImpl.visibleFrameForDisplay(1) == CoordinateKit.quartzVisibleFrame(of: screen))
+        } else {
+            check("restore: 默认 visibleFrameForDisplay 无屏回 nil",
+                  defaultImpl.visibleFrameForDisplay(1) == nil)
+        }
+    }
+
     // MARK: switchSourceSpace（4-pre 源屏预切回双层编排）
 
     do {
@@ -1186,4 +1219,13 @@ extension RunnerHarness {
     }
     }
     }
+}
+
+/// 只实现 RestoreWindowOperating 必需成员的假件：不覆写 visibleFrameForDisplay，
+/// 专门让 protocol extension 的默认实现（SpaceController 几何回退）可被直测。
+private final class DefaultVisibleFrameOperating: RestoreWindowOperating {
+    func findWindowByPID(_ pid: pid_t, windowID: UInt32?) -> AXUIElement? { nil }
+    func moveWindowToFrameViaYabai(windowID: UInt32, frame: CGRect, op: String, stage: String, sourceVisibleFrame: CGRect?) -> Bool { false }
+    func displayContext(for frame: CGRect) -> (yabaiIndex: Int?, displayID: UInt32?) { (nil, nil) }
+    var frameTolerance: CGFloat { 20 }
 }
