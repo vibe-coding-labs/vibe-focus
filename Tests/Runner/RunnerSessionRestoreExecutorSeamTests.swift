@@ -150,13 +150,16 @@ extension RunnerHarness {
         }
 
         // 活窗观测：iTerm 502/504/505 + Terminal 503/506 + Safari 噪音窗
+        // yabai 的 app 字段是显示名（"iTerm2"/"Terminal"），
+        // observeLiveWindows 以此判定是否需要跑对应 AppleScript 枚举——填 bundle id 会让
+        // 枚举分支直接跳过，pane 坐标缺失使会话级注入退化为窗口级（CI 实测假红来源）。
         let liveApps: [(UInt32, String, CGFloat, Int?)] = [
-            (502, iterm, 2000, 1111),
-            (503, term, 3000, 1112),
-            (504, iterm, 4000, 1113),
-            (505, iterm, 5000, 1114),
-            (506, term, 6000, 1115),
-            (507, "com.apple.Safari", 9000, 1116),
+            (502, "iTerm2", 2000, 1111),
+            (503, "Terminal", 3000, 1112),
+            (504, "iTerm2", 4000, 1113),
+            (505, "iTerm2", 5000, 1114),
+            (506, "Terminal", 6000, 1115),
+            (507, "Safari", 9000, 1116),
         ]
         env.queryAllWindows = {
             liveApps.map { id, app, x, pid in

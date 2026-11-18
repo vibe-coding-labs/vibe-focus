@@ -25,6 +25,8 @@ final class ToggleRoutesSeamState: @unchecked Sendable {
     var floatCalls = 0
     var moveCalls: [(windowID: UInt32, frame: CGRect, stage: String)] = []
     var moveResult = true
+    /// 逐次消费的 moveFrame 结果队列（非空时优先于 moveResult）
+    var moveResults: [Bool] = []
     var axTrusted = true
     var notifyCalls = 0
     var identity: WindowIdentity? = WindowIdentity(
@@ -61,6 +63,7 @@ extension RunnerHarness {
                 floatAndSettle: { _, _, _ in state.floatCalls += 1 },
                 moveFrame: { windowID, frame, _, stage, _ in
                     state.moveCalls.append((windowID, frame, stage))
+                    if !state.moveResults.isEmpty { return state.moveResults.removeFirst() }
                     return state.moveResult
                 },
                 mainScreen: { screen },
@@ -98,6 +101,7 @@ extension RunnerHarness {
             state.floatCalls = 0
             state.moveCalls = []
             state.moveResult = true
+            state.moveResults = []
             state.axTrusted = true
             state.notifyCalls = 0
             state.identity = WindowIdentity(
@@ -130,7 +134,7 @@ extension RunnerHarness {
         check("toggleRoutes B3: 成功移动不触发回滚", state.perfMetrics.isEmpty && state.perfSnapshots.isEmpty)
 
         reset()
-        state.moveResult = false
+        state.moveResults = [false, true]
         wm.moveStuckWindowToSecondaryScreen(operationID: "ut-stuck-c", triggerSource: "ut", environment: makeEnv())
         check("toggleRoutes C1: 移动失败 → 回滚原帧（第二次直写）",
               state.moveCalls.count == 2 && state.moveCalls[1].stage == "move_to_secondary_rollback")
