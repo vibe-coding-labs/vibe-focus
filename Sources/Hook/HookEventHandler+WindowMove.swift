@@ -6,6 +6,18 @@ import Foundation
 // 执行逻辑已移至 HookEventHandler+WindowMove+Execute.swift
 // 包含: moveWindowToMainScreenAndRespond()
 
+/// Stop/SessionEnd 移窗触发的宿主依赖缝（2026-11-19 覆盖率补齐）：总开关、
+/// 绑定解析、CGWindowList、主屏/冷却查询与移窗管线全可注入。默认 nil → 生产
+/// 真实实现；Runner 注入假实现穷尽七路尾部决策（零真实移动、零 DB 写）。
+struct HookWindowMoveEnvironment {
+    var autoFocusEnabled: () -> Bool
+    var resolveBinding: (ClaudeHookPayload, String) -> SessionBindingOutcome
+    var cgWindows: () -> [CGWindowEntry]
+    var isOnMainScreen: (UInt32) -> Bool
+    var isInCooldown: (UInt32) -> Bool
+    var moveAndRespond: (WindowIdentity, ClaudeHookPayload, String, Double, () -> Void) async -> (statusCode: Int, response: ClaudeHookResponse)
+}
+
 @MainActor
 extension HookEventHandler {
 
@@ -30,7 +42,8 @@ extension HookEventHandler {
     func handleWindowMoveTrigger(
         payload: ClaudeHookPayload,
         triggerName: String,
-        remoteOnly: Bool = false
+        remoteOnly: Bool = false,
+        environment: HookWindowMoveEnvironment? = nil
     ) async -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-31: handleWindowMoveTrigger 总耗时（Stop/SessionEnd hook 同步响应延迟；defer 统一记，
         // 含决策输入收集与 moveWindowToMainScreenAndRespond）。
@@ -55,7 +68,9 @@ extension HookEventHandler {
         )
 
         // ① autoFocus 总开关（任何 IO 之前）
-        guard ClaudeHookPreferences.autoFocusOnSessionEnd else {
+        let autoFocusEnabled = environment.map { $0.autoFocusEnabled() }
+            ?? ClaudeHookPreferences.autoFocusOnSessionEnd
+        guard autoFocusEnabled else {
             decision = .autoFocusDisabled
             SessionWindowRegistry.shared.touch(
                 sessionID: payload.sessionID,
@@ -87,7 +102,13 @@ extension HookEventHandler {
         // ③④ 绑定解析（含 machineLabel 自愈）+ 活性校验 —— 与 UPS 共用同一编排
         // （resolveSessionBinding；此前两路各写一份，校验时序与日志文案漂移）
         let binding: WindowState
-        switch resolveSessionBinding(payload: payload, traceID: triggerName) {
+        let bindingOutcome: SessionBindingOutcome
+        if let environment {
+            bindingOutcome = environment.resolveBinding(payload, triggerName)
+        } else {
+            bindingOutcome = resolveSessionBinding(payload: payload, traceID: triggerName)
+        }
+        switch bindingOutcome {
         case .bound(let resolved), .healed(let resolved):
             binding = resolved
         case .verificationFailed(let resolved):
@@ -124,7 +145,8 @@ extension HookEventHandler {
         let bindingAge = Date().timeIntervalSince(binding.createdAt)
         var staleActualPID: pid_t?
         let pidMatches: Bool?
-        if bindingAge > 1800, let entry = cgWindowListAll().first(where: { $0.windowID == windowID }) {
+        let cgWindows = environment.map { $0.cgWindows() } ?? cgWindowListAll()
+        if bindingAge > 1800, let entry = cgWindows.first(where: { $0.windowID == windowID }) {
             staleActualPID = entry.ownerPID
             pidMatches = entry.ownerPID == binding.pid
         } else {
@@ -135,8 +157,10 @@ extension HookEventHandler {
             autoFocusEnabled: true,   // ① 已排除
             hasBinding: true,         // ③ 已排除
             bindingVerified: true,    // ④ 已排除
-            isWindowOnMainScreen: WindowManager.shared.isWindowOnMainScreen(windowID: windowID),
-            isInCooldown: MoveCooldownRegistry.shared.isInCooldown(windowID: windowID),
+            isWindowOnMainScreen: environment.map { $0.isOnMainScreen(windowID) }
+                ?? WindowManager.shared.isWindowOnMainScreen(windowID: windowID),
+            isInCooldown: environment.map { $0.isInCooldown(windowID) }
+                ?? MoveCooldownRegistry.shared.isInCooldown(windowID: windowID),
             bindingAge: bindingAge,
             pidMatches: pidMatches,
             isTerminalOrIDE: Self.isTerminalOrIDEApp(
@@ -158,6 +182,12 @@ extension HookEventHandler {
                     "bindingAge": String(Int(bindingAge)) + "s"
                 ]
             )
+            if let environment {
+                return await environment.moveAndRespond(identity, payload, triggerName, bindingAge, {
+                    SessionWindowRegistry.shared.markCompleted(sessionID: payload.sessionID)
+                    MoveCooldownRegistry.shared.setCooldown(windowID: windowID)
+                })
+            }
             return await moveWindowToMainScreenAndRespond(
                 identity: identity,
                 payload: payload,
