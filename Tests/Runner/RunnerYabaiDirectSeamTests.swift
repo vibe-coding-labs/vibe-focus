@@ -95,6 +95,7 @@ extension RunnerHarness {
         fi
         case "$*" in
           *"query --spaces --space"*) echo '{"id":11,"index":1,"display":1,"is-visible":true}'; exit 0;;
+          *"query --windows --window "*) echo "could not locate window" >&2; exit 1;;
           *"query --windows"*) echo '\(windowsJSON)'; exit 0;;
           *"--version"*) echo "yabai-v7.1.18-stub"; exit 0;;
           *"stub-fail"*) echo "stub failure" >&2; exit 2;;
