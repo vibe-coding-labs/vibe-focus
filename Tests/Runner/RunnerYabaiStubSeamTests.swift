@@ -445,5 +445,49 @@ extension RunnerHarness {
             check("yabaiStub: switchToSpace 查询失败 → unknown",
                   unknown.outcome == .noDrift && unknown.state == .unknown)
         }
+
+        // ---- W. attemptScriptingAdditionRecovery 状态机闸门与 yabai 缺失早退 ----
+        // 只走「不弹框」的两条安全臂：SIP 阻断态短路（永不自动重试）与 yabai 缺失早退。
+        // 绝不进入提权段（osascript 管理员弹框属于真机交互，测试不得触发）。
+        do {
+            let defaults = UserDefaults.standard
+            let savedVerdict = defaults.string(forKey: "saRecoveryVerdict")
+            let savedVerdictAt = defaults.object(forKey: "saRecoveryVerdictAt")
+            let savedLegacy = defaults.object(forKey: "scriptingAdditionRecoveryFailedAt")
+            let savedDidAttempt = sc.didAttemptScriptingAdditionRecovery
+            let savedSucceeded = sc.scriptingAdditionRecoverySucceeded
+            defer {
+                if let savedVerdict { defaults.set(savedVerdict, forKey: "saRecoveryVerdict") }
+                else { defaults.removeObject(forKey: "saRecoveryVerdict") }
+                if let savedVerdictAt { defaults.set(savedVerdictAt, forKey: "saRecoveryVerdictAt") }
+                else { defaults.removeObject(forKey: "saRecoveryVerdictAt") }
+                if let savedLegacy { defaults.set(savedLegacy, forKey: "scriptingAdditionRecoveryFailedAt") }
+                else { defaults.removeObject(forKey: "scriptingAdditionRecoveryFailedAt") }
+                sc.didAttemptScriptingAdditionRecovery = savedDidAttempt
+                sc.scriptingAdditionRecoverySucceeded = savedSucceeded
+                setenv("VIBEFOCUS_YABAI_PATH", stubPath.path, 1)
+            }
+
+            // W1. blockedBySIP 持久化态 → 自动恢复直接短路（didAttempt 置位、零 fork、零弹框）
+            sc.recordRecoveryState(.blockedBySIP, op: "stub-gate", output: "System Integrity Protection")
+            sc.didAttemptScriptingAdditionRecovery = false
+            let gated = sc.attemptScriptingAdditionRecovery(
+                trigger: "stub-gate", operationID: "stub-gate", adminWaitsForUser: false)
+            check("yabaiStub: blockedBySIP 状态机 → 自动恢复拒绝且不弹框",
+                  gated == false && sc.didAttemptScriptingAdditionRecovery == true)
+
+            // W2. yabai 路径缺失早退（手动触发也先报路径错误，不进入提权段）。
+            // 仅在本机常规探测确实找不到 yabai 时执行；真机有 yabai → 跳过防误触提权。
+            setenv("VIBEFOCUS_YABAI_PATH", dir.appendingPathComponent("missing-for-nopath").path, 1)
+            if YabaiClient.yabaiPath() == nil {
+                sc.didAttemptScriptingAdditionRecovery = false
+                let noPath = sc.attemptScriptingAdditionRecovery(
+                    trigger: "stub-nopath", operationID: "stub-nopath", adminWaitsForUser: true)
+                check("yabaiStub: yabai 缺失 → 恢复早退返回 false（零提权）",
+                      noPath == false && sc.didAttemptScriptingAdditionRecovery == true)
+            } else {
+                check("yabaiStub: 本机存在 yabai，跳过缺失早退断言（防误触提权）", true)
+            }
+        }
     }
 }
