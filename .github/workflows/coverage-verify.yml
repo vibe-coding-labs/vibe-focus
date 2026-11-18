@@ -14,6 +14,7 @@ on:
   push:
     branches:
       - test/coverage-sprint
+      - merge/integration   # 临时：集成分支门禁验证，合并 main 前移除
   workflow_dispatch:
     inputs:
       domains:
