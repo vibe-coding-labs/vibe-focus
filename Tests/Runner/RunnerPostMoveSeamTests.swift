@@ -95,8 +95,9 @@ extension RunnerHarness {
         check("postMove C1: 容差内漂移 → 零重写", state.writeCalls == 0 && state.settles == 0)
 
         // D. 超容差漂移、第二轮回读收敛
+        // 脚本首项被前置 drift check 消费，随后两轮 rewrite 读才是 [drifted, target]
         reset()
-        state.boundsScript = [drifted, target]
+        state.boundsScript = [drifted, drifted, target]
         _ = wm.verifyAndCorrectPostMoveSize(
             windowAX: ax, windowID: 6101, targetFrame: target,
             origFrame: target, mainScreen: screen, op: "ut-post", environment: makeEnv())

@@ -133,9 +133,9 @@ extension RunnerHarness {
             if script.contains("repeat with w in windows") {
                 // iTerm2 枚举：502 与 505 各匹配 2/1 个 session；504 故意不匹配
                 return """
-                502|1|1|/dev/ttys010|2000,0,2800,600|tab-a
-                502|1|2|/dev/ttys011|2000,0,2800,600|tab-b
-                505|1|1|/dev/ttys020|5000,0,5800,600|busy
+                asid-502|1|1|/dev/ttys010|2000,0,2800,600|tab-a
+                asid-502|1|2|/dev/ttys011|2000,0,2800,600|tab-b
+                asid-505|1|1|/dev/ttys020|5000,0,5800,600|busy
                 """
             }
             if script.contains("repeat with t in tabs of w") {
@@ -221,11 +221,12 @@ extension RunnerHarness {
               && state.yabaiCalls.contains { $0.contains("--resize") })
         check("srSeam A10: AX 未就绪窗跳过投递（计入送达失败）",
               state.yabaiCalls.contains { $0.first == "--float" && $0.last == "9003" } == false)
-        check("srSeam A11: 汇总消息含新建/注入/跳过三类去处",
+        let summary = result?.message ?? "nil"
+        check("srSeam A11: 汇总消息含新建/注入/跳过三类去处（实际：\(summary)）",
               result?.message.contains("新建 3 窗") == true
               && result?.message.contains("注入 3 窗") == true
               && result?.message.contains("仍活着跳过 2 窗") == true)
-        check("srSeam A12: 汇总消息如实记账失败数（1 送达 + 2 注入）",
+        check("srSeam A12: 汇总消息如实记账失败数（1 送达 + 2 注入）（实际：\(summary)）",
               result?.message.contains("1 窗未能送达目标工作区") == true
               && result?.message.contains("2 条注入命令执行失败") == true)
         check("srSeam A13: 活窗观测排除了非终端窗（Safari 不参与匹配）",
