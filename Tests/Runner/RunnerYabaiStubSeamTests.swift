@@ -46,6 +46,7 @@ extension RunnerHarness {
         }
 
         let modeFile = dir.appendingPathComponent("mode")
+        let landedFlag = dir.appendingPathComponent("landed-flag")
         let stubPath = dir.appendingPathComponent("yabai")
         func setMode(_ mode: String) {
             try? mode.write(to: modeFile, atomically: true, encoding: .utf8)
@@ -89,6 +90,19 @@ extension RunnerHarness {
         if [ "$MODE" = "mc-block" ]; then
           case "$*" in
             *"-m space --focus"*) echo "mission-control is active" >&2; exit 1;;
+          esac
+        fi
+        if [ "$MODE" = "landed-after" ]; then
+          case "$*" in
+            *"-m query --spaces --space"*) echo '\(focusedSpaceJSON)'; exit 0;;
+            *"-m query --spaces"*)
+              if [ -e "\(landedFlag.path)" ]; then
+                echo '[{"id":11,"index":1,"display":1,"is-visible":false},{"id":12,"index":2,"display":1,"is-visible":true}]'
+              else
+                : > "\(landedFlag.path)"
+                echo '\(spacesJSON)'
+              fi
+              exit 0;;
           esac
         fi
         if [ "$MODE" = "bad-json" ]; then
@@ -386,6 +400,50 @@ extension RunnerHarness {
             } else {
                 check("yabaiStub: 无零候选 app 时保持基础断言", true)
             }
+        }
+
+        // ---- V. switchToSpace 胶囊切换编排：目标状态四态 × 两条切换通道 ----
+        do {
+            let savedCanControlForSwitch = sc.canControlSpaces
+            sc.isEnabled = true
+            defer {
+                sc.canControlSpaces = savedCanControlForSwitch
+                setMode("ok")
+                try? FileManager.default.removeItem(at: landedFlag)
+                sc.clearQueryCache()
+            }
+
+            // V1. 目标 space 已在其屏可见 → 零切换动作，noDrift/visible
+            setMode("ok")
+            sc.canControlSpaces = true
+            let visible = sc.switchToSpace(1, operationID: "stub-switch-visible")
+            check("yabaiStub: switchToSpace 目标已可见 → noDrift/visible",
+                  visible.outcome == .noDrift && visible.state == .visible)
+
+            // V2. 目标不可见 + SA 直切可用 → focusSpace(2) 成功 → refocused/hidden
+            let switched = sc.switchToSpace(2, operationID: "stub-switch-hidden")
+            check("yabaiStub: switchToSpace 隐藏目标 SA 直切成功 → refocused/hidden",
+                  switched.outcome == .refocused(postSpace: 1) && switched.state == .hidden)
+
+            // V3. SA 不可控 → 聚焦带动通道；替身首查返回隐藏、落位轮询返回目标可见
+            try? FileManager.default.removeItem(at: landedFlag)
+            setMode("landed-after")
+            sc.canControlSpaces = false
+            let landed = sc.switchToSpace(2, operationID: "stub-switch-landed")
+            check("yabaiStub: switchToSpace 聚焦带动落位验证成功 → refocused/hidden",
+                  landed.outcome == .refocused(postSpace: 1) && landed.state == .hidden)
+
+            // V4. 目标索引不存在（快照漂移）→ failed/missing
+            setMode("ok")
+            let missing = sc.switchToSpace(9, operationID: "stub-switch-missing")
+            check("yabaiStub: switchToSpace 目标缺失 → failed/missing",
+                  missing.outcome == .failed(postSpace: 0) && missing.state == .missing)
+
+            // V5. spaces 查询失败 → unknown（视角判定降级 noDrift）
+            setMode("fail")
+            let unknown = sc.switchToSpace(2, operationID: "stub-switch-unknown")
+            check("yabaiStub: switchToSpace 查询失败 → unknown",
+                  unknown.outcome == .noDrift && unknown.state == .unknown)
         }
     }
 }

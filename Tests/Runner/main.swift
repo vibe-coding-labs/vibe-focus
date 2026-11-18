@@ -556,6 +556,11 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runPlayAudioFileRealWavTests") { runPlayAudioFileRealWavTests() }
         runDomain("runInstallationsFailPathTests") { runInstallationsFailPathTests() }
         runDomain("runCaptureFocusedWindowTests") { runCaptureFocusedWindowTests() }
+        runDomainUIGated("FindingFocusCaptureUI") {
+            runFindingFocusCaptureUITests()
+        }
+        runDomain("runLayoutGuardTests") { runLayoutGuardTests() }
+        runDomain("runPostMoveRecordTests") { runPostMoveRecordTests() }
         runDomain("runAppleScriptDirectedTests") { runAppleScriptDirectedTests() }
         runDomain("runBubbleButtonCursorTests") { runBubbleButtonCursorTests() }
         runDomain("runSelectionRefreshTests") { runSelectionRefreshTests() }

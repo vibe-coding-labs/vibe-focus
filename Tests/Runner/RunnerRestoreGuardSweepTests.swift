@@ -16,6 +16,17 @@ extension RunnerHarness {
         let controller = SessionRestoreController(store: store)
         let executor = SessionRestoreExecutor(controller: controller)
 
+        // A0. 空快照 → restore 全链空转（规划 0 项、零建窗零注入、原视角为空）
+        // 仅无 yabai 环境执行：真机上 queryAllWindows 非 nil 时 observeLiveWindows 会对
+        // iTerm/Terminal 发 AppleScript 枚举，违反本域「不发 AppleEvents」纪律。
+        if SpaceController.shared.queryAllWindows() == nil {
+            let emptySnapshot = SessionRestoreSnapshot(
+                id: "ut100-empty", name: "n", windows: [],
+                launchCommand: nil, capturedAt: Date(), formatVersion: 2)
+            let emptyRestore = runMainActorAsync { await executor.restore(snapshot: emptySnapshot) }
+            check("restoreGuard A0: 空快照全链空转 → ok=true 零建窗", emptyRestore?.ok == true)
+        }
+
         // A. Executor 实例环境守卫：未安装 bundle → 拒绝（冷拉起/建窗之前）
         let unknownSnapshot = SessionRestoreSnapshot(
             id: "ut100-unknown", name: "n",
