@@ -24,7 +24,7 @@ extension RunnerHarness {
 
         // MARK: A. querySpaces：新鲜缓存命中（不 fork）
         do {
-            controller.spacesQueryCache = (result: [], cachedAt: Date())
+            controller.spacesQueryCache = (result: [YabaiSpaceInfo](), cachedAt: Date())
             let hit = controller.querySpaces(caller: "unit-cache-hit")
             check("spaceCache: 新鲜 spaces 缓存命中直接返回", hit?.isEmpty == true)
         }
@@ -32,7 +32,7 @@ extension RunnerHarness {
         // MARK: B. querySpaces：过期缓存→直查（结果随环境：CI 失败 / 真机成功）
         do {
             let staleAt = Date().addingTimeInterval(-30)
-            controller.spacesQueryCache = (result: [], cachedAt: staleAt)
+            controller.spacesQueryCache = (result: [YabaiSpaceInfo](), cachedAt: staleAt)
             check("spaceCache: 30s 前条目判定为过期", controller.isCacheExpired(staleAt))
             let refreshed = controller.querySpaces(caller: "unit-cache-expired")
             if refreshed == nil {
@@ -47,14 +47,14 @@ extension RunnerHarness {
 
         // MARK: C. queryWindow：新鲜窗口缓存命中（含 nil 结果的负缓存）
         do {
-            controller.windowQueryCache[4_200_042] = (result: nil, cachedAt: Date())
+            controller.windowQueryCache[4_200_042] = (result: YabaiWindowInfo?.none, cachedAt: Date())
             check("spaceCache: 新鲜 window 缓存（nil）命中",
                   controller.queryWindow(windowID: 4_200_042) == nil)
-            controller.windowQueryCache[4_200_043] = (result: nil, cachedAt: Date())
+            controller.windowQueryCache[4_200_043] = (result: YabaiWindowInfo?.none, cachedAt: Date())
             controller.clearWindowQueryCache()
             check("spaceCache: 清窗口缓存后条目清空",
                   !controller.windowQueryCache.keys.contains(4_200_043))
-            controller.spacesQueryCache = (result: [], cachedAt: Date())
+            controller.spacesQueryCache = (result: [YabaiSpaceInfo](), cachedAt: Date())
             controller.clearQueryCache()
             check("spaceCache: 全量清缓存清空两槽",
                   controller.spacesQueryCache == nil && controller.windowQueryCache.isEmpty)
