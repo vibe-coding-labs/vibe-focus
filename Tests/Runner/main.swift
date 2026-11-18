@@ -482,6 +482,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runOverlayQuerySweepTests") { runOverlayQuerySweepTests() }
         runDomain("runSignalNavTailTests") { runSignalNavTailTests() }
         runDomain("runRestoreGuardSweepTests") { runRestoreGuardSweepTests() }
+        runDomain("runSessionRestoreExecutorSeamTests") { runSessionRestoreExecutorSeamTests() }
         runDomain("runGateSweepTests") { runGateSweepTests() }
         runDomain("runTargetResolveTailTests") { runTargetResolveTailTests() }
         runDomain("runSpaceReadOnlySweepTests") { runSpaceReadOnlySweepTests() }

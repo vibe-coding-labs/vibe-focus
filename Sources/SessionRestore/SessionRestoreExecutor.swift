@@ -2,6 +2,72 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+// MARK: - 宿主机依赖缝
+/// restore 全链用到的宿主能力（单例/AX/屏幕/AppleScript/等待）。默认实现与历史
+/// 内联调用逐字等价；Runner 注入假实现即可在 CLI 直测编排逻辑（零建窗、零 AE）。
+struct SessionRestoreEnvironment {
+    var automationInstanceRefusal: @MainActor (String, Bool) -> String? = { bundleID, allow in
+        TerminalGridController.shared.automationInstanceRefusal(appBundleID: bundleID, allowNotRunning: allow)
+    }
+    var ensureTerminalRunning: @MainActor (String, String) async -> Bool = { bundleID, op in
+        await TerminalGridController.shared.ensureTerminalRunning(appBundleID: bundleID, op: op)
+    }
+    var querySpaces: @MainActor () -> [YabaiSpaceInfo]? = {
+        SpaceController.shared.querySpaces(ignoreCache: true)
+    }
+    var screens: @MainActor () -> [NSScreen] = { NSScreen.screens }
+    var exactYabaiDisplayIndex: @MainActor (NSScreen) -> Int? = { screen in
+        SpaceController.shared.exactYabaiDisplayIndex(for: screen)
+    }
+    var cgDisplayID: @MainActor (NSScreen) -> UInt32? = { screen in
+        CoordinateKit.cgDisplayID(for: screen)
+    }
+    var primaryDisplayID: @MainActor () -> UInt32? = {
+        CoordinateKit.primaryScreen.flatMap { CoordinateKit.cgDisplayID(for: $0) }
+    }
+    var queryAllWindows: @MainActor () -> [YabaiWindowInfo]? = {
+        SpaceController.shared.queryAllWindows()
+    }
+    var bundleIdentifierOfPID: @MainActor (pid_t) -> String? = { pid in
+        NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+    }
+    var classifyTTY: @MainActor (String) -> PaneClassifier.Classification = { tty in
+        SessionRestoreController.classifyTTY(tty)
+    }
+    var focusSpace: @MainActor (SpaceIdentifier, String) -> Bool = { space, op in
+        SpaceController.shared.focusSpace(space, operationID: op)
+    }
+    var createTerminalCell: @MainActor (String, String?, CGRect, String, Set<UInt32>) async
+        -> (cgWindowID: UInt32?, corrected: Bool, appleScriptID: String?) = { bundleID, command, frame, op, excluding in
+        await TerminalGridController.shared.createTerminalCell(
+            appBundleID: bundleID, command: command, frame: frame, op: op, excluding: excluding)
+    }
+    var queryWindow: @MainActor (UInt32) -> YabaiWindowInfo? = { windowID in
+        SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)
+    }
+    var setWindowFloat: @MainActor (UInt32, String) -> Void = { windowID, op in
+        _ = SpaceController.shared.setWindowFloat(windowID, operationID: op)
+    }
+    var parkingScreen: @MainActor (Int) -> NSScreen? = { displayIndex in
+        SpaceController.shared.parkingScreen(excludingYabaiDisplayIndex: displayIndex)
+    }
+    var quartzVisibleFrame: @MainActor (NSScreen) -> CGRect = { screen in
+        CoordinateKit.quartzVisibleFrame(of: screen)
+    }
+    var runYabai: @MainActor ([String], String, String) -> Void = { arguments, operation, op in
+        _ = SpaceController.shared.runYabai(arguments: arguments, operation: operation, operationID: op)
+    }
+    var runAppleScript: @MainActor (String) async -> String? = { script in
+        await SessionRestoreController.runAppleScriptText(script)
+    }
+    /// 纯等待缝：默认真实睡眠；Runner 注入虚拟时钟推进零延迟驱动轮询分支。
+    var sleepNanos: @MainActor (UInt64) async -> Void = { nanos in
+        try? await Task.sleep(nanoseconds: nanos)
+    }
+    /// 时钟缝：轮询截止判定用（Runner 注入虚拟时钟，避免真实等待拖慢 CLI 门禁）。
+    var now: @MainActor () -> Date = { Date() }
+}
+
 // MARK: - 会话恢复执行器
 /// 消费 SessionRestorePlanner 的计划：按（显示器 × 工作区）分组「切视角 → 建窗 →
 /// 跨 Space 投递」，活窗空闲 pane 注入，结束时归还原视角。跨 Space 投递走真机
@@ -11,9 +77,11 @@ import Foundation
 final class SessionRestoreExecutor {
 
     private let controller: SessionRestoreController
+    private let env: SessionRestoreEnvironment
 
-    init(controller: SessionRestoreController) {
+    init(controller: SessionRestoreController, environment: SessionRestoreEnvironment = SessionRestoreEnvironment()) {
         self.controller = controller
+        self.env = environment
     }
 
     func restore(snapshot: SessionRestoreSnapshot) async -> TerminalGridController.OperationResult {
@@ -21,7 +89,7 @@ final class SessionRestoreExecutor {
 
         // 1. 实例环境守卫（快照里出现过的每个终端都验；未运行放行冷拉起）
         for bundleID in Set(snapshot.windows.map(\.appBundleID)) {
-            if let refusal = TerminalGridController.shared.automationInstanceRefusal(appBundleID: bundleID, allowNotRunning: true) {
+            if let refusal = env.automationInstanceRefusal(bundleID, true) {
                 log("[SessionRestore] restore refused by instance guard", level: .warn, fields: [
                     "op": op, "app": bundleID
                 ])
@@ -30,11 +98,11 @@ final class SessionRestoreExecutor {
         }
         // 冷拉起未运行的终端（建窗 AE 前置；失败继续——守卫链会兜住）
         for bundleID in Set(snapshot.windows.map(\.appBundleID)) {
-            _ = await TerminalGridController.shared.ensureTerminalRunning(appBundleID: bundleID, op: op)
+            _ = await env.ensureTerminalRunning(bundleID, op)
         }
 
         // 2. 环境真值采集
-        let spaces = SpaceController.shared.querySpaces(ignoreCache: true) ?? []
+        let spaces = env.querySpaces() ?? []
         let existingSpaceIndices = Set(spaces.compactMap(\.index))
         var visibleSpaceByYabaiDisplay: [Int: Int] = [:]
         for space in spaces where space.isVisible == true {
@@ -43,16 +111,15 @@ final class SessionRestoreExecutor {
             }
         }
         var displayIDByYabaiIndex: [Int: UInt32] = [:]
-        for screen in NSScreen.screens {
-            if let yabaiIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen),
-               let cgID = CoordinateKit.cgDisplayID(for: screen) {
+        for screen in env.screens() {
+            if let yabaiIndex = env.exactYabaiDisplayIndex(screen),
+               let cgID = env.cgDisplayID(screen) {
                 displayIDByYabaiIndex[yabaiIndex] = cgID
             }
         }
         let existingDisplayIDs = Set(displayIDByYabaiIndex.values)
         // 主屏唯一事实源（origin .zero 契约）
-        let primaryDisplayID = CoordinateKit.primaryScreen
-            .flatMap { CoordinateKit.cgDisplayID(for: $0) }
+        let primaryDisplayID = env.primaryDisplayID()
 
         // 3. 活窗观测（会话在跑的绝不动）
         let liveWindows = await observeLiveWindows()
@@ -100,20 +167,15 @@ final class SessionRestoreExecutor {
                let displayIndex = first.targetYabaiDisplay,
                let originalSpace = originalVisibleSpaces[displayIndex],
                originalSpace != space {
-                let focused = SpaceController.shared.focusSpace(.yabai(space), operationID: op)
+                let focused = env.focusSpace(.yabai(space), op)
                 if focused { switchedOriginalSpaces.append(originalSpace) }
                 await settleVisibleSpace(space, budgetSeconds: 2.0)
             }
             for item in items {
                 guard case .create(let commands) = item.action, let frame = item.targetFrame else { continue }
                 let appBundleID = snapshot.windows[item.windowIndex].appBundleID
-                let placement = await TerminalGridController.shared.createTerminalCell(
-                    appBundleID: appBundleID,
-                    command: commands.first ?? nil,
-                    frame: frame,
-                    op: op,
-                    excluding: claimedIDs
-                )
+                let placement = await env.createTerminalCell(
+                    appBundleID, commands.first ?? nil, frame, op, claimedIDs)
                 if let cgID = placement.cgWindowID {
                     claimedIDs.insert(cgID)
                     // 附加 pane：iTerm2 追加 tab（AppleScript id 定位）；Terminal 逐条 do script in window
@@ -129,7 +191,7 @@ final class SessionRestoreExecutor {
                         if let script {
                             _ = await runAppleScript(script)
                         }
-                        try? await Task.sleep(nanoseconds: TerminalGridController.interWindowDelayNanos)
+                        await env.sleepNanos(TerminalGridController.interWindowDelayNanos)
                     }
                     // 投递校验与纠偏（含泊靠往返）
                     if let space = item.targetYabaiSpace {
@@ -162,7 +224,7 @@ final class SessionRestoreExecutor {
                 if let script {
                     let output = await runAppleScript(script)
                     if output == nil { injectFailures += 1 }
-                    try? await Task.sleep(nanoseconds: TerminalGridController.interWindowDelayNanos)
+                    await env.sleepNanos(TerminalGridController.interWindowDelayNanos)
                 } else {
                     injectFailures += 1
                 }
@@ -172,7 +234,7 @@ final class SessionRestoreExecutor {
         // 5. 归还原视角：每个被切走的空间按切换逆序逐一还原——恢复结束时每块屏
         // 都回到自己恢复前的可见工作区（旧实现只还最小屏号一块，用户会被丢到主屏）。
         for originalSpace in switchedOriginalSpaces.reversed() {
-            _ = SpaceController.shared.focusSpace(.yabai(originalSpace), operationID: op)
+            _ = env.focusSpace(.yabai(originalSpace), op)
         }
 
         var message = SessionRestorePlanner.summaryMessage(plan: plan, snapshotWindowCount: snapshot.windows.count)
@@ -212,10 +274,10 @@ final class SessionRestoreExecutor {
     /// 「无会话」处理（恢复语义宁可注入也不盲跳？不——busy 判据按 pane 有 tty
     /// 且探到进程才算，读不到 tty 的 pane 不阻塞 skip 判定，但活窗匹配本身仍生效）。
     private func observeLiveWindows() async -> [SessionRestorePlanner.ObservedLiveWindow] {
-        guard let allWindows = SpaceController.shared.queryAllWindows() else { return [] }
+        guard let allWindows = env.queryAllWindows() else { return [] }
         let terminalWindows = allWindows.filter {
             SessionRestoreController.isCapturableYabaiWindow($0, bundleIDOf: { pid in
-                NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+                env.bundleIdentifierOfPID(pid)
             })
         }
         guard !terminalWindows.isEmpty else { return [] }
@@ -242,7 +304,7 @@ final class SessionRestoreExecutor {
                 var hasClaude = false
                 var hasSSH = false
                 if let tty = pane.tty {
-                    let cls = SessionRestoreController.classifyTTY(tty)
+                    let cls = env.classifyTTY(tty)
                     hasClaude = cls.kind == .localClaude
                     hasSSH = cls.kind == .remoteSSH
                 }
@@ -268,19 +330,19 @@ final class SessionRestoreExecutor {
     /// 交付判定 + 纠偏：已在对的 space → 原样；错位 → 泊靠往返写回
     /// （前置：目标屏正显示目标 space——分组循环里已切视角）。
     private func deliver(windowID: UInt32, frame: CGRect, space: Int, displayIndex: Int?, op: String) async -> Bool {
-        guard let info = SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true) else {
+        guard let info = env.queryWindow(windowID) else {
             return false
         }
         if info.space == space { return true }
         // AX 引用懒建立（新建窗 1-3s）：未建立时 float/move 全部静默失效
-        let axDeadline = Date().addingTimeInterval(3)
+        let axDeadline = env.now().addingTimeInterval(3)
         var axReady = false
-        while Date() < axDeadline {
-            if SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)?.isManageableByYabai == true {
+        while env.now() < axDeadline {
+            if env.queryWindow(windowID)?.isManageableByYabai == true {
                 axReady = true
                 break
             }
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            await env.sleepNanos(200_000_000)
         }
         guard axReady else {
             log("[SessionRestore] delivery skip: window never became yabai-managed", level: .warn, fields: [
@@ -288,36 +350,34 @@ final class SessionRestoreExecutor {
             ])
             return false
         }
-        _ = SpaceController.shared.setWindowFloat(windowID, operationID: op)
+        env.setWindowFloat(windowID, op)
         // 泊靠屏：目标屏之外的任一屏（跨屏 frame 直写必入目标屏当前可见 space）。
         // displayIndex 未知时 info.display == nil 恒不成立，与旧内联判定等价。
         if let targetDisplayIndex = displayIndex,
-           let parkingScreen = SpaceController.shared.parkingScreen(
-               excludingYabaiDisplayIndex: targetDisplayIndex
-           ), info.display == targetDisplayIndex {
+           let parkingScreen = env.parkingScreen(targetDisplayIndex), info.display == targetDisplayIndex {
             // 同屏错位：先泊到其它屏，再写回（此刻目标屏正显示目标 space）
-            let parkingBase = CoordinateKit.quartzVisibleFrame(of: parkingScreen)
-            _ = SpaceController.shared.runYabai(
-                arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(parkingBase.minX + 40)):\(Int(parkingBase.minY + 40))"],
-                operation: "session-delivery.park(windowID=\(windowID))", operationID: op
+            let parkingBase = env.quartzVisibleFrame(parkingScreen)
+            env.runYabai(
+                ["-m", "window", "\(windowID)", "--move", "abs:\(Int(parkingBase.minX + 40)):\(Int(parkingBase.minY + 40))"],
+                "session-delivery.park(windowID=\(windowID))", op
             )
-            try? await Task.sleep(nanoseconds: 600_000_000)
+            await env.sleepNanos(600_000_000)
         }
-        _ = SpaceController.shared.runYabai(
-            arguments: ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
-            operation: "session-delivery.writeback.move(windowID=\(windowID))", operationID: op
+        env.runYabai(
+            ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
+            "session-delivery.writeback.move(windowID=\(windowID))", op
         )
-        _ = SpaceController.shared.runYabai(
-            arguments: ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
-            operation: "session-delivery.writeback.resize(windowID=\(windowID))", operationID: op
+        env.runYabai(
+            ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
+            "session-delivery.writeback.resize(windowID=\(windowID))", op
         )
         // 轮询确认到位
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            if SpaceController.shared.queryWindow(windowID: windowID, ignoreCache: true)?.space == space {
+        let deadline = env.now().addingTimeInterval(5)
+        while env.now() < deadline {
+            if env.queryWindow(windowID)?.space == space {
                 return true
             }
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            await env.sleepNanos(150_000_000)
         }
         return false
     }
@@ -325,17 +385,17 @@ final class SessionRestoreExecutor {
     // MARK: 辅助
 
     private func settleVisibleSpace(_ space: Int, budgetSeconds: Double) async {
-        let deadline = Date().addingTimeInterval(budgetSeconds)
-        while Date() < deadline {
-            if let spaces = SpaceController.shared.querySpaces(ignoreCache: true),
+        let deadline = env.now().addingTimeInterval(budgetSeconds)
+        while env.now() < deadline {
+            if let spaces = env.querySpaces(),
                spaces.first(where: { $0.index == space })?.isVisible == true {
                 return
             }
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            await env.sleepNanos(200_000_000)
         }
     }
 
     private func runAppleScript(_ script: String) async -> String? {
-        await controller.runAppleScript(script)
+        await env.runAppleScript(script)
     }
 }
