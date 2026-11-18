@@ -13,6 +13,19 @@ enum SessionStartRoute: Equatable {
     case local(TerminalContext)
 }
 
+/// SessionStart 绑定的宿主依赖缝（2026-11-19 覆盖率补齐）：远程映射查表、
+/// 本地 TTY/PPID 匹配、注册表落账、审计、AX 解析与自动标题全可注入。
+/// 默认 nil → 生产真实实现；Runner 注入假实现穷尽分流/绑定成功/两路失败分支
+/// （零注册表持久化、零 AX 写、零标题注入）。
+struct HookSessionStartEnvironment {
+    var resolveRemoteBinding: (String, String) -> WindowIdentity?
+    var findLocalWindow: (TerminalContext) -> WindowIdentity?
+    var bind: (ClaudeHookPayload, WindowIdentity, WindowState.BindingType, TerminalContext) -> Void
+    var audit: (ClaudeHookPayload, WindowIdentity, TerminalContext) -> Void
+    var resolveAX: (WindowIdentity) -> AXUIElement?
+    var autoSetTitle: (ClaudeHookPayload, WindowIdentity, AXUIElement) -> Void
+}
+
 @MainActor
 extension HookEventHandler {
 
@@ -39,7 +52,8 @@ extension HookEventHandler {
     /// - Parameter payload: The hook event payload containing session and terminal context
     /// - Returns: HTTP-style status code and hook response
     func handleSessionStart(
-        payload: ClaudeHookPayload
+        payload: ClaudeHookPayload,
+        environment: HookSessionStartEnvironment? = nil
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         // P-INST-33: handleSessionStart 总耗时（SessionStart hook 同步响应延迟；含 findWindowByTerminalContext 窗口匹配 + autoSetTitle AX write）。
         #if PERF_INSTRUMENT
@@ -81,9 +95,11 @@ extension HookEventHandler {
                 )
             )
         case .remote(let terminalCtx, let label):
-            return handleRoutedSessionBind(terminalCtx: terminalCtx, payload: payload, label: label)
+            return handleRoutedSessionBind(
+                terminalCtx: terminalCtx, payload: payload, label: label, environment: environment)
         case .local(let terminalCtx):
-            return handleRoutedSessionBind(terminalCtx: terminalCtx, payload: payload, label: nil)
+            return handleRoutedSessionBind(
+                terminalCtx: terminalCtx, payload: payload, label: nil, environment: environment)
         }
     }
 
@@ -91,7 +107,8 @@ extension HookEventHandler {
     private func handleRoutedSessionBind(
         terminalCtx: TerminalContext,
         payload: ClaudeHookPayload,
-        label: String?
+        label: String?,
+        environment: HookSessionStartEnvironment?
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         PerfMonitor.shared.beginSection("hook.bind")
         defer { PerfMonitor.shared.endSection() }
@@ -112,12 +129,17 @@ extension HookEventHandler {
                         // B125：SessionStart 不做聚焦窗绑定（此刻用户可能在看别处，会误绑）。
             // 真正的绑定时机 = 第一次 UPS（用户敲提示词，聚焦窗必为会话所在终端窗），
             // 见 resolveSessionBinding。静态映射仅作显式兜底。
-            let remoteResolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID)
+            let remoteResolved: WindowIdentity?
+            if let environment {
+                remoteResolved = environment.resolveRemoteBinding(label, payload.sessionID)
+            } else {
+                remoteResolved = resolveRemoteBinding(label: label, sessionID: payload.sessionID)
+            }
             switch Self.decideSessionBind(isRemote: true, machineLabel: label, localResolved: nil, remoteResolved: remoteResolved) {
             case .bind(let identity, let bindingType):
                 return finishSessionBind(
                     identity: identity, bindingType: bindingType,
-                    terminalCtx: terminalCtx, payload: payload
+                    terminalCtx: terminalCtx, payload: payload, environment: environment
                 )
             case .remoteBindingFailed(let failedLabel):
                 return (409, ClaudeHookResponse(
@@ -146,12 +168,17 @@ extension HookEventHandler {
                     "termSessionID": terminalCtx.termSessionID ?? "nil"
                 ]
             )
-            let localIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            let localIdentity: WindowIdentity?
+            if let environment {
+                localIdentity = environment.findLocalWindow(terminalCtx)
+            } else {
+                localIdentity = WindowManager.shared.findWindowByTerminalContext(terminalCtx)
+            }
             switch Self.decideSessionBind(isRemote: false, machineLabel: nil, localResolved: localIdentity, remoteResolved: nil) {
             case .bind(let identity, let bindingType):
                 return finishSessionBind(
                     identity: identity, bindingType: bindingType,
-                    terminalCtx: terminalCtx, payload: payload
+                    terminalCtx: terminalCtx, payload: payload, environment: environment
                 )
             case .terminalContextMatchFailed:
                 log(
@@ -195,7 +222,8 @@ extension HookEventHandler {
         identity: WindowIdentity,
         bindingType: WindowState.BindingType,
         terminalCtx: TerminalContext,
-        payload: ClaudeHookPayload
+        payload: ClaudeHookPayload,
+        environment: HookSessionStartEnvironment? = nil
     ) -> (statusCode: Int, response: ClaudeHookResponse) {
         log(
             "[HookEventHandler] SessionStart matched",
@@ -207,37 +235,52 @@ extension HookEventHandler {
                 "windowID": String(identity.windowID)
             ]
         )
-        SessionWindowRegistry.shared.bind(
-            sessionID: payload.sessionID,
-            windowIdentity: identity,
-            terminalTTY: payload.terminalCtx?.tty,
-            terminalSessionID: payload.terminalCtx?.termSessionID,
-            itermSessionID: payload.terminalCtx?.itermSessionID,
-            cwd: payload.cwd,
-            model: payload.model,
-            bindingType: bindingType
-        )
-        AuditLogger.shared.record(
-            eventType: "session_bind",
-            windowID: identity.windowID,
-            pid: identity.pid,
-            sessionID: payload.sessionID,
-            details: [
-                "app": identity.appName ?? "unknown",
-                "isRemote": String(terminalCtx.isRemote),
-                "bindingType": String(describing: bindingType),
-                "cwd": payload.cwd ?? "nil"
-            ]
-        )
+        if let environment {
+            environment.bind(payload, identity, bindingType, terminalCtx)
+            environment.audit(payload, identity, terminalCtx)
+        } else {
+            SessionWindowRegistry.shared.bind(
+                sessionID: payload.sessionID,
+                windowIdentity: identity,
+                terminalTTY: payload.terminalCtx?.tty,
+                terminalSessionID: payload.terminalCtx?.termSessionID,
+                itermSessionID: payload.terminalCtx?.itermSessionID,
+                cwd: payload.cwd,
+                model: payload.model,
+                bindingType: bindingType
+            )
+            AuditLogger.shared.record(
+                eventType: "session_bind",
+                windowID: identity.windowID,
+                pid: identity.pid,
+                sessionID: payload.sessionID,
+                details: [
+                    "app": identity.appName ?? "unknown",
+                    "isRemote": String(terminalCtx.isRemote),
+                    "bindingType": String(describing: bindingType),
+                    "cwd": payload.cwd ?? "nil"
+                ]
+            )
+        }
 
         // Auto-set terminal title to project name
-        if let axWindow = WindowManager.shared.resolveWindow(identity: identity) {
-            TitleEditorService.shared.autoSetTitle(
-                cwd: payload.cwd,
-                pid: identity.pid,
-                bundleID: identity.bundleIdentifier ?? "",
-                window: axWindow
-            )
+        let axWindow: AXUIElement?
+        if let environment {
+            axWindow = environment.resolveAX(identity)
+        } else {
+            axWindow = WindowManager.shared.resolveWindow(identity: identity)
+        }
+        if let axWindow {
+            if let environment {
+                environment.autoSetTitle(payload, identity, axWindow)
+            } else {
+                TitleEditorService.shared.autoSetTitle(
+                    cwd: payload.cwd,
+                    pid: identity.pid,
+                    bundleID: identity.bundleIdentifier ?? "",
+                    window: axWindow
+                )
+            }
         } else {
             log(
                 "[HookEventHandler] SessionStart autoSetTitle skipped: could not resolve AX window",

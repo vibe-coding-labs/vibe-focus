@@ -5,6 +5,18 @@ import Foundation
 // MARK: - AX 写入编排层（2026-08-31 从 +AXHelpers.swift 拆分，行为不变）
 // apply 两阶段（Phase 1 size + Phase 2 position）frame 写入及其子步骤。读取原语见 +AXRead.swift。
 
+/// AX 两阶段写的宿主依赖缝（2026-11-19 覆盖率补齐）：size 写、回读、settle 睡眠、
+/// position 写全可注入。默认 nil → 生产真实实现（AXUIElementSetAttributeValue /
+/// CGWindowList 回读 / usleep）；Runner 注入假实现穷尽收敛/未收敛/写失败/
+/// position 失败四态（零 AX 写、零真实睡眠）。
+struct AXSizeWriteEnvironment {
+    var writeSize: (CGRect, AXUIElement, String, String, Int) -> (axOK: Bool, writeMs: Int)
+    /// windowID=nil → AX frame 回读兼容路径（生产语义）
+    var readBounds: (UInt32?) -> CGRect?
+    var writePosition: (CGRect, AXUIElement) -> Bool
+    var settle: (useconds_t) -> Void
+}
+
 extension WindowManager {
 
     /// 写入目标 frame。两阶段固定顺序：Phase 1 size write + readback retry，Phase 2 position write。
@@ -29,7 +41,8 @@ extension WindowManager {
         window: AXUIElement,
         windowID: UInt32,
         op: String,
-        stage: String
+        stage: String,
+        environment: AXSizeWriteEnvironment? = nil
     ) -> Bool {
         let outcome = writeSizeWithReadback(
             targetFrame: targetFrame,
@@ -38,7 +51,8 @@ extension WindowManager {
             settleDelayMicros: WindowSettle.axWriteSettleMicros,
             op: op,
             stage: stage,
-            windowID: windowID
+            windowID: windowID,
+            environment: environment
         )
         return outcome.axOK && outcome.matched
     }
@@ -49,7 +63,8 @@ extension WindowManager {
         operationID: String? = nil,
         stage: String = "apply_frame",
         maxAttempts: Int = 3,
-        windowID: UInt32? = nil
+        windowID: UInt32? = nil,
+        environment: AXSizeWriteEnvironment? = nil
     ) -> Bool {
         let op = operationID ?? "none"
         let startedAt = Date()
@@ -74,7 +89,8 @@ extension WindowManager {
             settleDelayMicros: settleDelayMicros,
             op: op,
             stage: stage,
-            windowID: windowID
+            windowID: windowID,
+            environment: environment
         )
         guard sizeOutcome.axOK else {
             return false
@@ -89,7 +105,13 @@ extension WindowManager {
         // （旧实现因 position 在循环内阻塞 maxAttempts 次）。size 已在 Phase 1 验证生效
         // （maxAttempts>1）或单次写入（maxAttempts=1），position 单次 write 即可。
         let phase2Start = Date()
-        guard writePosition(targetFrame: targetFrame, window: window, op: op, stage: stage, writeMs: &positionWriteMs) else {
+        let positionOK: Bool
+        if let environment {
+            positionOK = environment.writePosition(targetFrame, window)
+        } else {
+            positionOK = writePosition(targetFrame: targetFrame, window: window, op: op, stage: stage, writeMs: &positionWriteMs)
+        }
+        guard positionOK else {
             return false
         }
         let phase2Ms = elapsedMilliseconds(since: phase2Start)
@@ -122,7 +144,8 @@ extension WindowManager {
         settleDelayMicros: useconds_t,
         op: String,
         stage: String,
-        windowID: UInt32? = nil
+        windowID: UInt32? = nil,
+        environment: AXSizeWriteEnvironment? = nil
     ) -> (axOK: Bool, attemptsUsed: Int, matched: Bool, writeSetMs: Int, readbackMs: Int) {
         var attemptsUsed = 0
         var writeSetMs = 0
@@ -132,7 +155,12 @@ extension WindowManager {
             settleMicros: settleDelayMicros,
             write: {
                 attemptsUsed += 1
-                let write = axWriteSizeOnce(targetFrame: targetFrame, window: window, op: op, stage: stage, attempt: attemptsUsed)
+                let write: (axOK: Bool, writeMs: Int)
+                if let environment {
+                    write = environment.writeSize(targetFrame, window, op, stage, attemptsUsed)
+                } else {
+                    write = axWriteSizeOnce(targetFrame: targetFrame, window: window, op: op, stage: stage, attempt: attemptsUsed)
+                }
                 writeSetMs += write.writeMs
                 return write.axOK
             },
@@ -144,7 +172,9 @@ extension WindowManager {
                 // P-INST-7: readback 计时（cgWindowBounds ~2ms / AX frame(of:) ~68ms，区分 readback 路径成本）。
                 let readbackStart = Date()
                 let appliedFrame: CGRect?
-                if let wid = windowID {
+                if let environment {
+                    appliedFrame = environment.readBounds(windowID)
+                } else if let wid = windowID {
                     appliedFrame = cgWindowBounds(for: wid)
                 } else {
                     appliedFrame = frame(of: window)
@@ -152,7 +182,14 @@ extension WindowManager {
                 readbackMs += elapsedMilliseconds(since: readbackStart)
                 return appliedFrame
             },
-            isConverged: { CoordinateKit.isSizeConverged(actual: $0.size, target: targetFrame.size, tolerance: frameTolerance) }
+            isConverged: { CoordinateKit.isSizeConverged(actual: $0.size, target: targetFrame.size, tolerance: frameTolerance) },
+            sleep: { micros in
+                if let environment {
+                    environment.settle(micros)
+                } else {
+                    usleep(micros)
+                }
+            }
         )
         switch outcome {
         case .converged:
