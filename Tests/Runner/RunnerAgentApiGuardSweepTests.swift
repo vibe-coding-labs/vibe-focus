@@ -203,6 +203,23 @@ extension RunnerHarness {
                   && sessionsText.contains("\"completed\""))
         }
 
+        // --- F. 端点参数守卫扫描（空/坏 JSON → 400，零真实窗操作）---
+        let snapshotsRead = call("GET", "/api/v1/snapshots")
+        check("apiGuard: GET snapshots → 200 读体（buildSnapshotsBody）",
+              snapshotsRead.statusCode == 200)
+        let floatBad = call("POST", "/api/v1/windows/float")
+        check("apiGuard: float 缺 windowId/on → 400", floatBad.statusCode == 400)
+        let focusBad = call("POST", "/api/v1/windows/focus")
+        check("apiGuard: focus 缺 windowId → 400", focusBad.statusCode == 400)
+        let moveBad = call("POST", "/api/v1/windows/move-main")
+        check("apiGuard: move-main 缺 windowId → 400", moveBad.statusCode == 400)
+        let spaceBad = call("POST", "/api/v1/space/switch")
+        check("apiGuard: space/switch 缺 space → 400", spaceBad.statusCode == 400)
+        let layoutBadPreset = call("POST", "/api/v1/windows/layout", body: #"{"preset":"nope"}"#)
+        check("apiGuard: layout 非法 preset → 400", layoutBadPreset.statusCode == 400)
+        let notifyBad = call("POST", "/api/v1/notify")
+        check("apiGuard: notify 缺 text → 400", notifyBad.statusCode == 400)
+
         // --- E. 写限流：无害 400 打满 60s 窗口 → 429 ---
         var sawRateLimited = false
         for _ in 0..<40 {

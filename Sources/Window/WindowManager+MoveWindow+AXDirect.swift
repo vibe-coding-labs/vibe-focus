@@ -54,6 +54,19 @@ enum MoveChannelPolicy {
     }
 }
 
+/// AX 直写通道的宿主依赖缝（默认 nil → 真实 CGWindowList/AX/写原语；
+/// Runner 注入假实现直测写序与收敛裁决，零 AX 写入、零窗口移动）。
+struct AXDirectMoveEnvironment {
+    var ownerPID: @MainActor (UInt32) -> Int32?
+    var axWindows: @MainActor (Int32) -> [AXUIElement]?
+    var matchAXWindow: @MainActor ([AXUIElement], UInt32) -> AXUIElement?
+    var isSettable: @MainActor (AXUIElement, String) -> Bool
+    var cgWindowBounds: @MainActor (UInt32) -> CGRect?
+    var writeMove: @MainActor (CGRect, AXUIElement) -> Void
+    var writeResize: @MainActor (CGRect, AXUIElement) -> Void
+    var pollSleep: @MainActor (UInt32) -> Void
+}
+
 extension WindowManager {
 
     /// CGWindowList 原始快照 → 窗口 owner pid（纯函数，Runner 注入假快照锁定）。
@@ -98,35 +111,83 @@ extension WindowManager {
         stage: String,
         sourceVisibleFrame: CGRect?
     ) -> Bool {
+        moveWindowToFrameViaAX(
+            windowID: windowID, frame: frame, op: op, stage: stage,
+            sourceVisibleFrame: sourceVisibleFrame, environment: nil)
+    }
+
+    /// 带宿主依赖缝的实现体（environment 非 nil 时 owner pid/AX 解析/可写检查/
+    /// 写原语/读回全部走注入，Runner 在 CLI 直测写序与收敛裁决）。
+    @discardableResult
+    func moveWindowToFrameViaAX(
+        windowID: UInt32,
+        frame: CGRect,
+        op: String,
+        stage: String,
+        sourceVisibleFrame: CGRect?,
+        environment: AXDirectMoveEnvironment?
+    ) -> Bool {
         let segStart = Date()
         // 1. owner pid（CGWindowList 原始快照，非阻塞）。查无此窗 = 已关闭/不可见，如实失败。
-        guard let pid = Self.ownerPID(fromSnapshot: Self.rawWindowListSnapshot(), windowID: windowID) else {
+        let resolvedPID: Int32?
+        if let environment {
+            resolvedPID = environment.ownerPID(windowID)
+        } else {
+            resolvedPID = Self.ownerPID(fromSnapshot: Self.rawWindowListSnapshot(), windowID: windowID)
+        }
+        guard let pid = resolvedPID else {
             log("[WindowManager] moveWindowToFrameViaAX: window not in CGWindowList", level: .warn, fields: [
                 "op": op, "stage": stage, "windowID": String(windowID)
             ])
             return false
         }
         // 2. AX 元素解析（kAXWindows 全量 → _AXUIElementGetWindow 精确匹配 CGWindowID）。
-        let appElement = AXUIElementCreateApplication(pid)
-        var windowsRef: CFTypeRef?
-        let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-        guard status == .success, let axWindows = windowsRef as? [AXUIElement] else {
-            log("[WindowManager] moveWindowToFrameViaAX: AX windows unavailable", level: .warn, fields: [
-                "op": op, "stage": stage, "windowID": String(windowID),
-                "pid": String(pid), "axStatus": String(status.rawValue)
-            ])
-            return false
+        let axWindowList: [AXUIElement]
+        if let environment {
+            guard let injected = environment.axWindows(pid) else {
+                log("[WindowManager] moveWindowToFrameViaAX: AX windows unavailable", level: .warn, fields: [
+                    "op": op, "stage": stage, "windowID": String(windowID),
+                    "pid": String(pid), "axStatus": "injected-nil"
+                ])
+                return false
+            }
+            axWindowList = injected
+        } else {
+            let appElement = AXUIElementCreateApplication(pid)
+            var windowsRef: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+            guard status == .success, let axWindows = windowsRef as? [AXUIElement] else {
+                log("[WindowManager] moveWindowToFrameViaAX: AX windows unavailable", level: .warn, fields: [
+                    "op": op, "stage": stage, "windowID": String(windowID),
+                    "pid": String(pid), "axStatus": String(status.rawValue)
+                ])
+                return false
+            }
+            axWindowList = axWindows
         }
-        guard let ax = Self.matchAXWindow(axWindows, windowID: windowID, handle: { self.windowHandle(for: $0) }) else {
+        let matchedAX: AXUIElement?
+        if let environment {
+            matchedAX = environment.matchAXWindow(axWindowList, windowID)
+        } else {
+            matchedAX = Self.matchAXWindow(axWindowList, windowID: windowID, handle: { self.windowHandle(for: $0) })
+        }
+        guard let ax = matchedAX else {
             log("[WindowManager] moveWindowToFrameViaAX: AX window mismatch", level: .warn, fields: [
                 "op": op, "stage": stage, "windowID": String(windowID),
-                "pid": String(pid), "axWindowCount": String(axWindows.count)
+                "pid": String(pid), "axWindowCount": String(axWindowList.count)
             ])
             return false
         }
         // 3. 双属性可写检查（任一不可写即失败——半可写的窗口写一半留残态）。
-        guard isAttributeSettable(ax, attribute: kAXPositionAttribute),
-              isAttributeSettable(ax, attribute: kAXSizeAttribute) else {
+        let settable: Bool
+        if let environment {
+            settable = environment.isSettable(ax, kAXPositionAttribute)
+                && environment.isSettable(ax, kAXSizeAttribute)
+        } else {
+            settable = isAttributeSettable(ax, attribute: kAXPositionAttribute)
+                && isAttributeSettable(ax, attribute: kAXSizeAttribute)
+        }
+        guard settable else {
             log("[WindowManager] moveWindowToFrameViaAX: attributes not settable", level: .warn, fields: [
                 "op": op, "stage": stage, "windowID": String(windowID), "pid": String(pid)
             ])
@@ -134,7 +195,11 @@ extension WindowManager {
         }
         // 4. 写序自适应（与 yabai 通道同源 FrameConvergence.writeOrder：收窄先 resize 后
         //    move、放大先 move 后 resize，中间态被源/目标 frame 包含）。
-        let preWriteBounds = cgWindowBounds(for: windowID)
+        func readBounds() -> CGRect? {
+            if let environment { return environment.cgWindowBounds(windowID) }
+            return cgWindowBounds(for: windowID)
+        }
+        let preWriteBounds = readBounds()
         let writeOrder = FrameConvergence.writeOrder(
             currentSize: preWriteBounds?.size,
             targetSize: frame.size,
@@ -148,25 +213,33 @@ extension WindowManager {
         var positionSendCount = 0
         var sizeSendCount = 0
         let outcome = Self.runAXFrameWrite(
-            read: { cgWindowBounds(for: windowID) },
+            read: readBounds,
             writeMove: {
                 positionSendCount += 1
                 var writeMs = 0
-                _ = self.writePosition(targetFrame: frame, window: ax, op: op, stage: stage, writeMs: &writeMs)
+                if let environment {
+                    environment.writeMove(frame, ax)
+                } else {
+                    _ = self.writePosition(targetFrame: frame, window: ax, op: op, stage: stage, writeMs: &writeMs)
+                }
                 positionWriteMs += writeMs
             },
             writeResize: {
                 sizeSendCount += 1
                 let writeStart = Date()
-                _ = self.writeSizeWithReadback(
-                    targetFrame: frame,
-                    window: ax,
-                    attempts: 1,
-                    settleDelayMicros: WindowSettle.axWriteSettleMicros,
-                    op: op,
-                    stage: stage,
-                    windowID: windowID
-                )
+                if let environment {
+                    environment.writeResize(frame, ax)
+                } else {
+                    _ = self.writeSizeWithReadback(
+                        targetFrame: frame,
+                        window: ax,
+                        attempts: 1,
+                        settleDelayMicros: WindowSettle.axWriteSettleMicros,
+                        op: op,
+                        stage: stage,
+                        windowID: windowID
+                    )
+                }
                 sizeWriteMs += elapsedMilliseconds(since: writeStart)
             },
             target: frame,
@@ -174,7 +247,8 @@ extension WindowManager {
             tolerance: frameTolerance,
             op: op,
             stage: stage,
-            windowID: windowID
+            windowID: windowID,
+            pollSleep: environment?.pollSleep ?? { usleep(useconds_t($0) * 1_000) }
         )
         let converged: Bool
         switch outcome {
