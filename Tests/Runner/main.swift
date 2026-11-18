@@ -540,6 +540,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runAXWriteRetryTests") { runAXWriteRetryTests() }
         runDomain("runSpaceMoveSkipTests") { runSpaceMoveSkipTests() }
         runDomain("runSpaceQueryReadOnlyTests") { runSpaceQueryReadOnlyTests() }
+        runDomain("runYabaiStubSeamTests") { runYabaiStubSeamTests() }
         runDomain("runTargetResolveTests") { runTargetResolveTests() }
         runDomain("runHookTestAndAXReadTests") { runHookTestAndAXReadTests() }
         runDomain("runLoginItemCleanupTests") { runLoginItemCleanupTests() }

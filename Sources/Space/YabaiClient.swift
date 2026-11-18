@@ -40,6 +40,16 @@ enum YabaiClient {
             }
         }
         #endif
+        // 测试注入缝（对齐 VIBEFOCUS_DB_PATH）：显式设置 VIBEFOCUS_YABAI_PATH 时优先返回
+        // 该可执行文件，让无 yabai 环境（CI）也能直测 runYabai/runYabaiVariants/query 解码
+        // 与失败分支（替身只回显固定 JSON / 退出码，不执行真实 space/window 变更）。
+        // 不入缓存：解注后立即恢复常规探测，避免替身路径污染后续调用；生产不设置该变量
+        // → 行为与原先完全一致。
+        if let override = ProcessInfo.processInfo.environment["VIBEFOCUS_YABAI_PATH"],
+           !override.isEmpty,
+           FileManager.default.fileExists(atPath: override) {
+            return override
+        }
         if let cached = cachedPathBox.value, FileManager.default.fileExists(atPath: cached) {
             return cached
         }

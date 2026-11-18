@@ -1,9 +1,9 @@
 // Tests/Runner/RunnerSpaceQueryYabaiTests.swift — SpaceController 查询/Yabai 通道实例直测（B239）。
 // 锁定：markOperationError 三分支状态迁移（SA 错误翻转 canControlSpaces）、queryWindow
 // 缓存命中双呼叫（真实 yabai 窗口 id，只读）、exactNSScreen 兜底（表外索引）。
-// 留白注记：runYabai 的「可执行文件不存在」分支与各查询的失败日志分支需要让真实 yabai
-// 失败（无注入缝、热路径原语不为覆盖率加缝），归 E2E 基建；AutoShow tick 观察机器
-// 同 B219 先例留白（会真弹气泡面板，用户在用机）。
+// 留白注记：本域仍依赖真机 yabai（查询命中真实窗口）。runYabai 各分支与查询失败日志
+// 已由 cover-31 的 VIBEFOCUS_YABAI_PATH 替身域（RunnerYabaiStubSeamTests）覆盖，
+// 不再依赖真实 yabai 失败；AutoShow tick 观察机器同 B219 先例留白（会真弹气泡面板）。
 
 import AppKit
 import Foundation
