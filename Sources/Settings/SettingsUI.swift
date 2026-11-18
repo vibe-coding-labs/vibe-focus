@@ -16,6 +16,18 @@ public struct SettingsView: View {
     init(initialTab: SettingsTab) {
         _selectedTab = State(initialValue: initialTab)
     }
+    /// 测试缝：注入编排目标初始值（同 B317 initialTab 家法——无窗环境下
+    /// post-install 写 @State 不落 storage，初始值注入是唯一确定性通道）。
+    /// 生产默认走 `init()`，零行为变更。
+    init(
+        gridTargetCode: String,
+        gridMinimapScreens: [ScreenLayoutMapper.InputScreen] = [],
+        gridSpaceSwitchMessage: String? = nil
+    ) {
+        _gridTargetCode = State(initialValue: gridTargetCode)
+        _gridMinimapScreens = State(initialValue: gridMinimapScreens)
+        _gridSpaceSwitchMessage = State(initialValue: gridSpaceSwitchMessage)
+    }
     @EnvironmentObject var hotKeyManager: HotKeyManager
     @StateObject var spaceController = SpaceController.shared
     @StateObject var loginItemManager = LoginItemManager.shared

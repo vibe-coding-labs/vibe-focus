@@ -18,27 +18,23 @@ extension RunnerHarness {
 
         // MARK: A. 目标摘要四分支：快照缺失 → 回退文案
         do {
-            let view = SettingsView()
-            view.gridMinimapScreens = []
-
-            view.gridTargetCode = GridTargetCode.main.code
-            check("gridSettings: main 摘要", view.gridTargetSummary == "→ 主屏")
-            view.gridTargetCode = GridTargetCode.focused.code
-            check("gridSettings: focused 摘要", view.gridTargetSummary == "→ 焦点屏")
-            view.gridTargetCode = GridTargetCode.display(displayID: 4_292_000_001).code
+            // 无窗环境下 post-install 写 @State 不落 storage（B317 注记），
+            // 走 init(gridTargetCode:) 测试缝注入初始值。
+            func summary(_ code: String) -> String? {
+                SettingsView(gridTargetCode: code).gridTargetSummary
+            }
+            check("gridSettings: main 摘要", summary(GridTargetCode.main.code) == "→ 主屏")
+            check("gridSettings: focused 摘要", summary(GridTargetCode.focused.code) == "→ 焦点屏")
             check("gridSettings: display 快照缺失→#ID 回退",
-                  view.gridTargetSummary == "→ #4292000001 当前 Space")
-            view.gridTargetCode = GridTargetCode.displaySpace(displayID: 4_292_000_001, spaceIndex: 7).code
+                  summary(GridTargetCode.display(displayID: 4_292_000_001).code) == "→ #4292000001 当前 Space")
             check("gridSettings: displaySpace 快照缺失→全局索引回退",
-                  view.gridTargetSummary == "→ #4292000001 · Space 7")
-            view.gridTargetCode = "not-a-target"
-            check("gridSettings: 非法目标码→无摘要", view.gridTargetSummary == nil)
+                  summary(GridTargetCode.displaySpace(displayID: 4_292_000_001, spaceIndex: 7).code) == "→ #4292000001 · Space 7")
+            check("gridSettings: 非法目标码→无摘要", summary("not-a-target") == nil)
         }
 
         // MARK: B. 快照命中：屏号-位次语言
         do {
-            let view = SettingsView()
-            view.gridMinimapScreens = [
+            let screens = [
                 ScreenLayoutMapper.InputScreen(
                     displayID: 4_292_000_001,
                     name: "Synthetic Display",
@@ -50,22 +46,32 @@ extension RunnerHarness {
                     ],
                     yabaiDisplayIndex: 1)
             ]
-            view.gridTargetCode = GridTargetCode.display(displayID: 4_292_000_001).code
+            func summary(_ code: String) -> String? {
+                SettingsView(gridTargetCode: code, gridMinimapScreens: screens).gridTargetSummary
+            }
             check("gridSettings: display 快照命中→屏号",
-                  view.gridTargetSummary == "→ 屏1 当前 Space")
-            view.gridTargetCode = GridTargetCode.displaySpace(displayID: 4_292_000_001, spaceIndex: 7).code
+                  summary(GridTargetCode.display(displayID: 4_292_000_001).code) == "→ 屏1 当前 Space")
             check("gridSettings: displaySpace 快照命中→屏号-位次",
-                  view.gridTargetSummary == "→ 屏1 · 1-2")
+                  summary(GridTargetCode.displaySpace(displayID: 4_292_000_001, spaceIndex: 7).code) == "→ 屏1 · 1-2")
         }
 
-        // MARK: C. 快照重建（只读 yabai 查询；无 yabai 时退化为纯屏幕）
+        // MARK: C. 快照装配（纯函数；异步 @State 落账不在无窗容器内可观测）
         do {
-            let view = SettingsView()
-            view.refreshGridMinimap(ignoreCache: true)
-            check("gridSettings: 强制重建后屏幕表非空（CI 至少一屏）",
-                  !view.gridMinimapScreens.isEmpty || NSScreen.screens.isEmpty)
-            view.refreshGridMinimap()
-            check("gridSettings: 缓存路径重建可重入", true)
+            let screens = NSScreen.screens
+            let assembled = SettingsView.inputScreens(
+                from: screens,
+                spacesByYabaiDisplay: [1: [ScreenLayoutMapper.InputSpace(yabaiIndex: 3, isVisible: true)]],
+                yabaiIndex: { _ in 1 },
+                displayID: { _ in 42 },
+                mainDisplayID: 42
+            )
+            check("gridSettings: 快照装配数量与屏数一致（CI 至少一屏）",
+                  assembled.count == screens.count)
+            check("gridSettings: 快照字段与 yabai 分组命中",
+                  assembled.allSatisfy {
+                      $0.displayID == 42 && $0.isMain && $0.yabaiDisplayIndex == 1
+                          && $0.spaces.map(\.yabaiIndex) == [3]
+                  })
         }
 
         // MARK: D. 整段渲染：空态 / 断显横幅 / 切换反馈 / 参数区
@@ -73,18 +79,19 @@ extension RunnerHarness {
             let empty = ImageRenderer(content: SettingsView().terminalGridSection)
             check("gridSettings: 空快照整段渲染出图", empty.nsImage != nil)
 
-            let warned = SettingsView()
-            warned.gridTargetCode = GridTargetCode.display(displayID: 4_292_000_999).code
-            warned.gridSpaceSwitchMessage = "已切换到 屏1-位次2"
-            warned.gridMinimapScreens = [
-                ScreenLayoutMapper.InputScreen(
-                    displayID: 4_292_000_001,
-                    name: "Synthetic Display",
-                    cocoaFrame: NSRect(x: 0, y: 0, width: 1920, height: 1080),
-                    isMain: true,
-                    spaces: [ScreenLayoutMapper.InputSpace(yabaiIndex: 3, isVisible: true)],
-                    yabaiDisplayIndex: 1)
-            ]
+            let warned = SettingsView(
+                gridTargetCode: GridTargetCode.display(displayID: 4_292_000_999).code,
+                gridMinimapScreens: [
+                    ScreenLayoutMapper.InputScreen(
+                        displayID: 4_292_000_001,
+                        name: "Synthetic Display",
+                        cocoaFrame: NSRect(x: 0, y: 0, width: 1920, height: 1080),
+                        isMain: true,
+                        spaces: [ScreenLayoutMapper.InputSpace(yabaiIndex: 3, isVisible: true)],
+                        yabaiDisplayIndex: 1)
+                ],
+                gridSpaceSwitchMessage: "已切换到 屏1-位次2"
+            )
             let renderer = ImageRenderer(content: warned.terminalGridSection)
             check("gridSettings: 断显横幅+切换反馈整段渲染出图", renderer.nsImage != nil)
         }

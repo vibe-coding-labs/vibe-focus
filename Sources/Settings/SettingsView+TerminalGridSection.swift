@@ -271,17 +271,34 @@ extension SettingsView {
     /// 屏标签/胶囊挂接统一走精确解析器（几何匹配 + 1s 缓存，Batch 33/34）。
     @MainActor
     private func applyGridMinimapScreens(spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]]) {
-        let screens = NSScreen.screens
-        gridMinimapScreens = screens.map { screen in
-            let displayID = CoordinateKit.cgDisplayID(for: screen) ?? 0
-            let yabaiIndex = SpaceController.shared.exactYabaiDisplayIndex(for: screen)
+        gridMinimapScreens = Self.inputScreens(
+            from: NSScreen.screens,
+            spacesByYabaiDisplay: spacesByYabaiDisplay,
+            yabaiIndex: { SpaceController.shared.exactYabaiDisplayIndex(for: $0) },
+            displayID: { CoordinateKit.cgDisplayID(for: $0) ?? 0 },
+            mainDisplayID: CGMainDisplayID()
+        )
+    }
+
+    /// 屏快照纯装配（不碰 @State，Runner 可直测）：NSScreen → InputScreen 列表。
+    /// 解析器以闭包注入，测试可给固定夹具；生产侧闭包仍走精确解析器。
+    static func inputScreens(
+        from screens: [NSScreen],
+        spacesByYabaiDisplay: [Int: [ScreenLayoutMapper.InputSpace]],
+        yabaiIndex: (NSScreen) -> Int?,
+        displayID: (NSScreen) -> UInt32,
+        mainDisplayID: UInt32
+    ) -> [ScreenLayoutMapper.InputScreen] {
+        screens.map { screen in
+            let id = displayID(screen)
+            let yIndex = yabaiIndex(screen)
             return ScreenLayoutMapper.InputScreen(
-                displayID: displayID,
+                displayID: id,
                 name: screen.localizedName,
                 cocoaFrame: screen.frame,
-                isMain: displayID == CGMainDisplayID(),
-                spaces: yabaiIndex.flatMap { spacesByYabaiDisplay[$0] } ?? [],
-                yabaiDisplayIndex: yabaiIndex
+                isMain: id == mainDisplayID,
+                spaces: yIndex.flatMap { spacesByYabaiDisplay[$0] } ?? [],
+                yabaiDisplayIndex: yIndex
             )
         }
     }
