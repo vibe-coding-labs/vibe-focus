@@ -8,6 +8,20 @@ import SwiftUI
 // 纯函数工具已移至 WindowManager+TerminalContext+Helpers.swift
 // iTerm2/TTY/AppleScript 匹配已移至 WindowManager+TerminalContext+iTerm2.swift
 
+/// 终端上下文匹配的宿主依赖缝（2026-11-19 覆盖率补齐）：进程树解析、
+/// CGWindowList 枚举、TTY 解析与三种匹配策略全可注入。默认 nil → 生产真实实现；
+/// Runner 注入假实现直测多窗区分与策略降级链（零 ps fork、零 AppleScript、零 AX）。
+struct TerminalContextMatchEnvironment {
+    var terminalPID: (Int32) -> Int32?
+    var runningAppName: (Int32) -> String?
+    var windowsForPID: (Int32) -> [WindowIdentity]
+    var resolveTTY: (Int32) -> String?
+    var psParentPID: (Int32) -> String?
+    var matchByTTY: (String, [WindowIdentity]) -> WindowIdentity?
+    var matchIterm2: (String, [WindowIdentity]) -> WindowIdentity?
+    var matchTerminalAppleScript: (String, Int32, [WindowIdentity]) -> WindowIdentity?
+}
+
 @MainActor
 extension WindowManager {
 
@@ -15,7 +29,10 @@ extension WindowManager {
 
     /// 通过 hook 辅助脚本捕获的终端上下文精确定位窗口
     /// 解决多工作区/多 Claude Code 实例场景下的窗口匹配问题
-    func findWindowByTerminalContext(_ ctx: TerminalContext) -> WindowIdentity? {
+    func findWindowByTerminalContext(
+        _ ctx: TerminalContext,
+        environment: TerminalContextMatchEnvironment? = nil
+    ) -> WindowIdentity? {
         // P-INST-39: findWindowByTerminalContext 总耗时（SessionStart 本地绑定核心；进程树 ps fork + CGWindowList + 可能 AppleScript；归因 handleSessionStart durationMs 中的窗口匹配阶段，匹配 strategy 见各 case log）。
         #if PERF_INSTRUMENT
         let fwtcStart = Date()
@@ -47,7 +64,13 @@ extension WindowManager {
             return nil
         }
 
-        guard let terminalPID = TerminalRegistry.findTerminalPID(from: startPID) else {
+        let resolvedTerminalPID: Int32?
+        if let environment {
+            resolvedTerminalPID = environment.terminalPID(startPID)
+        } else {
+            resolvedTerminalPID = TerminalRegistry.findTerminalPID(from: startPID)
+        }
+        guard let terminalPID = resolvedTerminalPID else {
             log(
                 "[WindowManager] findWindowByTerminalContext: no terminal app found in process tree",
                 level: .warn,
@@ -56,9 +79,14 @@ extension WindowManager {
             return nil
         }
 
-        let terminalAppName = NSRunningApplication(processIdentifier: terminalPID)?.localizedName
-            ?? (runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(terminalPID)])?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown")
+        let terminalAppName: String
+        if let environment {
+            terminalAppName = environment.runningAppName(terminalPID) ?? "unknown"
+        } else {
+            terminalAppName = NSRunningApplication(processIdentifier: terminalPID)?.localizedName
+                ?? (runShellCommand("/bin/ps", args: ["-o", "comm=", "-p", String(terminalPID)])?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown")
+        }
 
         log(
             "[WindowManager] findWindowByTerminalContext: resolved terminal app",
@@ -70,7 +98,7 @@ extension WindowManager {
         )
 
         // 步骤 2: 通过终端 App PID 查 CGWindowList 获取该 PID 下的所有窗口
-        let windows = findWindowsForPID(terminalPID)
+        let windows = environment.map { $0.windowsForPID(terminalPID) } ?? findWindowsForPID(terminalPID)
         if windows.isEmpty {
             log(
                 "[WindowManager] findWindowByTerminalContext: terminal PID has no windows",
@@ -96,10 +124,17 @@ extension WindowManager {
             // 沿进程树向上找有效 TTY
             var currentPID = startPID
             for _ in 0..<10 {
-                if let tty = resolveTTY(forPID: currentPID) {
+                if let environment {
+                    if let tty = environment.resolveTTY(currentPID) { return tty }
+                } else if let tty = resolveTTY(forPID: currentPID) {
                     return tty
                 }
-                let ppidOutput = runShellCommand("/bin/ps", args: ["-o", "ppid=", "-p", String(currentPID)])
+                let ppidOutput: String?
+                if let environment {
+                    ppidOutput = environment.psParentPID(currentPID)
+                } else {
+                    ppidOutput = runShellCommand("/bin/ps", args: ["-o", "ppid=", "-p", String(currentPID)])
+                }
                 guard let nextPIDStr = ppidOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
                       let nextPID = Int32(nextPIDStr), nextPID > 1, nextPID != currentPID else {
                     break
@@ -119,7 +154,12 @@ extension WindowManager {
         }
 
         // 用 TTY 上的进程 command 精确匹配窗口标题
-        let matchedWindow = matchWindowByTTYProcess(tty: tty, windows: windows)
+        let matchedWindow: WindowIdentity?
+        if let environment {
+            matchedWindow = environment.matchByTTY(tty, windows)
+        } else {
+            matchedWindow = matchWindowByTTYProcess(tty: tty, windows: windows)
+        }
         if let match = matchedWindow {
             log(
                 "[WindowManager] findWindowByTerminalContext: matched window by TTY process",
@@ -137,7 +177,13 @@ extension WindowManager {
         // iTerm2: 用 ITERM_SESSION_ID 通过 AppleScript 精确匹配
         if let itermSID = ctx.itermSessionID, !itermSID.isEmpty {
             let iTerm2Start = Date()
-            if let match = matchiTerm2WindowBySessionID(itermSessionID: itermSID, windows: windows) {
+            let itermMatch: WindowIdentity?
+            if let environment {
+                itermMatch = environment.matchIterm2(itermSID, windows)
+            } else {
+                itermMatch = matchiTerm2WindowBySessionID(itermSessionID: itermSID, windows: windows)
+            }
+            if let match = itermMatch {
                 log(
                     "[WindowManager] findWindowByTerminalContext: matched iTerm2 window by session ID",
                     fields: ["itermSessionID": itermSID, "windowID": String(match.windowID), "durationMs": String(elapsedMilliseconds(since: iTerm2Start))]
@@ -152,7 +198,13 @@ extension WindowManager {
         }
 
         // Fallback: Terminal.app 的 CGWindowList 无窗口标题，用 AppleScript 按 TTY 查窗口 ID
-        if let match = matchTerminalWindowByAppleScript(tty: tty, terminalPID: terminalPID, windows: windows) {
+        let appleScriptMatch: WindowIdentity?
+        if let environment {
+            appleScriptMatch = environment.matchTerminalAppleScript(tty, terminalPID, windows)
+        } else {
+            appleScriptMatch = matchTerminalWindowByAppleScript(tty: tty, terminalPID: terminalPID, windows: windows)
+        }
+        if let match = appleScriptMatch {
             log(
                 "[WindowManager] findWindowByTerminalContext: matched window by AppleScript TTY lookup",
                 fields: ["tty": tty, "windowID": String(match.windowID)]
