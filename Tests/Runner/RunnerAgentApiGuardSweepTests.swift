@@ -31,7 +31,7 @@ extension RunnerHarness {
                     method: method,
                     path: path,
                     body: Data(body.utf8),
-                    query: ["token": ClaudeHookPreferences.authToken],
+                    query: ["token": ClaudeHookPreferences.authToken ?? ""],
                     headers: [:],
                     peerAddress: peer
                 )
@@ -88,7 +88,7 @@ extension RunnerHarness {
             return box.value ?? (statusCode: -1, body: Data())
         }()
         check("apiGuard: 错误 token → 401",
-              ClaudeHookPreferences.authToken.isEmpty || badToken.statusCode == 401)
+              (ClaudeHookPreferences.authToken ?? "").isEmpty || badToken.statusCode == 401)
 
         // --- B. L0 读端点：三份只读体构造 ---
         let status = call("GET", "/api/v1/status")
@@ -124,6 +124,73 @@ extension RunnerHarness {
         // --- D. 快照恢复：不存在的 ID → 409（零建窗） ---
         let restoreMissing = call("POST", "/api/v1/snapshots/restore", body: #"{"id":"ut-api-guard-nonexistent"}"#)
         check("apiGuard: restore 不存在快照 → 409", restoreMissing.statusCode == 409)
+
+        // --- D2. 快照捕获：无 yabai/无终端窗时采集前置失败 → 409（失败路径不落库） ---
+        let capture = call("POST", "/api/v1/snapshots/capture")
+        check("apiGuard: capture 采集前置失败 → 409（或环境可采 → 200）",
+              capture.statusCode == 409 || capture.statusCode == 200)
+
+        // --- D3. layout 合法 preset：无焦点窗降级 409；前台有他属窗时跳过实摆 ---
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let frontCandidates = frontPID.map {
+            ToggleFocusBranching.cgListFocusCandidates(snapshot: cgWindowListAll(), ownerPID: $0).count
+        } ?? 0
+        if frontCandidates == 0 {
+            let layoutValid = call("POST", "/api/v1/windows/layout", body: #"{"preset":"leftHalf"}"#)
+            check("apiGuard: layout 合法 preset 无焦点窗 → 409", layoutValid.statusCode == 409)
+        } else {
+            check("apiGuard: 前台有他属窗，跳过 layout 实摆（防真机误移）", true)
+        }
+
+        // --- D4. settings 批量坏项（缺 value）→ 400 逐项 bad_request，零设置写入 ---
+        let savedWriteAgain = AgentAccessPreferences.allowSettingsWrite
+        AgentAccessPreferences.allowSettingsWrite = true
+        let badItem = call("POST", "/api/v1/settings", body: #"{"updates":[{"key":"sound.volume"}]}"#)
+        AgentAccessPreferences.allowSettingsWrite = savedWriteAgain
+        check("apiGuard: settings 批量缺 value → 400", badItem.statusCode == 400)
+
+        // --- D5. sessions 读体：进程内注入一条活动 + 窗口绑定，覆盖「带绑定行」分支。
+        //     注入只进内存（Runner 无 bundle id → 不落盘）；测毕 reset 回填原样。 ---
+        do {
+            let tracker = SessionActivityTracker.shared
+            let registry = SessionWindowRegistry.shared
+            let savedActivities = tracker.activities
+            let injectedSession = "ut-api-guard-session"
+            let injectedWID: UInt32 = 987_001
+            tracker.resetForTesting()
+            tracker.record(sessionID: injectedSession, event: .userPromptSubmit,
+                           code: "ut-guard", at: Date(timeIntervalSince1970: 1_700_000_000))
+            let injectedState = WindowState(
+                windowID: injectedWID, pid: Int32(getpid()), tty: nil,
+                axWindowNumber: nil, appName: "Terminal", bundleIdentifier: "com.apple.Terminal",
+                title: "ut-guard", termSessionID: nil, itermSessionID: nil,
+                kittyWindowID: nil, weztermPane: nil, envWindowID: nil,
+                sessionID: injectedSession, cwd: nil, model: nil,
+                origX: nil, origY: nil, origW: nil, origH: nil,
+                targetX: nil, targetY: nil, targetW: nil, targetH: nil,
+                sourceSpace: nil, sourceDisplay: nil,
+                sourceYabaiDisp: nil, sourceDispSpace: nil,
+                targetDisplay: nil, toggleReason: nil, toggledAt: nil,
+                isCompleted: false, completedAt: nil,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            )
+            registry.windowStates[injectedWID] = injectedState
+            defer {
+                registry.windowStates.removeValue(forKey: injectedWID)
+                tracker.resetForTesting()
+                for (sid, activity) in savedActivities {
+                    tracker.record(sessionID: sid, event: activity.lastEvent,
+                                   code: activity.lastCode, at: activity.at)
+                }
+            }
+            let sessionsBound = call("GET", "/api/v1/sessions")
+            let sessionsText = String(data: sessionsBound.body, encoding: .utf8) ?? ""
+            check("apiGuard: sessions 带绑定行 → 200 且含 windowId/completed 字段",
+                  sessionsBound.statusCode == 200
+                  && sessionsText.contains("\"windowId\"")
+                  && sessionsText.contains("\"completed\""))
+        }
 
         // --- E. 写限流：无害 400 打满 60s 窗口 → 429 ---
         var sawRateLimited = false
