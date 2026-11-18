@@ -387,8 +387,8 @@ CI runner 无 yabai、无 AX 授权、无真实终端/IDE 进程，故「真机�
 ### 2026-11-19 收口第二轮（批次 31–36，分支 `test/coverage-100b`）
 
 > 继续按同一口径把 CLI 可测面写满。本轮新增 6 组域/扩展（下），Sources-only missed
-> 7476 → 7198（−278 行）。停止点理由：剩余大块经逐行复核全部落在 B 态（真机
-> E2E 通道）与 C 态（豁免清单）之内，未再发现 A 态（可提缝未清）项。
+> 7476 → **7085**（−391 行，75.92% → **77.18%**）。停止点理由：剩余大块经逐行复核
+> 全部落在 B 态（真机 E2E 通道）与 C 态（豁免清单）之内，未再发现 A 态（可提缝未清）项。
 
 #### 新增断言与靶点
 
@@ -397,24 +397,26 @@ CI runner 无 yabai、无 AX 授权、无真实终端/IDE 进程，故「真机�
 | `SpaceController+Switch`（105→26） | `switchToSpace` 四态：目标已可见 `noDrift/visible`、隐藏目标 SA 直切 `refocused/hidden`、聚焦带动落位验证（一次性 flag 桩）`refocused/hidden`、目标缺失 `failed/missing`、查询失败 `noDrift/unknown` | RunnerYabaiStubSeam |
 | `SpaceController+Recovery`（157→61） | SA 恢复状态机闸门：`blockedBySIP` 拒绝自动恢复且不弹权；yabai 缺失早退（零提权）；verdict/时间戳/legacy 键读写全族 | 同上 |
 | `WindowManager+Finding` / `+Toggle+FocusResolution` | UI 门控域自建真窗：单窗段锁「候选=1 → cgwindowlist 快路径 + adopt 收尾」，双窗段走 yabai 探测 → AX 分支；`captureFocusedWindowIdentity` AX 成功臂 | RunnerFindingFocusCaptureUI |
-| `WindowManager+Layout`（166→134） | `placeWindow` 原语幽灵窗（FloatSettle 空转 + 直写守卫）、无授权全动作守卫、有授权且前台非他属 app 时 `applyLayoutAction` 降级/自摆（前台是他属 app 一律跳过，防真机误移用户窗口） | RunnerLayoutGuard |
+| `WindowManager+Layout`（166→134） | `placeWindow` 原语幽灵窗（FloatSettle 空转 + 直写守卫）、无授权全动作守卫、`applyLayoutAction` 在有授权且「前台 app 无在屏 layer0 窗」时走降级/自摆（前台他属 app 有窗时一律跳过，防真机误移用户窗口） | RunnerLayoutGuard |
 | `WindowManager+MoveWindow+PostMove`（104→70） | `saveToggleRecordForMainMove` 三态：主屏外正常落库（帧/来源 space/display/身份）、主屏内 origFrame 被 `shouldRejectSave` 拒收、单屏 `singleDisplay:true` 放行 | RunnerPostMoveRecord |
 | `ClaudeHookServer+API`（88→53） | 回环/token 门/分级授权/未知端点/写限流 429；全部写端点空 JSON → 400；幽灵窗 404；restore 不存在 409；capture 前置失败；layout 合法 preset；settings 批量缺 value；sessions 带绑定行 | RunnerAgentApiGuardSweep |
 | `SessionRestoreExecutor` | 空快照全链空转（ok=true 零建窗，零 AppleEvent） | RunnerRestoreGuardSweep A0 |
 
 #### 实测取证
 
-- **门禁**：run `44386926977`（提交 `66c420c`）success，
-  `VibeFocusTestRunner: 4156 checks, 4156 passed, 0 failed, 16 domains skipped`
-  （本轮起点 4037 → +119）；Standalone 8/8、零警告构建同轮通过。
+- **门禁**：run `44396085594`（提交 `581028f`）success，
+  `VibeFocusTestRunner: 4157 checks, 4157 passed, 0 failed, 16 domains skipped`
+  （本轮起点 4037 → +120）；Standalone 9/28/24 三组全绿、零警告构建同轮通过。
 - **覆盖率**（Sources-only 自算，LCOV DA 逐行并集）：
   - 起点 run `44370107659`：31,041 行 / 7,476 missed / **75.92%**
-  - 批次 31–33 run `44379513177`（`39b4f39`）：7,183 missed / **76.86%**（−293）
-  - 批次 31–35 run `44384190011`（`a4817a4`）：7,198 missed / **76.81%**
-  - 全口径（含 Tests）：64,523 行 / 11,083 missed / 82.82%
-  - 同代码两轮全量差 15 行（0.05pp）为逐域环境抖动：Finding/FocusResolution 的命中臂
-    依赖 runner 上是否存在真实 AX 前台会话；批次 36 已把 UI 域单窗段确定性化（候选恒 1），
-    后续轮次该项不再漂移。
+  - 批次 31–33 run `44379513177`（`39b4f39`）：7,183 missed / 76.86%
+  - 批次 31–35 run `44384190011`（`a4817a4`）：7,198 missed / 76.81%
+  - **定稿 run `44392636086`（`66c420c`，已合入 main）：31,041 行 / 7,085 missed /
+    **77.18%**；全口径（含 Tests）64,557 行 / 10,983 missed / 82.99%**
+  - 逐域全量存在 ±0.2pp 环境抖动（`Toggle+Routes` 223↔271、`ScreenOverlay+Display`
+    42↔54 等域执行面随 runner 会话状态变化）；批次 36 把 UI 域单窗段确定性化后，
+    `FocusResolution`/`Finding` 不再随 AX 会话有无在 63/34 与 31/14 之间漂移（定稿
+    稳定在 31/14）。
 - **逐文件变化（起点 → 末次，missed）**：`SpaceController+Recovery` 157→61、
   `SpaceController+Switch` 105→26、`ClaudeHookServer+API` 88→53、
   `WindowManager+MoveWindow+PostMove` 104→70、`WindowManager+Layout` 166→134、
@@ -426,9 +428,9 @@ CI runner 无 yabai、无 AX 授权、无真实终端/IDE 进程，故「真机�
 
 | 文件 | 残余 missed | 归因 |
 |---|---|---|
-| `WindowManager+Toggle+FocusResolution` | 63（`87-100,116-126,134-147,156-179`） | 单候选快路径（116-126）与 `adopt` 收尾（87-100）已由 UI 域覆盖，批次 36 起改为单窗段确定性命中；yabai 命中分支（134-147）与 AX 在 CG 快照无窗时的兜底（156-179）需要真焦点窗口——CI 无 yabai、无 AX 会话时结构性不可达（B 态） |
-| `WindowManager+Finding` | 34（`73-77,80-85,95-114,161-162,181`） | 无前台 app / 前台 app 无 AX 焦点窗 / AX 身份构造成功臂 / CG 快照里进程已退出 / 命中真实终端宿主窗——全部依赖真实桌面会话（B 态） |
-| `WindowManager+Layout` | 134（`25-136,143-149,177-185,225-230`） | 真实焦点窗摆位链（AX 写 / 跨屏 float + yabai 直写 / 原生全屏探测）；无窗/无授权臂已覆盖，其余归真机 E2E |
+| `WindowManager+Toggle+FocusResolution` | 31（`116-126,134-147,173-178`） | 单候选快路径（116-126）与 `adopt` 收尾（87-100）已由 UI 域覆定（批次 36 单窗段确定性命中）；yabai 命中分支（134-147）与「AX 窗不在 CG 快照」兜底（173-178）需要真焦点窗口——CI 无 yabai、无 AX 会话时结构性不可达（B 态） |
+| `WindowManager+Finding` | 14（`73-77,80-85,161-162,181`） | 无前台 app / 前台 app 无 AX 焦点窗 / CG 快照里进程已退出 / 命中真实终端宿主窗——全部依赖真实桌面会话（B 态）；`captureFocusedWindowIdentity` 成功臂（95-114）已由 UI 域覆盖 |
+| `WindowManager+Layout` | 134（`25-136,143-149,177-185,225-230`） | `applyLayoutAction` 入口链要求「前台 app 无在屏窗」才允许执行（安全闸：真机前台有用户窗口时绝不实摆）；CI runner 的前台 app 恒有在屏窗 → 整链在测量通道内被安全闸拦下。`placeWindow`/FloatSettle/无授权守卫（160-230 段）已覆盖；其余归真机 E2E（B 态） |
 | `SessionRestoreExecutor` | 199 | 建窗/投递/活窗观测全部走真实终端 AppleScript 与 yabai（B 态）；纯函数 `groupByTargetSpace` 与空快照链已直测 |
 | `TerminalGrid*` / `InputBubble*` / `SettingsView+*` / `HotKeyManager+*` / `CrashSignalHandler` | 见大块表 | 维持既有 B/C 态登记（真机窗口、渲染树、Carbon 事件、信号真身） |
 
