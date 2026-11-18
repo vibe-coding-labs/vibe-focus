@@ -289,10 +289,12 @@ final class SessionRestoreExecutor {
             return false
         }
         _ = SpaceController.shared.setWindowFloat(windowID, operationID: op)
-        // 泊靠屏：目标屏之外的任一屏（跨屏 frame 直写必入目标屏当前可见 space）
-        if let parkingScreen = SpaceController.shared.parkingScreen(
-            excludingYabaiDisplayIndex: displayIndex
-        ), info.display == displayIndex {
+        // 泊靠屏：目标屏之外的任一屏（跨屏 frame 直写必入目标屏当前可见 space）。
+        // displayIndex 未知时 info.display == nil 恒不成立，与旧内联判定等价。
+        if let targetDisplayIndex = displayIndex,
+           let parkingScreen = SpaceController.shared.parkingScreen(
+               excludingYabaiDisplayIndex: targetDisplayIndex
+           ), info.display == targetDisplayIndex {
             // 同屏错位：先泊到其它屏，再写回（此刻目标屏正显示目标 space）
             let parkingBase = CoordinateKit.quartzVisibleFrame(of: parkingScreen)
             _ = SpaceController.shared.runYabai(
