@@ -323,7 +323,7 @@ extension RunnerHarness {
         _ = env.querySpaces()
         _ = env.queryAllWindows()
         check("yabaiDirect F3: queryWindow 幽灵窗默认闭包 → nil",
-              env.queryWindow(4_000_001) == nil)
+              env.queryWindow(4_000_999) == nil)
         check("yabaiDirect F4: bundleIdentifierOfPID 幽灵 pid → nil",
               env.bundleIdentifierOfPID(pid_t(999_999_999)) == nil)
         check("yabaiDirect F5: classifyTTY 幽灵 tty → 降级 shell 分类",
