@@ -491,3 +491,73 @@ B/C 态，无新增豁免需求。
 
 **验收口径不变**：字面 100% 仍物理不可达（B/C 态 + 测量通道损失），本批可测面增量已
 全部落库，无新增豁免需求。
+
+### 2026-11-19 收口第四轮（批次 43，分支 `test/coverage-100f`）
+
+> 起点 `2456051` / run `44417368728`：Sources-only 31,819 行 / 5,465 missed / **82.82%**
+> （全口径 LCOV 68,506 / 9,408 / 86.27%）。本批 8 个提交新增新域
+> `runYabaiDirectSeamTests`（43 checks），全部走「替身可执行文件
+> （`VIBEFOCUS_YABAI_PATH`）+ 环境注入」，零真实 yabai/AX/窗口副作用。终测 run
+> `44428344019`（`9e987fa`）：Sources-only **31,819 行 / 5,264 missed / 83.46%**
+> （**−201 missed / +0.64pp**）；全口径 LCOV **68,891 / 9,218 / 86.62%**
+> （行数增加来自本批新增的 Runner 测试文件）。
+
+#### 本批新增断言与靶点
+
+| 组 | 覆盖点（全部直测 CLI 可提缝面） |
+|---|---|
+| A `YabaiClient` 执行原语 | `run` 成功 / 非零退出 / 不可执行文件（launch catch）/ `stub-hang` 超时 terminate→nil；`queryJSON` 解码数组 / 非 JSON / 退出码守卫；`runAsync` / `queryJSONAsync` 成功、失败、launch 异常、退出码守卫 |
+| B `SpaceController.focusWindow` 五分支 | disabled 早退；stub `--focus` 成功；失败 → Carbon 幽灵窗 false；unmanaged → Carbon false；表外窗口 id → `queryWindow` nil → `no_window` false；`focusWindowByCGWindowID` 幽灵窗 false |
+| C 落位链 | `isEnabled=false` 零 fork；stub success；`runYabaiVariants` 失败路径 |
+| D `applyAvailability` 四态 | launch 失败 → unavailable + "Unable to launch yabai"；exit0+SA 已载 → available/canControl true/message nil；exit0+SA 缺失 → available/canControl false + scripting-addition 提示；非零退出 → unavailable + 格式化错误 |
+| E 快照响应体 | `ClaudeHookServer.buildSnapshotsBody()` JSON ok + count 与 snapshots 一致；`WindowManager.terminalScreenText` 空 AX 树 → nil |
+| F `attemptSilentSARecovery` | 成功落账（verdict 键写入 → succeeded）；紧随调用被状态机闸门早退（canControl/lastErrorMessage 保持 sentinel）；UserDefaults 键原样还原 |
+| G `SessionRestoreEnvironment` 默认闭包 | screens / cgDisplayID / primaryDisplayID / quartzVisibleFrame / exactYabaiDisplayIndex / automationInstanceRefusal ×2 / querySpaces / queryAllWindows / queryWindow 表外 id / bundleIdentifierOfPID 无效 pid / classifyTTY 合成路径 → `.shell` / focusSpace(.yabai) / setWindowFloat / parkingScreen / runYabai / now —— 17 个默认实现直调 |
+| H `yabaiPath` 常规解析 | 撤注入 + PATH 前置替身目录 + `SHELL=/bin/bash`：`findViaUserShell` 命中、`findViaBashWhich` 命中、`yabaiPath()` 非 nil 且入缓存、二次命中同路径 |
+| I SA 探针直调 | 无 focused space/探针启动失败 → false；stub exit0 → true；`scripting-addition` 报错 → false |
+| J 查询缓存与 float 三臂 | `isCacheExpired` 过期/新鲜；`clearWindowQueryCache`；`setWindowFloat`：query_nil → skippedNoOp、unmanaged → skippedNoOp、可管理 → toggled（stub `--toggle float` 非零不影响决策返回值） |
+
+#### 逐文件变化（起点 → 终测，missed）
+
+| 文件 | 起点 | 终测 | 变化 |
+|---|---|---|---|
+| `Space/YabaiClient.swift` | 75 | **8** | −67（A/H 组：执行原语、常规解析链） |
+| `Space/SpaceController.swift` | 63 | **5** | −58（D 组：`applyAvailability` 四态；`private → internal` 仅放开可见性，生产入口不变） |
+| `Space/SpaceController+Move.swift` | 49 | **0** | −49（B 组 `focusWindow` 五分支 + J 组 `setWindowFloat` 三臂） |
+| `Window/WindowManager+AXRead.swift` | 36 | **18** | −18（E 组：空 AX 树降级） |
+| `Space/SpaceController+Recovery.swift` | 61 | **49** | −12（F/I 组：静默 SA 恢复成功链、状态机闸门、探针直调） |
+| `Space/SpaceController+SARecoveryState.swift` | 7 | **0** | −7（F 组：verdict/时间戳读写全族） |
+| `Space/SpaceController+Switch.swift` | 26 | 25 | −1 |
+| `TerminalGrid/TerminalGridController+Automation.swift` | 69 | 68 | −1（域执行面抖动） |
+| `Overlay/ScreenOverlayManager+Display.swift` | 42 | 54 | +12（域执行面抖动，非本批靶点） |
+
+#### 剩余项归因（逐行复核，均为 B/C 态或单例生命周期夹具）
+
+| 文件 | 残余 missed | 归因 |
+|---|---|---|
+| `SpaceController+Recovery` | 49（`14-16,23-38,131,182-210`） | 手动 SA 加载的同步提权与 `osascript` 管理员 shell（C3 系统授权）；`blockedBySIP` 持久化需 SIP 阻断的真实环境（B 态）；提权恢复编排同 C3 |
+| `SpaceController+Switch` | 25（`98-156`） | `refocusWindowOnSpace` 的候选截断/聚焦失败/落位轮询日志臂：判据是「视角真落到目标 space」（700ms 实时钟轮询 + 真实焦点落位），替身无法伪造视角落定位（B 态） |
+| `WindowManager+AXRead` | 18（`60,108-114,162-175`） | 真实 AX 元素/属性读与授权访问（B 态） |
+| `YabaiClient` | 8（`69-70,82-83,125-126,153-154`） | 69-70 标准安装路径命中（CI runner 未在 `/opt/homebrew/bin` 等路径装 yabai；真机开发机即命中）；82-83 `which` 兜底缓存写（user-shell 先行命中，which 兜底只在无用户 shell 时走）；125-126/153-154 两个 fallback 的 Process 启动 catch（需 Process launch 失败，CI 无此条件） |
+| `SpaceController` | 5（`83-84,94-95,98`） | 60s health timer 闭包、屏参变化通知闭包、`deinit`——单例进程生命周期胶水（C1；需实时钟/销毁 shared 单例，执行即改写共享运行时状态） |
+| 其余大块（`WindowManager+WindowQuery`/`InputBubble*`/`TerminalGrid*`/`Settings*`/`SessionRestoreExecutor` 等） | 见上轮登记 | 维持既有 B/C 态归因（真桌面会话、渲染树、真实终端 AppleScript、提权/信号真身） |
+
+#### 实测取证
+
+- **门禁** run `44428344019`（`9e987fa`）success：`swift build` 零警告、Standalone 全绿、
+  新域 `runYabaiDirectSeamTests` 43/43 全绿（定向 run `44427721115` 先行确认 J1–J3）。
+- **全量逐域**（`VIBEFOCUS_PER_DOMAIN_RUN: 1`）：352 个域段合计 5,022 checks，FAIL 24 条，
+  与前一轮 run `44417368728` 的 FAIL 集合**逐条完全一致**（CI 无 yabai/AX 的既有环境域：
+  bind149 / hookDispatch / overlayQ / perf / pipeline / registry / spaceQY / spaceRO /
+  spaceSwitch / yabai），本批零新增失败。
+- **覆盖率**（Sources-only 自算，LCOV DA 逐行并集）：31,819 行 / 5,465 → **5,264** missed，
+  82.82% → **83.46%**；全口径 68,506/9,408/86.27% → 68,891/9,218/**86.62%**。
+- 同 commit 前一次全量（run `44425831906`）观测 Sources-only 5,280 / 83.41%，与本轮终测
+  存在 ±9 行域执行抖动（`ScreenOverlayManager+Display` 一类随 runner 会话状态浮动）；
+  靶点变化均按 LCOV DA 行逐条核对，非总量摊派。
+- 夹具确定性修正（本批内两处）：替身补「单窗查询失败」臂，B5/F3 改用表外窗口 id
+  （`4_000_999`），避免 `decodeSingleOrFirst` 对全量数组回退命中造成假绿/假红。
+
+**验收口径不变**：字面 100% 仍物理不可达（B/C 态 + 测量通道损失）；本批 CLI 可提缝面
+增量已全部落库，剩余 CLI 残余行经逐行复核均为真实 fork/AX/提权/实时钟/单例生命周期臂，
+无新增豁免需求。
