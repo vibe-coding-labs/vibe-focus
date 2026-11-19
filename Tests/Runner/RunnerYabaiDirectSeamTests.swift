@@ -393,6 +393,16 @@ extension RunnerHarness {
                 && !sc.isCacheExpired(Date()))
         sc.clearWindowQueryCache()
 
+        // ---- ⑩ setWindowFloat 三臂（query_nil / unmanaged / 真实 toggle fork） ----
+        // 均带 knownWindowInfo 或走替身单窗查询失败臂，绝不触发真实 float 写。
+        sc.isEnabled = true
+        check("yabaiDirect J1: queryWindow nil → skippedNoOp(query_nil)",
+              sc.setWindowFloat(4_000_999, operationID: "op-float-nil", knownWindowInfo: nil) == .skippedNoOp)
+        check("yabaiDirect J2: 不可管理 → skippedNoOp(unmanaged)",
+              sc.setWindowFloat(4_000_999, operationID: "op-float-unmanaged", knownWindowInfo: unmanaged) == .skippedNoOp)
+        check("yabaiDirect J3: 可管理 → toggled（替身 --toggle float 非零仍按决策返回）",
+              sc.setWindowFloat(4_000_001, operationID: "op-float-toggle", knownWindowInfo: managed) == .toggled)
+
         // 收尾：恢复注入前状态（defer 兜底，此处显式清缓存避免窗口查询缓存跨域污染）
         sc.clearQueryCache()
     }
