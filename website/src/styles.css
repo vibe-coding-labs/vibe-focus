@@ -788,56 +788,6 @@ code {
 /* END AUTO-GENERATED */
 }
 
-/* transform 百分比参照自身（=落位矩形）：
-   rest 格心 = translate(12.55%, -79.06%) scale(0.167, 0.31)
-   三段式：拾起(8-14%) → 弧线飞行(14-26%) → 落定(26-32%) → 保持 → 返程对称 → 交还 mini */
-@keyframes wf-motion {
-  0%, 8% {
-    transform: translate(12.55%, -79.06%) scale(0.167, 0.31);
-    opacity: 0;
-  }
-  12% {
-    transform: translate(12.55%, -79.06%) scale(0.185, 0.343);
-    opacity: 1;
-  }
-  14% {
-    transform: translate(12.2%, -78%) scale(0.19, 0.35);
-    opacity: 1;
-  }
-  20% {
-    transform: translate(6.3%, -45.8%) scale(0.381, 0.466);
-    opacity: 1;
-  }
-  26%, 29% {
-    transform: translate(0, 0) scale(1, 1);
-    opacity: 1;
-  }
-  30% {
-    transform: translate(-0.3%, -0.28%) scale(1.008, 1.008);
-    opacity: 1;
-  }
-  32%, 52% {
-    transform: translate(0, 0) scale(1, 1);
-    opacity: 1;
-  }
-  58% {
-    transform: translate(6.3%, -39.5%) scale(0.381, 0.466);
-    opacity: 1;
-  }
-  66% {
-    transform: translate(11.4%, -70%) scale(0.19, 0.35);
-    opacity: 1;
-  }
-  74% {
-    transform: translate(12.55%, -79.06%) scale(0.167, 0.31);
-    opacity: 1;
-  }
-  80%, 100% {
-    transform: translate(12.55%, -79.06%) scale(0.167, 0.31);
-    opacity: 0;
-  }
-}
-
 /* 旧双通道 keyframes 移除（wf-fly/wf-lift 已由 wf-motion 取代） */
 
 /* 终端拟真：rest=紧凑绿纹，落位=完整提示符/输出/输入行 */

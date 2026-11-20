@@ -231,7 +231,10 @@ const BADGE_BACK = [[0, 0], [63, 0], [66, 1], [78, 1], [81, 0], [100, 0]];
 
 function writeHelperKf(html, name, points) {
   const kf = `@keyframes ${name}{${points.map(([p, o]) => `${p}%{opacity:${o.toFixed(3)}}`).join('')}}`;
-  const re = new RegExp(`@keyframes ${name}\\{[^}]*\\}`);
+  // 2026-11-21：原正则 `\{[^}]*\}` 只吃到第一个帧的右括号——每跑一次就把旧块尾部
+  // 残留在文件里，反复生成会让 demo 页的 keyframes 无限膨胀（实测一次运行即从 7 份
+  // 变 8 份）。改为非贪婪匹配到行尾的花括号块收盘（生成格式恒为 `...}}` 结尾）。
+  const re = new RegExp(`@keyframes ${name}\\{[\\s\\S]*?\\}\\}`);
   if (!re.test(html)) throw new Error(`keyframes ${name} not found`);
   return html.replace(re, kf);
 }
@@ -246,16 +249,20 @@ let css = readFileSync(cssPath, 'utf-8');
 const cssBlock = `${MARK_BEGIN}\n${wfKf}\n${MARK_END}`;
 // 关键：任何手写的 @keyframes wf-motion 都必须删除——CSS 后定义者生效，
 // 残留旧块会静默覆盖生成结果（曾导致丢单位的旧版生效）。标记段先挖出、清理后放回。
+const WF_MOTION_BLOCK = /@keyframes\s+wf-motion\s*\{[\s\S]*?\n\}\n?/g;
 {
   const MARK_B = css.indexOf(MARK_BEGIN);
   const MARK_E = css.indexOf(MARK_END) + MARK_END.length;
   const hasBlock = MARK_B >= 0 && MARK_E > MARK_B;
   let head = hasBlock ? css.slice(0, MARK_B) : css;
-  const tail = hasBlock ? css.slice(MARK_E) : '';
-  // 删掉标记段之外所有 wf-motion 手写块及其说明注释
-  // 只删 @keyframes 块本体（正则限定在 keyframes 内部，绝不跨出）；注释保留无害
-  head = head.replace(/@keyframes\s+wf-motion\s*\{[\s\S]*?\n\}\n?/g, '');
+  // 2026-11-21：标记段**之后**的手写块同样必须删——此前只清 head，tail 原样拼回，
+  // 于是 tail 里的手写三段式 keyframes 后定义覆盖了生成的弹簧曲线，官网演示看起来
+  // 仍是「拾起→飞行→落定」的多段跳变（用户主诉的「多个步骤、卡顿」）。
+  let tail = hasBlock ? css.slice(MARK_E) : '';
+  head = head.replace(WF_MOTION_BLOCK, '');
   head = head.replace(/\n{3,}/g, '\n\n');
+  tail = tail.replace(WF_MOTION_BLOCK, '');
+  tail = tail.replace(/\n{3,}/g, '\n\n');
   css = head.trimEnd() + '\n\n' + cssBlock + '\n' + tail.replace(/^\s*\n+/, '');
 }
 // 花括号配平断言：生成后 CSS 必须语法完整（曾因删除逻辑吃掉样式块 } 导致整条动画失效）

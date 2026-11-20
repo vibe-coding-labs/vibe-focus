@@ -40,6 +40,16 @@ for (const [, name, body] of kfBlocks) {
 }
 notes.push(`扫描 ${kfBlocks.length} 组 @keyframes 的动画属性`);
 
+// 1b) wf-motion 必须唯一：CSS 后定义者生效，第二份手写块会静默覆盖生成的弹簧曲线。
+//     2026-11-21 实锤——标记段之后残留的手写三段式 keyframes 让官网演示一直表现为
+//     「拾起→飞行→落定」多段跳变（用户主诉的「多个步骤、卡顿」）。
+{
+  const dupes = [...css.matchAll(/@keyframes\s+wf-motion\s*\{/g)].length;
+  if (dupes > 1) {
+    failures.push(`@keyframes wf-motion 出现 ${dupes} 次（后者覆盖前者，生成结果被手写块盖掉）`);
+  }
+}
+
 /* ---------- 2) wf-motion 连续性 ---------- */
 const wf = css.match(/@keyframes\s+wf-motion\s*\{([\s\S]*?)\n\s*\}/);
 if (!wf) {
