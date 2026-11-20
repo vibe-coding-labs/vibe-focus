@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Window moves are now **atomic** (single yabai message) — fixes the "multi-step,
+  move-then-grow" animation and the visible pause between segments
+  - `window --move` and `window --resize` are sent in one `yabai -m` invocation
+    (`Sources/Support/WindowFrameCommand.swift`). yabai runs chained commands from one
+    message, so there is a single fork, no inter-segment polling, and no second
+    independent animation.
+  - Root cause: yabai animates **each** write primitive separately when
+    `window_animation_duration` is set (`window_manager_animate_window` is called by both
+    `window_manager_move_window_relative` and `window_manager_resize_window_relative`).
+    Splitting them into two commands therefore produced two sequential proxy animations
+    separated by a `waitForPhase` poll (up to 300ms).
+  - `FrameWriteExecutor` gains an optional `applyCombined` path: when present, phase 1 is
+    one write of the full frame with no inter-segment wait; retries that need both
+    dimensions also go out combined. The two-segment path is unchanged when it is absent
+    (AX direct-write channel), and `YabaiMoveEnvironment.useCombinedWrite` can force it
+    for regression tests.
+  - Same treatment applied to the two other raw move+resize pairs: session-restore
+    delivery (`SessionRestoreExecutor`) and terminal-grid space delivery
+    (`TerminalGridController+SpaceDelivery`).
+
 - Settings window visual overhaul — unified design system introduced in
   `Sources/Settings/DesignSystem.swift` and applied across all five tabs
   - Brand indigo accent (light/dark adaptive) injected via root `.tint`, replacing

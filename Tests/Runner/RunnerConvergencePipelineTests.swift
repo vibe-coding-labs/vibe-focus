@@ -151,6 +151,61 @@ extension RunnerHarness {
             check("executor E: 全程无 robust（单 size 缺不进全缺通道）", !calls.contains("resizeRobust"))
             check("executor E: 不收敛如实上报 mismatched", !run.outcome.isConverged)
         }
+
+        // F. 原子合发（2026-11-21）：段一只发一次 combined、零两段调用、零段间读。
+        do {
+            var calls: [String] = []
+            var reads = 0
+            let executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { reads += 1; return target },
+                    applyMove: { calls("move") },
+                    applyResizeAdaptive: { calls("resizeAdaptive") },
+                    applyResizeRobust: { calls("resizeRobust") },
+                    applyCombined: { calls("combined") }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-combined", windowID: 1,
+                pollSleep: noSleep
+            )
+            let run = executor.run(target: target, order: .resizeThenMove)
+            check("executor F1: 合发段一只调用一次 combined，无 move/resize 分段",
+                  calls == ["combined"])
+            check("executor F2: 合发路径零段间等待（首读即判收敛）",
+                  run.outcome.isConverged && run.convergedRounds == 1 && run.resendCount == 0)
+            check("executor F3: combinedPhase1 标记为 true", run.combinedPhase1)
+            // 段一零读（waitForPhase 跳过）；段二 = 补发计划读 + 收敛判读各一次。
+            check("executor F4: 合计只读回 2 次（段一零读 + 段二写前/读后各一）", reads == 2)
+        }
+
+        // G. 合发 + 全缺补发：段二同样合发（不再拆 robust/adaptive 两段）。
+        do {
+            var calls: [String] = []
+            let executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { fullMiss },
+                    applyMove: { calls("move") },
+                    applyResizeAdaptive: { calls("resizeAdaptive") },
+                    applyResizeRobust: { calls("resizeRobust") },
+                    applyCombined: { calls("combined") }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-combined-miss", windowID: 1,
+                pollSleep: noSleep
+            )
+            let run = executor.run(target: target, order: .moveThenResize)
+            check("executor G1: 全缺路径全程只有 combined（无分段写）",
+                  !calls.isEmpty && calls == Array(repeating: "combined", count: calls.count))
+            check("executor G2: 不收敛如实上报且段一标记合发",
+                  !run.outcome.isConverged && run.combinedPhase1)
+        }
+
+        // H. 合发关闭（nil）→ 历史两段路径零漂移（回归锁）。
+        do {
+            var calls: [String] = []
+            let run = makeExecutor(read: { target }, calls: { calls.append($0) })
+                .run(target: target, order: .moveThenResize)
+            check("executor H1: 未提供合发时仍走两段且 combinedPhase1=false",
+                  calls == ["move", "resizeAdaptive"] && !run.combinedPhase1)
+        }
     }
 
     // MARK: WindowManager.route（真实实现——toggle 执行路由唯一映射，Batch 5）

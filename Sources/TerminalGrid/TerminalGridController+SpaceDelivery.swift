@@ -237,13 +237,11 @@ extension TerminalGridController {
             }
             // 写回：crossDisplay 直写目标格位、roundTrip 从泊位写回，跨屏归属
             // 切换都落入「目标屏当前可见 space」= 目标 space
+            // move + resize 合成一条消息（2026-11-21 原子合发）：两条命令在装了
+            // window_animation_duration 时各跑一段动画，视觉上是「先移动再长大」。
             await writeYabai(
-                ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
-                "delivery.writeback.move(windowID=\(windowID))"
-            )
-            await writeYabai(
-                ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
-                "delivery.writeback.resize(windowID:\(windowID))"
+                WindowFrameCommand.applyFrame(windowID: windowID, frame: frame, order: .moveThenResize),
+                "delivery.writeback.apply(windowID=\(windowID))"
             )
             if await pollSpace(windowID, equals: spaceIndex, budgetSeconds: 5.0) {
                 delivered += 1

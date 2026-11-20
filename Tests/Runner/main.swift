@@ -486,6 +486,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runSessionRestoreExecutorSeamTests") { runSessionRestoreExecutorSeamTests() }
         runDomain("runLayoutApplySeamTests") { runLayoutApplySeamTests() }
         runDomain("runAXDirectSeamTests") { runAXDirectSeamTests() }
+        runDomain("runWindowFrameCommandTests") { runWindowFrameCommandTests() }
         runDomain("runYabaiMoveSeamTests") { runYabaiMoveSeamTests() }
         runDomain("runToggleRoutesSeamTests") { runToggleRoutesSeamTests() }
         runDomain("runTerminalContextMatchSeamTests") { runTerminalContextMatchSeamTests() }

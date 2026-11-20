@@ -363,13 +363,11 @@ final class SessionRestoreExecutor {
             )
             await env.sleepNanos(600_000_000)
         }
+        // 写回 move + resize 合成一条 yabai 消息（2026-11-21 原子合发）：装了
+        // window_animation_duration 时两条命令各跑一段独立动画，用户看到「先移动再长大」。
         env.runYabai(
-            ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"],
-            "session-delivery.writeback.move(windowID=\(windowID))", op
-        )
-        env.runYabai(
-            ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"],
-            "session-delivery.writeback.resize(windowID=\(windowID))", op
+            WindowFrameCommand.applyFrame(windowID: windowID, frame: frame, order: .moveThenResize),
+            "session-delivery.writeback.apply(windowID=\(windowID))", op
         )
         // 轮询确认到位
         let deadline = env.now().addingTimeInterval(5)

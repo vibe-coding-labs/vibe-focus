@@ -17,6 +17,8 @@ final class YabaiMoveSeamState: @unchecked Sendable {
     var axResizeResult = true
     var axResizeCalls = 0
     var ensureConverged = true
+    /// 是否走原子合发（默认 true = 生产行为；false 复现历史两段序列）。
+    var combined = true
 }
 
 extension RunnerHarness {
@@ -42,13 +44,11 @@ extension RunnerHarness {
                 runYabai: { args in
                     state.yabaiArgs.append(args)
                     guard state.ensureConverged else { return }
-                    if args.contains("--move") {
-                        state.bounds = CGRect(origin: target.origin,
-                                              size: state.bounds?.size ?? source.size)
-                    } else if args.contains("--resize") {
-                        state.bounds = CGRect(origin: state.bounds?.origin ?? source.origin,
-                                              size: target.size)
-                    }
+                    // 合发与单发同款：一条消息里出现哪个动作就应用哪个（合发两条都应用）。
+                    var frame = state.bounds ?? source
+                    if args.contains("--move") { frame.origin = target.origin }
+                    if args.contains("--resize") { frame.size = target.size }
+                    state.bounds = frame
                 },
                 findAXWindow: { _, _ in state.axFound ? fakeAX : nil },
                 isSettable: { _, _ in state.axSettable },
@@ -59,7 +59,8 @@ extension RunnerHarness {
                                           size: target.size)
                     return true
                 },
-                pollSleep: { _ in })
+                pollSleep: { _ in },
+                useCombinedWrite: state.combined)
         }
 
         let wm = WindowManager.shared
@@ -72,6 +73,7 @@ extension RunnerHarness {
             state.axResizeResult = true
             state.axResizeCalls = 0
             state.ensureConverged = true
+            state.combined = true
         }
         func run() -> Bool {
             wm.moveWindowToFrameViaYabai(
@@ -79,20 +81,48 @@ extension RunnerHarness {
                 sourceVisibleFrame: source, environment: makeEnv())
         }
 
-        // A. 管理窗 + AX 不可写：move/resize 全走 yabai，收敛 → true
+        // A. 管理窗 + AX 不可写 + 合发关闭（历史两段路径）：写序与发令逐条保留
         reset()
+        state.combined = false
         let a = run()
         check("yabaiSeam A1: 管理窗 AX 不可写 → yabai 双段写入后收敛", a == true)
-        check("yabaiSeam A2: move 与 resize 均经 yabai 发令",
-              state.yabaiArgs.contains { $0.contains("--move") }
-              && state.yabaiArgs.contains { $0.contains("--resize") })
+        check("yabaiSeam A2: move 与 resize 均经 yabai 发令（两段路径各自成条）",
+              state.yabaiArgs.filter { $0.contains("--move") }.count >= 1
+              && state.yabaiArgs.filter { $0.contains("--resize") }.count >= 1)
+        // 两段路径的每条发令只含一个动作（合发关闭的回归锁）。
+        check("yabaiSeam A3: 两段路径每条消息只含一个动作",
+              state.yabaiArgs.allSatisfy { args in
+                  let hasMove = args.contains("--move"), hasResize = args.contains("--resize")
+                  return (hasMove || hasResize) && !(hasMove && hasResize)
+              })
         let firstResize = state.yabaiArgs.firstIndex { $0.contains("--resize") }
         let firstMove = state.yabaiArgs.firstIndex { $0.contains("--move") }
-        check("yabaiSeam A3: 收窄场景 resize 先于 move（写序自适应）",
+        check("yabaiSeam A4: 收窄场景 resize 先于 move（写序自适应）",
               firstResize != nil && firstMove != nil && firstResize! < firstMove!)
 
-        // B. AX resize 可写且成功：resize 走 AX（零 fork），move 仍走 yabai
+        // A′. 合发开启（生产默认）：一次消息写完两段，零段间等待、写序保留
         reset()
+        let aPrime = run()
+        check("yabaiSeam A5: 合发路径 → 收敛", aPrime == true)
+        let combinedSends = state.yabaiArgs.filter { $0.contains("--move") && $0.contains("--resize") }
+        check("yabaiSeam A6: 合发路径首条消息同时含 --move 与 --resize（单次 fork 写全帧）",
+              combinedSends.count >= 1 && state.yabaiArgs.first == combinedSends.first)
+        if let combo = state.yabaiArgs.first {
+            let moveIdx = combo.firstIndex(of: "--move") ?? combo.count
+            let resizeIdx = combo.firstIndex(of: "--resize") ?? combo.count
+            check("yabaiSeam A7: 收窄场景合发内部 resize 仍在 move 之前（写序不丢）",
+                  resizeIdx < moveIdx)
+            check("yabaiSeam A8: 合发参数含 move 与 resize 的 abs 目标值",
+                  combo.contains("abs:\(Int(target.origin.x)):\(Int(target.origin.y))")
+                  && combo.contains("abs:\(Int(target.width)):\(Int(target.height))"))
+        } else {
+            check("yabaiSeam A7: 收窄场景合发内部 resize 仍在 move 之前（写序不丢）", false)
+            check("yabaiSeam A8: 合发参数含 move 与 resize 的 abs 目标值", false)
+        }
+
+        // B. AX resize 可写且成功（合发关闭的兼容路径）：resize 走 AX（零 fork），move 走 yabai
+        reset()
+        state.combined = false
         state.axFound = true
         state.axSettable = true
         let b = run()
@@ -103,8 +133,9 @@ extension RunnerHarness {
         check("yabaiSeam B4: move 恒走 yabai（跨屏唯一通道）",
               state.yabaiArgs.contains { $0.contains("--move") })
 
-        // C. AX resize 报告失败且不生效：降级 yabai resize 补发后收敛
+        // C. AX resize 报告失败且不生效（合发关闭的兼容路径）：降级 yabai resize 补发后收敛
         reset()
+        state.combined = false
         state.axFound = true
         state.axSettable = true
         state.axResizeResult = false

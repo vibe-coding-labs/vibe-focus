@@ -9,18 +9,29 @@
 //
 // ## 语义契约（Tests/Runner FrameWriteExecutor 段锁定——编排逻辑不做 standalone 镜像，
 // 因为等待/轮询骨架属执行域，其纯决策部分已由 FrameConvergence 镜像锁定）
-// - phase1 按写序执行：resizeThenMove = adaptive resize → 等 size 收敛 → move；
+// - phase1：deps.applyCombined 非 nil 时一次写全帧、零等待（2026-11-21 合发）；
+//   否则按写序两段执行：resizeThenMove = adaptive resize → 等 size 收敛 → move；
 //   moveThenResize = move → 等 origin 收敛 → adaptive resize；
 // - 阶段等待超时只告警不失败——最终由段二收敛轮询如实裁决（历史行为）；
 // - 段二补发计划 = resendSegments(shortfalls, order)；执行器差异：单 .resize 走
-//   adaptive（AX/yabai 择优），计划含两段（全缺）时 resize 走 robust 纯 yabai——
-//   「大漂移用最稳通道」的历史行为；
+//   adaptive（AX/yabai 择优），计划含两段（全缺）时—合发可用则合发、否则 resize
+//   走 robust 纯 yabai——「大漂移用最稳通道」的历史行为；
 // - attempts=2、stallResendReads=4、轮询/预算常量取自 WindowSettle（与历史一致）。
 
 import Foundation
 
 /// 两段写入执行编排（Batch 3）。非隔离：deps 闭包由调用方（@MainActor 域）构造，
 /// 本类型只同步调用它们，不持状态。
+///
+/// ## 2026-11-21 原子合发（「多段动画」根治，用户主诉）
+/// 旧执行骨架恒把 move / resize 拆成两次进程调用，中间夹一轮 `waitForPhase` 轮询
+/// （最多 300ms）——yabai 侧两个写原语各触发一段独立 proxy 动画，用户看到的是
+/// 「先移动 → 停 → 再长大」。现 `applyCombined` 可用时，段一改为**一次调用写全帧**，
+/// 省掉第二次 fork 与段间等待，yabai 在一条消息里连续执行 --move + --resize。
+/// - 仅当调用方提供 applyCombined（yabai 通道恒提供；AX 通道为 nil 保持两段）启用；
+/// - 合发为单条消息，不存在「第一段已生效、第二段未生效」的中间态，故 waitForPhase
+///   对合发路径整体跳过（等待语义由段二收敛轮询如实裁决）；
+/// - 段二的补发计划不受影响：只缺一维仍单发该维，全缺优先再合发一次。
 struct FrameWriteExecutor {
 
     struct Deps {
@@ -32,6 +43,22 @@ struct FrameWriteExecutor {
         let applyResizeAdaptive: () -> Void
         /// 尺寸写·最稳通道（纯 yabai --resize abs，全缺计划使用）。
         let applyResizeRobust: () -> Void
+        /// 原子合发（yabai 单条消息内 --move + --resize）。nil = 通道不支持，退回两段。
+        let applyCombined: (() -> Void)?
+
+        init(
+            read: @escaping () -> CGRect?,
+            applyMove: @escaping () -> Void,
+            applyResizeAdaptive: @escaping () -> Void,
+            applyResizeRobust: @escaping () -> Void,
+            applyCombined: (() -> Void)? = nil
+        ) {
+            self.read = read
+            self.applyMove = applyMove
+            self.applyResizeAdaptive = applyResizeAdaptive
+            self.applyResizeRobust = applyResizeRobust
+            self.applyCombined = applyCombined
+        }
     }
 
     struct RunOutcome {
@@ -41,6 +68,8 @@ struct FrameWriteExecutor {
         let convergedRounds: Int
         let phase1Ms: Int
         let phase2ConvergeMs: Int
+        /// 段一是否走了原子合发（单次写全帧，无段间等待）。
+        let combinedPhase1: Bool
     }
 
     let deps: Deps
@@ -68,21 +97,30 @@ struct FrameWriteExecutor {
     }
 
     /// 执行两段写入并收敛验证。返回结果与分段计时（供调用方 segment timing 汇总日志）。
+    ///
+    /// 段一分支（2026-11-21）：
+    /// - `applyCombined` 非 nil → 一次调用写全帧，**不做段间等待**（单条消息无中间态）；
+    /// - 否则沿用历史两段 + waitForPhase（AX 通道 / 兼容路径）。
     func run(target: CGRect, order: FrameWriteOrder) -> RunOutcome {
         let phase1Start = Date()
-        switch order {
-        case .resizeThenMove:
-            deps.applyResizeAdaptive()
-            waitForPhase("resize") {
-                !FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance).contains(.size)
+        let combined = deps.applyCombined
+        if let applyCombined = combined {
+            applyCombined()
+        } else {
+            switch order {
+            case .resizeThenMove:
+                deps.applyResizeAdaptive()
+                waitForPhase("resize") {
+                    !FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance).contains(.size)
+                }
+                deps.applyMove()
+            case .moveThenResize:
+                deps.applyMove()
+                waitForPhase("move") {
+                    !FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance).contains(.origin)
+                }
+                deps.applyResizeAdaptive()
             }
-            deps.applyMove()
-        case .moveThenResize:
-            deps.applyMove()
-            waitForPhase("move") {
-                !FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance).contains(.origin)
-            }
-            deps.applyResizeAdaptive()
         }
         let phase1Ms = elapsedMilliseconds(since: phase1Start)
 
@@ -96,12 +134,17 @@ struct FrameWriteExecutor {
                 attemptNo += 1
                 let shortfall = FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance)
                 let segments = FrameConvergence.resendSegments(shortfall: shortfall, order: order)
-                for segment in segments {
-                    switch segment {
-                    case .move:
-                        deps.applyMove()
-                    case .resize:
-                        if segments.count == 2 { deps.applyResizeRobust() } else { deps.applyResizeAdaptive() }
+                // 全缺 + 通道支持合发 → 一次写全帧（补发同样不再拆两段）。
+                if segments.count == 2, let applyCombined = combined {
+                    applyCombined()
+                } else {
+                    for segment in segments {
+                        switch segment {
+                        case .move:
+                            deps.applyMove()
+                        case .resize:
+                            if segments.count == 2 { deps.applyResizeRobust() } else { deps.applyResizeAdaptive() }
+                        }
                     }
                 }
                 // yabai 写不返回硬失败（exit code 吞掉，最终以读回判据为准）。
@@ -128,7 +171,8 @@ struct FrameWriteExecutor {
             resendCount: max(0, attemptNo - convergedRounds),
             convergedRounds: convergedRounds,
             phase1Ms: phase1Ms,
-            phase2ConvergeMs: phase2ConvergeMs
+            phase2ConvergeMs: phase2ConvergeMs,
+            combinedPhase1: combined != nil
         )
     }
 

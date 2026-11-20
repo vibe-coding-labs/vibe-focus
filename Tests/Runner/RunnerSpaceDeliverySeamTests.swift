@@ -155,7 +155,7 @@ extension RunnerHarness {
               d.attempted == 0 && d.delivered == 0 && !d.parkingUnavailable
               && state.yabaiCalls.isEmpty && state.floatCalls.isEmpty)
 
-        // E. 跨屏直写：窗口在其它 display → float + move + resize → 到位
+        // E. 跨屏直写：窗口在其它 display → float + 合发写全帧 → 到位
         reset()
         state.queryScript = [
             info(space: 1, display: 2, manageable: true),
@@ -165,11 +165,13 @@ extension RunnerHarness {
         let e = run(windowIDs: [9101], frames: [cell])
         check("spaceDelivery E1: 跨屏错位 → attempted=1 delivered=1",
               e.attempted == 1 && e.delivered == 1 && !e.parkingUnavailable)
-        check("spaceDelivery E2: 浮起一次 + move/resize 两段直写（无 park 段）",
-              state.floatCalls == [9101] && state.yabaiCalls.count == 2
-              && state.yabaiCalls[0].operation.hasPrefix("delivery.writeback.move")
-              && state.yabaiCalls[1].operation.hasPrefix("delivery.writeback.resize"))
-        check("spaceDelivery E3: 直写帧取传入格位", state.yabaiCalls[0].args.contains("abs:20:20"))
+        check("spaceDelivery E2: 浮起一次 + 合发单条消息写全帧（无 park 段）",
+              state.floatCalls == [9101] && state.yabaiCalls.count == 1
+              && state.yabaiCalls[0].operation.hasPrefix("delivery.writeback.apply")
+              && state.yabaiCalls[0].args.contains("--move")
+              && state.yabaiCalls[0].args.contains("--resize"))
+        check("spaceDelivery E3: 直写帧取传入格位", state.yabaiCalls[0].args.contains("abs:20:20")
+              && state.yabaiCalls[0].args.contains("abs:\(Int(cell.width)):\(Int(cell.height))"))
 
         // F. 同屏往返：窗口在目标屏错位 space → park + 600ms + move/resize
         reset()
@@ -181,9 +183,11 @@ extension RunnerHarness {
         let f = run(windowIDs: [9101], frames: [cell])
         check("spaceDelivery F1: 同屏往返 → attempted=1 delivered=1",
               f.attempted == 1 && f.delivered == 1)
-        check("spaceDelivery F2: park 段 + 600ms 睡眠 + 写回两段",
-              state.yabaiCalls.count == 3
+        check("spaceDelivery F2: park 段 + 600ms 睡眠 + 写回合发一条",
+              state.yabaiCalls.count == 2
               && state.yabaiCalls[0].operation.hasPrefix("delivery.park")
+              && state.yabaiCalls[1].args.contains("--move")
+              && state.yabaiCalls[1].args.contains("--resize")
               && state.sleeps.contains(600_000_000))
 
         // G. AX 引用始终未建立 → 轮询 3s 后跳过

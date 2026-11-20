@@ -22,6 +22,9 @@ struct YabaiMoveEnvironment {
     var isSettable: (AXUIElement, String) -> Bool
     var resizeViaAX: (CGRect, AXUIElement) -> Bool
     var pollSleep: (UInt32) -> Void
+    /// 是否启用原子合发（2026-11-21）。默认 true；Runner 置 false 复现历史两段序列
+    /// （写序断言等），置 true 断言「一次调用写完两段、零段间等待」。
+    var useCombinedWrite: Bool = true
 }
 
 // MARK: - Window Move Operations
@@ -68,6 +71,11 @@ extension WindowManager {
     /// - 停滞重发 + AX 失败降级（2026-09-06 水波/慢修复）：收敛轮询内连续 4 读不变即幂等
     ///   补发缺失段（写丢失不再干等整轮 400ms）；AX resize 一轮不收敛后，后续补发改走
     ///   yabai 通道（不再对吞写的 app 撞死胡同）。
+    /// - **原子合发（2026-11-21「多段动画」根治）**：默认把两段合成**一条** yabai 消息
+    ///   （`--move` 与 `--resize` 按写序连发，见 WindowFrameCommand.applyFrame）。
+    ///   装了 `window_animation_duration` 的 yabai 会给每个写原语各跑一段独立 proxy 动画，
+    ///   旧两段写法因此表现为「先移动→停→再长大」；合发后段一只有一次 fork、零段间等待，
+    ///   视觉为一次跳变。补发计划只缺一维时仍单发该维；全缺时同样合发一次。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(
         windowID: UInt32,
@@ -136,31 +144,31 @@ extension WindowManager {
             "order": writeOrder == .resizeThenMove ? "resize_then_move" : "move_then_resize",
             "target": QuartzRect(frame).description
         ])
-        let applyMove = {
+        /// yabai 发令统一出口（生产走 SpaceController，注入走 environment.runYabai）。
+        let sendYabai: ([String], String) -> Void = { args, operation in
             yabaiSendCount += 1
-            let args = ["-m", "window", "\(windowID)", "--move", "abs:\(Int(frame.origin.x)):\(Int(frame.origin.y))"]
             if let environment {
                 environment.runYabai(args)
             } else {
                 _ = self.spaceController.runYabai(
-                    arguments: args,
-                    operation: "\(stage).move(windowID=\(windowID))",
-                    operationID: op
-                )
+                    arguments: args, operation: operation, operationID: op)
             }
         }
+        let applyMove = {
+            sendYabai(WindowFrameCommand.moveOnly(windowID: windowID, frame: frame),
+                      "\(stage).move(windowID=\(windowID))")
+        }
         let applyResize = {
-            yabaiSendCount += 1
-            let args = ["-m", "window", "\(windowID)", "--resize", "abs:\(Int(frame.width)):\(Int(frame.height))"]
-            if let environment {
-                environment.runYabai(args)
-            } else {
-                _ = self.spaceController.runYabai(
-                    arguments: args,
-                    operation: "\(stage).resize(windowID=\(windowID))",
-                    operationID: op
-                )
-            }
+            sendYabai(WindowFrameCommand.resizeOnly(windowID: windowID, frame: frame),
+                      "\(stage).resize(windowID=\(windowID))")
+        }
+        // 原子合发（2026-11-21）：单条 yabai 消息内按写序连发 --move + --resize，
+        // 段一一次写全帧、零段间等待。旧两段写法在装了 window_animation_duration 的
+        // 机器上会触发两段独立 proxy 动画（先移动、停、再长大）——用户主诉「多步骤、
+        // 先怎么着再怎么着」的直接来源。environment 可置 useCombinedWrite=false 复现历史。
+        let applyCombined = {
+            sendYabai(WindowFrameCommand.applyFrame(windowID: windowID, frame: frame, order: writeOrder),
+                      "\(stage).apply(windowID=\(windowID))")
         }
         // 段间等待逻辑在 FrameWriteExecutor.waitForPhase（Batch 3 提取，含超时告警）。
         // AX resize 通道（同屏 resize 无 fork）：窗口 AX 解析失败/属性不可写时 fallback yabai。
@@ -205,12 +213,15 @@ extension WindowManager {
         // 执行器差异保留历史行为：单 .resize 走 AX/yabai 择优通道；全缺（两段都在
         // 计划里）走纯 yabai 最稳通道。停滞重发（连续 4 读不变）在轮询内幂等补发，
         // 写丢失不再干等整轮预算。
+        // 合发开关：生产恒开；AX 择优通道只影响「仅尺寸」补发，不影响合发（合发走纯 yabai）。
+        let combinedWriteEnabled = environment?.useCombinedWrite ?? true
         let executor = FrameWriteExecutor(
             deps: .init(
                 read: { readBounds() },
                 applyMove: applyMove,
                 applyResizeAdaptive: applyResizeBestChannel,
-                applyResizeRobust: applyResize
+                applyResizeRobust: applyResize,
+                applyCombined: combinedWriteEnabled ? applyCombined : nil
             ),
             tolerance: frameTolerance,
             op: op,
@@ -233,7 +244,8 @@ extension WindowManager {
             "axResizeUnreliable": String(axResizeUnreliable),
             "yabaiSendCount": String(yabaiSendCount),
             "convergeRounds": String(run.convergedRounds),
-            "stallResendCount": String(run.resendCount)
+            "stallResendCount": String(run.resendCount),
+            "combinedPhase1": String(run.combinedPhase1)
         ])
         switch outcome {
         case .converged(let attempt, _):

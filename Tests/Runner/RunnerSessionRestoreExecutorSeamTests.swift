@@ -219,9 +219,11 @@ extension RunnerHarness {
               state.focusCalls == [2, 3, 1, 1])
         check("srSeam A8: 已在对的 space 直落（不 float）",
               !state.yabaiCalls.contains { $0.first == "--float" && $0.last == "9001" })
-        check("srSeam A9: 同屏错位走泊靠往返（float + park + 写回 move/resize）",
+        check("srSeam A9: 同屏错位走泊靠往返（float + park + 写回合发单条消息）",
               state.yabaiCalls.contains { $0.count > 2 && $0[2] == "9002" && $0.contains("--move") }
-              && state.yabaiCalls.contains { $0.contains("--resize") })
+              && state.yabaiCalls.contains {
+                  $0.count > 2 && $0[2] == "9002" && $0.contains("--move") && $0.contains("--resize")
+              })
         check("srSeam A10: AX 未就绪窗跳过投递（计入送达失败）",
               state.yabaiCalls.contains { $0.first == "--float" && $0.last == "9003" } == false)
         let summary = result?.message ?? "nil"
