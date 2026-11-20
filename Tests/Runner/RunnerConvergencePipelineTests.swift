@@ -154,22 +154,22 @@ extension RunnerHarness {
 
         // F. 原子合发（2026-11-21）：段一只发一次 combined、零两段调用、零段间读。
         do {
-            var calls: [String] = []
+            var seen: [String] = []
             var reads = 0
             let executor = FrameWriteExecutor(
                 deps: .init(
                     read: { reads += 1; return target },
-                    applyMove: { calls("move") },
-                    applyResizeAdaptive: { calls("resizeAdaptive") },
-                    applyResizeRobust: { calls("resizeRobust") },
-                    applyCombined: { calls("combined") }
+                    applyMove: { seen.append("move") },
+                    applyResizeAdaptive: { seen.append("resizeAdaptive") },
+                    applyResizeRobust: { seen.append("resizeRobust") },
+                    applyCombined: { seen.append("combined") }
                 ),
                 tolerance: tol, op: "runner", stage: "executor-combined", windowID: 1,
                 pollSleep: noSleep
             )
             let run = executor.run(target: target, order: .resizeThenMove)
             check("executor F1: 合发段一只调用一次 combined，无 move/resize 分段",
-                  calls == ["combined"])
+                  seen == ["combined"])
             check("executor F2: 合发路径零段间等待（首读即判收敛）",
                   run.outcome.isConverged && run.convergedRounds == 1 && run.resendCount == 0)
             check("executor F3: combinedPhase1 标记为 true", run.combinedPhase1)
@@ -179,21 +179,21 @@ extension RunnerHarness {
 
         // G. 合发 + 全缺补发：段二同样合发（不再拆 robust/adaptive 两段）。
         do {
-            var calls: [String] = []
+            var seen: [String] = []
             let executor = FrameWriteExecutor(
                 deps: .init(
                     read: { fullMiss },
-                    applyMove: { calls("move") },
-                    applyResizeAdaptive: { calls("resizeAdaptive") },
-                    applyResizeRobust: { calls("resizeRobust") },
-                    applyCombined: { calls("combined") }
+                    applyMove: { seen.append("move") },
+                    applyResizeAdaptive: { seen.append("resizeAdaptive") },
+                    applyResizeRobust: { seen.append("resizeRobust") },
+                    applyCombined: { seen.append("combined") }
                 ),
                 tolerance: tol, op: "runner", stage: "executor-combined-miss", windowID: 1,
                 pollSleep: noSleep
             )
             let run = executor.run(target: target, order: .moveThenResize)
             check("executor G1: 全缺路径全程只有 combined（无分段写）",
-                  !calls.isEmpty && calls == Array(repeating: "combined", count: calls.count))
+                  !seen.isEmpty && seen == Array(repeating: "combined", count: seen.count))
             check("executor G2: 不收敛如实上报且段一标记合发",
                   !run.outcome.isConverged && run.combinedPhase1)
         }
