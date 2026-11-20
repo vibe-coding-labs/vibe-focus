@@ -40,3 +40,6 @@ docs/superpowers/plans/
 # 覆盖率构建产物（llvm-cov profraw/报告目录）
 .build-coverage/
 *.profraw
+
+# 第二份物理检出（只在确实需要并行构建时使用；禁止放仓库同级父目录）
+.worktrees/
