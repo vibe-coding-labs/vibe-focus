@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Window switching is now **animation-free** — yabai's `window_animation_duration` is
+  forced to `0.0` while VibeFocus runs (`Sources/Support/YabaiAnimationGuard.swift`)
+  - yabai has no per-command bypass: `--move` / `--resize` always call
+    `window_manager_animate_window`, whose only switch is the global
+    `window_animation_duration` config (`message.c` hard-codes `animate: true`). Asserted
+    once at launch (previous value logged) and re-asserted, throttled to 30s, before any
+    `--move` / `--resize` send in the single yabai choke point
+    (`SpaceController.runYabai`) — so a `yabairc` reload cannot bring the animation back.
+  - The app never restores the user's value: the whole point is that a focus-switching
+    tool should jump, not glide.
+
 - Window moves are now **atomic** (single yabai message) — fixes the "multi-step,
   move-then-grow" animation and the visible pause between segments
   - `window --move` and `window --resize` are sent in one `yabai -m` invocation

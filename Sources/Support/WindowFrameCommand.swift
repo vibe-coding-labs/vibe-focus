@@ -19,6 +19,8 @@
 //   - 只剩一次 fork（省 ~40-90ms）；
 //   - 只剩一次「等生效」的轮询（旧版段间 waitForPhase 最多再等 300ms）；
 //   - 两段写入在 yabai 侧连续无间隔，视觉上是一次跳变而非两段接续动画。
+// 2026-11-22 起动画本身也不再存在：YabaiAnimationGuard 把 window_animation_duration
+// 断言为 0（见 Sources/Support/YabaiAnimationGuard.swift），合发只保留「省 fork/省轮询」的收益。
 // 命令构造收敛到本类型，两个写通道（yabai / AX）与三处调用点同源，避免再次各写一份。
 //
 // ## 语义契约（Runner FrameCommand 域锁定）

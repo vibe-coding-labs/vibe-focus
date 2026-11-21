@@ -34,6 +34,13 @@ extension SpaceController {
             )
             return nil
         }
+        // 切换零动画（2026-11-22）：yabai 的 --move/--resize 都走 window_manager_animate_window，
+        // 唯一开关是全局 window_animation_duration（无 per-call 旁路）。任何帧写入发令前把总闸
+        // 拉到 0，30s 节流——覆盖用户 reload yabairc 把值改回来的场景，常态零额外 fork。
+        // 根因与策略见 Sources/Support/YabaiAnimationGuard.swift 头注。
+        if arguments.contains("--move") || arguments.contains("--resize") {
+            YabaiAnimationGuard.shared.assertDisabled(reason: "frame_write")
+        }
         let startedAt = Date()
         guard let result = runProcess(executable: yabaiPath, arguments: arguments) else {
             log(
