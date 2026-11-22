@@ -617,6 +617,23 @@ B/C 态，无新增豁免需求。
   LayoutSection −21、`YabaiAnimationGuard` 8→**0**。
 - 设置页假绿修正是本轮最大单一来源——印证「断言在跑但测的是默认态」比缺测试更隐蔽。
 
+#### 第五轮补遗（`test/coverage-100h`，审计清单 A 态清账）
+
+另起一轮独立审计后补了此前漏判的可直测项：
+`HotKeyManager` 持久化读取三臂（decoded/legacyDefault 迁移/损坏回落 + 布局表命中与
+withDefaults）、`FrameWriteExecutor` 省略 pollSleep 的生产默认参数、
+`LANSettingsView` 未映射/已映射两分支（旧 defaults 写法是假绿，改 memberwise 注入）、
+`TerminalGridController.runScript` 生产体（`return 1`/`error` 双态锁 lastScriptError）、
+`SessionRestoreExecutor` deliver 两条失败出口（query nil / 永不落位）、Terminal 多 pane
+附加、`InputBubbleAutoShow` 64 容量基线 FIFO 淘汰（含对照用例）。
+
+**终测（run `45070340998`，`2d2dcb1`）：32,019 行 / 4,763 missed / 85.12%
+（missed −495 / +1.58pp）**；断言 **5,176 过 / 22 败**（失败集合仍与基线逐条一致）。
+
+本轮另记两处「自造断言错误」的订正（非产品缺陷）：`ClaudeMCPConfig.remove` 对坏 JSON
+返回 changed=false（幂等成功）而非失败；基线淘汰场景中淘汰拍不能同时含被淘汰窗
+（否则先删后写回，淘汰根本没发生）。
+
 #### 剩余项复核（逐行）
 
 Top 缺口仍为既有 B/C 态：`InputBubbleController`(真面板/真 AX 读)、
