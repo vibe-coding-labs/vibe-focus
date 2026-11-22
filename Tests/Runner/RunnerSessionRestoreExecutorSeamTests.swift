@@ -388,6 +388,67 @@ extension RunnerHarness {
               result?.ok == true)
         check("srSeamFail A2: 两窗均计入送达失败（query nil + 永不落位）（实际：\(summary)）",
               summary.contains("2 窗未能送达"))
+
+        // B. Terminal 多 pane 的「附加 pane」分支（2026-11-23 补口）
+        // create 批里 iTerm 走 itermAppendTab 已覆盖，但 Terminal 方言走
+        // terminalWriteToWindow(windowCGID:) 的附加路径此前零覆盖——现有夹具的
+        // Terminal 窗只有一个 pane。给 Terminal 窗两个 pane。
+        var termEnv = SessionRestoreEnvironment()
+        termEnv.automationInstanceRefusal = { _, _ in nil }
+        termEnv.ensureTerminalRunning = { _, _ in true }
+        termEnv.screens = { [screen] }
+        termEnv.exactYabaiDisplayIndex = { _ in 1 }
+        termEnv.cgDisplayID = { _ in 1 }
+        termEnv.primaryDisplayID = { 1 }
+        termEnv.querySpaces = { [YabaiSpaceInfo(id: 1, index: 1, display: 1, isVisible: true)] }
+        termEnv.focusSpace = { _, _ in true }
+        termEnv.setWindowFloat = { _, _ in }
+        termEnv.parkingScreen = { _ in nil }
+        termEnv.quartzVisibleFrame = { _ in CGRect(x: 0, y: 0, width: 1440, height: 900) }
+        termEnv.runYabai = { _, _, _ in }
+        termEnv.now = { Date(timeIntervalSince1970: 1_700_000_000) }
+        termEnv.sleepNanos = { _ in }
+        var termScripts: [String] = []
+        termEnv.runAppleScript = { script in
+            termScripts.append(script)
+            return "ok"
+        }
+        termEnv.queryAllWindows = { [] }
+        termEnv.bundleIdentifierOfPID = { _ in "com.apple.Terminal" }
+        termEnv.classifyTTY = { _ in
+            PaneClassifier.Classification(kind: .shell, pid: nil, sshCommand: nil, sshTarget: nil)
+        }
+        termEnv.createTerminalCell = { _, _, _, _, _ in
+            (cgWindowID: 9501, corrected: false, appleScriptID: "term-501")
+        }
+        termEnv.queryWindow = { id in
+            YabaiWindowInfo(
+                id: Int(id), pid: 1, app: "Terminal", title: nil, space: 1, display: 1,
+                frame: YabaiWindowInfo.Frame(x: 0, y: 0, w: 100, h: 100),
+                isFloatingRaw: false, hasAXReferenceRaw: true)
+        }
+        let termPaneA = SessionPaneSnapshot(kind: .shell, cwd: "/tmp/a")
+        let termPaneB = SessionPaneSnapshot(kind: .shell, cwd: "/tmp/b")
+        let termSnap = SessionRestoreSnapshot(
+            id: "ut-term-multipane", name: "t",
+            windows: [SessionWindowSnapshot(
+                appBundleID: "com.apple.Terminal",
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                displayID: 1, yabaiDisplay: 1, yabaiSpace: 1,
+                title: nil, wasMinimized: false, panes: [termPaneA, termPaneB])],
+            launchCommand: nil)
+        let dirB = NSTemporaryDirectory() + "ut-seam-term-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dirB, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dirB) }
+        let termController = SessionRestoreController(
+            store: SessionRestoreStore(store: WindowStateStore(dbPath: dirB + "/t.db")))
+        let termResult = runRestoreSeamAsync {
+            await SessionRestoreExecutor(controller: termController, environment: termEnv)
+                .restore(snapshot: termSnap)
+        }
+        check("srSeamFail B1: Terminal 多 pane 建窗成功", termResult?.ok == true)
+        check("srSeamFail B2: 附加 pane 走 Terminal 方言 do script in window",
+              termScripts.contains { $0.contains("do script") && $0.contains("window id 9501") })
     }
 
     /// MainActor 异步桥接（Task + 短片泵主 RunLoop，30s 死线）
