@@ -62,5 +62,40 @@ extension RunnerHarness {
         // --- 窄容器极端尺寸：缩放/居中不产生 NaN/负退化 ---
         _ = selectedView.minimapContent(in: CGSize(width: 40, height: 30))
         check("minimap: 窄容器极端尺寸直调无异常", true)
+
+        // --- screenTapHelp 三分支（悬停/无障碍文案的唯一来源）---
+        // ① 可见 space 且能算出屏内位次 → 「当前工作区 屏号-位次」；
+        // ② 可见 space 但位次算不出（不在表内）→ 回落全局「Space N」；
+        // ③ 无可见 space → 纯「编排到「屏名」（标号）」。
+        let mapped = ScreenLayoutMapper.map(
+            screens: [mainScreen, secondary], viewSize: CGSize(width: 500, height: 216), padding: 14)
+        let helpView = ScreenMinimapView(
+            screens: [mainScreen, secondary], selected: nil,
+            gridPreviewRows: 1, gridPreviewCols: 1, height: 216, onSelect: { _ in })
+        if let mappedMain = mapped.screens.first(where: { $0.displayID == 1 }) {
+            let help = helpView.screenTapHelp(mappedMain)
+            check("minimap: screenTapHelp 位次可算 → 屏号-位次文案（实际：\(help)）",
+                  help.contains("屏\(mainScreen.yabaiDisplayIndex ?? -1)")
+                  && help.contains("当前工作区"))
+        }
+        // ② 位次算不出：构造一个 visibleSpaceIndex 不在 spaces 表内的映射屏
+        let ghostScreen = ScreenLayoutMapper.MappedScreen(
+            displayID: 9, name: "ghost", isMain: false,
+            frame: CGRect(x: 0, y: 0, width: 200, height: 120),
+            spaces: [ScreenLayoutMapper.MappedSpace(
+                yabaiIndex: 1, frame: CGRect(x: 0, y: 0, width: 200, height: 14), isVisible: true)],
+            visibleSpaceIndex: 42,
+            yabaiDisplayIndex: 9)
+        let ghostHelp = helpView.screenTapHelp(ghostScreen)
+        check("minimap: screenTapHelp 位次算不出 → 回落全局 Space 42（实际：\(ghostHelp)）",
+              ghostHelp.contains("Space 42"))
+        // ③ 无可见 space
+        let blankScreen = ScreenLayoutMapper.MappedScreen(
+            displayID: 8, name: "blank", isMain: false,
+            frame: CGRect(x: 0, y: 0, width: 200, height: 120),
+            spaces: [], visibleSpaceIndex: nil, yabaiDisplayIndex: nil)
+        let blankHelp = helpView.screenTapHelp(blankScreen)
+        check("minimap: screenTapHelp 无可见 space → 纯编排文案并回落 #displayID（实际：\(blankHelp)）",
+              blankHelp == "编排到「blank」（#8）")
     }
 }
