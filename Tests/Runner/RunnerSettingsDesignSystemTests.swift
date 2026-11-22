@@ -236,6 +236,17 @@ extension RunnerHarness {
         }
         button.viewDidChangeEffectiveAppearance()
 
+        // 显式 frame 构造（2026-11-23 补口）：`ShortcutRecorderButton()` 走 NSButton
+        // 继承的无参 init，本类的 `override init(frame:)` 与 `init?(coder:)` 此前
+        // 从未被执行（0 覆盖）——而 SwiftUI 的 makeNSView 正是用无参构造，两条
+        // 构造路径都必须锁「setupButton 后外观就位」。
+        // `init?(coder:)` 只能经 nib/归档触达（本类无 XIB，无归档路径），属
+        // 死模板；只锁 frame 构造。
+        let framedButton = ShortcutRecorderButton(frame: NSRect(x: 0, y: 0, width: 120, height: 28))
+        check("shortcutRecorder: frame 构造走 setupButton（无边框、标题为默认快捷键）",
+              !framedButton.isBordered && framedButton.attributedTitle.string
+                  == HotKeyConfiguration.default.displayString)
+
         // SwiftUI 包装器 ShortcutRecorderView：NSViewRepresentableContext 无公开 init，
         // makeNSView/updateNSView 属渲染装配缝，诚实留白——真身 ShortcutRecorderButton
         // 的行为已在本组全流程直测。
