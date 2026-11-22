@@ -264,18 +264,20 @@ extension RunnerHarness {
         // O. 基线表容量淘汰（2026-11-23 补口）：recordBaseline 的 64 上限 FIFO
         // 淘汰臂此前零覆盖（既有用例最多喂 2 窗）。
         //
-        // 决定性证法：①先把 9100 落成「非主屏」基线（该拍不弹）；②再喂 64 个别的
-        // 窗，把 9100 挤出容量；③让 9100 变主屏并挂归因账——若基线仍在，这是
-        // 「非主屏→主屏」跨越应弹；基线已被淘汰则是首次观测，只落基线不弹。
+        // 决定性证法：①先把 9100 落成「非主屏」基线（该拍不弹）；②下一拍喂 64 个
+        // 别的窗（**不含 9100**），使它被挤出 64 容量且不会被本拍重写；③让 9100
+        // 变主屏并挂归因账——基线仍在则是「非主屏→主屏」跨越应弹；已被淘汰则是
+        // 首次观测只落基线不弹。
         state.reset()
         state.autoShowOnFocus = false
         state.autoShowOnMoveToMain = true
         let anchor: UInt32 = 9100
         state.windows = [entry(anchor, onMain: false)]
         tick()
-        state.windows = (1...64).map { entry(UInt32(9100 + $0), onMain: true) } + [entry(anchor, onMain: false)]
-        tick()   // 65 个窗同拍落基线，anchor 在末尾被挤出
-        state.windows = (1...64).map { entry(UInt32(9100 + $0), onMain: true) } + [entry(anchor, onMain: true)]
+        state.windows = (1...64).map { entry(UInt32(9100 + $0), onMain: true) }
+        tick()   // 64 个新窗把最旧的 anchor 挤出（anchor 不在本拍 → 不会被重写回来）
+        state.windows = (1...64).map { entry(UInt32(9100 + $0), onMain: true) }
+            + [entry(anchor, onMain: true)]
         state.movers[anchor] = .hookPull
         tick()
         check("inputBubbleTick O1: 超 64 容量后 anchor 基线被淘汰（变主屏也不判跨越、不弹）",
