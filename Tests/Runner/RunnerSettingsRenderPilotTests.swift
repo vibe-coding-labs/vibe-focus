@@ -38,8 +38,10 @@ extension RunnerHarness {
     /// （此前留白原因）；onAppear→refreshGridMinimap 只读（yabai 查询+屏读取）。
     func runSettingsTerminalGridTabRenderTests() {
         print("\n=== SettingsTerminalGridTabRender (B239) ===")
-        let gridTab = SettingsView()
-        gridTab.selectedTab = .orchestration
+        // 必须走 init 缝（B317）：无窗 NSHostingView 下 post-install 写 selectedTab
+        // 不落 storage，后置赋值实际渲染的还是 general tab。
+        let gridTab = SettingsView(
+            gridTargetCode: TerminalGridPreferences.target, initialTab: .orchestration)
         let host = NSHostingView(rootView: gridTab.environmentObject(HotKeyManager.shared))
         host.frame = NSRect(x: 0, y: 0, width: 680, height: 940)
         host.layoutSubtreeIfNeeded()
