@@ -43,8 +43,18 @@ public struct SettingsView: View {
         layoutHotKeysEnabled: Bool? = nil,
         layoutConflictSummary: String?? = nil,
         initialTab: SettingsTab? = nil,
-        resultMessages: ResultMessages? = nil
+        resultMessages: ResultMessages? = nil,
+        gridSnapshots: [SessionRestoreSnapshot]? = nil,
+        gridAutoRestoreSnapshotID: String?? = nil
     ) {
+        // 快照列表行同理（纯 @State + @State 覆盖面）：列表非空时的行内多屏/多工作区
+        // 计数与「已设开机恢复」pill 分支，只有初始值注入才能渲染出来。
+        if let gridSnapshots {
+            _gridSnapshots = State(initialValue: gridSnapshots)
+        }
+        if let snapshotID = gridAutoRestoreSnapshotID {
+            _gridAutoRestoreSnapshotID = State(initialValue: snapshotID)
+        }
         if let initialTab {
             _selectedTab = State(initialValue: initialTab)
         }
