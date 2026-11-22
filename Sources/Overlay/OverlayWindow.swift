@@ -127,6 +127,14 @@ final class OverlayWindow: NSWindow {
             ])
         }
         #endif
+        // 零动画（2026-11-22 用户主诉「切换的时候不要动画」）：CALayer 的 backgroundColor /
+        // cornerRadius / borderWidth / frame 写入默认走 0.25s 隐式动画（CoreAnimation 的
+        // implicit action），切 space 时角标文字由「3-1」变「3-2」、宽度跟着变，用户看到的
+        // 就是角标自己滑一下/缩一下。禁用 action 让每次写入瞬时到位——效率工具不该有装饰
+        // 过渡。窗口级 setFrameOrigin（updatePosition）与 setContentSize 同在事务内一并瞬时。
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         self.screenIndex = screenIndex
         self.spaceIndex = spaceIndex
 
@@ -199,7 +207,11 @@ final class OverlayWindow: NSWindow {
             windowSize: windowSize,
             margin: margin
         )
+        // 零动画：窗口定位同样瞬时到位（不随角标尺寸变化做插值位移）。
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         self.setFrameOrigin(origin)
+        CATransaction.commit()
     }
 
     func show() {

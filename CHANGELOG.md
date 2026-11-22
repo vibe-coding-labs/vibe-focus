@@ -11,14 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Window switching is now **animation-free** — yabai's `window_animation_duration` is
   forced to `0.0` while VibeFocus runs (`Sources/Support/YabaiAnimationGuard.swift`)
-  - yabai has no per-command bypass: `--move` / `--resize` always call
-    `window_manager_animate_window`, whose only switch is the global
-    `window_animation_duration` config (`message.c` hard-codes `animate: true`). Asserted
-    once at launch (previous value logged) and re-asserted, throttled to 30s, before any
-    `--move` / `--resize` send in the single yabai choke point
-    (`SpaceController.runYabai`) — so a `yabairc` reload cannot bring the animation back.
+  - yabai has no per-command bypass: the global `window_animation_duration` config is the
+    only switch for `window_manager_animate_window` — and that function is reached from far
+    more than the two frame primitives: `--move`/`--resize` (window_manager.c:342/359/403),
+    the layout re-flow after `--toggle float` (`window_node_flush` → view.c:378, which is
+    the **first** step of every toggle — that's the "window slides by itself" the user
+    sees), `--toggle windowed-fullscreen` / `--zoom-fullscreen` (:2394/2399), and any
+    command that re-flows a view.
+  - `YabaiAnimationConfig.requiresAnimationOff(arguments:)` now gates on "is this a write"
+    rather than "does it contain --move/--resize", so every write command is covered
+    (reads — `query`, `config <key>` without a value, `signal`, bare `space`/`window`
+    selectors, `--load-sa` — are skipped; unknown domains default to protected).
+  - Asserted at launch (previous value logged) and re-asserted **before and after** every
+    write in the single yabai choke point (`SpaceController.runYabai`), throttled to 30s —
+    so both a `yabairc` reload and a write that itself triggers one are covered, at zero
+    extra forks in steady state.
   - The app never restores the user's value: the whole point is that a focus-switching
     tool should jump, not glide.
+
+- All decorative UI animation removed — VibeFocus is an efficiency tool, not a showcase
+  - Settings tab bar no longer slides its selection pill (`.matchedGeometryEffect` +
+    `.spring` removed); hover effects on buttons, minimap tiles and the copy chip are now
+    instant instead of 100–150ms ease-outs; the copy-success icon swap is no longer
+    animated.
+  - The space-index overlay disables CoreAnimation implicit actions
+    (`CATransaction.setDisableActions(true)`) around its layer/window writes — a space
+    switch that changed the "3-1" → "3-2" label used to fade/scale over ~0.25s because
+    CALayer applies implicit animations to `frame`/`backgroundColor` writes.
 
 - Window moves are now **atomic** (single yabai message) — fixes the "multi-step,
   move-then-grow" animation and the visible pause between segments

@@ -110,8 +110,6 @@ struct ScreenMinimapView: View {
             }
         }
         .onTapGesture { onSelect(.display(displayID: screen.displayID)) }
-        .animation(.easeOut(duration: 0.15), value: hoveredDisplayID)
-        .animation(.easeOut(duration: 0.15), value: selectedScreen)
         .help(screenTapHelp(screen))
         .accessibilityLabel(screenTapHelp(screen))
         .accessibilityAddTraits(selectedScreen ? .isSelected : [])

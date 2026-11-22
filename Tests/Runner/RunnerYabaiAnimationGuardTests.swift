@@ -45,6 +45,49 @@ extension RunnerHarness {
                     last: now.addingTimeInterval(-30), now: now))
         }
 
+        // A'. 写命令判定：所有会改窗口 frame 的命令都受总闸保护（2026-11-22 二次加固）
+        // 背景：`--toggle float` 脱管后的布局重摆同样走 window_manager_animate_window
+        // （view.c window_node_flush → animate_window_list），只覆盖 --move/--resize
+        // 会让「切换」第一步先滑一下。
+        do {
+            func off(_ args: String...) -> Bool {
+                YabaiAnimationConfig.requiresAnimationOff(arguments: args)
+            }
+            check("yabaiAnim A'1: --move/--resize 合发 → 需要断言",
+                  off("-m", "window", "123", "--move", "abs:0:0", "--resize", "abs:10:10"))
+            check("yabaiAnim A'2: --toggle float（脱管重摆会播动画）→ 需要断言",
+                  off("-m", "window", "123", "--toggle", "float"))
+            check("yabaiAnim A'3: window --focus → 需要断言",
+                  off("-m", "window", "--focus", "123"))
+            check("yabaiAnim A'4: space --focus → 需要断言",
+                  off("-m", "space", "--focus", "2"))
+            check("yabaiAnim A'5: window --zoom-fullscreen → 需要断言",
+                  off("-m", "window", "123", "--zoom-fullscreen", "abs"))
+            check("yabaiAnim A'6: config 带值（写全局配置）→ 需要断言",
+                  off("-m", "config", "window_gap", "10"))
+            check("yabaiAnim A'7: 未知域（未来新增写域）→ 保守断言",
+                  off("-m", "map", "some", "command"))
+            check("yabaiAnim A'8: --restart → 需要断言（重排全部窗口）",
+                  off("--restart"))
+
+            check("yabaiAnim A'9: query 域 → 不断言（纯读）",
+                  !off("-m", "query", "--windows"))
+            check("yabaiAnim A'10: config 无值（读当前值）→ 不断言",
+                  !off("-m", "config", "window_animation_duration"))
+            check("yabaiAnim A'11: signal 域 → 不断言",
+                  !off("-m", "signal", "--remove", "vibefocus-space-changed"))
+            check("yabaiAnim A'12: space <sel> 无子命令（只读选中）→ 不断言",
+                  !off("-m", "space"))
+            check("yabaiAnim A'13: window <sel> 无子命令（只读选中）→ 不断言",
+                  !off("-m", "window"))
+            check("yabaiAnim A'14: --load-sa → 不断言（不重排窗口）",
+                  !off("--load-sa"))
+            check("yabaiAnim A'15: 总闸自己的关断命令绝不递归断言",
+                  !off("-m", "config", "window_animation_duration", "0.0"))
+            check("yabaiAnim A'16: 总闸自己的查询命令绝不递归断言",
+                  !off("-m", "config", "window_animation_duration"))
+        }
+
         // B. 查询解析：读到才认，读不到不猜
         do {
             check("yabaiAnim B1: 解析 yabai %f 输出 0.400000 → 0.4",
@@ -116,6 +159,22 @@ extension RunnerHarness {
             }
             check("yabaiAnim E1: 并发 16 次同刻断言只发一次令",
                   state.calls.count == 1)
+        }
+
+        // F. 写命令 + 发令前后双断言：节流窗口内一次写命令最多一次真实 config 发令
+        // （runYabai 在 before/after 各调一次 assertDisabled；节流把它压成一次 fork）。
+        do {
+            let state = YabaiAnimationGuardTestState()
+            let unit = YabaiAnimationGuard { args in
+                state.record(args)
+                return nil
+            }
+            let t0 = Date()
+            // 模拟 runYabai 的 before/after 两次调用（同一 now，窗口内）。
+            _ = unit.assertDisabled(now: t0, reason: "yabai_write")
+            _ = unit.assertDisabled(now: t0, reason: "yabai_write_after")
+            check("yabaiAnim F1: 同一写命令的 before/after 双断言只落一次 config fork",
+                  state.calls == [YabaiAnimationConfig.disableArguments])
         }
     }
 }

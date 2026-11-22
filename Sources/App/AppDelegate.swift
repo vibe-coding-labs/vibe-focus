@@ -140,9 +140,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         }
         applyApplicationIcon()
         setupMenuBar()
-        // 切换零动画：启动即把 yabai 的窗口动画总闸拉到 0（30s 节流复断言接在帧写入
-        // 咽喉点 SpaceController.runYabai）。用户 2026-11-22 明确要求「切换窗口不要动画」；
-        // yabai 的 --move/--resize 没有 per-call 旁路，只能关全局配置。
+        // 切换零动画：启动即把 yabai 的窗口动画总闸拉到 0（30s 节流的前后双断言接在
+        // 所有写命令的咽喉点 SpaceController.runYabai）。用户 2026-11-22 明确要求
+        // 「切换窗口不要动画」；yabai 的写窗口命令（--move/--resize/--toggle float 的
+        // 重摆/--zoom-fullscreen…）没有 per-call 旁路，只能关全局配置。
         // 后台队列执行：不占启动主线程（一次 fork ~40ms）。
         DispatchQueue.global(qos: .utility).async {
             YabaiAnimationGuard.shared.assertDisabledOnLaunch()

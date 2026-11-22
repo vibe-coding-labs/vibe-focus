@@ -92,11 +92,10 @@ struct CodeBlockView: View {
                 .strokeBorder(VibeColors.hairline, lineWidth: 1)
         )
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 
     private func copyToClipboard() {
-        // P-INST-239: 复制安装命令到剪贴板耗时（NSPasteboard.clearContents + setString 剪贴板 IPC；设置 UI 复制按钮触发，withAnimation/asyncAfter UI 反馈不计入；slow-op ≥5ms warn）。
+        // P-INST-239: 复制安装命令到剪贴板耗时（NSPasteboard.clearContents + setString 剪贴板 IPC；设置 UI 复制按钮触发，asyncAfter UI 反馈不计入；slow-op ≥5ms warn）。
         #if PERF_INSTRUMENT
         let ctcStart = Date()
         #endif
@@ -106,9 +105,9 @@ struct CodeBlockView: View {
         let durMs = elapsedMilliseconds(since: ctcStart)
         if durMs >= 5 { log("[SettingsComponents] copyToClipboard slow", level: .warn, fields: ["durationMs": String(durMs)]) }
         #endif
-        withAnimation { isCopied = true }
+        isCopied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation { isCopied = false }
+            isCopied = false
         }
     }
 }

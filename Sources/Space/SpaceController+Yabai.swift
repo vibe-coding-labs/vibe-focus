@@ -34,12 +34,15 @@ extension SpaceController {
             )
             return nil
         }
-        // 切换零动画（2026-11-22）：yabai 的 --move/--resize 都走 window_manager_animate_window，
-        // 唯一开关是全局 window_animation_duration（无 per-call 旁路）。任何帧写入发令前把总闸
-        // 拉到 0，30s 节流——覆盖用户 reload yabairc 把值改回来的场景，常态零额外 fork。
-        // 根因与策略见 Sources/Support/YabaiAnimationGuard.swift 头注。
-        if arguments.contains("--move") || arguments.contains("--resize") {
-            YabaiAnimationGuard.shared.assertDisabled(reason: "frame_write")
+        // 切换零动画（2026-11-22，同日二次加固）：yabai 的**所有**写窗口布局命令都会走
+        // window_manager_animate_window（--move/--resize 之外，--toggle float 的脱管重摆、
+        // --zoom-fullscreen、view 重排等同样如此），唯一开关是全局 window_animation_duration，
+        // 没有 per-call 旁路。故凡写命令，发令前把总闸拉到 0、发令后再复断言一次（30s 节流
+        // 内是纯内存判定，零额外 fork）——后者覆盖「这条命令自己触发的 yabairc 重新 source」。
+        // 判据与根因见 Sources/Support/YabaiAnimationGuard.swift 头注。
+        let suppressAnimation = YabaiAnimationConfig.requiresAnimationOff(arguments: arguments)
+        if suppressAnimation {
+            YabaiAnimationGuard.shared.assertDisabled(reason: "yabai_write")
         }
         let startedAt = Date()
         guard let result = runProcess(executable: yabaiPath, arguments: arguments) else {
@@ -53,6 +56,13 @@ extension SpaceController {
                 ]
             )
             return nil
+        }
+        // 写命令后再复断言：这条命令自己可能触发 yabairc 重新 source（用户绑定在
+        // window_created / space_changed 事件上的 `yabai -m config --load-sa`），
+        // 那一刻总闸会被改回非零——若不在此收口，下一次点击之前的所有布局变化
+        // 都会带动画。节流内是纯内存判定，常态零额外 fork。
+        if suppressAnimation {
+            YabaiAnimationGuard.shared.assertDisabled(reason: "yabai_write_after")
         }
 
         let durationMs = elapsedMilliseconds(since: startedAt)

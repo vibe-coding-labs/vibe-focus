@@ -297,7 +297,6 @@ struct VibeProminentButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .opacity(configuration.isPressed ? 0.92 : 1)
             .onHover { isHovered = $0 }
-            .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 

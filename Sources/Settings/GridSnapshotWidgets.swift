@@ -94,6 +94,5 @@ private struct StepIconButton: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.1), value: isHovered)
     }
 }

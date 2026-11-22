@@ -19,17 +19,33 @@
 // 一个以「按键即到位」为卖点的效率工具，反而比手点还慢。用户 2026-11-22 的诉求是
 // 「切换窗口的时候不要动画」，动画在这里没有任何信息价值。
 //
+// ## 不止 --move/--resize：所有会改窗口 frame 的写命令
+// 2026-11-22 二次加固（用户再次投诉「切换的时候不要动画」）。`window_manager_animate_window`
+// 的调用点远不止两个帧写入原语（yabai 源码实测）：
+//   - `--move` / `--resize`：window_manager.c:342（move_window_relative）、:359 / :403
+//     （resize_window_relative 的 animate 分支）；
+//   - **`--toggle float` 脱管后的布局重摆**：message.c 走 window_manager_make_window_floating
+//     → space_manager_untile_window → `window_node_flush` → view.c:378
+//     `window_manager_animate_window_list`。float 脱管是 vf 每次切换的第一步，
+//     所以「一按就看见窗口自己滑一下」正是它；
+//   - `--toggle windowed-fullscreen` / `--zoom-fullscreen`（window_manager.c:2394 / :2399）；
+//   - 任何触发 view 重摆的命令（`--space` / `--insert` / `--warp` / 布局配置变更…）。
+// 这些命令走的是**同一个**全局总闸——没有 per-call 旁路。只覆盖 --move/--resize 意味着
+// float 重摆那一跳在总闸被 yabairc reload 掉后照样播动画。故判定改为：
+// 只要这条 yabai 命令属于「写窗口布局」域就断言（读查询除外）。
+//
 // ## 策略
 // - **只降不升**：断言 `window_animation_duration = 0.0`，从不恢复用户原值。恢复等于把
 //   用户明确要删掉的动画重新塞回来。
-// - **启动断言 + 写入前节流复断言**：yabai 只在 yabairc 被重新 source 时改配置
-//   （`yabai -m config --load-sa` 等），因此启动断言之后，任何帧写入前再做一次 30s
+// - **启动断言 + 写入前/后节流复断言**：yabai 只在 yabairc 被重新 source 时改配置
+//   （`yabai -m config --load-sa` 等），因此启动断言之后，任何写命令前后各做一次 30s
 //   节流的复断言即可覆盖「用户 reload 了 yabairc」的场景；常态下写入路径零额外 fork。
-// - **单一咽喉点**：接线在 `SpaceController.runYabai`（所有 yabai 帧写入都从这里发令），
+// - **单一咽喉点**：接线在 `SpaceController.runYabai`（所有 yabai 写命令都从这里发令），
 //   不散落在各调用点，新增写通道自动受保护。
 //
 // ## 语义契约（Runner YabaiAnimationGuard 域锁定）
 // - 断言参数逐字为 `["-m", "config", "window_animation_duration", "0.0"]`；
+// - `requiresAnimationOff(arguments:)`：写窗口布局域 → true；纯读查询（query / config 查询）→ false；
 // - 节流窗口内不重复发令，跨过窗口后必再发一次（含并发调用只发一次）；
 // - 查询解析失败/空输出返回 nil，不猜默认值。
 
@@ -61,6 +77,45 @@ enum YabaiAnimationConfig {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return Float(trimmed)
+    }
+
+    /// 这条 yabai 命令是否可能让 yabai 播窗口动画（必须先把总闸拉到 0 再发）。
+    ///
+    /// 判据刻意取「白名单读命令」而不是「黑名单写命令」：新增的写命令（yabai 版本
+    /// 升级带来新域）默认受保护，漏网的是只读，只会多一次无害的幂等 config 写。
+    /// 读命令清单（yabai -m 的全部非写域）：
+    ///   - `-m query ...`（所有查询）
+    ///   - `-m config <key>`（无值形式 = 读当前值，见 message.c handle_domain_config）
+    ///   - `-m signal ...`（发信号，不改窗口）
+    ///   - `-m display ...`（display 域只改焦点显示器，窗口 frame 不动）
+    ///   - `-m rule ...`（改规则表，不立即重排）
+    ///   - `--load-sa` / `--version` / `--help`（SA 装载与自述）
+    ///   - `-m space <sel>`（无子命令 = 只读选中 space，见 message.c：无 command 时直接返回）
+    ///   - `-m window <sel>`（无子命令 = 只读，同理）
+    /// 其余一律视为写：`window`/`space` 带子命令、`config <key> <value>`、`mouse`、
+    /// `--restart` 等。
+    static func requiresAnimationOff(arguments: [String]) -> Bool {
+        // 总闸自己的命令绝不递归触发断言（`config <key> <value>` 形式本身会被判为写）。
+        if arguments == disableArguments || arguments == queryArguments { return false }
+        guard arguments.first == "-m" else {
+            // 非 `-m` 形式的顶层开关（--load-sa / --restart / --version …）：只有
+            // --restart 会重新加载配置并重排全部窗口，其余无窗口影响。
+            return arguments.contains("--restart")
+        }
+        guard arguments.count >= 2 else { return false }
+        switch arguments[1] {
+        case "query", "signal", "display", "rule":
+            return false
+        case "config":
+            // 无值 = 读；有值 = 写（yabai 唯一改全局配置的通道）。
+            return arguments.count > 3
+        case "space", "window":
+            // 域选择器之后还有子命令才是写（`-m space --focus N`），无子命令是读。
+            return arguments.count > 2
+        default:
+            // 未知域（含未来新增的写域 map/mouse 等）：保守断言。
+            return true
+        }
     }
 }
 

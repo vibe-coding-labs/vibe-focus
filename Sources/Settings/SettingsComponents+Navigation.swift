@@ -85,12 +85,11 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
-/// 分段式标签栏：凹槽底 + 滑动选中块（matchedGeometryEffect），
-/// 选中态 = 亮面浮起小块，观感对齐 macOS 原生分段控件。
+/// 分段式标签栏：凹槽底 + 亮面选中块，观感对齐 macOS 原生分段控件。
+/// 选中块**瞬时跳转**，不做滑动/弹簧过渡——2026-11-22 用户主诉「不要动画，效率工具
+/// 别插没用的动画」，Tab 切换不需要任何修饰性动效。
 struct SettingsTabBar: View {
     @Binding var selection: SettingsTab
-
-    @Namespace private var thumbNamespace
 
     var body: some View {
         HStack(spacing: 2) {
@@ -114,9 +113,7 @@ struct SettingsTabBar: View {
         let isSelected = selection == tab
 
         return Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                selection = tab
-            }
+            selection = tab
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: tab.icon)
@@ -133,7 +130,6 @@ struct SettingsTabBar: View {
                     RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous)
                         .fill(VibeColors.card)
                         .shadow(color: VibeColors.shadow.opacity(0.12), radius: 3, y: 1)
-                        .matchedGeometryEffect(id: "tab-thumb", in: thumbNamespace)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: VibeRadius.control, style: .continuous))
