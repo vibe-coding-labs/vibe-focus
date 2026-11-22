@@ -712,6 +712,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runStoreDatabaseTests") { runStoreDatabaseTests() }
         runDomain("runTitleEditorCaptureTests") { runTitleEditorCaptureTests() }
         runDomain("runAudioEngineProtocolTests") { runAudioEngineProtocolTests() }
+        runDomain("runRestoreOutcomeAnnouncementTests") { runRestoreOutcomeAnnouncementTests() }
         runDomain("runSoundScreenPrefsResidueTests") { runSoundScreenPrefsResidueTests() }
         runDomain("runReadOnlyTailTests") { runReadOnlyTailTests() }
         runDomain("runSessionActivityWriteTests") { runSessionActivityWriteTests() }

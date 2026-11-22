@@ -112,4 +112,89 @@ extension RunnerHarness {
         check("voiceEngine: stopAll 经合成器 stopSpeaking 并清 announcing 态",
               provider.synthesizer.stopCalled && !voice.isAnnouncing)
     }
+
+    // MARK: - announceRestoreOutcome 接线（2026-11-23 补口）
+    //
+    // plan 纯映射已由 RunnerDecisionPrefSweep 穷举，但**接线**（107-133：mode=none
+    // 静默断言、语音入队、三路音效分流）零覆盖——写错通道不会有任何断言红。
+    // 用 mock 合成器 + mock 播放器观察，零真实发声。
+    func runRestoreOutcomeAnnouncementTests() {
+        let voice = VoiceAnnouncementManager.shared
+        let sound = SoundManager.shared
+        let savedMode = voice.preferences.mode
+        let savedType = sound.preferences.soundType
+        let savedInterval = sound.preferences.minPlayIntervalSeconds
+        defer {
+            voice.updateMode(savedMode)
+            sound.updateSoundType(savedType)
+            sound.updateMinPlayInterval(savedInterval)
+            voice.stopAll()
+            sound.stopPlayback()
+        }
+
+        let mockProvider = MockSynthesizerProvider()
+        voice.synthesizerProvider = mockProvider
+        let mockPlayer = MockSoundPlayer()
+        sound.soundPlayer = mockPlayer
+        sound.updateMinPlayInterval(0)
+        sound.updateQuietHours(enabled: false, startHour: sound.preferences.quietStartHour,
+                               endHour: sound.preferences.quietEndHour)
+
+        // A. aborted → silent：语音零开口、音效零播放
+        voice.updateMode(.template)
+        voice.updateTemplateText("{project_name} 完成")
+        sound.updateSoundType(.systemDefault)
+        mockProvider.synthesizer.resetRecording()
+        voice.announceRestoreOutcome(.aborted(reason: "no_record"), windowID: 7001)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        check("restoreOutcome A1: aborted → 双通道静默",
+              mockProvider.synthesizer.startedText == nil && mockPlayer.playCount == 0)
+
+        // B. restored(spaceExact: true) + 手动恢复（playsSuccessSound=false）
+        //    → 语音播「窗口已恢复」，但成功音被扣住（ding 只留给 agent 完成语义）
+        mockProvider.synthesizer.resetRecording()
+        let beforeB = mockPlayer.playCount
+        voice.announceRestoreOutcome(.restored(spaceExact: true), windowID: 7002,
+                                     playsSuccessSound: false)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        check("restoreOutcome B1: 手动恢复 → 语音播「窗口已恢复」",
+              mockProvider.synthesizer.startedText == "窗口已恢复")
+        check("restoreOutcome B2: 手动恢复 → 成功音被扣住",
+              mockPlayer.playCount == beforeB)
+
+        // C. restored + agent 路径（playsSuccessSound=true）→ 语音 + 成功音
+        voice.stopAll()
+        mockProvider.synthesizer.resetRecording()
+        let beforeC = mockPlayer.playCount
+        voice.announceRestoreOutcome(.restored(spaceExact: true), windowID: 7003,
+                                     playsSuccessSound: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        check("restoreOutcome C1: agent 恢复 → 语音 + 成功音各一次",
+              mockProvider.synthesizer.startedText == "窗口已恢复"
+              && mockPlayer.playCount == beforeC + 1)
+
+        // D. moveFailedRetryable → 失败音（Basso 通道），语音播失败文案
+        voice.stopAll()
+        mockProvider.synthesizer.resetRecording()
+        let beforeD = mockPlayer.playCount
+        voice.announceRestoreOutcome(.moveFailedRetryable, windowID: 7004)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        check("restoreOutcome D1: 可重试失败 → 失败音一次",
+              mockPlayer.playCount == beforeD + 1)
+        check("restoreOutcome D2: 可重试失败 → 语音文案非空",
+              (mockProvider.synthesizer.startedText?.isEmpty == false))
+
+        // E. mode=none → 语音通道静默，但音效通道不受影响（两开关各管一通道）
+        voice.stopAll()
+        voice.updateMode(.none)
+        mockProvider.synthesizer.resetRecording()
+        let beforeE = mockPlayer.playCount
+        voice.announceRestoreOutcome(.restored(spaceExact: true), windowID: 7005,
+                                     playsSuccessSound: true)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        check("restoreOutcome E1: 语音关 → 零开口但成功音照播",
+              mockProvider.synthesizer.startedText == nil
+              && mockPlayer.playCount == beforeE + 1)
+    }
 }
+
