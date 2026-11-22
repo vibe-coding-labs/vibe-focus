@@ -116,6 +116,112 @@ extension RunnerHarness {
         let user = VoiceAnnouncementManager.llmUserContent(message: "压轴", context: ["旧1", "旧2"])
         check("voiceLLM: user 内容上下文在前消息压轴",
               user.hasPrefix("旧1\n---\n旧2\n---\n压轴"))
+
+        // F–I. summarizeAndSpeak 编排全链（2026-11-23 补口）
+        // 此前只测 requestLLMSummary 本体，Task 编排体（63-107：成功 speak / 空总结
+        // 回落 / 网络失败回落 / 取消守卫）全部零覆盖。用 mock 合成器观察开口文本，
+        // 零真实发声——「真发声留白」只应约束引擎本体，不该连带编排逻辑。
+        let voice = VoiceAnnouncementManager.shared
+        let mockProvider = MockSynthesizerProvider()
+        voice.synthesizerProvider = mockProvider
+        let savedBase = voice.preferences.llmApiBase
+        let savedKey = voice.preferences.llmApiKey
+        let savedModel = voice.preferences.llmModel
+        let savedMaxChars = voice.preferences.llmMaxChars
+        let savedTemplate = voice.preferences.templateText
+        defer {
+            voice.stopAll()
+            voice.updateLLMApiBase(savedBase)
+            voice.updateLLMApiKey(savedKey)
+            voice.updateLLMModel(savedModel)
+            voice.updateLLMMaxChars(savedMaxChars)
+            voice.updateTemplateText(savedTemplate)
+        }
+        let payload = ClaudeHookPayload(
+            event: .stop, sessionID: "vf-llm-sum", source: nil, timestamp: nil,
+            cwd: "/tmp", model: nil, terminalCtx: nil,
+            lastAssistantMessage: "这轮把覆盖率补上来了", transcriptPath: nil)
+
+        /// 等编排 Task 落地（mock 服务器应答 + 主线程回写）
+        func pump(seconds: TimeInterval = 3) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+
+        // F. 无 API 配置 → 直接 fallback，念截断后的原消息
+        voice.updateLLMApiBase("")
+        voice.updateLLMApiKey("")
+        voice.updateTemplateText("模板兜底")
+        mockProvider.synthesizer.resetRecording()
+        voice.summarizeAndSpeak(payload: payload)
+        pump(seconds: 0.5)
+        check("voiceLLM F1: 无配置 → fallback 念原消息（不念模板）",
+              mockProvider.synthesizer.startedText == "这轮把覆盖率补上来了")
+        voice.stopAll()
+
+        // G. 成功总结 → speak 总结文本（剥引号/空白后）
+        if let (server, port) = makeServer(
+            "200 OK", #"{"choices":[{"message":{"content":" \"一句话总结\" "}}]}"#) {
+            defer { server.listener.cancel() }
+            voice.updateLLMApiBase("http://127.0.0.1:\(port)")
+            voice.updateLLMApiKey("vf-key")
+            voice.updateLLMModel("vf-model")
+            mockProvider.synthesizer.resetRecording()
+            voice.summarizeAndSpeak(payload: payload)
+            pump()
+            check("voiceLLM G1: LLM 成功 → 念总结并剥掉引号空白",
+                  mockProvider.synthesizer.startedText == "一句话总结")
+            voice.stopAll()
+        } else {
+            check("voiceLLM G1: 本地 mock 服务器不可用，跳过", true)
+        }
+
+        // H. 总结为空串 → 回落 fallback（念原消息）
+        if let (server, port) = makeServer(
+            "200 OK", #"{"choices":[{"message":{"content":"   "}}]}"#) {
+            defer { server.listener.cancel() }
+            voice.updateLLMApiBase("http://127.0.0.1:\(port)")
+            mockProvider.synthesizer.resetRecording()
+            voice.summarizeAndSpeak(payload: payload)
+            pump()
+            check("voiceLLM H1: 总结为空 → 回落念原消息",
+                  mockProvider.synthesizer.startedText == "这轮把覆盖率补上来了")
+            voice.stopAll()
+        } else {
+            check("voiceLLM H1: 本地 mock 服务器不可用，跳过", true)
+        }
+
+        // I. 网络失败（5xx）→ 回落 fallback
+        if let (server, port) = makeServer("500 Internal Server Error", #"{"e":1}"#) {
+            defer { server.listener.cancel() }
+            voice.updateLLMApiBase("http://127.0.0.1:\(port)")
+            mockProvider.synthesizer.resetRecording()
+            voice.summarizeAndSpeak(payload: payload)
+            pump()
+            check("voiceLLM I1: HTTP 失败 → 回落念原消息",
+                  mockProvider.synthesizer.startedText == "这轮把覆盖率补上来了")
+            voice.stopAll()
+        } else {
+            check("voiceLLM I1: 本地 mock 服务器不可用，跳过", true)
+        }
+
+        // J. 消息为空 + transcript 尾部兜底 + 待问前缀
+        voice.updateLLMApiBase("")
+        voice.updateLLMApiKey("")
+        var emptyMsg = payload
+        emptyMsg = ClaudeHookPayload(
+            event: .stop, sessionID: "vf-llm-empty", source: nil, timestamp: nil,
+            cwd: "/tmp", model: nil, terminalCtx: nil,
+            lastAssistantMessage: "", transcriptPath: nil)
+        mockProvider.synthesizer.resetRecording()
+        voice.summarizeAndSpeak(payload: emptyMsg, transcriptTail: ["尾部消息"], pendingQuestion: true)
+        pump(seconds: 0.5)
+        let spokenJ = mockProvider.synthesizer.startedText ?? ""
+        check("voiceLLM J1: 空消息 → transcript 尾兜底且带待问前缀（实际：\(spokenJ)）",
+              spokenJ.contains("尾部消息") && spokenJ.contains("在等你回复"))
+        voice.stopAll()
     }
 }
 
