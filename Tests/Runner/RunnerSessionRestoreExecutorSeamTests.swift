@@ -16,6 +16,9 @@ final class RestoreSeamState: @unchecked Sendable {
     var focusCalls: [Int] = []
     var createCalls: [(app: String, command: String?, frame: CGRect, excluding: Set<UInt32>)] = []
     var yabaiCalls: [[String]] = []
+    /// `env.runYabai` 收到的 operation 标签（A15~A17 断言合发写回与泊靠的归因串）。
+    /// 只覆盖 runYabai 通道——setWindowFloat 走独立闭包，不并入本表。
+    var yabaiOperations: [String] = []
     var scripts: [String] = []
     var windowSpace: [UInt32: Int] = [:]
     var windowDisplay: [UInt32: Int] = [:]
@@ -123,7 +126,10 @@ extension RunnerHarness {
         env.setWindowFloat = { id, _ in state.yabaiCalls.append(["--float", String(id)]) }
         env.parkingScreen = { _ in NSScreen.screens.first }
         env.quartzVisibleFrame = { _ in CGRect(x: 0, y: 0, width: 1440, height: 900) }
-        env.runYabai = { args, _, _ in state.yabaiCalls.append(args) }
+        env.runYabai = { args, operation, _ in
+            state.yabaiCalls.append(args)
+            state.yabaiOperations.append(operation)
+        }
         env.sleepNanos = { nanos in
             state.clock = state.clock.addingTimeInterval(Double(nanos) / 1_000_000_000)
         }
@@ -238,6 +244,17 @@ extension RunnerHarness {
               !state.scripts.contains { $0.contains("com.apple.Safari") })
         check("srSeam A14: 虚拟时钟推进未触发真实等待（脚本数有限、流程结束）",
               state.scripts.count < 20)
+        // A15/A16（2026-11-23）：写回与泊靠的 operation 标签——日志归因唯一来源，
+        // 之前只断言了参数形状、标签写错（例如仍留 move/resize 两条旧串）不会被发现。
+        check("srSeam A15: 错位窗的泊靠与合发写回各留一条归因标签",
+              state.yabaiOperations.contains { $0.hasPrefix("session-delivery.park(windowID=") }
+              && state.yabaiOperations.contains { $0.hasPrefix("session-delivery.writeback.apply(windowID=") })
+        let writebackIdx = state.yabaiOperations.firstIndex { $0.hasPrefix("session-delivery.writeback.apply") }
+        let parkIdx = state.yabaiOperations.firstIndex { $0.hasPrefix("session-delivery.park") }
+        check("srSeam A16: 泊靠先于写回（operator 序与参数序同源）",
+              writebackIdx != nil && parkIdx != nil && parkIdx! < writebackIdx!)
+        check("srSeam A17: 写回恰一条消息（不再拆 move/resize 两条旧串）",
+              state.yabaiOperations.filter { $0.contains("session-delivery.writeback") }.count == 1)
 
         // MARK: B 段——实例守卫拒绝（零环境采集）
         var refuseEnv = SessionRestoreEnvironment()

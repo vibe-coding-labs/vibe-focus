@@ -181,6 +181,15 @@ final class YabaiAnimationGuard: @unchecked Sendable {
         return true
     }
 
+    /// 测试缝：清空节流基准。Runner 需要「同一进程内连续验证 前置断言 / 强制复断言 /
+    /// 读命令不断言」三条接线，而 `shared` 的节流态是进程级——不清基准时第二条用例
+    /// 会被 30s 窗口吃掉，断言结果依赖同批其它域是否刚发过令。生产入口不调用。
+    func resetThrottleForTesting() {
+        lock.lock()
+        lastAssertedAt = nil
+        lock.unlock()
+    }
+
     /// 读当前动画时长（仅供启动时留证；读不到返回 nil）。
     func currentDuration() -> Float? {
         runYabai(YabaiAnimationConfig.queryArguments)

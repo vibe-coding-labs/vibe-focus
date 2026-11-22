@@ -121,6 +121,27 @@ extension RunnerHarness {
             check("executor C: converged / 1 轮", run.outcome.isConverged && run.convergedRounds == 1)
         }
 
+        // C′. origin 单缺补发（2026-11-23 补口）：段二计划只有 [.move]，走 applyMove
+        //     ——这是「move 写丢失」的生产分支（尺寸已对、位置被钳回），此前执行器
+        //     用例只造过 size 缺与全缺，单 .move 补发从未跑过。
+        do {
+            let missOrigin = CGRect(x: 400, y: 300, width: 1653, height: 1079) // 仅 origin 缺
+            var n = 0
+            var calls: [String] = []
+            let run = makeExecutor(
+                read: { n += 1; return n <= 14 ? missOrigin : target },
+                calls: { calls.append($0) }
+            ).run(target: target, order: .moveThenResize)
+            check("executor C′1: 段一 [move, resizeAdaptive]（moveThenResize 写序）",
+                  calls.count >= 2 && calls[0] == "move" && calls[1] == "resizeAdaptive")
+            check("executor C′2: 段二补发只走 move（单 origin 缺不拆 resize）",
+                  calls.dropFirst(2).allSatisfy { $0 == "move" } && calls.count > 2)
+            check("executor C′3: 最终收敛且如实记 1 轮",
+                  run.outcome.isConverged && run.convergedRounds == 1)
+            check("executor C′4: 全程无 robust（单维缺不进全缺通道）",
+                  !calls.contains("resizeRobust"))
+        }
+
         // D. 全缺 × 两轮不收敛：段一 [resizeAdaptive, move]；段二每轮计划两段走
         //    robust 纯 yabai 按写序 [resizeRobust, move]；停滞重发（4 读不变）在
         //    轮询内重复同一计划、不计新轮——因此断言模式而非精确次数。

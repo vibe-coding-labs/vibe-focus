@@ -86,6 +86,19 @@ extension RunnerHarness {
                   !off("-m", "config", "window_animation_duration", "0.0"))
             check("yabaiAnim A'16: 总闸自己的查询命令绝不递归断言",
                   !off("-m", "config", "window_animation_duration"))
+
+            // A''：读域白名单余项与畸形入参（判据是「白名单读」反推，漏一个读域就会
+            // 给每条查询多挂一次 config 写；白名单外一律保守断言）。
+            check("yabaiAnim A'17: display 域只改焦点显示器 → 不断言",
+                  !off("-m", "display", "1"))
+            check("yabaiAnim A'18: rule 域改规则表不立即重排 → 不断言",
+                  !off("-m", "rule", "--add", "app=Terminal", "manage=off"))
+            check("yabaiAnim A'19: 裸 -m（无域）→ 不断言且不越界",
+                  !off("-m"))
+            check("yabaiAnim A'20: -m 后跟未知域 → 保守断言",
+                  off("-m", "mouse", "--zoom"))
+            check("yabaiAnim A'21: 非 -m 顶层开关（--version）→ 不断言",
+                  !off("--version"))
         }
 
         // B. 查询解析：读到才认，读不到不猜
@@ -186,6 +199,37 @@ extension RunnerHarness {
                   && state.calls.count == 2)
         }
 
+        // F'. 启动断言（AppDelegate 在后台队列调用的那个函数本体）
+        //
+        // 启动编排（applicationDidFinishLaunching 里那行 DispatchQueue.async）是 C1 生命周期
+        // 胶水，重入即重复启动，不可直测；但**被调函数**本身没有副作用边界，注入 runYabai
+        // 即可直测——这轮动画修复的原始故障正是「判据对了但没接上」，所以这个函数必须有断言。
+        do {
+            let state = YabaiAnimationGuardTestState()
+            let unit = YabaiAnimationGuard { args in
+                state.record(args)
+                return args == YabaiAnimationConfig.queryArguments ? "0.400000\n" : nil
+            }
+            unit.assertDisabledOnLaunch()
+            let calls = state.calls
+            check("yabaiAnim F'1: 启动先读原值再关断（query → config 写 两步）",
+                  calls == [YabaiAnimationConfig.queryArguments,
+                            YabaiAnimationConfig.disableArguments])
+            check("yabaiAnim F'2: 启动断言不受节流影响（首次必有令）",
+                  calls.contains(YabaiAnimationConfig.disableArguments))
+
+            // 读不到原值（fork 失败）→ 仍然关断（不能让「读失败」挡住总闸）
+            let blind = YabaiAnimationGuardTestState()
+            let blindUnit = YabaiAnimationGuard { args in
+                blind.record(args)
+                return nil
+            }
+            blindUnit.assertDisabledOnLaunch()
+            check("yabaiAnim F'3: 读不到原值仍关断总闸",
+                  blind.calls == [YabaiAnimationConfig.queryArguments,
+                                  YabaiAnimationConfig.disableArguments])
+        }
+
         // G. 帧写入判定（决定后置断言是否 force）
         do {
             func frame(_ args: String...) -> Bool {
@@ -199,6 +243,16 @@ extension RunnerHarness {
                   frame("-m", "window", "1", "--zoom-fullscreen", "abs"))
             check("yabaiAnim G4: --toggle windowed-fullscreen → 是帧写入",
                   frame("-m", "window", "1", "--toggle", "windowed-fullscreen"))
+            check("yabaiAnim G4b: --toggle zoom-fullscreen → 是帧写入",
+                  frame("-m", "window", "1", "--toggle", "zoom-fullscreen"))
+            // 只缺 size 的补发走单发 --resize（FrameWriteExecutor 段二 adaptive/robust），
+            // 这条分支决定补发后是否强制复断言——生产高频，必须单独锁定。
+            check("yabaiAnim G4c: 单发 --resize（无 --move/--toggle）→ 是帧写入",
+                  frame("-m", "window", "1", "--resize", "abs:800:600"))
+            check("yabaiAnim G4d: 只改位置的单发 --move → 是帧写入",
+                  frame("-m", "window", "1", "--move", "abs:10:20"))
+            check("yabaiAnim G4e: window 子命令但既不 move 也不 resize（--raise）→ 不是帧写入",
+                  !frame("-m", "window", "1", "--raise"))
             check("yabaiAnim G5: --toggle shadow（不动机位）→ 不是帧写入",
                   !frame("-m", "window", "1", "--toggle", "shadow"))
             check("yabaiAnim G6: space --focus（不动窗口 frame）→ 不是帧写入",

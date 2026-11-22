@@ -47,6 +47,9 @@ extension RunnerHarness {
 
         let modeFile = dir.appendingPathComponent("mode")
         let landedFlag = dir.appendingPathComponent("landed-flag")
+        /// 替身收到的每条命令（一行一条，供动画总闸接线断言）。替身是独立进程，
+        /// 只能经文件回读——不走环境变量/管道，避免与并行后台任务互相干扰。
+        let argvLog = dir.appendingPathComponent("argv.log")
         let stubPath = dir.appendingPathComponent("yabai")
         func setMode(_ mode: String) {
             try? mode.write(to: modeFile, atomically: true, encoding: .utf8)
@@ -68,6 +71,7 @@ extension RunnerHarness {
 
         let script = """
         #!/bin/bash
+        printf '%s\\n' "$*" >> "\(argvLog.path)"
         MODE=$(cat "\(modeFile.path)" 2>/dev/null || echo ok)
         if [ "$MODE" = "fail" ]; then
           echo "stub failure" >&2
@@ -444,6 +448,68 @@ extension RunnerHarness {
             let unknown = sc.switchToSpace(2, operationID: "stub-switch-unknown")
             check("yabaiStub: switchToSpace 查询失败 → unknown",
                   unknown.outcome == .noDrift && unknown.state == .unknown)
+        }
+
+        // ---- X. 动画总闸接线（2026-11-22）：写命令前后断言 = 0，读命令零额外 fork ----
+        //
+        // 靶：SpaceController.runYabai 的两处 YabaiAnimationGuard.shared 调用（前置节流断言
+        // + 帧写入后强制复断言）。判据本身已由 RunnerYabaiAnimationGuardTests 纯函数锁定，
+        // 这里验的是**接线真的执行**：earlier 起 main 上的动画修复正是「判据对但没接上」
+        // 才被用户二次投诉。断言只看替身 argv 里 `-m config window_animation_duration 0.0`
+        // 的出现（幂等无害），不检查任何真实窗口状态。
+        do {
+            let guardUnit = YabaiAnimationGuard.shared
+            func argvLines() -> [String] {
+                (try? String(contentsOf: argvLog, encoding: .utf8))?
+                    .split(separator: "\n").map(String.init) ?? []
+            }
+            func guardSends(in lines: [String]) -> Int {
+                lines.filter { $0 == "-m config window_animation_duration 0.0" }.count
+            }
+
+            // X1. 读命令（query）→ 不发断言令
+            try? FileManager.default.removeItem(at: argvLog)
+            guardUnit.resetThrottleForTesting()
+            _ = sc.runYabai(arguments: ["-m", "query", "--spaces"], operationID: "stub-anim-read")
+            check("yabaiStub: 读命令不触发动画断言（零额外 config 写）",
+                  guardSends(in: argvLines()) == 0)
+
+            // X2. 写命令（space --focus）→ 恰好一次前置断言（非帧写入，不强制复断言）
+            try? FileManager.default.removeItem(at: argvLog)
+            guardUnit.resetThrottleForTesting()
+            _ = sc.runYabai(arguments: ["-m", "space", "--focus", "2"], operationID: "stub-anim-write")
+            check("yabaiStub: 非帧写入命令前置断言一次、后置不强制",
+                  guardSends(in: argvLines()) == 1)
+
+            // X3. 帧写入命令（window --move）→ 前置 + 后置强制 = 两次
+            try? FileManager.default.removeItem(at: argvLog)
+            guardUnit.resetThrottleForTesting()
+            _ = sc.runYabai(arguments: ["-m", "window", "3220", "--move", "abs:10:10"],
+                            operationID: "stub-anim-frame")
+            let frameLines = argvLines()
+            check("yabaiStub: 帧写入命令前后各断言一次（堵住事件钩子重置总闸）",
+                  guardSends(in: frameLines) == 2)
+            let guardIdx = frameLines.firstIndex(of: "-m config window_animation_duration 0.0")
+            let moveIdx = frameLines.firstIndex { $0.contains("--move") }
+            check("yabaiStub: 断言令先于帧写入命令本身",
+                  guardIdx != nil && moveIdx != nil && guardIdx! < moveIdx!)
+
+            // X4. 节流窗口内复写命令不再多 fork（前置断言被吃、帧写入仍强制一次）
+            try? FileManager.default.removeItem(at: argvLog)
+            _ = sc.runYabai(arguments: ["-m", "window", "3220", "--move", "abs:11:11"],
+                            operationID: "stub-anim-frame-throttled")
+            check("yabaiStub: 节流窗口内帧写入只强制复断言一次（前置被节流吃掉）",
+                  guardSends(in: argvLines()) == 1)
+
+            // X5. 总闸自身的 config 写不递归触发断言（否则无限套娃）
+            try? FileManager.default.removeItem(at: argvLog)
+            guardUnit.resetThrottleForTesting()
+            _ = sc.runYabai(arguments: YabaiAnimationConfig.disableArguments,
+                            operationID: "stub-anim-self")
+            check("yabaiStub: 总闸自己的关断命令不递归断言",
+                  guardSends(in: argvLines()) == 1)
+
+            guardUnit.resetThrottleForTesting()
         }
 
         // ---- W. attemptScriptingAdditionRecovery 状态机闸门与 yabai 缺失早退 ----
