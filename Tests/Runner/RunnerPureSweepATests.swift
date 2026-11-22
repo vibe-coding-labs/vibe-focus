@@ -738,6 +738,20 @@ extension RunnerHarness {
             let serialized = serializeFields(["b": "x y", "a": "1", "": "skipped"])
             check("support: serializeFields 键排序 + 空键过滤 + 前导空格",
                   serialized == " a=1 b=\"x y\"")
+            // 两条空集分支：空字典早退 / 全部键为空（过滤后无对）→ 都返回空串
+            check("support: serializeFields 空字典 → 空串",
+                  serializeFields([:]).isEmpty)
+            check("support: serializeFields 全空键 → 空串（过滤后无对）",
+                  serializeFields(["": "a"]).isEmpty)
+            // logOperationDuration：返回值即实测毫秒（调用方按它判慢），恒非负且
+            // 省略 operationID 时不写 op 字段（字段集与调用点一致）。
+            let quickStart = Date()
+            check("support: logOperationDuration 返回非负毫秒",
+                  logOperationDuration("ut.support.quick", startedAt: quickStart) >= 0)
+            let slowMs = logOperationDuration(
+                "ut.support.slow", startedAt: Date().addingTimeInterval(-2),
+                operationID: "ut-op", warnThresholdMs: 1, fields: ["k": "v"])
+            check("support: logOperationDuration 跨阈值如实计时（≥2000ms）", slowMs >= 2000)
             check("support: truncateForLog 超 260 截断加省略号、未超原样",
                   truncateForLog(String(repeating: "x", count: 263)).count == 263
                   && truncateForLog(String(repeating: "x", count: 263)).hasSuffix("...")
