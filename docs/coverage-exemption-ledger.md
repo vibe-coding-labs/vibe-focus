@@ -561,3 +561,64 @@ B/C 态，无新增豁免需求。
 **验收口径不变**：字面 100% 仍物理不可达（B/C 态 + 测量通道损失）；本批 CLI 可提缝面
 增量已全部落库，剩余 CLI 残余行经逐行复核均为真实 fork/AX/提权/实时钟/单例生命周期臂，
 无新增豁免需求。
+
+### 2026-11-23 收口第五轮（分支 `test/coverage-100g`）：假绿清算 + 新代码接线
+
+> **触发**：上一轮收口（2026-11-19，83.46%）之后 main 又进了 2026-11-20~22 的
+> 窗口原子合发与零动画总闸两个修复，两批新代码**只测了纯判据、没测接线**；
+> 而用户当时的投诉正是「判据对但没接上」。同时本轮发现一类**系统性假绿**：
+> 大量设置页测试用 `SettingsView()` 后置写 `@State`，而 B317 早已记录
+> 「无窗 NSHostingView 下 post-install 写 @State 不落 storage」——这些断言
+> 一直在渲染默认态。
+
+#### 一、新代码接线补口（2026-11-21/22 进 main）
+
+| 目标 | 覆盖点 | 域 |
+|---|---|---|
+| `SpaceController.runYabai` 动画总闸 | 前置节流断言 / 帧写入后强制复断言 / 读命令零断言 / 总闸自命令不递归；替身 argv 落盘回读 | RunnerYabaiStubSeam X1–X5 |
+| `YabaiAnimationConfig` 判据余项 | display/rule 读域、裸 `-m`、未知域、`--version`、`--toggle zoom-fullscreen`、单发 `--resize`/`--move`、`--raise` | RunnerYabaiAnimationGuard A'17–21 / G4b–e |
+| `assertDisabledOnLaunch` 本体 | query→disable 顺序；读不到原值仍关断 | RunnerYabaiAnimationGuard F'1–3 |
+| `YabaiAnimationGuard.resetThrottleForTesting` | 进程级节流态测试缝（生产不调用） | 同上 + Stub X1–X5 依赖 |
+| `FrameWriteExecutor` 段二单 `.move` 补发 | 只缺 origin 时只发 move、零 robust/adaptive | RunnerConvergencePipeline C′1–4 |
+| `SessionRestoreExecutor` 写回/泊靠归因 | operation 标签前缀、泊靠先于写回、写回恰一条消息 | RunnerSessionRestoreExecutorSeam A15–17 |
+
+#### 二、假绿清算（设置页初始化缝）
+
+| 位置 | 假绿表现 | 修法 |
+|---|---|---|
+| 7 个 tab 渲染域 | 全在渲染 general tab（其余 6 个 tab 内容从未求值） | `init(initialTab:)` 注入 |
+| 权限分区「其它副本」段 | `duplicateAppPaths` 后置写不生效 | init 缝 `duplicateAppPaths` |
+| 摆位分区开关×冲突横幅 | 四态断言渲染的都是默认态 | init 缝 `layoutHotKeysEnabled` / `layoutConflictSummary` |
+| 各分区操作结果横幅（12 个字段） | 安装/测试/注册/接入物料横幅分支从未求值 | `ResultMessages` 初始值集合 |
+| 快照行「已设开机恢复」/多屏计数 | pill 与计数分支未求值 | init 缝 `gridSnapshots` / `gridAutoRestoreSnapshotID` |
+| claudeHook 运行状态/Token/错误行 | 依赖 `hookInstallMessage` 后置写 | @Published 直注 + ResultMessages |
+| 项目音效规则 ForEach 行体 | 裸求值不实例化 ForEach 子视图 | ImageRenderer 真渲染 |
+| 会话卡片结果行/警告横幅 | 纯 @State 条件分支 | ResultMessages + 真渲染 |
+| 唤醒重建调度臂 | 决策表已穷举但调度/取消/补射零覆盖 | 投 Notification 驱动实例方法 |
+
+#### 三、其他可直测补口
+
+`announceCompletion` 模板/音频边界（空模板回落、无路径回落、提问收尾、{tokens}）、
+`ScreenOverlayManager.suspend/resume` 幂等与配对、`MCPRegistration`/`AgentOnboarding`
+的 IO 失败面、`VibeFocusCrashPipeline.installHandlers`、`serializeFields` 空集双臂与
+`logOperationDuration` 计时、`ScreenMinimapView.screenTapHelp` 三分支、
+`WorkspaceSection` `.unavailable` 双态。
+
+#### 实测（CI，`coverage-verify.yml`）
+
+- 基线 main（run `45054279106`）：Sources 纯净 **31,962 行 / 5,258 missed / 83.55%**
+- 本轮中段（run `45060261202`，`688187e`）：**32,019 行 / 4,949 missed / 84.54%**
+  （**−309 missed / +0.99pp**），设置页四分区合计 −177 行、Voice −17、MCP −16、
+  `YabaiAnimationGuard` 8→**0**。
+- 设置页假绿修正是本轮最大单一来源——印证「断言在跑但测的是默认态」比缺测试更隐蔽。
+
+#### 剩余项复核（逐行）
+
+Top 缺口仍为既有 B/C 态：`InputBubbleController`(真面板/真 AX 读)、
+`TerminalGridController`(真建窗 osascript)、`AppDelegate`(C1 启动编排)、
+`HotKeyManager+CarbonHotKey/EventTap`(口径② HotKey E2E)、`CrashSignalHandler`(C5 信号真身)、
+`TitleEditorService`(C2 模态态)、`SARecoveryAdmin`(C3 提权)、`ScreenIndexPreferences`
+(C7 装机态沙箱守卫)、`PerfMonitor` 看门狗线程(C7)。**本轮未发现新的 A 态。**
+
+**验收口径不变**：字面 100% 仍物理不可达；本轮把可达面里「测了但测错对象」的一类
+假绿清掉，并把 2026-11-21/22 新代码的接线纳入断言。
