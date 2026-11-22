@@ -311,6 +311,85 @@ extension RunnerHarness {
               noYabaiResult?.ok == true && noYabaiResult?.message.contains("无法安放") == true)
     }
 
+    // MARK: - 投递失败臂（2026-11-23 补口）
+    //
+    // deliver() 的两条失败出口此前零覆盖（现有用例的 queryWindow 恒返回 info、
+    // manageable 恒就绪）：
+    //   ① queryWindow 返回 nil（窗口已关/查询失败）→ 直接 false；
+    //   ② 窗口可管理但写回后 5s 虚拟时钟内从未观测到目标 space → false。
+    // 两条都走 SessionRestoreEnvironment 注入缝 + 虚拟时钟，零真实等待零建窗。
+    func runSessionRestoreDeliveryFailureTests() {
+        guard let screen = NSScreen.screens.first else {
+            check("srSeamFail A0: 无屏环境跳过", true)
+            return
+        }
+        let iterm = "com.googlecode.iterm2"
+        let shellPane = SessionPaneSnapshot(kind: .shell, cwd: "/tmp/f")
+        func window(_ x: CGFloat, space: Int?) -> SessionWindowSnapshot {
+            SessionWindowSnapshot(
+                appBundleID: iterm, frame: CGRect(x: x, y: 0, width: 800, height: 600),
+                displayID: 1, yabaiDisplay: 1, yabaiSpace: space,
+                title: nil, wasMinimized: false, panes: [shellPane])
+        }
+        // 两个 create 目标：9001 走「查询返回 nil」，9002 走「可管理但永不落位」
+        let snapshot = SessionRestoreSnapshot(
+            id: "ut-deliver-fail", name: "f",
+            windows: [window(0, space: 2), window(1000, space: 2)],
+            launchCommand: nil)
+
+        var env = SessionRestoreEnvironment()
+        env.automationInstanceRefusal = { _, _ in nil }
+        env.ensureTerminalRunning = { _, _ in true }
+        env.screens = { [screen] }
+        env.exactYabaiDisplayIndex = { _ in 1 }
+        env.cgDisplayID = { _ in 1 }
+        env.primaryDisplayID = { 1 }
+        env.querySpaces = {
+            [YabaiSpaceInfo(id: 2, index: 2, display: 1, isVisible: true)]
+        }
+        env.focusSpace = { _, _ in true }
+        env.setWindowFloat = { _, _ in }
+        env.parkingScreen = { _ in NSScreen.screens.first }
+        env.quartzVisibleFrame = { _ in CGRect(x: 0, y: 0, width: 1440, height: 900) }
+        env.runYabai = { _, _, _ in }
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        env.now = { clock }
+        env.sleepNanos = { nanos in clock = clock.addingTimeInterval(Double(nanos) / 1_000_000_000) }
+        env.runAppleScript = { _ in "" }
+        env.queryAllWindows = { [] }
+        env.bundleIdentifierOfPID = { _ in iterm }
+        env.classifyTTY = { _ in PaneClassifier.Classification(kind: .shell, pid: nil, sshCommand: nil, sshTarget: nil) }
+        var created: [(UInt32?, String?)] = [(9001, "asid-1"), (9002, "asid-2")]
+        env.createTerminalCell = { _, _, _, _, _ in
+            let next = created.isEmpty ? (nil, nil) : created.removeFirst()
+            return (cgWindowID: next.0, corrected: false, appleScriptID: next.1)
+        }
+        // ① 9001 查询恒 nil；② 9002 可管理但 space 恒不等于目标 2
+        env.queryWindow = { id in
+            if id == 9001 { return nil }
+            return YabaiWindowInfo(
+                id: Int(id), pid: 1, app: "iTerm2", title: nil,
+                space: 9, display: 1,
+                frame: YabaiWindowInfo.Frame(x: 0, y: 0, w: 100, h: 100),
+                isFloatingRaw: false, hasAXReferenceRaw: true)
+        }
+
+        let dir = NSTemporaryDirectory() + "ut-seam-fail-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let controller = SessionRestoreController(
+            store: SessionRestoreStore(store: WindowStateStore(dbPath: dir + "/f.db")))
+        let result = runRestoreSeamAsync {
+            await SessionRestoreExecutor(controller: controller, environment: env)
+                .restore(snapshot: snapshot)
+        }
+        let summary = result?.message ?? "nil"
+        check("srSeamFail A1: restore 整体仍 ok（失败只记账不失败）",
+              result?.ok == true)
+        check("srSeamFail A2: 两窗均计入送达失败（query nil + 永不落位）（实际：\(summary)）",
+              summary.contains("2 窗未能送达"))
+    }
+
     /// MainActor 异步桥接（Task + 短片泵主 RunLoop，30s 死线）
     private func runRestoreSeamAsync<T: Sendable>(
         _ block: @escaping @MainActor () async -> T
