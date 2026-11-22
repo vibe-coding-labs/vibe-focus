@@ -124,22 +124,32 @@ extension RunnerHarness {
         // C′. origin 单缺补发（2026-11-23 补口）：段二计划只有 [.move]，走 applyMove
         //     ——这是「move 写丢失」的生产分支（尺寸已对、位置被钳回），此前执行器
         //     用例只造过 size 缺与全缺，单 .move 补发从未跑过。
+        //     收敛条件挂在「第二次 move 之后」（写次数驱动，不依赖读次数——段一
+        //     waitForPhase 会吃掉不确定次数的读，按读计数会随预算抖动）。
         do {
             let missOrigin = CGRect(x: 400, y: 300, width: 1653, height: 1079) // 仅 origin 缺
-            var n = 0
+            var moveWrites = 0
             var calls: [String] = []
-            let run = makeExecutor(
-                read: { n += 1; return n <= 14 ? missOrigin : target },
-                calls: { calls.append($0) }
-            ).run(target: target, order: .moveThenResize)
+            let executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { moveWrites >= 2 ? target : missOrigin },
+                    applyMove: { moveWrites += 1; calls.append("move") },
+                    applyResizeAdaptive: { calls.append("resizeAdaptive") },
+                    applyResizeRobust: { calls.append("resizeRobust") }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-origin-only", windowID: 1,
+                pollSleep: noSleep
+            )
+            let run = executor.run(target: target, order: .moveThenResize)
             check("executor C′1: 段一 [move, resizeAdaptive]（moveThenResize 写序）",
                   calls.count >= 2 && calls[0] == "move" && calls[1] == "resizeAdaptive")
             check("executor C′2: 段二补发只走 move（单 origin 缺不拆 resize）",
                   calls.dropFirst(2).allSatisfy { $0 == "move" } && calls.count > 2)
             check("executor C′3: 最终收敛且如实记 1 轮",
                   run.outcome.isConverged && run.convergedRounds == 1)
-            check("executor C′4: 全程无 robust（单维缺不进全缺通道）",
-                  !calls.contains("resizeRobust"))
+            check("executor C′4: 全程无 robust/adaptive 补发（单维缺不进全缺通道）",
+                  !calls.dropFirst(2).contains("resizeRobust")
+                  && !calls.dropFirst(2).contains("resizeAdaptive"))
         }
 
         // D. 全缺 × 两轮不收敛：段一 [resizeAdaptive, move]；段二每轮计划两段走
