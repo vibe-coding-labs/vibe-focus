@@ -94,6 +94,45 @@ extension RunnerHarness {
         check("overlaySignal: 取消后防抖不 fire（时间戳未推进=零 fork）",
               shared.lastForceRefreshTriggerAt == tBeforeSchedule)
 
+        // G. suspend/resume 自动刷新的幂等与配对语义（B317 起设置页/切换路径高频调用；
+        //    suspend 重入必须早退、resume 未挂起必须早退，否则会重复 invalidate/重建 Timer
+        //    并在 catchUp 时多打一次 force refresh）。只碰 refreshTimer 与状态位，
+        //    不创建任何 overlay 窗口。
+        do {
+            let saved = shared.automaticRefreshSuspended
+            defer {
+                // 恢复原状：先确保未挂起，再按原值回填
+                if shared.automaticRefreshSuspended, !saved {
+                    shared.resumeAutomaticRefreshes(reason: "vf-test-restore")
+                }
+                shared.automaticRefreshSuspended = saved
+            }
+
+            shared.automaticRefreshSuspended = false
+            shared.suspendAutomaticRefreshes(reason: "vf-test-suspend")
+            check("overlaySignal: suspend 置位并回收 Timer",
+                  shared.automaticRefreshSuspended && shared.refreshTimer == nil)
+            shared.suspendAutomaticRefreshes(reason: "vf-test-suspend-again")
+            check("overlaySignal: suspend 幂等（二次仍挂起、无 Timer）",
+                  shared.automaticRefreshSuspended && shared.refreshTimer == nil)
+
+            // resume 不带 catchUp：只重建 Timer、不触发 force refresh（时间戳不动）。
+            shared.lastForceRefreshTriggerAt = .distantPast
+            let stampBefore = shared.lastForceRefreshTriggerAt
+            shared.resumeAutomaticRefreshes(reason: "vf-test-resume")
+            check("overlaySignal: resume 清挂起态",
+                  !shared.automaticRefreshSuspended)
+            check("overlaySignal: resume 不带 catchUp 不触发刷新（时间戳未推进）",
+                  shared.lastForceRefreshTriggerAt == stampBefore)
+            shared.refreshTimer?.invalidate()
+            shared.refreshTimer = nil
+
+            // resume 未挂起 → 早退（不重建 Timer）。
+            shared.resumeAutomaticRefreshes(reason: "vf-test-resume-idempotent")
+            check("overlaySignal: 未挂起时 resume 早退（无 Timer 重建）",
+                  shared.refreshTimer == nil && !shared.automaticRefreshSuspended)
+        }
+
         // 收尾：restore 触发时间戳语义（下一次真实信号不被测试期时间戳抑制）。
         shared.lastForceRefreshTriggerAt = .distantPast
     }
