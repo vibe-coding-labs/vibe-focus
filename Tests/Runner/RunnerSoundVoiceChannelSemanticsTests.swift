@@ -114,5 +114,70 @@ extension RunnerHarness {
             check("sem: 语音模式 template→TTS 被调用", mockProvider.synthesizer.startCalled == true)
             voice.stopAll()
         }
+
+        // MARK: F. announceCompletion 的模板分支边界（B197/B200）
+        // 行覆盖缺口补口：模板空文案回落「对话完成」、音频路径为空回落文本、
+        // 提问收尾追加等待前缀、{tokens} 由 transcript 用量填充。
+        // 全部用 mock 合成器观察开口文本，不真实发声。
+        do {
+            let mockProvider = MockSynthesizerProvider()
+            voice.synthesizerProvider = mockProvider
+            voice.updateMode(.template)
+            voice.updateTemplateText("")
+            voice.announceCompletion(payload: payload!)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            check("sem: 空模板 → 回落「对话完成」",
+                  mockProvider.synthesizer.startedText == "对话完成")
+            voice.stopAll()
+
+            // 音频模式但路径为空 → 回落文本（不静默吞掉播报）
+            voice.updateMode(.audioFile)
+            voice.updateAudioFilePath("")
+            mockProvider.synthesizer.resetRecording()
+            voice.announceCompletion(payload: payload!)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            check("sem: 音频模式无路径 → 回落文本播报",
+                  mockProvider.synthesizer.startedText == "对话完成")
+            voice.stopAll()
+
+            // 提问收尾：transcript 尾部是问句 → 模板文案后追加等待前缀
+            let dir = "/tmp/vibefocus-sem-\(UUID().uuidString)"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: dir) }
+            let transcript = dir + "/session.jsonl"
+            let line = #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"要继续吗？"}],"usage":{"input_tokens":10,"output_tokens":30}}}"#
+            try? (line + "\n").data(using: .utf8)?.write(to: URL(fileURLWithPath: transcript))
+            // transcriptPath 是 let：用 memberwise init 重建（不可变值语义）
+            let base = payload!
+            let questionPayload = ClaudeHookPayload(
+                event: .stop,
+                sessionID: base.sessionID,
+                source: base.source,
+                timestamp: base.timestamp,
+                cwd: base.cwd,
+                model: base.model,
+                terminalCtx: base.terminalCtx,
+                lastAssistantMessage: base.lastAssistantMessage,
+                transcriptPath: transcript
+            )
+            voice.updateMode(.template)
+            voice.updateTemplateText("完成")
+            mockProvider.synthesizer.resetRecording()
+            voice.announceCompletion(payload: questionPayload)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            let spoken = mockProvider.synthesizer.startedText ?? ""
+            check("sem: 提问收尾追加等待前缀（实际：\(spoken)）",
+                  spoken.hasPrefix("完成。") && spoken.contains("要继续吗？"))
+            voice.stopAll()
+
+            // {tokens} 由 transcript 最后一轮 usage 填充
+            voice.updateTemplateText("用掉 {tokens} tokens")
+            mockProvider.synthesizer.resetRecording()
+            voice.announceCompletion(payload: questionPayload)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            check("sem: 模板 {tokens} 由 transcript 用量填充（实际：\(mockProvider.synthesizer.startedText ?? "nil")）",
+                  mockProvider.synthesizer.startedText?.contains("40") == true)
+            voice.stopAll()
+        }
     }
 }

@@ -26,6 +26,12 @@ final class MockSpeechSynthesizer: NSSpeechSynthesizer {
     private(set) var stopCalled = false
     override func startSpeaking(_ text: String) -> Bool { startedText = text; startCalled = true; return true }
     override func stopSpeaking() { stopCalled = true }
+    /// 测试缝：清空「本次开口」记录（同一 mock 跨多次播报断言用；生产路径无此调用）。
+    func resetRecording() {
+        startedText = nil
+        startCalled = false
+        stopCalled = false
+    }
 }
 
 final class MockSynthesizerProvider: SpeechSynthesizerProviding {
