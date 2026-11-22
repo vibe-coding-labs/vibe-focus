@@ -607,9 +607,14 @@ B/C 态，无新增豁免需求。
 #### 实测（CI，`coverage-verify.yml`）
 
 - 基线 main（run `45054279106`）：Sources 纯净 **31,962 行 / 5,258 missed / 83.55%**
-- 本轮中段（run `45060261202`，`688187e`）：**32,019 行 / 4,949 missed / 84.54%**
-  （**−309 missed / +0.99pp**），设置页四分区合计 −177 行、Voice −17、MCP −16、
-  `YabaiAnimationGuard` 8→**0**。
+- **终测（run `45065818388`，`2be91b4`）：32,019 行 / 4,790 missed / 85.04%
+  （−468 missed / +1.49pp）**；断言 **5,161 过 / 22 败**（基线 5,071/22，
+  失败集合与基线**逐条完全一致**——全部是 CI 无 yabai/AX 的既有环境域，
+  本轮零新增失败）。
+- 主要来源（missed 减少）：ClaudeHookSection −62、SoundProjectRules −46、
+  PermissionsSection −45、WorkspaceSection −35、SettingsUI −34、
+  Overlay+Rebuild −34、RestoreOutcome −27、CodexSection −24、AgentAccess −22、
+  LayoutSection −21、`YabaiAnimationGuard` 8→**0**。
 - 设置页假绿修正是本轮最大单一来源——印证「断言在跑但测的是默认态」比缺测试更隐蔽。
 
 #### 剩余项复核（逐行）
