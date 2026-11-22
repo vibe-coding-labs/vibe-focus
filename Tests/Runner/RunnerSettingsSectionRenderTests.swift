@@ -208,18 +208,67 @@ extension RunnerHarness {
         let view = SettingsView()
 
         // ===== A. claudeHookSection：安装结果横幅双态渲染（hookInstallMessage）=====
+        // 2026-11-23：改走 init 缝注入（post-install 写 @State 在无窗渲染下不落
+        // storage —— 旧写法「渲染出图」断言一直是默认态假绿；双态覆盖见 A′）。
         do {
-            let ok = view
-            ok.hookInstallMessage = "已安装到 ~/.claude/settings.json"
-            ok.hookInstallSucceeded = true
+            var okMessages = SettingsView.ResultMessages()
+            okMessages.hookInstall = "已安装到 ~/.claude/settings.json"
+            okMessages.hookInstallOK = true
+            let ok = SettingsView(gridTargetCode: TerminalGridPreferences.target,
+                                  resultMessages: okMessages)
             let rOK = ImageRenderer(content: ok.claudeHookSection)
             check("stateRender: 安装成功横幅渲染出图", rOK.nsImage != nil)
 
-            let fail = view
-            fail.hookInstallMessage = "安装辅助脚本失败"
-            fail.hookInstallSucceeded = false
+            var failMessages = SettingsView.ResultMessages()
+            failMessages.hookInstall = "安装辅助脚本失败"
+            failMessages.hookInstallOK = false
+            let fail = SettingsView(gridTargetCode: TerminalGridPreferences.target,
+                                    resultMessages: failMessages)
             let rFail = ImageRenderer(content: fail.claudeHookSection)
             check("stateRender: 安装失败横幅渲染出图", rFail.nsImage != nil)
+        }
+
+        // ===== A2. claudeHookSection：运行状态/Token/错误行（hookServer @Published 直注）=====
+        // 235-249 段依赖 hookServer.lastEventAt / 计数器 / lastErrorMessage 与
+        // SessionWindowRegistry.lastEventDescription —— 都是 @Published，可直接写。
+        do {
+            let savedAt = ClaudeHookServer.shared.lastEventAt
+            let savedTotal = ClaudeHookServer.shared.totalRequestCount
+            let savedHandled = ClaudeHookServer.shared.handledRequestCount
+            let savedUnmatched = ClaudeHookServer.shared.unmatchedSessionCount
+            let savedDescription = SessionWindowRegistry.shared.lastEventDescription
+            let savedToken = ClaudeHookPreferences.authToken
+            defer {
+                ClaudeHookServer.shared.lastEventAt = savedAt
+                ClaudeHookServer.shared.totalRequestCount = savedTotal
+                ClaudeHookServer.shared.handledRequestCount = savedHandled
+                ClaudeHookServer.shared.unmatchedSessionCount = savedUnmatched
+                SessionWindowRegistry.shared.lastEventDescription = savedDescription
+                ClaudeHookPreferences.authToken = savedToken
+            }
+
+            // 最近事件时间 + 非零计数行
+            ClaudeHookServer.shared.lastEventAt = Date(timeIntervalSince1970: 1_790_000_000)
+            ClaudeHookServer.shared.totalRequestCount = 42
+            ClaudeHookServer.shared.handledRequestCount = 40
+            ClaudeHookServer.shared.unmatchedSessionCount = 2
+            SessionWindowRegistry.shared.lastEventDescription = "SessionStart 绑定成功（ut）"
+            ClaudeHookPreferences.authToken = "ut-token-0123456789abcdef"
+            let withEvent = SettingsView(gridTargetCode: TerminalGridPreferences.target)
+            let rEvent = ImageRenderer(content: withEvent.claudeHookSection)
+            rEvent.proposedSize = ProposedViewSize(width: 720, height: 2600)
+            check("stateRender: 运行状态最近事件 + 计数行渲染出图", rEvent.nsImage != nil)
+
+            // 无事件 + 空 token → 「否则」分支（无「最近事件」行、Token 显示「未生成」）
+            ClaudeHookServer.shared.lastEventAt = nil
+            ClaudeHookServer.shared.totalRequestCount = 0
+            ClaudeHookServer.shared.handledRequestCount = 0
+            ClaudeHookServer.shared.unmatchedSessionCount = 0
+            ClaudeHookPreferences.authToken = nil
+            let noEvent = SettingsView(gridTargetCode: TerminalGridPreferences.target)
+            let rNoEvent = ImageRenderer(content: noEvent.claudeHookSection)
+            rNoEvent.proposedSize = ProposedViewSize(width: 720, height: 2600)
+            check("stateRender: 无事件 + 空 token 分支渲染出图", rNoEvent.nsImage != nil)
         }
 
         // ===== B. LANSettingsView：远程绑定行渲染（defaults 预置映射）=====
