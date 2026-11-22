@@ -96,5 +96,41 @@ extension RunnerHarness {
             let uninstallAgain = AgentOnboarding.uninstallSkill(home: tmp)
             check("onboard: 未安装卸载→幂等", uninstallAgain.ok && !uninstallAgain.changed)
         }
+
+        // MARK: D. 安装/卸载的 IO 失败臂（2026-11-23 补口）
+        // 此前只测成功链：安装 catch（目录建不出来）与卸载 catch（删不掉）都零覆盖。
+        // 用「父路径占成普通文件」强制失败，不动用户真实目录。
+        do {
+            let tmp = NSTemporaryDirectory() + "vf-onboard-err-\(UUID().uuidString.prefix(8))"
+            try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: tmp) }
+
+            // 让 skills 目录位置被普通文件占住 → createDirectory 必失败
+            let blockedHome = tmp + "/blocked-home"
+            let skillsDir = blockedHome + "/.claude/skills"
+            try? FileManager.default.createDirectory(atPath: blockedHome + "/.claude",
+                                                    withIntermediateDirectories: true)
+            try? "occupied".write(toFile: skillsDir, atomically: true, encoding: .utf8)
+            let failedInstall = AgentOnboarding.installSkill(home: blockedHome, port: 39277, token: "tk")
+            check("onboard: 目录不可建 → 安装如实失败（不崩）",
+                  !failedInstall.ok && !failedInstall.changed
+                  && failedInstall.message.hasPrefix("安装失败"))
+            check("onboard: 安装失败不留下半成品",
+                  !FileManager.default.fileExists(atPath: AgentOnboarding.skillFilePath(home: blockedHome)))
+
+            // 卸载失败臂：SKILL.md 被替换成非空目录 → removeItem 删不掉 → catch 分支
+            let realHome = tmp + "/real-home"
+            try? FileManager.default.createDirectory(atPath: realHome, withIntermediateDirectories: true)
+            _ = AgentOnboarding.installSkill(home: realHome, port: 39277, token: "tk")
+            check("onboard: 前置安装成功",
+                  AgentOnboarding.isSkillInstalled(home: realHome, port: 39277, token: "tk"))
+            let skillFile = AgentOnboarding.skillFilePath(home: realHome)
+            try? FileManager.default.removeItem(atPath: skillFile)
+            try? FileManager.default.createDirectory(atPath: skillFile + "/inner",
+                                                    withIntermediateDirectories: true)
+            let failedUninstall = AgentOnboarding.uninstallSkill(home: realHome)
+            check("onboard: 卸载删不掉 → 如实失败（不崩）",
+                  !failedUninstall.ok && failedUninstall.message.hasPrefix("卸载失败"))
+        }
     }
 }

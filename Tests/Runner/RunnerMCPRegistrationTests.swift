@@ -101,6 +101,70 @@ extension RunnerHarness {
             check("mcpReg: 无桥→报缺不写文件", !naked.ok && !naked.changed)
         }
 
+        // MARK: C′. 注册/注销的 IO 错误面（2026-11-23 补口）
+        // 三处此前零覆盖：
+        //   ① Claude 配置被写坏（非法 JSON）→ 如实拒写，绝不覆盖损坏文件；
+        //   ② 重复注册 → changed=false「已是最新注册」（幂等，不重写文件）；
+        //   ③ 目标不可写（父路径是文件）→ 写入失败如实上报，不崩。
+        do {
+            let tmp = NSTemporaryDirectory() + "vf-mcpreg-err-\(UUID().uuidString.prefix(8))"
+            try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: tmp) }
+
+            // ① 损坏 JSON
+            let brokenHome = tmp + "/broken"
+            try? FileManager.default.createDirectory(atPath: brokenHome, withIntermediateDirectories: true)
+            try? "{not json".write(toFile: MCPRegistration.claudeConfigPath(home: brokenHome),
+                                   atomically: true, encoding: .utf8)
+            let brokenReg = MCPRegistration.register(.claudeCode, home: brokenHome, command: cmd)
+            check("mcpReg: 损坏 ~/.claude.json → 拒写且如实报错", !brokenReg.ok && !brokenReg.changed)
+            check("mcpReg: 损坏文件原样保留（绝不覆盖）",
+                  (try? String(contentsOfFile: MCPRegistration.claudeConfigPath(home: brokenHome),
+                               encoding: .utf8)) == "{not json")
+            let brokenUnreg = MCPRegistration.unregister(.claudeCode, home: brokenHome)
+            check("mcpReg: 损坏 JSON 注销 → 同样拒写", !brokenUnreg.ok && !brokenUnreg.changed)
+
+            // ② 幂等：重复注册 changed=false，且文件 mtime 不变（未重写）
+            let idemHome = tmp + "/idem"
+            try? FileManager.default.createDirectory(atPath: idemHome, withIntermediateDirectories: true)
+            let first = MCPRegistration.register(.claudeCode, home: idemHome, command: cmd)
+            let configPath = MCPRegistration.claudeConfigPath(home: idemHome)
+            let firstMTime = (try? FileManager.default.attributesOfItem(atPath: configPath))?[.modificationDate] as? Date
+            let second = MCPRegistration.register(.claudeCode, home: idemHome, command: cmd)
+            let secondMTime = (try? FileManager.default.attributesOfItem(atPath: configPath))?[.modificationDate] as? Date
+            check("mcpReg: 重复注册幂等（ok 但 changed=false）", first.changed && second.ok && !second.changed)
+            check("mcpReg: 幂等注册不重写文件（mtime 未变）",
+                  firstMTime != nil && firstMTime == secondMTime)
+
+            // ②' codex 注销无块 → changed=false
+            let codexHome = tmp + "/codex-idem"
+            try? FileManager.default.createDirectory(atPath: codexHome, withIntermediateDirectories: true)
+            _ = MCPRegistration.register(.codex, home: codexHome, command: cmd)
+            let codexUnreg = MCPRegistration.unregister(.codex, home: codexHome)
+            let codexUnregAgain = MCPRegistration.unregister(.codex, home: codexHome)
+            check("mcpReg: codex 注销后无块 → changed=false",
+                  codexUnreg.changed && codexUnregAgain.ok && !codexUnregAgain.changed)
+
+            // ③ 不可写：把父目录位置占成普通文件 → 建目录失败 → 写入失败如实上报
+            let blockedHome = tmp + "/blocked"
+            try? FileManager.default.createDirectory(atPath: blockedHome, withIntermediateDirectories: true)
+            let blocker = blockedHome + "/.codex"
+            try? "occupied".write(toFile: blocker, atomically: true, encoding: .utf8)
+            let blocked = MCPRegistration.register(.codex, home: blockedHome, command: cmd)
+            check("mcpReg: 目标不可写 → ok=false 且不崩", !blocked.ok)
+        }
+
+        // MARK: C″. Host 显示名（设置页结果文案的唯一来源）
+        do {
+            check("mcpReg: Host 显示名逐字",
+                  MCPRegistration.Host.claudeCode.displayName == "Claude Code"
+                  && MCPRegistration.Host.codex.displayName == "Codex CLI")
+            check("mcpReg: Host 全量枚举两态且 rawValue 稳定",
+                  MCPRegistration.Host.allCases.count == 2
+                  && MCPRegistration.Host.claudeCode.rawValue == "claudeCode"
+                  && MCPRegistration.Host.codex.rawValue == "codex")
+        }
+
         // MARK: D. 路径派生（配置文件位置 + 随包桥二进制）
         do {
             check("mcpReg: claudeConfigPath 按 home 拼接",
