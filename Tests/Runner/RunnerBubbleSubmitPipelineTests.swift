@@ -323,5 +323,21 @@ extension RunnerHarness {
         controller.restoreClipboardIfSafe()
         check("pipeline: 剪贴板快照跳过 dyn 类型且还原普通字符串",
               NSPasteboard.general.string(forType: .string) == "VF-keep-me-9137")
+
+        // --- ⑩ 注入门「预算内逐拍重试」通道（2026-11-23 补口，必须放在域末尾）---
+        // 7b 只覆盖预算已耗尽的早退 abort（79-80）；83-96 的「重新 activate + 排下一拍」
+        // 重试通道零覆盖。放最后的原因：这条会在预算（2s）内留下延迟闭包，插在中间
+        // 会打断前面 blindDelay 用例的 Return 计数（i1 CI 实测红过）。
+        arm(text: "重试正文", bundleID: nil)
+        controller.submitFrontmostPIDProvider = { -1 }
+        controller.finishSubmission()
+        controller.phase = .submitting
+        controller.waitFrontmostAndInject(
+            target: InputBubbleController.Target(pid: ownPID, bundleID: nil, windowID: 777_002, title: "retry"),
+            text: "重试正文", mode: .submit, elapsedMs: 0)
+        let retryIdle = pumpUntilIdle(3.5)
+        check("pipeline: 预算内不匹配 → 逐拍重试直至耗尽后 abort（零键击）",
+              retryIdle && controller.phase == .idle && mock.events.isEmpty)
+        controller.submitFrontmostPIDProvider = nil
     }
 }
