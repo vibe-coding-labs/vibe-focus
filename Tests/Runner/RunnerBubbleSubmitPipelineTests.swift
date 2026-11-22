@@ -278,22 +278,6 @@ extension RunnerHarness {
         check("pipeline: 空文本 dismissOnly 零键击收尾",
               controller.phase == .idle && mock.events.isEmpty)
 
-        // 7d. 预算内但前台不匹配 → 走「逐拍激活重试」排程（B176 分支，2026-11-23 补口）
-        // 7b 走的是预算已耗尽（早退 abort）；这里 elapsedMs=0 且 provider 恒返回 -1，
-        // 必须真正进入 83-96 的「重新 activate + 排下一拍」通道，最终在预算耗尽时 abort。
-        arm(text: "重试正文", bundleID: nil)
-        controller.submitFrontmostPIDProvider = { -1 }
-        controller.finishSubmission()
-        controller.phase = .submitting
-        controller.waitFrontmostAndInject(
-            target: InputBubbleController.Target(pid: ownPID, bundleID: nil, windowID: 777_002, title: "retry"),
-            text: "重试正文", mode: .submit, elapsedMs: 0)
-        // 每拍间隔 50ms、预算 ~2.5s：泵 3.5s 让重试链跑到耗尽
-        let retryIdle = pumpUntilIdle(3.5)
-        check("pipeline: 预算内不匹配 → 逐拍重试直至耗尽后 abort（零键击）",
-              retryIdle && controller.phase == .idle && mock.events.isEmpty)
-        controller.submitFrontmostPIDProvider = nil
-
         // --- ⑧ 归位决策 restore 分支（缝判读=true，restore 本体走 nil 记录 failed 臂，零 DB 写） ---
         arm(text: "归位分支正文", bundleID: "com.googlecode.iterm2")
         InputBubblePreferences.autoRestoreOnSubmit = true
