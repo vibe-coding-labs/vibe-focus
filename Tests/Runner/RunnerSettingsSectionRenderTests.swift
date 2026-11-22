@@ -205,8 +205,6 @@ extension RunnerHarness {
 
 extension RunnerHarness {
     func runSettingsSectionStateRenderTests() {
-        let view = SettingsView()
-
         // ===== A. claudeHookSection：安装结果横幅双态渲染（hookInstallMessage）=====
         // 2026-11-23：改走 init 缝注入（post-install 写 @State 在无窗渲染下不落
         // storage —— 旧写法「渲染出图」断言一直是默认态假绿；双态覆盖见 A′）。
