@@ -78,5 +78,31 @@ extension RunnerHarness {
         check("screenSandbox E2: 生产 CFPreferences 偏好键写前写后零变化",
               (cfpBefore == nil && cfpAfter == nil)
               || (cfpBefore as? String == cfpAfter as? String))
+
+        // F. ScreenOverlayManager 偏好 flush 通道（2026-11-23 补口）
+        // flushPendingPreferenceSave 是设置页关闭/挂起前的强制落盘入口，
+        // 此前零断言：沙箱进程下必须落 /tmp 沙箱且（再次）零生产触碰。
+        do {
+            let om = ScreenOverlayManager.shared
+            let file = ScreenIndexPreferences.sandboxPreferencesURL
+            let hadFile = FileManager.default.fileExists(atPath: file.path)
+            if hadFile { try? FileManager.default.removeItem(at: file) }
+            defer {
+                if hadFile { ScreenIndexPreferences.default.save() }
+                else { try? FileManager.default.removeItem(at: file) }
+            }
+            var prefs = om.preferences
+            prefs.fontSize = 40
+            om.preferences = prefs
+            om.flushPendingPreferenceSave(reason: "ut-flush")
+            check("screenSandbox F1: flushPendingPreferenceSave 落沙箱文件",
+                  FileManager.default.fileExists(atPath: file.path))
+            let reloaded = ScreenIndexPreferences.load()
+            check("screenSandbox F2: flush 后沙箱回读为新字号", reloaded.fontSize == 40)
+            let prodAfterFlush = WindowStateStore.shared.loadPreference(
+                key: ScreenIndexPreferences.userDefaultsKey)
+            check("screenSandbox F3: flush 仍零生产库触碰", prodAfterFlush == prodBefore)
+            om.preferences = ScreenIndexPreferences.load()
+        }
     }
 }
