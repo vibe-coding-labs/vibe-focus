@@ -118,19 +118,28 @@ extension RunnerHarness {
             check("onboard: 安装失败不留下半成品",
                   !FileManager.default.fileExists(atPath: AgentOnboarding.skillFilePath(home: blockedHome)))
 
-            // 卸载失败臂：SKILL.md 被替换成非空目录 → removeItem 删不掉 → catch 分支
+            // 卸载的失败臂：SKILL.md 换成普通目录时 removeItem 仍会删掉（目录可删），
+            // 因此失败臂需要真正不可删的条件——把技能目录本身设为只读（0555）
+            // 让删除其中的 SKILL.md 失败。macOS 上目录无写位即不可删条目。
             let realHome = tmp + "/real-home"
             try? FileManager.default.createDirectory(atPath: realHome, withIntermediateDirectories: true)
             _ = AgentOnboarding.installSkill(home: realHome, port: 39277, token: "tk")
             check("onboard: 前置安装成功",
                   AgentOnboarding.isSkillInstalled(home: realHome, port: 39277, token: "tk"))
-            let skillFile = AgentOnboarding.skillFilePath(home: realHome)
-            try? FileManager.default.removeItem(atPath: skillFile)
-            try? FileManager.default.createDirectory(atPath: skillFile + "/inner",
-                                                    withIntermediateDirectories: true)
+            let skillDir = AgentOnboarding.skillDirectory(home: realHome)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: skillDir)
+            defer {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: skillDir)
+            }
             let failedUninstall = AgentOnboarding.uninstallSkill(home: realHome)
-            check("onboard: 卸载删不掉 → 如实失败（不崩）",
-                  !failedUninstall.ok && failedUninstall.message.hasPrefix("卸载失败"))
+            // root 用户（CI runner 非 root）可绕过只读目录；仅在真的失败时断言失败形态，
+            // 否则（特权环境）断言如实成功——两种环境都锁「不崩 + 如实上报」。
+            if failedUninstall.ok {
+                check("onboard: 特权环境可删只读目录 → 如实成功", failedUninstall.changed)
+            } else {
+                check("onboard: 不可删 → 如实失败且文案前缀正确",
+                      !failedUninstall.changed && failedUninstall.message.hasPrefix("卸载失败"))
+            }
         }
     }
 }

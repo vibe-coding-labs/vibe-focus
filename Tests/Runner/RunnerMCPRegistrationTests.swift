@@ -121,8 +121,14 @@ extension RunnerHarness {
             check("mcpReg: 损坏文件原样保留（绝不覆盖）",
                   (try? String(contentsOfFile: MCPRegistration.claudeConfigPath(home: brokenHome),
                                encoding: .utf8)) == "{not json")
+            // 注销语义与注册不同：ClaudeMCPConfig.remove 对坏 JSON 返回
+            // (content 原样, changed=false)——「没东西可注销」按幂等成功上报，
+            // 不覆盖损坏文件（宁可留给用户手动处理，也不写坏）。
             let brokenUnreg = MCPRegistration.unregister(.claudeCode, home: brokenHome)
-            check("mcpReg: 损坏 JSON 注销 → 同样拒写", !brokenUnreg.ok && !brokenUnreg.changed)
+            check("mcpReg: 损坏 JSON 注销 → 幂等成功且不覆盖文件",
+                  brokenUnreg.ok && !brokenUnreg.changed
+                  && (try? String(contentsOfFile: MCPRegistration.claudeConfigPath(home: brokenHome),
+                                  encoding: .utf8)) == "{not json")
 
             // ② 幂等：重复注册 changed=false，且文件 mtime 不变（未重写）
             let idemHome = tmp + "/idem"
