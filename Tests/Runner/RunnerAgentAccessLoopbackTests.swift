@@ -244,6 +244,29 @@ extension RunnerHarness {
             let r8 = runBG([.settingsSet(key: "sound.volume", value: "0.5")])
             AgentAccessPreferences.allowSettingsWrite = savedSettingsWrite
             check("loop: CLI settings set→退出码 0（POST 真生效）", r8.first == AgentCLIExitCode.ok)
+
+            // sessions list 的**非空**快照行映射（2026-11-23 补口）：上面的 sessions
+            // 断言跑的是空 home（count=0），365-370 的行映射（sessionId/lastEvent/lastAt）
+            // 从未执行。往临时 home 写一条活动快照后再跑。
+            do {
+                let activityPath = (tmp as NSString)
+                    .appendingPathComponent(".vibefocus/session-activity.json")
+                try? FileManager.default.createDirectory(
+                    atPath: (activityPath as NSString).deletingLastPathComponent,
+                    withIntermediateDirectories: true)
+                let seeded = SessionActivityTracker.encodeActivities(activities: [
+                    "ut-session-1": SessionActivity(lastEvent: .stop, at: Date(), lastCode: nil)
+                ])
+                if let seeded {
+                    try? seeded.write(to: URL(fileURLWithPath: activityPath))
+                }
+                check("loop: 种子会话快照已写入临时 home", seeded != nil
+                      && FileManager.default.fileExists(atPath: activityPath))
+                let r9 = runBG([.sessionsList])
+                check("loop: CLI sessions list 非空库行映射→退出码 0",
+                      r9.first == AgentCLIExitCode.ok)
+                try? FileManager.default.removeItem(atPath: activityPath)
+            }
         }
     }
 }
