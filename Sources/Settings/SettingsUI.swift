@@ -23,7 +23,9 @@ public struct SettingsView: View {
         gridTargetCode: String,
         gridMinimapScreens: [ScreenLayoutMapper.InputScreen] = [],
         gridSpaceSwitchMessage: String? = nil,
-        duplicateAppPaths: [String] = []
+        duplicateAppPaths: [String] = [],
+        layoutHotKeysEnabled: Bool? = nil,
+        layoutConflictSummary: String?? = nil
     ) {
         _gridTargetCode = State(initialValue: gridTargetCode)
         _gridMinimapScreens = State(initialValue: gridMinimapScreens)
@@ -31,6 +33,16 @@ public struct SettingsView: View {
         // 权限分区「其它安装副本」分支随同一缝注入：post-install 写 @State 在无窗
         // 渲染下不落 storage（B317），旧测试注入了却渲染不出来。
         _duplicateAppPaths = State(initialValue: duplicateAppPaths)
+        // 摆位分区两态同理：layoutHotKeysEnabled / layoutConflictSummary 没有
+        // UserDefaults 来源（纯本地 @State），post-install 写入渲染不出来。
+        // 双可选语义：layoutConflictSummary 传 `.some(nil)` = 显式清空冲突，
+        // 传 `nil` = 保留探针默认值。
+        if let enabled = layoutHotKeysEnabled {
+            _layoutHotKeysEnabled = State(initialValue: enabled)
+        }
+        if let conflict = layoutConflictSummary {
+            _layoutConflictSummary = State(initialValue: conflict)
+        }
     }
     @EnvironmentObject var hotKeyManager: HotKeyManager
     @StateObject var spaceController = SpaceController.shared

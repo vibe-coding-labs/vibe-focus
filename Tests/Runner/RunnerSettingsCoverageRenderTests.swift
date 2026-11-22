@@ -168,10 +168,14 @@ extension RunnerHarness {
             for enabled in [false, true] {
                 let conflicts: [String?] = [nil, "Rectangle"]
                 for conflict in conflicts {
-                    let view = SettingsView()
+                    // init 缝注入（B317 家法）：无窗 NSHostingView 下 post-install
+                    // 写 @State 不落 storage，旧的 `view.layoutHotKeysEnabled = …`
+                    // 实际上是渲染默认态——冲突横幅四态断言一直是假绿。
+                    let view = SettingsView(
+                        gridTargetCode: TerminalGridPreferences.target,
+                        layoutHotKeysEnabled: enabled,
+                        layoutConflictSummary: .some(conflict))
                     view.selectedTab = .orchestration
-                    view.layoutHotKeysEnabled = enabled
-                    view.layoutConflictSummary = conflict
                     let renderer = ImageRenderer(
                         content: SettingsViewHost(view: view)
                             .environmentObject(HotKeyManager.shared))
