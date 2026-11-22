@@ -22,10 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rather than "does it contain --move/--resize", so every write command is covered
     (reads — `query`, `config <key>` without a value, `signal`, bare `space`/`window`
     selectors, `--load-sa` — are skipped; unknown domains default to protected).
-  - Asserted at launch (previous value logged) and re-asserted **before and after** every
-    write in the single yabai choke point (`SpaceController.runYabai`), throttled to 30s —
-    so both a `yabairc` reload and a write that itself triggers one are covered, at zero
-    extra forks in steady state.
+  - Asserted at launch (previous value logged) and re-asserted **before every** write in
+    the single yabai choke point (`SpaceController.runYabai`), throttled to 30s. Frame
+    writes (`--move` / `--resize` / `--toggle float` / `--zoom-fullscreen`) additionally
+    re-assert **unconditionally after** the command returns, because those are the events
+    users hook `yabai -m config --load-sa` onto — the moment the switch would come back.
   - The app never restores the user's value: the whole point is that a focus-switching
     tool should jump, not glide.
 

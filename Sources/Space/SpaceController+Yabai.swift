@@ -57,12 +57,13 @@ extension SpaceController {
             )
             return nil
         }
-        // 写命令后再复断言：这条命令自己可能触发 yabairc 重新 source（用户绑定在
-        // window_created / space_changed 事件上的 `yabai -m config --load-sa`），
-        // 那一刻总闸会被改回非零——若不在此收口，下一次点击之前的所有布局变化
-        // 都会带动画。节流内是纯内存判定，常态零额外 fork。
-        if suppressAnimation {
-            YabaiAnimationGuard.shared.assertDisabled(reason: "yabai_write_after")
+        // 改窗口 frame 的命令执行完再**强制**复断言：这类命令最可能触发用户挂在
+        // window_moved / space_changed 事件上的 `yabai -m config --load-sa`，把总闸
+        // 改回非零。节流的 30s 窗口正好会被上一条前置断言的记录吃掉，所以这里必须
+        // force——此时窗口已落定，多一次 fork 不影响观感，但下一次切换不会被拉成动画。
+        // （非帧写入命令不强制：节流足够，且避免每条 space/float 命令都多一次 fork。）
+        if suppressAnimation, YabaiAnimationConfig.mutatesWindowFrame(arguments: arguments) {
+            YabaiAnimationGuard.shared.assertDisabled(reason: "yabai_write_after", force: true)
         }
 
         let durationMs = elapsedMilliseconds(since: startedAt)

@@ -37,15 +37,18 @@
 // ## 策略
 // - **只降不升**：断言 `window_animation_duration = 0.0`，从不恢复用户原值。恢复等于把
 //   用户明确要删掉的动画重新塞回来。
-// - **启动断言 + 写入前/后节流复断言**：yabai 只在 yabairc 被重新 source 时改配置
-//   （`yabai -m config --load-sa` 等），因此启动断言之后，任何写命令前后各做一次 30s
-//   节流的复断言即可覆盖「用户 reload 了 yabairc」的场景；常态下写入路径零额外 fork。
+// - **启动断言 + 写入前节流复断言 + 帧写入后强制复断言**：yabai 只在 yabairc 被重新
+//   source 时改配置（`yabai -m config --load-sa` 等）。写命令前做一次 30s 节流断言
+//   （常态零额外 fork）；改窗口 frame 的命令（--move/--resize/--toggle float
+//   /--zoom-fullscreen）执行完再 **force** 断言一次——这几条正是用户挂
+//   `--load-sa` 钩子的事件源，且时机在窗口落定之后，多一次 fork 不影响观感。
 // - **单一咽喉点**：接线在 `SpaceController.runYabai`（所有 yabai 写命令都从这里发令），
 //   不散落在各调用点，新增写通道自动受保护。
 //
 // ## 语义契约（Runner YabaiAnimationGuard 域锁定）
 // - 断言参数逐字为 `["-m", "config", "window_animation_duration", "0.0"]`；
-// - `requiresAnimationOff(arguments:)`：写窗口布局域 → true；纯读查询（query / config 查询）→ false；
+// - `requiresAnimationOff(arguments:)`：写窗口布局域 → true；纯读（query / 无值 config / signal / 裸选择器）→ false；
+// - `mutatesWindowFrame(arguments:)`：--move/--resize/--toggle float|windowed-fullscreen|--zoom-fullscreen → true；
 // - 节流窗口内不重复发令，跨过窗口后必再发一次（含并发调用只发一次）；
 // - 查询解析失败/空输出返回 nil，不猜默认值。
 
@@ -117,6 +120,25 @@ enum YabaiAnimationConfig {
             return true
         }
     }
+
+    /// 这条命令是否会**直接改窗口 frame**（而不只是可能触发重排）。
+    /// 用于发令后强制复断言：这类命令之后总闸被改回非零的概率最高（用户把
+    /// `yabai -m config --load-sa` 挂在 window_moved / space_changed 这类事件上，
+    /// 正是它们触发的事件），且时机在窗口已经落定之后——多一次 fork 不拖慢视觉。
+    static func mutatesWindowFrame(arguments: [String]) -> Bool {
+        guard arguments.contains("--move")
+            || arguments.contains("--resize")
+            || arguments.contains("--zoom-fullscreen")
+            || arguments.contains("--toggle") else { return false }
+        // `--toggle` 只认 float / windowed-fullscreen / zoom-fullscreen（改 frame 的三态）；
+        // `--toggle sticky` / `--toggle shadow` 等不动机位。
+        if arguments.contains("--toggle") {
+            return arguments.contains("float")
+                || arguments.contains("windowed-fullscreen")
+                || arguments.contains("zoom-fullscreen")
+        }
+        return true
+    }
 }
 
 /// 动画总闸：节流断言 `window_animation_duration = 0.0`。
@@ -142,10 +164,13 @@ final class YabaiAnimationGuard: @unchecked Sendable {
     }
 
     /// 必要时关断动画；返回本次是否真的发了令（节流命中返回 false）。
+    /// - Parameter force: 无视节流窗口必发一次令。只给「帧写入命令已执行完」的
+    ///   后置收口用：那时窗口已经落定，多一次 fork 不影响视觉，换来的是「yabairc
+    ///   被这条命令自己的事件钩子重新 source」这一漏洞必然被堵上。
     @discardableResult
-    func assertDisabled(now: Date = Date(), reason: String) -> Bool {
+    func assertDisabled(now: Date = Date(), reason: String, force: Bool = false) -> Bool {
         lock.lock()
-        let due = YabaiAnimationConfig.shouldAssert(last: lastAssertedAt, now: now)
+        let due = force || YabaiAnimationConfig.shouldAssert(last: lastAssertedAt, now: now)
         if due { lastAssertedAt = now }
         lock.unlock()
         guard due else { return false }

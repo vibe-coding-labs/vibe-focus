@@ -161,8 +161,7 @@ extension RunnerHarness {
                   state.calls.count == 1)
         }
 
-        // F. 写命令 + 发令前后双断言：节流窗口内一次写命令最多一次真实 config 发令
-        // （runYabai 在 before/after 各调一次 assertDisabled；节流把它压成一次 fork）。
+        // F. 写命令 + 发令前后双断言
         do {
             let state = YabaiAnimationGuardTestState()
             let unit = YabaiAnimationGuard { args in
@@ -170,11 +169,44 @@ extension RunnerHarness {
                 return nil
             }
             let t0 = Date()
-            // 模拟 runYabai 的 before/after 两次调用（同一 now，窗口内）。
+            // 模拟普通写命令的 before/after 两次非强制调用（同一 now，窗口内）。
             _ = unit.assertDisabled(now: t0, reason: "yabai_write")
             _ = unit.assertDisabled(now: t0, reason: "yabai_write_after")
-            check("yabaiAnim F1: 同一写命令的 before/after 双断言只落一次 config fork",
+            check("yabaiAnim F1: 节流窗口内的前后双断言只落一次 config fork",
                   state.calls == [YabaiAnimationConfig.disableArguments])
+
+            // 帧写入命令的后置收口是 force：即使节流窗口内也必发——那正是
+            // 「这条命令自己的事件钩子把 yabairc 重新 source 了」要被堵上的时刻。
+            let forced = unit.assertDisabled(now: t0, reason: "yabai_write_after", force: true)
+            check("yabaiAnim F2: force 无视节流必发一次令",
+                  forced && state.calls == [YabaiAnimationConfig.disableArguments,
+                                            YabaiAnimationConfig.disableArguments])
+            check("yabaiAnim F3: force 之后重置节流基准（紧接着的非强制断言被压掉）",
+                  !unit.assertDisabled(now: t0.addingTimeInterval(1), reason: "next")
+                  && state.calls.count == 2)
+        }
+
+        // G. 帧写入判定（决定后置断言是否 force）
+        do {
+            func frame(_ args: String...) -> Bool {
+                YabaiAnimationConfig.mutatesWindowFrame(arguments: args)
+            }
+            check("yabaiAnim G1: --move/--resize 合发 → 是帧写入",
+                  frame("-m", "window", "1", "--move", "abs:0:0", "--resize", "abs:9:9"))
+            check("yabaiAnim G2: --toggle float → 是帧写入",
+                  frame("-m", "window", "1", "--toggle", "float"))
+            check("yabaiAnim G3: --zoom-fullscreen → 是帧写入",
+                  frame("-m", "window", "1", "--zoom-fullscreen", "abs"))
+            check("yabaiAnim G4: --toggle windowed-fullscreen → 是帧写入",
+                  frame("-m", "window", "1", "--toggle", "windowed-fullscreen"))
+            check("yabaiAnim G5: --toggle shadow（不动机位）→ 不是帧写入",
+                  !frame("-m", "window", "1", "--toggle", "shadow"))
+            check("yabaiAnim G6: space --focus（不动窗口 frame）→ 不是帧写入",
+                  !frame("-m", "space", "--focus", "2"))
+            check("yabaiAnim G7: window --focus（不改 frame）→ 不是帧写入",
+                  !frame("-m", "window", "--focus", "1"))
+            check("yabaiAnim G8: query → 不是帧写入",
+                  !frame("-m", "query", "--windows"))
         }
     }
 }
