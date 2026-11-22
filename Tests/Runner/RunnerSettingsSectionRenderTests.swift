@@ -381,12 +381,14 @@ extension RunnerHarness {
             check("deep3: codexSection 关态警告横幅渲染出图", rOff.nsImage != nil)
 
             // 开态：按钮可用的全行分支 + 安装结果横幅（成功文案）
+            // 2026-11-23：横幅消息走 init 缝（纯 @State 后置写不落 storage，旧写法
+            // 渲染的是无横幅态；双态覆盖见 A′）。
             ClaudeHookPreferences.isEnabled = true
-            let on = view
-            on.hookEnabled = true
-            on.codexInstallMessage = "已安装到 Codex。hooks 有变更时需在 Codex TUI 执行 /hooks 重新信任"
-            on.codexInstallSucceeded = true
-            let rOn = ImageRenderer(content: on.codexSection)
+            var onMessages = SettingsView.ResultMessages()
+            onMessages.codexInstall = "已安装到 Codex。hooks 有变更时需在 Codex TUI 执行 /hooks 重新信任"
+            onMessages.codexInstallOK = true
+            let rOn = ImageRenderer(content: SettingsView(
+                gridTargetCode: TerminalGridPreferences.target, resultMessages: onMessages).codexSection)
             check("deep3: codexSection 开态+安装结果横幅渲染出图", rOn.nsImage != nil)
         }
 
@@ -535,18 +537,20 @@ extension RunnerHarness {
         }
 
         // ===== C. CodexSection 横幅双态渲染 =====
+        // 2026-11-23：改 init 缝（codexInstallMessage 是纯 @State，后置写不落 storage）。
         do {
-            let view = SettingsView()
-            let ok = view
-            ok.codexInstallMessage = "已安装到 Codex"
-            ok.codexInstallSucceeded = true
-            let rOK = ImageRenderer(content: ok.codexSection)
+            var okMessages = SettingsView.ResultMessages()
+            okMessages.codexInstall = "已安装到 Codex"
+            okMessages.codexInstallOK = true
+            let rOK = ImageRenderer(content: SettingsView(
+                gridTargetCode: TerminalGridPreferences.target, resultMessages: okMessages).codexSection)
             check("hotkeyOffline: codex 安装成功横幅渲染", rOK.nsImage != nil)
 
-            let fail = view
-            fail.codexInstallMessage = "安装失败"
-            fail.codexInstallSucceeded = false
-            let rFail = ImageRenderer(content: fail.codexSection)
+            var failMessages = SettingsView.ResultMessages()
+            failMessages.codexInstall = "安装失败"
+            failMessages.codexInstallOK = false
+            let rFail = ImageRenderer(content: SettingsView(
+                gridTargetCode: TerminalGridPreferences.target, resultMessages: failMessages).codexSection)
             check("hotkeyOffline: codex 安装失败横幅渲染", rFail.nsImage != nil)
         }
     }
