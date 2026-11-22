@@ -260,5 +260,37 @@ extension RunnerHarness {
         tick()
         check("inputBubbleTick N1: 多窗扫描只弹跨越到主屏的窗",
               state.movedSummons.count == 1 && state.movedSummons[0].windowID == 8015)
+
+        // O. 基线表容量淘汰（2026-11-23 补口）：recordBaseline 的 64 上限 FIFO
+        // 淘汰臂此前零覆盖（既有用例最多喂 2 窗）。
+        //
+        // 决定性证法：①先把 9100 落成「非主屏」基线（该拍不弹）；②再喂 64 个别的
+        // 窗，把 9100 挤出容量；③让 9100 变主屏并挂归因账——若基线仍在，这是
+        // 「非主屏→主屏」跨越应弹；基线已被淘汰则是首次观测，只落基线不弹。
+        state.reset()
+        state.autoShowOnFocus = false
+        state.autoShowOnMoveToMain = true
+        let anchor: UInt32 = 9100
+        state.windows = [entry(anchor, onMain: false)]
+        tick()
+        state.windows = (1...64).map { entry(UInt32(9100 + $0), onMain: true) } + [entry(anchor, onMain: false)]
+        tick()   // 65 个窗同拍落基线，anchor 在末尾被挤出
+        state.windows = (1...64).map { entry(UInt32(9100 + $0), onMain: true) } + [entry(anchor, onMain: true)]
+        state.movers[anchor] = .hookPull
+        tick()
+        check("inputBubbleTick O1: 超 64 容量后 anchor 基线被淘汰（变主屏也不判跨越、不弹）",
+              state.movedSummons.isEmpty && state.retargets.isEmpty)
+
+        // O′. 对照：不触发淘汰时同一路径应当弹（证明 O1 的「不弹」确因淘汰而非别的原因）
+        state.reset()
+        state.autoShowOnFocus = false
+        state.autoShowOnMoveToMain = true
+        state.windows = [entry(anchor, onMain: false)]
+        tick()
+        state.windows = [entry(anchor, onMain: true)]
+        state.movers[anchor] = .hookPull
+        tick()
+        check("inputBubbleTick O′1: 对照——未淘汰时非主屏→主屏照常弹",
+              state.movedSummons.count == 1 && state.movedSummons[0].windowID == anchor)
     }
 }
