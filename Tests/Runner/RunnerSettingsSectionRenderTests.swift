@@ -330,12 +330,24 @@ extension RunnerHarness {
             let rZero = ImageRenderer(content: LANSettingsView())
             check("stateMatrix: 取回 0 条状态文本渲染出图", rZero.nsImage != nil)
 
-            // A2. 远程绑定「未映射」分支（label → nil）
-            UserDefaults.standard.set(
-                #"{"vf-unmapped-label": null}"#,
-                forKey: "claudeHookRemoteBindings")
-            let rUnmapped = ImageRenderer(content: LANSettingsView())
+            // A2. 远程绑定「未映射」/「窗口 N」两分支（2026-11-23 修正）
+            // 旧写法往 defaults 写 {"label": null}——LANHookPreferences.remoteBindings
+            // 先按 [String: UInt32] 解码失败、再走兜底得 [:]，「未映射」行其实渲染不出来。
+            // 改走 memberwise init 直注 remoteBindings。
+            let unmappedView = LANSettingsView(
+                remoteBindings: ["vf-unmapped-label": nil],
+                newMachineLabel: "", remoteInstallMessage: nil, remoteInstallSucceeded: true,
+                spoolHosts: [], newSpoolHost: "")
+            let rUnmapped = ImageRenderer(content: unmappedView)
             check("stateMatrix: 绑定未映射分支渲染出图", rUnmapped.nsImage != nil)
+
+            // A2′. 已映射分支（windowID 非 nil → 「窗口 N」行）
+            let mappedView = LANSettingsView(
+                remoteBindings: ["vf-mapped-label": UInt32(4242)],
+                newMachineLabel: "", remoteInstallMessage: nil, remoteInstallSucceeded: true,
+                spoolHosts: [], newSpoolHost: "")
+            let rMapped = ImageRenderer(content: mappedView)
+            check("stateMatrix: 绑定已映射分支渲染出图", rMapped.nsImage != nil)
 
             // A3. 主机空清单 → 空状态分支
             RemoteSpoolHosts.saveHosts([])

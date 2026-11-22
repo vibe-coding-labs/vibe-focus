@@ -208,6 +208,25 @@ extension RunnerHarness {
             check("executor F4: 合计只读回 2 次（段一零读 + 段二写前/读后各一）", reads == 2)
         }
 
+        // F′. 省略 pollSleep 的生产默认参数（2026-11-23 补口）
+        // 所有既有用例都显式传 pollSleep:{ _ in }，`{ usleep(...) }` 这个默认参数
+        // 表达式从未求值。这里不传 pollSleep、且首读即收敛 → 断言收敛且不付等待。
+        do {
+            let executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { target },
+                    applyMove: {},
+                    applyResizeAdaptive: {},
+                    applyResizeRobust: {},
+                    applyCombined: {}
+                ),
+                tolerance: tol, op: "runner", stage: "executor-default-sleep", windowID: 1
+            )
+            let run = executor.run(target: target, order: .moveThenResize)
+            check("executor F′1: 省略 pollSleep 仍收敛（生产默认参数可求值）",
+                  run.outcome.isConverged && run.combinedPhase1)
+        }
+
         // G. 合发 + 全缺补发：段二同样合发（不再拆 robust/adaptive 两段）。
         do {
             var seen: [String] = []

@@ -125,4 +125,58 @@ extension RunnerHarness {
         // 回环：from(event) 的配置能 match 回同一事件
         check("hotkeyRoundtrip: 捕获配置回环匹配原事件", config.matches(event: cmdM) || true)
     }
+
+    // MARK: - 持久化读取三臂（2026-11-23 补口）
+    //
+    // HotKeyManager.init 只做「读 defaults + 只读 AX 探针」，零注册零 beep——
+    // 可安全构造第二实例。此前 loadStoredHotKey 的 decoded / legacyDefault 迁移
+    // 两臂与 loadStoredLayoutTable 的命中臂零覆盖。
+    func runHotKeyPersistenceLoadTests() {
+        let defaults = UserDefaults.standard
+        let hotKeyKey = HotKeyConfiguration.userDefaultsKey
+        let tableKey = LayoutHotKeyTable.userDefaultsKey
+        let savedHotKey = defaults.data(forKey: hotKeyKey)
+        let savedTable = defaults.data(forKey: tableKey)
+        defer {
+            if let savedHotKey { defaults.set(savedHotKey, forKey: hotKeyKey) }
+            else { defaults.removeObject(forKey: hotKeyKey) }
+            if let savedTable { defaults.set(savedTable, forKey: tableKey) }
+            else { defaults.removeObject(forKey: tableKey) }
+        }
+
+        // A. 合法存量配置 → 原样读回
+        let stored = HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_K), modifiers: UInt32(cmdKey))
+        defaults.set(try? JSONEncoder().encode(stored), forKey: hotKeyKey)
+        let loaded = HotKeyManager()
+        check("hotkeyLoad A1: 合法存量配置原样读回（decoded 臂）",
+              loaded.currentHotKey == stored)
+
+        // B. legacyDefault 存量 → 迁移为 .default（不把退役键位当现行配置）
+        defaults.set(try? JSONEncoder().encode(HotKeyConfiguration.legacyDefault),
+                     forKey: hotKeyKey)
+        let migrated = HotKeyManager()
+        check("hotkeyLoad B1: legacyDefault 存量 → 回落 .default（迁移臂）",
+              migrated.currentHotKey == .default)
+
+        // C. 损坏数据 → 回落 .default（不崩）
+        defaults.set(Data("not-json".utf8), forKey: hotKeyKey)
+        let corrupted = HotKeyManager()
+        check("hotkeyLoad C1: 损坏存量 → 回落 .default", corrupted.currentHotKey == .default)
+
+        // D. 合法布局表存量 → 原样读回（loadStoredLayoutTable 命中臂）
+        var table = LayoutHotKeyTable.withDefaults
+        let probe = HotKeyConfiguration(keyCode: UInt32(kVK_ANSI_9), modifiers: UInt32(cmdKey))
+        table.bindings[LayoutAction.leftHalf.rawValue] = probe
+        defaults.set(table.encoded(), forKey: tableKey)
+        let withTable = HotKeyManager()
+        check("hotkeyLoad D1: 合法布局表存量读回（含自定义绑定的动作）",
+              withTable.layoutTable.hotKey(for: .leftHalf) == probe)
+
+        // E. 无布局表存量 → 回落默认表（withDefaults 臂）
+        defaults.removeObject(forKey: tableKey)
+        let fresh = HotKeyManager()
+        check("hotkeyLoad E1: 无布局表存量 → 回落默认表（含默认左半绑定）",
+              fresh.layoutTable.hotKey(for: .leftHalf) == LayoutAction.defaultBindings[.leftHalf]
+              && LayoutAction.defaultBindings[.leftHalf] != nil)
+    }
 }

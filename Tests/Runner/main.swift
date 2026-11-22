@@ -436,6 +436,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runPureSweepB") { runPureSweepB() }
         runDomain("runAppIdentityTests") { runAppIdentityTests() }
         runDomain("runHotKeyDisplayTests") { runHotKeyDisplayTests() }
+        runDomain("runHotKeyPersistenceLoadTests") { runHotKeyPersistenceLoadTests() }
         runDomain("runHotKeyEventMatchTests") { runHotKeyEventMatchTests() }
         runDomain("runHotKeyRealMachineE2E") { runHotKeyRealMachineE2E() }
         runDomain("runToggleDecisionTests") { runToggleDecisionTests() }

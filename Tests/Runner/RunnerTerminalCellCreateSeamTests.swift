@@ -37,6 +37,24 @@ final class TerminalCellCreateResultBox: @unchecked Sendable {
 }
 
 extension RunnerHarness {
+
+    /// async 桥接（同文件内既有 run() 的 Task + 短片泵法，抽成可复用版）。
+    private func runMainActorWait<T>(_ block: @escaping @MainActor () async -> T) -> T? {
+        final class Box: @unchecked Sendable { var value: T? }
+        let box = Box()
+        let sem = DispatchSemaphore(value: 0)
+        Task { @MainActor in
+            box.value = await block()
+            sem.signal()
+        }
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline {
+            if sem.wait(timeout: .now() + 0.05) == .success { break }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        return box.value
+    }
+
     func runTerminalCellCreateSeamTests() {
         let state = TerminalCellCreateSeamState()
         let target = CGRect(x: 20, y: 20, width: 800, height: 600)
@@ -176,5 +194,24 @@ extension RunnerHarness {
         check("cellCreate H1: iTerm2 按落点就近匹配拿 CG id",
               h.cgWindowID == 555 && !h.corrected && state.locateCalls == 1
               && h.appleScriptID == "iterm-1")
+
+        // I. runScript 生产体（2026-11-23 补口）：现有用例全走 environment.runScript
+        // 注入，真实 osascript fork 的 23-33 段零覆盖。用不触任何 app 的极小脚本
+        // （`return 1` / `error "x"`）直调，锁 lastScriptError 双态语义：
+        // 每次调用都重写，不携带历史陈旧错误。
+        let controller = TerminalGridController.shared
+        let savedError = controller.lastScriptError
+        defer { controller.lastScriptError = savedError }
+
+        controller.lastScriptError = "陈旧错误（应被覆盖）"
+        let okResult = runMainActorWait { await controller.runScript("return 1") }
+        check("cellCreate I1: 成功脚本 → lastScriptError 被清空（不携陈旧错误）",
+              okResult != nil && okResult?.exitCode == 0
+              && controller.lastScriptError == nil)
+
+        let failResult = runMainActorWait { await controller.runScript("error \"vf-ut-boom\"") }
+        check("cellCreate I2: 失败脚本 → lastScriptError 反映本次错误",
+              failResult != nil && failResult?.exitCode != 0
+              && controller.lastScriptError?.isEmpty == false)
     }
 }
