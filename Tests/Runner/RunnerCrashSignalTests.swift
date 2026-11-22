@@ -21,6 +21,14 @@ extension RunnerHarness {
         installAtExitHandler()
         check("crash: atexit 处理器可注册", true)
 
+        // 2'. AppEntry（--crash-test-signal）跨模块入口：包装层等价性与幂等
+        // 公开入口此前零覆盖——它是 AppEntry 模块唯一能触达信号层的通道，
+        // 包装写错（例如漏传或改了调用顺序）不会被任何断言发现。
+        VibeFocusCrashPipeline.installHandlers()
+        check("crash: VibeFocusCrashPipeline.installHandlers 可重入（已安装态再次注册不崩）", true)
+        // recordTestLaunch 的真身落盘语义已由 RunnerShellRunnerTests 经同一入口锁定，
+        // 此处不重复触发（它会写生产 exits.jsonl）。
+
         // 3) PRE-CRASH STATE 双缓冲写入入口：正常短快照与截断长快照
         var okShort = false
         updateCrashSnapshot { buffer, size in
