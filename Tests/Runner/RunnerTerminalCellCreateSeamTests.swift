@@ -29,6 +29,11 @@ final class TerminalCellCreateSeamState: @unchecked Sendable {
     }
 }
 
+/// 通用可发送结果盒（Swift 不允许在泛型函数内嵌套类型）。
+final class SendableBox<T>: @unchecked Sendable {
+    var value: T?
+}
+
 final class TerminalCellCreateResultBox: @unchecked Sendable {
     var cgWindowID: UInt32?
     var corrected = false
@@ -39,9 +44,9 @@ final class TerminalCellCreateResultBox: @unchecked Sendable {
 extension RunnerHarness {
 
     /// async 桥接（同文件内既有 run() 的 Task + 短片泵法，抽成可复用版）。
+    /// 注：Swift 不允许在泛型函数内嵌套类型，结果盒放在文件作用域（SendableBox）。
     private func runMainActorWait<T>(_ block: @escaping @MainActor () async -> T) -> T? {
-        final class Box: @unchecked Sendable { var value: T? }
-        let box = Box()
+        let box = SendableBox<T>()
         let sem = DispatchSemaphore(value: 0)
         Task { @MainActor in
             box.value = await block()
@@ -204,14 +209,21 @@ extension RunnerHarness {
         defer { controller.lastScriptError = savedError }
 
         controller.lastScriptError = "陈旧错误（应被覆盖）"
-        let okResult = runMainActorWait { await controller.runScript("return 1") }
+        // runScript 返回 Optional，而桥接又包了一层 Optional：用 flatten 取内层结果。
+        let okBox = runMainActorWait { () -> YabaiClient.YabaiResult? in
+            await controller.runScript("return 1")
+        }
+        let okResult = okBox ?? nil
         check("cellCreate I1: 成功脚本 → lastScriptError 被清空（不携陈旧错误）",
-              okResult != nil && okResult?.exitCode == 0
+              okResult != nil && okResult!.exitCode == 0
               && controller.lastScriptError == nil)
 
-        let failResult = runMainActorWait { await controller.runScript("error \"vf-ut-boom\"") }
+        let failBox = runMainActorWait { () -> YabaiClient.YabaiResult? in
+            await controller.runScript("error \"vf-ut-boom\"")
+        }
+        let failResult = failBox ?? nil
         check("cellCreate I2: 失败脚本 → lastScriptError 反映本次错误",
-              failResult != nil && failResult?.exitCode != 0
+              failResult != nil && failResult!.exitCode != 0
               && controller.lastScriptError?.isEmpty == false)
     }
 }
