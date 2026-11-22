@@ -63,9 +63,14 @@ extension RunnerHarness {
 
     /// 单 tab 渲染：B239 把 7 个 tab 塞进同一域，CI 上整域超时（12min+）导致
     /// 连已渲染完的 tab 也随 profraw 一起丢失。拆域后每个 tab 独立成败。
-    private func renderSettingsTab(_ tab: SettingsTab) {
-        let view = SettingsView()
-        view.selectedTab = tab
+    ///
+    /// ⚠️ 必须走 `init(initialTab:)`：tabContent 是 switch 非惰性 TabView，渲染树只含
+    /// 选中 case；无窗 NSHostingView 下 post-install 写 `selectedTab` 不落 storage
+    /// （B317 家法）——本函数此前用 `SettingsView()` + 后置赋值，7 个 tab 域实际上
+    /// 全在渲染 general tab，其余 6 个 tab 的内容从未被求值。
+    private func renderSettingsTab(_ tab: SettingsTab, extra: (SettingsView) -> Void = { _ in }) {
+        let view = SettingsView(gridTargetCode: TerminalGridPreferences.target, initialTab: tab)
+        extra(view)
         let host = NSHostingView(rootView: view.environmentObject(HotKeyManager.shared))
         host.frame = NSRect(x: 0, y: 0, width: 680, height: 940)
         host.layoutSubtreeIfNeeded()
@@ -92,8 +97,8 @@ extension RunnerHarness {
             // 空表，「其它副本」整段（PermissionsSection 110-160）曾因此零覆盖。
             let view = SettingsView(
                 gridTargetCode: TerminalGridPreferences.target,
-                duplicateAppPaths: duplicates)
-            view.selectedTab = .general
+                duplicateAppPaths: duplicates,
+                initialTab: .general)
             let renderer = ImageRenderer(
                 content: SettingsViewHost(view: view).environmentObject(HotKeyManager.shared))
             renderer.proposedSize = ProposedViewSize(width: 680, height: 940)
@@ -174,8 +179,8 @@ extension RunnerHarness {
                     let view = SettingsView(
                         gridTargetCode: TerminalGridPreferences.target,
                         layoutHotKeysEnabled: enabled,
-                        layoutConflictSummary: .some(conflict))
-                    view.selectedTab = .orchestration
+                        layoutConflictSummary: .some(conflict),
+                        initialTab: .orchestration)
                     let renderer = ImageRenderer(
                         content: SettingsViewHost(view: view)
                             .environmentObject(HotKeyManager.shared))

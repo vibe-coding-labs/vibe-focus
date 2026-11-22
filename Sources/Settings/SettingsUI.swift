@@ -25,8 +25,12 @@ public struct SettingsView: View {
         gridSpaceSwitchMessage: String? = nil,
         duplicateAppPaths: [String] = [],
         layoutHotKeysEnabled: Bool? = nil,
-        layoutConflictSummary: String?? = nil
+        layoutConflictSummary: String?? = nil,
+        initialTab: SettingsTab? = nil
     ) {
+        if let initialTab {
+            _selectedTab = State(initialValue: initialTab)
+        }
         _gridTargetCode = State(initialValue: gridTargetCode)
         _gridMinimapScreens = State(initialValue: gridMinimapScreens)
         _gridSpaceSwitchMessage = State(initialValue: gridSpaceSwitchMessage)
