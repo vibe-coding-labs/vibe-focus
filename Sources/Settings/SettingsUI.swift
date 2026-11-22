@@ -22,11 +22,15 @@ public struct SettingsView: View {
     init(
         gridTargetCode: String,
         gridMinimapScreens: [ScreenLayoutMapper.InputScreen] = [],
-        gridSpaceSwitchMessage: String? = nil
+        gridSpaceSwitchMessage: String? = nil,
+        duplicateAppPaths: [String] = []
     ) {
         _gridTargetCode = State(initialValue: gridTargetCode)
         _gridMinimapScreens = State(initialValue: gridMinimapScreens)
         _gridSpaceSwitchMessage = State(initialValue: gridSpaceSwitchMessage)
+        // 权限分区「其它安装副本」分支随同一缝注入：post-install 写 @State 在无窗
+        // 渲染下不落 storage（B317），旧测试注入了却渲染不出来。
+        _duplicateAppPaths = State(initialValue: duplicateAppPaths)
     }
     @EnvironmentObject var hotKeyManager: HotKeyManager
     @StateObject var spaceController = SpaceController.shared

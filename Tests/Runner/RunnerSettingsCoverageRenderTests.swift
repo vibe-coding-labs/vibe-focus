@@ -87,9 +87,13 @@ extension RunnerHarness {
         // SettingsView（general tab），由外层注入环境。
         var allOK = true
         for duplicates in [["/tmp/VibeFocus-Copy-A.app", "/tmp/VibeFocus-Copy-B.app"], []] {
-            let view = SettingsView()
+            // 必须走 init 缝：无窗 NSHostingView 下 post-install 写 @State 不落
+            // storage（B317 家法）——直接 `view.duplicateAppPaths = …` 渲染的还是
+            // 空表，「其它副本」整段（PermissionsSection 110-160）曾因此零覆盖。
+            let view = SettingsView(
+                gridTargetCode: TerminalGridPreferences.target,
+                duplicateAppPaths: duplicates)
             view.selectedTab = .general
-            view.duplicateAppPaths = duplicates
             let renderer = ImageRenderer(
                 content: SettingsViewHost(view: view).environmentObject(HotKeyManager.shared))
             renderer.proposedSize = ProposedViewSize(width: 680, height: 940)
