@@ -174,6 +174,25 @@ extension RunnerHarness {
         let _ = view.workspaceSection
         check("workspace: 已装态分支求值无异常", true)
 
+        // F3/F4. .unavailable 分支（yabai 装了但没权限）：SIP 指引段；
+        // 再带 lastErrorMessage → 「yabai 返回：…」诊断行 + 「加载 scripting-addition」钮。
+        // spaceController 是 @StateObject（引用类型，写 @Published 立即生效），可直注。
+        let savedMessage = sc.lastErrorMessage
+        defer { sc.lastErrorMessage = savedMessage }
+        sc.availability = .unavailable
+        sc.lastErrorMessage = nil
+        print("[SECTION-PROBE] F3 workspaceSection(unavailable, 无错误)")
+        let _ = view.workspaceSection
+        check("workspace: 权限不足态 SIP 指引分支求值无异常", true)
+
+        sc.lastErrorMessage = "error with the scripting-addition"
+        print("[SECTION-PROBE] F4 workspaceSection(unavailable, 带错误)")
+        let _ = view.workspaceSection
+        check("workspace: 权限不足 + 错误文本 → 诊断行与加载钮分支求值无异常", true)
+
+        sc.availability = .available
+        sc.lastErrorMessage = savedMessage
+
         // refreshInstallations 烟测：后台只读扫描（findAppBundlePaths）+ 主线程回填
         view.refreshInstallations()
         Thread.sleep(forTimeInterval: 0.5)
