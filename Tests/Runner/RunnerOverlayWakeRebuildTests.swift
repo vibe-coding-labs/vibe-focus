@@ -88,5 +88,56 @@ extension RunnerHarness {
                 secondsSinceLastRebuild: 31, cooldown: 30))
         check("visibilityAudit T15: 冷却常量为正",
               ScreenOverlayManager.visibilityAuditCooldown == 30)
+
+        // ===== 实例接线（2026-11-23 补口）：决策表已穷举，但**调度臂**此前零覆盖 =====
+        // handler 只在被通知时才跑，写反「取消旧 work / 唤醒类追加补射」不会有任何断言红。
+        // 这里直接投通知对象驱动实例方法（零系统事件、零浮层创建）。
+        do {
+            let om = ScreenOverlayManager.shared
+            let savedEnabled = om.preferences.isEnabled
+            let savedSuppressed = om.crashLoopSuppressed
+            let savedBubble = om.overlaysSuppressedForInputBubble
+            defer {
+                om.pendingWakeRebuildWorkItem?.cancel()
+                om.pendingWakeRebuildWorkItem = nil
+                om.preferences.isEnabled = savedEnabled
+                om.crashLoopSuppressed = savedSuppressed
+                om.setOverlaysSuppressedForInputBubble(savedBubble)
+            }
+
+            // W1. 守卫拒绝（开关关）→ 不排程
+            om.pendingWakeRebuildWorkItem = nil
+            om.crashLoopSuppressed = false
+            om.setOverlaysSuppressedForInputBubble(false)
+            om.preferences.isEnabled = false
+            om.handleScreenWakeOrUnlockNotification(
+                Notification(name: NSWorkspace.didWakeNotification))
+            check("wakeWiring W1: 开关关 → 不排程重建", om.pendingWakeRebuildWorkItem == nil)
+
+            // W2. 守卫放行 → 排程一项（唤醒类事件只保留 1 个 pending；补射是独立闭包不占该项）
+            om.preferences.isEnabled = true
+            let first = DispatchWorkItem {}
+            om.pendingWakeRebuildWorkItem = first
+            om.handleScreenWakeOrUnlockNotification(
+                Notification(name: NSWorkspace.didWakeNotification))
+            let scheduled = om.pendingWakeRebuildWorkItem
+            check("wakeWiring W2: 放行 → 旧 work 被取消并替换为新排程",
+                  scheduled != nil && scheduled !== first && first.isCancelled)
+
+            // W3. 非唤醒类（解锁通知）也走同一排程路径
+            om.pendingWakeRebuildWorkItem?.cancel()
+            om.pendingWakeRebuildWorkItem = nil
+            om.handleScreenWakeOrUnlockNotification(
+                Notification(name: Notification.Name("com.apple.screenIsUnlocked")))
+            check("wakeWiring W3: 解锁通知同样排程重建", om.pendingWakeRebuildWorkItem != nil)
+            om.pendingWakeRebuildWorkItem?.cancel()
+            om.pendingWakeRebuildWorkItem = nil
+
+            // W4. performWakeRebuild 守卫：开关关时直接返回（不触碰窗口集合）
+            om.preferences.isEnabled = false
+            om.performWakeRebuild(reason: "ut-disabled")
+            check("wakeWiring W4: performWakeRebuild 开关关 → 早退不重建",
+                  om.overlayWindows.isEmpty)
+        }
     }
 }
