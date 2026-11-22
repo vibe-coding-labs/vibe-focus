@@ -341,6 +341,66 @@ extension RunnerHarness {
             check("deep3: codexSection 开态+安装结果横幅渲染出图", rOn.nsImage != nil)
         }
 
+        // ===== A′. 各分区「操作结果横幅」成功/失败双态（2026-11-23 补口）=====
+        // 这些横幅字段都是纯 @State，无 UserDefaults 来源：post-install 写入在无窗
+        // 渲染下不落 storage 且本域此前正是那样写的——横幅分支等于从未求值。
+        // 改走 init 缝注入。
+        do {
+            func messages(
+                hook: String?, hookOK: Bool, codex: String?, codexOK: Bool,
+                codexTest: String? = nil, mcp: String? = nil, mcpOK: Bool = true,
+                onboarding: String? = nil, onboardingOK: Bool = true
+            ) -> SettingsView.ResultMessages {
+                var m = SettingsView.ResultMessages()
+                m.hookInstall = hook
+                m.hookInstallOK = hookOK
+                m.codexInstall = codex
+                m.codexInstallOK = codexOK
+                m.codexTest = codexTest
+                m.mcpAction = mcp
+                m.mcpActionOK = mcpOK
+                m.onboarding = onboarding
+                m.onboardingOK = onboardingOK
+                return m
+            }
+            let savedHookEnabled = ClaudeHookPreferences.isEnabled
+            defer { ClaudeHookPreferences.isEnabled = savedHookEnabled }
+            ClaudeHookPreferences.isEnabled = true
+
+            for (tag, ok, hook, codex) in [
+                ("成功", true, "已安装到 ~/.claude/settings.json", "已安装到 Codex"),
+                ("失败", false, "安装辅助脚本失败", "写 ~/.codex/hooks.json 失败"),
+            ] {
+                let view = SettingsView(
+                    gridTargetCode: TerminalGridPreferences.target,
+                    initialTab: .claudeIntegration,
+                    resultMessages: messages(hook: hook, hookOK: ok, codex: codex, codexOK: ok,
+                                             mcp: "Claude Code：已注册", mcpOK: ok,
+                                             onboarding: "接入提示词已复制", onboardingOK: ok))
+                let rHook = ImageRenderer(content: view.claudeHookSection)
+                check("msgBanner: claudeHookSection \(tag)横幅渲染出图", rHook.nsImage != nil)
+                let rCodex = ImageRenderer(content: view.codexSection)
+                check("msgBanner: codexSection \(tag)横幅渲染出图", rCodex.nsImage != nil)
+            }
+
+            // codex 测试事件结果行（无成功/失败色，只有中性文本）
+            let testView = SettingsView(
+                gridTargetCode: TerminalGridPreferences.target,
+                resultMessages: messages(hook: nil, hookOK: true, codex: nil, codexOK: true,
+                                         codexTest: "测试事件已发送（session=codex-test-abc）"))
+            let rTest = ImageRenderer(content: testView.codexSection)
+            check("msgBanner: codex 测试事件结果行渲染出图", rTest.nsImage != nil)
+
+            // agentAccessSection 的 MCP 注册结果行 + 接入物料结果行
+            let agentView = SettingsView(
+                gridTargetCode: TerminalGridPreferences.target,
+                initialTab: .agentAccess,
+                resultMessages: messages(hook: nil, hookOK: true, codex: nil, codexOK: true,
+                                         mcp: "Codex CLI：已移除", onboarding: "已卸载技能包"))
+            _ = agentView.agentAccessSection
+            check("msgBanner: agentAccessSection 结果行求值无异常", true)
+        }
+
         // ===== B. 声音防打扰安静时段深层行（quietHoursEnabled 开 → 起/止小时 Picker）=====
         do {
             // updateQuietHours 转发通道（preferences private(set)，B238 家法）

@@ -8,6 +8,22 @@ import UniformTypeIdentifiers
 
 public struct SettingsView: View {
     public init() {}
+    /// 测试缝：各分区「操作结果横幅」的初始值集合（纯 @State，无 UserDefaults 来源）。
+    /// 生产走 `init()` / `init(initialTab:)`，零行为变更。
+    struct ResultMessages {
+        var hookInstall: String? = nil
+        var hookInstallOK = true
+        var codexInstall: String? = nil
+        var codexInstallOK = true
+        var codexTest: String? = nil
+        var mcpAction: String? = nil
+        var mcpActionOK = true
+        var onboarding: String? = nil
+        var onboardingOK = true
+        var gridResult: String? = nil
+        var gridResultIsError = false
+        var gridFavoriteWarning: String? = nil
+    }
     /// B317 测试缝：指定初始 tab（tabContent 是 switch 非惰性 TabView，渲染树只含
     /// 选中 case；@EnvironmentObject 急切访问的 section（如 layoutHotKeySection 的
     /// hotKeyManager.layoutTable）必须整树渲染，post-install 写 @State 在无窗
@@ -26,10 +42,27 @@ public struct SettingsView: View {
         duplicateAppPaths: [String] = [],
         layoutHotKeysEnabled: Bool? = nil,
         layoutConflictSummary: String?? = nil,
-        initialTab: SettingsTab? = nil
+        initialTab: SettingsTab? = nil,
+        resultMessages: ResultMessages? = nil
     ) {
         if let initialTab {
             _selectedTab = State(initialValue: initialTab)
+        }
+        // 各分区操作结果横幅（安装/测试/注册/接入物料）都是纯 @State，无 UserDefaults
+        // 来源——post-install 写入在无窗渲染下不落 storage，横幅分支只能靠初始值。
+        if let resultMessages {
+            _hookInstallMessage = State(initialValue: resultMessages.hookInstall)
+            _hookInstallSucceeded = State(initialValue: resultMessages.hookInstallOK)
+            _codexInstallMessage = State(initialValue: resultMessages.codexInstall)
+            _codexInstallSucceeded = State(initialValue: resultMessages.codexInstallOK)
+            _codexTestMessage = State(initialValue: resultMessages.codexTest)
+            _mcpActionMessage = State(initialValue: resultMessages.mcpAction)
+            _mcpActionOK = State(initialValue: resultMessages.mcpActionOK)
+            _onboardingMessage = State(initialValue: resultMessages.onboarding)
+            _onboardingOK = State(initialValue: resultMessages.onboardingOK)
+            _gridResultMessage = State(initialValue: resultMessages.gridResult ?? "")
+            _gridResultIsError = State(initialValue: resultMessages.gridResultIsError)
+            _gridFavoriteWarning = State(initialValue: resultMessages.gridFavoriteWarning)
         }
         _gridTargetCode = State(initialValue: gridTargetCode)
         _gridMinimapScreens = State(initialValue: gridMinimapScreens)
