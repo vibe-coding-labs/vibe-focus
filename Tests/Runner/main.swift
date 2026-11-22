@@ -666,6 +666,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runReadOnlySweepTests") { runReadOnlySweepTests() }
         runDomain("runCaptureSeamTests") { runCaptureSeamTests() }
         runDomain("runSettingsViewSectionBodyTests") { runSettingsViewSectionBodyTests() }
+        runDomain("runTerminalSessionCardRenderTests") { runTerminalSessionCardRenderTests() }
         runDomain("runSoundRulesBodyTests") { runSoundRulesBodyTests() }
         runDomain("runSoundPrefsClampTests") { runSoundPrefsClampTests() }
         runDomain("runWorkspaceSectionBranchTests") { runWorkspaceSectionBranchTests() }

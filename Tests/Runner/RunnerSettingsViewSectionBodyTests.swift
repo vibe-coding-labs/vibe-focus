@@ -19,6 +19,31 @@ import SwiftUI
 // 构建期不执行——CodexSection 构建期仅 isHookInstalled() 读 ~/.codex/hooks.json（只读）。
 
 extension RunnerHarness {
+    // MARK: - 会话卡片的条件分支真渲染（2026-11-23 补口）
+    //
+    // terminalSessionCard 的「自动检测结果」反馈行（gridResultMessage 有值 →
+    // 红/灰双色文本）与「检测到同类窗口管理器」提示横幅（gridFavoriteWarning）
+    // 都是纯 @State，裸求值只构建外层结构、条件分支不进渲染树；必须 ImageRenderer
+    // 真渲染 + init 缝注入初值才能覆盖。
+    func runTerminalSessionCardRenderTests() {
+        var withResult = SettingsView.ResultMessages()
+        withResult.gridResult = "已恢复到「双屏双工作区」（2 窗 / 2 屏）"
+        withResult.gridResultIsError = false
+        withResult.gridFavoriteWarning = "检测到 Rectangle 正在运行，摆位热键已让位"
+        let okView = SettingsView(gridTargetCode: "d1s1", resultMessages: withResult)
+        let okRenderer = ImageRenderer(content: okView.terminalSessionCard)
+        okRenderer.proposedSize = ProposedViewSize(width: 620, height: 640)
+        check("sessionCard: 成功结果行 + 偏好警告横幅渲染出图", okRenderer.nsImage != nil)
+
+        var withError = SettingsView.ResultMessages()
+        withError.gridResult = "创建网格失败：终端未就绪"
+        withError.gridResultIsError = true
+        let errView = SettingsView(gridTargetCode: "main", resultMessages: withError)
+        let errRenderer = ImageRenderer(content: errView.terminalSessionCard)
+        errRenderer.proposedSize = ProposedViewSize(width: 620, height: 640)
+        check("sessionCard: 失败结果行（红字分支）渲染出图", errRenderer.nsImage != nil)
+    }
+
     func runSettingsViewSectionBodyTests() {
         let view = SettingsView()
 
@@ -146,6 +171,24 @@ extension RunnerHarness {
         print("[SECTION-PROBE] E3 projectRulesSection(2 rules)")
         let _ = view.projectRulesSection
         check("soundRules: 规则态 body 求值无异常", true)
+
+        // E4：裸求值只构建外层 VStack，ForEach 行体（项目名 TextField / 音效 Picker /
+        // 迷你试听 / 删除钮）不会实例化——必须交给 SwiftUI 真渲染。这是规则行的
+        // 唯一渲染通道（SoundProjectRules 49-101 曾因此整段零覆盖）。
+        let renderer = ImageRenderer(
+            content: SettingsView(gridTargetCode: TerminalGridPreferences.target)
+                .projectRulesSection)
+        renderer.proposedSize = ProposedViewSize(width: 620, height: 420)
+        check("soundRules: 两条规则的 ForEach 行体真渲染出图", renderer.nsImage != nil)
+
+        // E5：规则音效类型切换（Picker 绑定 get 分支随规则态变化）
+        sm.setProjectRuleSound(at: 0, .builtinDing)
+        sm.setProjectRuleSound(at: 1, .systemDefault)
+        let renderer2 = ImageRenderer(
+            content: SettingsView(gridTargetCode: TerminalGridPreferences.target)
+                .projectRulesSection)
+        renderer2.proposedSize = ProposedViewSize(width: 620, height: 420)
+        check("soundRules: 规则音效异态双 row 渲染出图", renderer2.nsImage != nil)
     }
 
     // MARK: - B269：WorkspaceSection 条件分支注入求值（availability 可写 @Published）
