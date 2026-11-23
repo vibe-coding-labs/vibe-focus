@@ -544,27 +544,30 @@ extension RunnerHarness {
             var l4bCalls: [String] = []
             var l4bBounds = CGRect(x: 101, y: -1050, width: 640, height: 525)
             let l4bTarget = CGRect(x: 0, y: 25, width: 1653, height: 1079)
-            var l4bClampSize = true   // 源屏阶段 resize 一律被钳
+            /// 窗口是否已落在目标屏（决定 size 写是否会被源屏可视区钳住）。
+            var l4bOnTargetDisplay = false
             let l4bExecutor = FrameWriteExecutor(
                 deps: .init(
                     read: { l4bBounds },
                     applyMove: {
                         l4bCalls.append("yabaiMove")
                         l4bBounds.origin = l4bTarget.origin
-                        l4bClampSize = false   // 落到目标屏后不再被钳
+                        l4bOnTargetDisplay = true
                     },
                     applyResizeAdaptive: {
                         l4bCalls.append("axResize")
-                        // 被钳时尺寸只到 1055 高（< 目标 1079，超容差）
-                        l4bBounds.size = l4bClampSize
-                            ? CGSize(width: l4bTarget.width, height: 1055)
-                            : l4bTarget.size
+                        // 还在源屏 → 被钳到 1055（差 24 > 容差 20，读回判为未到位）；
+                        // 已落目标屏 → 精确到位。
+                        l4bBounds.size = l4bOnTargetDisplay
+                            ? l4bTarget.size
+                            : CGSize(width: l4bTarget.width, height: 1055)
                     },
                     applyResizeRobust: { l4bCalls.append("yabaiResize") },
                     applyCombined: { l4bCalls.append("combined") },
                     applyMovePrecise: {
                         l4bCalls.append("axMove")
                         l4bBounds.origin = l4bTarget.origin
+                        l4bOnTargetDisplay = true
                         return true
                     },
                     axPreciseSize: { true },
@@ -574,8 +577,8 @@ extension RunnerHarness {
                 pollSleep: noSleep, phaseSettle: { _ in }
             )
             let l4bRun = l4bExecutor.run(target: l4bTarget, order: .moveThenResize)
-            // 精确锁死：先试 resize（被钳）→ 回落历史 move→resize。
-            // 首段 resize 计 1 次；回落 move 走 AX（未被钳，返回 true）；再 resize 成功。
+            // 精确锁死：先试 resize（源屏 → 被钳 1055，读回判未到位）
+            // → 回落历史 move→resize（AX move 落目标屏 → AX resize 精确到位）。
             check("executor L4′1: 放大序 resize 被钳 → 回落 [axResize, axMove, axResize]",
                   l4bCalls == ["axResize", "axMove", "axResize"])
             check("executor L4′2: clamp 回落路径仍收敛到终态", l4bRun.outcome.isConverged)
