@@ -62,6 +62,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Window switching is now verifiably single-step, and the log says so
+  - The all-AX path no longer sleeps 25ms between the resize and the move. That beat was
+    copied from the `axPrecise` arm, where it is genuinely needed (the move goes through
+    yabai, whose in-process frame cache must catch up). In the all-AX arm the move is also
+    an AX write — nothing reads yabai's cache — so the two writes now go back to back.
+  - `segment timing` gains `phase1WriteSteps`: **1** means the user saw a single jump,
+    **2** means it fell back to two (an AX position write that the system clamped, which
+    also logs a warning). The plan field says what *should* happen; this field says what
+    *did*. Runner locks both arms (L3″ = 1, L7′ = 2 on fallback) so the honesty cannot
+    regress.
+  - `docs/performance-triage-runbook.md` gains a "why is switching slow / why two steps"
+    section splitting the problem into two orthogonal axes — **visible animation** (yabai
+    writes size→position→size from its frame cache; fix = keep position out of yabai) and
+    **total duration** (6 yabai forks per restore, no longer on the main thread since
+    B191). Mixing them up is what made earlier investigations chase the wrong layer.
+
 - Window switching between displays is now a **single** visual step in **both directions**
   - Moving a window to the main screen (secondary → main, enlarge) and restoring it
     (main → secondary, shrink) used to be two writes even after the precision fix: the
