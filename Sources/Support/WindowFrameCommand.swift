@@ -27,10 +27,11 @@
 // `window_manager_set_window_frame()`：它「size → position → size」写三遍，且 size 用的是
 // yabai 进程内缓存的宽高。对按字符网格吸附的终端窗口（iTerm2）这组写入会停在吸附值
 // （目标 640 → 664，每列 ~8px）。App 直接写一次 `kAXSizeAttribute` 才是精确的。
-// 因此 `moveWindowToFrameViaYabai` 现在：AX 尺寸可写时走「AX resize + yabai move」
-// （FramePhase1Plan.axPrecise），**只有** AX 不可写/已证明吞写时才用本类型的合发；
-// 会话恢复/终端网格投递仍用合发——它们的目标窗是新建的、AX 引用尚在懒建立期，
-// 且历史实证（SpaceDelivery 头注）AX resize 会被 iTerm2 的窗口自动恢复行为吞掉。
+// 因此 `moveWindowToFrameViaYabai` **不再**使用合发：它恒走「尺寸 AX / 位置 yabai」
+// 两段（2026-11-23 收敛，见 FrameWriteExecutor 头注）。
+// 合发**只**保留给会话恢复与终端网格投递——它们的目标窗是新建的、AX 引用尚在
+// 懒建立期（1-3s），且历史实证（SpaceDelivery 头注）AX resize 会被 iTerm2 的窗口
+// 自动恢复行为吞掉，`--move`+`--resize` 合发是那两条路径唯一可用的写法。
 // 命令构造收敛到本类型，两个写通道（yabai / AX）与三处调用点同源，避免再次各写一份。
 
 // ## 语义契约（Runner FrameCommand 域锁定）

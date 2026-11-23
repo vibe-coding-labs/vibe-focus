@@ -306,17 +306,8 @@ extension WindowManager {
                 applyResizeAdaptive: writeResize,
                 applyResizeRobust: writeResize,
                 // 本通道两段都是 AX 写（position/size），尺寸天然精确、无 yabai 进程缓存
-                // 参与 → 走 **axFull** 臂：位置与尺寸都不经 yabai，段间从 300ms 等到位
-                // 轮询降为固定短节拍（收窄序）或首读即走的落地判定（放大序）。
-                //
-                // 两维都声明为可 AX —— 这是进入 `.axFull` 臂的条件（决定 decide() 的分支）。
-                //
-                // 但**不**设 applyMovePrecise：本通道的 applyMove 本身就是 AX position 写，
-                // `moveFrame` 里 `guard let precise = deps.applyMovePrecise else { … }`
-                // 会直接落 applyMove，等价于原两段 AX 写，只是等待语义换成短节拍；
-                // 也不存在「降级到 yabai」这一层（本通道是 yabai-blind 窗口的专用通道）。
-                axPreciseSize: { true },
-                axPreciseMove: { true }
+                // 参与 → 声明尺寸可 AX，段二补发走 AX 而非 yabai --resize。
+                axPreciseSize: { true }
             ),
             tolerance: tolerance,
             op: op,

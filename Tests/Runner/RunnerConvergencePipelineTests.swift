@@ -188,36 +188,25 @@ extension RunnerHarness {
         // 决策层已恒返回 .yabaiPolled，合发不再参与任何路径；这些用例失去对应实现，
         // 保留会锁定一个不存在的行为。回归锁由 I/J 两个块承担。
 
-        // I. 收敛后的决策契约（2026-11-23）：**恒走历史两段 + 段间等生效**。
+        // I. 收敛后的决策契约（2026-11-23）：**只有一条路径**。
         //
-        // 背景：跨屏且改尺寸时「一步完成」在物理上不存在——
-        //   ① yabai --move 用缓存宽高重写 size；② iTerm2 位置+尺寸同变时按字符网格
-        //   吸附（640→664）；③ 裸 AX 跨屏 position 写被钳回源屏。
-        // 因此 FramePhase1Plan.decide 一并返回 .yabaiPolled，不再按通道分臂。
-        // 各版「优化」（合发 / 全 AX / 先试终态 / 单次写）均已被真机否掉。
+        // 背景：跨屏且改尺寸时「一步完成」在物理上不存在——① yabai --move 用缓存
+        // 宽高重写 size；② iTerm2 位置+尺寸同变时按字符网格吸附（640→664）；
+        // ③ 裸 AX 跨屏 position 写被钳回源屏。历史各版「优化」均已被真机否掉。
         do {
-            check("plan I1: 任何通道组合 × 收窄序 → 恒 .yabaiPolled(resizeThenMove)",
-                  FramePhase1Plan.decide(axPreciseSize: true, axPreciseMove: true,
-                                         combinedAvailable: true, order: .resizeThenMove,
-                                         axSettleMs: 25, moveSettleBudgetMs: 150)
+            check("plan I1: 收窄序 → yabaiPolled(resizeThenMove)",
+                  FramePhase1Plan.decide(order: .resizeThenMove)
                   == .yabaiPolled(order: .resizeThenMove))
-            check("plan I2: 任何通道组合 × 放大序 → 恒 .yabaiPolled(moveThenResize)",
-                  FramePhase1Plan.decide(axPreciseSize: true, axPreciseMove: true,
-                                         combinedAvailable: true, order: .moveThenResize,
-                                         axSettleMs: 25, moveSettleBudgetMs: 150)
+            check("plan I2: 放大序 → yabaiPolled(moveThenResize)",
+                  FramePhase1Plan.decide(order: .moveThenResize)
                   == .yabaiPolled(order: .moveThenResize))
-            check("plan I3: 通道全不可用也仍是同一条路径（无分支漂移）",
-                  FramePhase1Plan.decide(axPreciseSize: false, axPreciseMove: false,
-                                         combinedAvailable: false, order: .resizeThenMove,
-                                         axSettleMs: 25, moveSettleBudgetMs: 150)
-                  == .yabaiPolled(order: .resizeThenMove))
-            check("plan I4: 历史两段是唯一会轮询段间的臂",
+            check("plan I3: 唯一形态会轮询段间",
                   FramePhase1Plan.yabaiPolled(order: .moveThenResize).pollsBetweenPhases)
         }
 
-        // J. 执行器行为契约：段一必须「写 → 等生效 → 写」，且尺寸补发优先 AX。
+        // J. 执行器行为契约：写序 + 段间等生效 + 尺寸补发优先 AX。
         do {
-            // J1. 收窄序：resize → (等) → move，序列锁死。
+            // J1. 收窄序：resize → (等) → move。
             var calls: [String] = []
             var bounds = CGRect(x: 0, y: 0, width: 1653, height: 1079)
             let target = CGRect(x: 101, y: -1050, width: 640, height: 525)
@@ -240,10 +229,10 @@ extension RunnerHarness {
             let run = executor.run(target: target, order: .resizeThenMove)
             check("executor J1: 收窄序段一 [axResize, move]（两段，中间等生效）",
                   calls == ["axResize", "move"])
-            check("executor J2: 收敛且如实报 2 步", run.outcome.isConverged && run.phase1WriteSteps == 2)
-            check("executor J3: 计划恒为 yabaiPolled", run.phase1Plan.pollsBetweenPhases)
+            check("executor J2: 收敛且计划为两段",
+                  run.outcome.isConverged && run.phase1Plan.pollsBetweenPhases)
 
-            // J4. 放大序：move → (等) → resize（源屏不被 clamp）。
+            // J3. 放大序：move → (等) → resize（源屏不被 clamp）。
             var calls2: [String] = []
             var bounds2 = CGRect(x: 101, y: -1050, width: 640, height: 525)
             let target2 = CGRect(x: 0, y: 25, width: 1653, height: 1079)
@@ -264,11 +253,11 @@ extension RunnerHarness {
                 pollSleep: noSleep
             )
             let run2 = executor2.run(target: target2, order: .moveThenResize)
-            check("executor J4: 放大序段一 [move, axResize]（先落位后放大）",
+            check("executor J3: 放大序段一 [move, axResize]（先落位后放大）",
                   calls2 == ["move", "axResize"])
-            check("executor J5: 放大序收敛", run2.outcome.isConverged)
+            check("executor J4: 放大序收敛", run2.outcome.isConverged)
 
-            // J6. 尺寸偏差补发走 AX（不是 yabai --resize，后者会回到 664）。
+            // J5. 尺寸偏差补发走 AX（不是 yabai --resize，后者会回到 664）。
             var calls3: [String] = []
             var sticky = CGRect(x: 0, y: 0, width: 1653, height: 1079)
             let t3 = CGRect(x: 0, y: 25, width: 1600, height: 1000)
@@ -278,15 +267,16 @@ extension RunnerHarness {
                     applyMove: { calls3.append("move") },
                     applyResizeAdaptive: {
                         calls3.append("axResize")
-                        sticky = t3   // AX 写能收敛
+                        sticky = t3
                     },
-                    applyResizeRobust: { calls3.append("yabaiResize") }
+                    applyResizeRobust: { calls3.append("yabaiResize") },
+                    axPreciseSize: { true }
                 ),
                 tolerance: tol, op: "runner", stage: "contract-resize", windowID: 1,
                 pollSleep: noSleep
             )
             _ = executor3.run(target: t3, order: .resizeThenMove)
-            check("executor J6: 尺寸补发优先 AX 通道（不靠 yabai --resize）",
+            check("executor J5: 尺寸补发优先 AX 通道（不靠 yabai --resize）",
                   calls3.contains("axResize"))
         }
     }

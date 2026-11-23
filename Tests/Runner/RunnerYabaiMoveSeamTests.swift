@@ -8,6 +8,13 @@ import Foundation
 // 管理窗分流、写前快照与写序、yabai move/resize 发令、AX resize 择优与
 // 「AX 一轮不收敛即降级 yabai」、收敛/不收敛裁决。零 fork、零真实窗口移动、
 // 零真实等待（pollSleep 注入为空操作）。
+//
+// ## 2026-11-23 收敛后的契约（本文件锁定）
+// 跨屏且改尺寸时「一步完成」在物理上不存在（三条硬约束见 FrameWriteExecutor 头注），
+// 帧写入恒走「尺寸优先 AX、位置恒 yabai」两段。曾试过并被真机否掉的：
+// 原子合发（尺寸吸附 664）、AX 跨屏 position（被钳回 → 来回跳）、
+// 放大序先试终态（三跳）、AX resize 单次写不等读回（仍跳）。相关断言已随之删除，
+// 不要凭旧提交历史把它们加回来。
 
 final class YabaiMoveSeamState: @unchecked Sendable {
     var info: YabaiWindowInfo?
@@ -15,17 +22,9 @@ final class YabaiMoveSeamState: @unchecked Sendable {
     var yabaiArgs: [[String]] = []
     var axFound = false
     var axSettable = false
-    /// position 属性是否可写（与 size 分开：只读窗口可以 size 可写而 position 不可写）。
-    var axPositionSettable = false
     var axResizeResult = true
     var axResizeCalls = 0
-    var axPositionCalls = 0
-    var axPositionResult = true
-    /// AX position 写是否真的落地（false = 静默吞写，用于断言降级路径）。
-    var axPositionApplies = true
     var ensureConverged = true
-    /// 是否走原子合发（默认 true = 生产行为；false 复现历史两段序列）。
-    var combined = true
     /// yabai 通道的 size 写被终端吸附的额外宽度（0 = 精确；24 = iTerm2 664-640 实测差）。
     var snappedWidth: CGFloat = 0
     /// yabai 自己是否做过 size 写（决定它进程内缓存里是吸附值还是旧值）。
@@ -47,7 +46,7 @@ extension RunnerHarness {
                 isFloatingRaw: false, hasAXReferenceRaw: manageable)
         }
 
-        /// 每次重跑工厂：bounds 复位、计数器清零，闭包按 state 现场取值。
+        /// 每次重跑工厂：闭包按 state 现场取值。
         func makeEnv() -> YabaiMoveEnvironment {
             YabaiMoveEnvironment(
                 queryWindow: { _ in state.info },
@@ -55,7 +54,6 @@ extension RunnerHarness {
                 runYabai: { args in
                     state.yabaiArgs.append(args)
                     guard state.ensureConverged else { return }
-                    // 合发与单发同款：一条消息里出现哪个动作就应用哪个（合发两条都应用）。
                     // 生产的偏差来源（yabai 源码）：--move 落到 set_window_frame，它用它
                     // 缓存的宽高再写一次 size；缓存只在 yabai 自己做过 size 写之后才有
                     // 吸附值。state.yabaiSawSizeWrite 模拟这条时间线。
@@ -64,8 +62,6 @@ extension RunnerHarness {
                                            height: target.height)
                     if args.contains("--move") {
                         frame.origin = target.origin
-                        // set_window_frame 会用它缓存的宽高重写 size；缓存只在 yabai 自己
-                        // 做过 size 写之后才是吸附值（生产的偏差来源）。
                         if state.yabaiSawSizeWrite { frame.size = yabaiSize }
                     }
                     if args.contains("--resize") {
@@ -75,9 +71,7 @@ extension RunnerHarness {
                     state.bounds = frame
                 },
                 findAXWindow: { _, _ in state.axFound ? fakeAX : nil },
-                isSettable: { _, attribute in
-                    attribute == kAXPositionAttribute ? state.axPositionSettable : state.axSettable
-                },
+                isSettable: { _, _ in state.axSettable },
                 resizeViaAX: { _, _ in
                     state.axResizeCalls += 1
                     guard state.axResizeResult, state.ensureConverged else { return state.axResizeResult }
@@ -85,16 +79,7 @@ extension RunnerHarness {
                                           size: target.size)
                     return true
                 },
-                pollSleep: { _ in },
-                useCombinedWrite: state.combined,
-                writePositionViaAX: { frame, _ in
-                    state.axPositionCalls += 1
-                    guard state.axPositionResult, state.ensureConverged,
-                          state.axPositionApplies else { return state.axPositionResult }
-                    state.bounds = CGRect(origin: frame.origin,
-                                          size: state.bounds?.size ?? frame.size)
-                    return true
-                })
+                pollSleep: { _ in })
         }
 
         let wm = WindowManager.shared
@@ -104,14 +89,9 @@ extension RunnerHarness {
             state.yabaiArgs = []
             state.axFound = false
             state.axSettable = false
-            state.axPositionSettable = false
             state.axResizeResult = true
             state.axResizeCalls = 0
-            state.axPositionCalls = 0
-            state.axPositionResult = true
-            state.axPositionApplies = true
             state.ensureConverged = true
-            state.combined = true
             state.snappedWidth = 0
             state.yabaiSawSizeWrite = false
         }
@@ -121,16 +101,14 @@ extension RunnerHarness {
                 sourceVisibleFrame: source, environment: makeEnv())
         }
 
-        // A. 管理窗 + AX 不可写 + 合发关闭（历史两段路径）：写序与发令逐条保留
+        // A. 管理窗 + AX 不可写：yabai 两段写入，写序自适应（收窄 → resize 先行）。
         reset()
-        state.combined = false
         let a = run()
         check("yabaiSeam A1: 管理窗 AX 不可写 → yabai 双段写入后收敛", a == true)
         check("yabaiSeam A2: move 与 resize 均经 yabai 发令（两段路径各自成条）",
               state.yabaiArgs.filter { $0.contains("--move") }.count >= 1
               && state.yabaiArgs.filter { $0.contains("--resize") }.count >= 1)
-        // 两段路径的每条发令只含一个动作（合发关闭的回归锁）。
-        check("yabaiSeam A3: 两段路径每条消息只含一个动作",
+        check("yabaiSeam A3: 每条消息只含一个动作（无合发）",
               state.yabaiArgs.allSatisfy { args in
                   let hasMove = args.contains("--move"), hasResize = args.contains("--resize")
                   return (hasMove || hasResize) && !(hasMove && hasResize)
@@ -140,125 +118,73 @@ extension RunnerHarness {
         check("yabaiSeam A4: 收窄场景 resize 先于 move（写序自适应）",
               firstResize != nil && firstMove != nil && firstResize! < firstMove!)
 
-        // A′（已删除）：原用例断言「合发路径首条消息同时含 --move 与 --resize」。
-        // 原子合发已于 2026-11-23 被真机否掉（尺寸被终端网格吸附成 664），决策层
-        // 恒返回 .yabaiPolled，合发不再参与任何路径。回归锁由 A1~A4 与 A16~A24 承担。
-
-        // B. AX resize 可写且成功（合发关闭的兼容路径）：resize 走 AX（零 fork），move 走 yabai
+        // B. AX 可写：尺寸走 AX（不进 yabai），位置恒走 yabai（跨屏唯一通道）。
         reset()
-        state.combined = false
         state.axFound = true
         state.axSettable = true
-        state.axPositionSettable = true
         let b = run()
         check("yabaiSeam B1: AX resize 通道成功 → 收敛", b == true)
         check("yabaiSeam B2: resize 未走 yabai（AX 择优生效）",
               !state.yabaiArgs.contains { $0.contains("--resize") })
         check("yabaiSeam B3: AX resize 至少一次", state.axResizeCalls >= 1)
-        check("yabaiSeam B4: 位置恒走 yabai --move（零 AX position 写）",
-              state.axPositionCalls == 0
-              && state.yabaiArgs.contains { $0.contains("--move") })
+        check("yabaiSeam B4: 位置恒走 yabai --move", state.yabaiArgs.contains { $0.contains("--move") })
 
-        // C. AX resize 报告失败且不生效（合发关闭的兼容路径）：降级 yabai resize 补发后收敛
+        // C. AX resize 失败 → 降级 yabai resize 补发。
         reset()
-        state.combined = false
         state.axFound = true
         state.axSettable = true
         state.axResizeResult = false
         let c = run()
-        check("yabaiSeam C1: AX 写一轮失败后降级 yabai → 收敛", c == true)
+        check("yabaiSeam C1: AX 写失败后降级 yabai → 收敛", c == true)
         check("yabaiSeam C2: AX 尝试过且随后出现 yabai resize",
               state.axResizeCalls >= 1 && state.yabaiArgs.contains { $0.contains("--resize") })
 
-        // A″. 生产默认（AX 可写 + 合发开启）：AX 尺寸通道优先，合发被让位
-        //     ——2026-11-23 还原尺寸精度修复（yabai 的 size 写会被终端字符网格吸附）。
-        reset()
-        state.axFound = true
-        state.axSettable = true
-        state.axPositionSettable = true
-        let aDoublePrime = run()
-        check("yabaiSeam A9: AX 可写时收敛", aDoublePrime == true)
-        check("yabaiSeam A10: AX 可写时尺寸走 AX、yabai 不再发 --resize",
-              state.axResizeCalls >= 1
-              && !state.yabaiArgs.contains { $0.contains("--resize") })
-        check("yabaiSeam A11: AX 可写时不再合发（合发会绕过精确尺寸通道）",
-              !state.yabaiArgs.contains { $0.contains("--move") && $0.contains("--resize") })
-        // 2026-11-23 双向单步：位置也可 AX 写时**不再需要** yabai --move——yabai 只要
-        // 碰位置就会用缓存宽高覆盖尺寸，那正是「两步」与「尺寸错」的共同来源。
-        check("yabaiSeam A12: 位置恒走 yabai --move（跨屏唯一验证过的通道）",
-              state.axPositionCalls == 0
-              && state.yabaiArgs.contains { $0.contains("--move") })
-
-        // A‴′. 收敛契约（2026-11-23）：无论 AX 通道多完整，帧写入**恒走两段**
-        //       （resize/move 各一次，中间等生效）。各版「一步到位」尝试均被真机否掉：
-        //       合发→尺寸吸附 664；全 AX 位置→跨屏被钳回→降级=来回跳；
-        //       先试终态→源屏先放大被钳→三跳。
-        reset()
-        state.axFound = true
-        state.axSettable = true
-        state.axPositionSettable = true
-        let converged = run()
-        check("yabaiSeam A16: AX 全可写时仍收敛", converged == true)
-        check("yabaiSeam A17: 位置**恒**走 yabai（零 AX position 写）",
-              state.axPositionCalls == 0)
-        check("yabaiSeam A18: 尺寸走 AX、位置走 yabai（各 ≥1 次，恒两段）",
-              state.axResizeCalls >= 1
-              && state.yabaiArgs.contains { $0.contains("--move") })
-        check("yabaiSeam A19: 不再发 yabai --resize（尺寸由 AX 保精度）",
-              !state.yabaiArgs.contains { $0.contains("--resize") })
-
-        // A‴″. 跨屏目标：同样的契约——位置走 yabai、尺寸走 AX。
-        //       （跨屏 AX position 会被 WindowServer 钳回源屏 → 真机「来回跳」。）
-        reset()
-        state.axFound = true
-        state.axSettable = true
-        state.axPositionSettable = true
-        let crossTarget = CGRect(x: 1200, y: 900, width: 500, height: 400)
-        _ = wm.moveWindowToFrameViaYabai(
-            windowID: 7101, frame: crossTarget, op: "ut-yabai", stage: "ut",
-            sourceVisibleFrame: source, environment: makeEnv())
-        check("yabaiSeam A22: 跨屏目标 → 零 AX position 写", state.axPositionCalls == 0)
-        check("yabaiSeam A23: 跨屏目标 → 位置走 yabai --move",
-              state.yabaiArgs.contains { $0.contains("--move") })
-        check("yabaiSeam A24: 跨屏目标 → 尺寸仍走 AX（精度不丢）",
-              state.axResizeCalls >= 1)
-
-        // A‴. 终端吸附场景：yabai 的 size 写落 664（iTerm2 字符网格 +24），且它缓存着
-        //     664——随后的 --move 会把 AX 刚写好的 640 盖回 664。这是用户主诉
-        //     「目标 640x525、实际 664x525、frameOK=false」的执行器级复现。
-        reset()
-        state.axFound = true
-        state.axSettable = true
-        state.snappedWidth = 24
-        state.yabaiSawSizeWrite = true   // yabai 缓存里已是吸附值
-        let snapped = run()
-        check("yabaiSeam A13: yabai 缓存复写 664 后 AX 补写仍收敛到 640",
-              snapped == true && state.axResizeCalls >= 2)
-        check("yabaiSeam A14: 吸附场景全程不靠 yabai --resize（它永远回到 664）",
-              !state.yabaiArgs.contains { $0.contains("--resize") })
-        // A⁗. 同样起点，但 AX 不可用：只能靠 yabai → 如实不收敛（不得谎报成功）。
-        reset()
-        state.snappedWidth = 24
-        state.yabaiSawSizeWrite = true
-        let snappedNoAX = run()
-        check("yabaiSeam A15: 吸附 + AX 不可用 → 如实 false（不谎报 640）",
-              snappedNoAX == false)
-
-        // D. 写原语全部不生效：预算内轮询后如实 false
+        // D. 写原语全部不生效：预算内轮询后如实 false。
         reset()
         state.ensureConverged = false
-        state.axPositionSettable = true   // 位置先 AX、失败后降级 yabai
         let d = run()
         check("yabaiSeam D1: 写不生效 → false（不谎报成功）", d == false)
         check("yabaiSeam D2: 失败前确有写入尝试",
               state.yabaiArgs.contains { $0.contains("--move") })
 
-        // E. AX 属性不可写（findAXWindow 命中但 settable=false）→ 全走 yabai
+        // E. AX 属性不可写 → 全走 yabai。
         reset()
         state.axFound = true
         state.axSettable = false
         let e = run()
         check("yabaiSeam E1: AX 属性不可写 → yabai 通道收敛", e == true)
         check("yabaiSeam E2: 零 AX resize 尝试", state.axResizeCalls == 0)
+
+        // F. 终端吸附场景：yabai 的 size 写落 664（iTerm2 字符网格 +24）。
+        //    AX 可写时尺寸全程走 AX，yabai 只负责位置——最终收敛到目标值。
+        reset()
+        state.axFound = true
+        state.axSettable = true
+        state.snappedWidth = 24
+        state.yabaiSawSizeWrite = true
+        let f = run()
+        check("yabaiSeam F1: 吸附场景下 AX 尺寸通道仍收敛到目标", f == true)
+        check("yabaiSeam F2: 吸附场景全程不发 yabai --resize（它永远回到 664）",
+              !state.yabaiArgs.contains { $0.contains("--resize") })
+
+        // G. 同样起点但 AX 不可用 → 只能靠 yabai，如实不收敛（不谎报 640）。
+        reset()
+        state.snappedWidth = 24
+        state.yabaiSawSizeWrite = true
+        check("yabaiSeam G1: 吸附 + AX 不可用 → 如实 false",
+              run() == false)
+
+        // H. 跨屏目标：位置仍走 yabai（AX 跨屏 position 已被真机否掉，见文件头）。
+        reset()
+        state.axFound = true
+        state.axSettable = true
+        let crossTarget = CGRect(x: 1200, y: 900, width: 500, height: 400)
+        _ = wm.moveWindowToFrameViaYabai(
+            windowID: 7101, frame: crossTarget, op: "ut-yabai", stage: "ut",
+            sourceVisibleFrame: source, environment: makeEnv())
+        check("yabaiSeam H1: 跨屏目标 → 位置走 yabai --move",
+              state.yabaiArgs.contains { $0.contains("--move") })
+        check("yabaiSeam H2: 跨屏目标 → 尺寸仍优先 AX（精度不丢）",
+              state.axResizeCalls >= 1)
     }
 }

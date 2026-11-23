@@ -22,15 +22,29 @@ struct YabaiMoveEnvironment {
     var isSettable: (AXUIElement, String) -> Bool
     var resizeViaAX: (CGRect, AXUIElement) -> Bool
     var pollSleep: (UInt32) -> Void
-    /// 是否启用原子合发（2026-11-21）。默认 true；Runner 置 false 复现历史两段序列
-    /// （写序断言等），置 true 断言「一次调用写完两段、零段间等待」。
-    ///
-    /// 注意（2026-11-23）：合发**不再是 AX 可写窗口的段一**——AX 尺寸通道优先，
-    /// 合发只在其不可用时接管（yabai 的 size 写会被终端字符网格吸附改值）。
-    var useCombinedWrite: Bool = true
-    /// AX 位置直写（2026-11-23 双向单步）。默认 nil 表示注入方不提供 → 走 yabai move。
-    /// 放在末尾：memberwise init 里带默认值的参数必须排在无默认值参数之后。
-    var writePositionViaAX: ((CGRect, AXUIElement) -> Bool)? = nil
+    // useCombinedWrite / writePositionViaAX 已移除（2026-11-23）：合发改由 yabai 写尺寸
+    // 导致终端吸附 664；AX 跨屏 position 被 WindowServer 钳回源屏。两者均被真机否掉。
+}
+
+// MARK: - Window Move Operations（主编排）
+// 文件分层（2026-08-31 拆分，行为不变）：
+//   +MoveWindow.swift（本文件）          — runShellCommand 委托 + moveWindowToMainScreen 编排
+//   +MoveWindow+PostMove.swift          — 移动后 size 校验重写 + toggle record 保存
+//   +WindowResolution.swift             — WindowIdentity → AXUIElement 四级解析
+// 注意：runShellCommand 虽与 move 无关，但被 TitleEditor/TerminalContext 多处调用，
+// 保留在 WindowManager 命名空间原位（搬动需同步评估全部调用方，本轮不做）。
+
+/// yabai 写通道的宿主依赖缝（2026-11-19 覆盖率补齐）：queryWindow / CG 读回 /
+/// yabai 发令 / AX resize 解析与写原语 / 轮询睡眠全可注入。默认 nil → 生产真实
+/// 实现；Runner 注入假实现直测写序、AX→yabai 降级与收敛裁决（零 fork、零真实窗口移动）。
+struct YabaiMoveEnvironment {
+    var queryWindow: (UInt32) -> YabaiWindowInfo?
+    var cgWindowBounds: (UInt32) -> CGRect?
+    var runYabai: ([String]) -> Void
+    var findAXWindow: (Int32, UInt32) -> AXUIElement?
+    var isSettable: (AXUIElement, String) -> Bool
+    var resizeViaAX: (CGRect, AXUIElement) -> Bool
+    var pollSleep: (UInt32) -> Void
 }
 
 // MARK: - Window Move Operations
@@ -78,21 +92,16 @@ extension WindowManager {
     /// - 停滞重发 + AX 失败降级（2026-09-06 水波/慢修复）：收敛轮询内连续 4 读不变即幂等
     ///   补发缺失段（写丢失不再干等整轮 400ms）；AX resize 一轮不收敛后，后续补发改走
     ///   yabai 通道（不再对吞写的 app 撞死胡同）。
-    /// - **AX 精确尺寸优先（2026-11-23 还原尺寸修复）**：段一按通道分三臂（决策
-    ///   唯一事实源 FramePhase1Plan）：AX 尺寸可写 → AX resize + yabai move 背靠背、段间
-    ///   只有固定 25ms 节拍（**不再** 300ms 轮询——这是「两段停顿」的直接来源）；AX 不可
-    ///   用 → yabai 单条消息合发（2026-11-21 的省 fork 通道保留）；合发被显式关闭 →
-    ///   历史两段 + 轮询（兼容路径）。尺寸补发同理优先 AX。
+    /// - **AX 精确尺寸优先**：尺寸段走 AX（`resizeViaAX`），yabai 只负责跨屏位置。
     ///   为什么尺寸必须绕开 yabai：`--resize`/`--move` 在动画总闸 0 时都落到
     ///   `window_manager_set_window_frame()`，它「size→position→size」写三遍且用的是
     ///   yabai 进程内缓存的宽高；对按字符网格吸附的终端窗口（iTerm2）稳定停在吸附值
-    ///   （目标 640 落成 664，同窗口 e16de7b 正确 / 5e0b288 起错误）。详见
-    ///   Sources/Support/FrameWriteExecutor.swift 头注。
-    /// - **原子合发（2026-11-21「多段动画」根治）**：AX 尺寸不可用时把两段合成**一条**
-    ///   yabai 消息（`--move` 与 `--resize` 按写序连发，见 WindowFrameCommand.applyFrame）。
-    ///   装了 `window_animation_duration` 的 yabai 会给每个写原语各跑一段独立 proxy 动画，
-    ///   旧两段写法因此表现为「先移动→停→再长大」；合发后段一只有一次 fork、零段间等待。
-    ///   补发计划只缺一维时仍单发该维；全缺时同样合发一次。
+    ///   （目标 640 落成 664）。详见 FrameWriteExecutor.swift 头注。
+    /// - **位置恒走 yabai**：AX 跨屏 position 写被 WindowServer 钳回源屏，真机表现为
+    ///   「来回跳来跳去」（+AXWrite.swift 头注早已写明）。位置只有 yabai 一条可靠通道。
+    /// - **写序自适应 + 段间等生效**：收窄/还原 resize→move，放大 move→resize；
+    ///   两段之间 waitForPhase 轮询到第一段可观测再发第二段。跨屏且要改尺寸时
+    ///   「一步完成」在物理上不存在（三条硬约束），本形态是该约束下的正确解。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(
         windowID: UInt32,
@@ -179,14 +188,10 @@ extension WindowManager {
             sendYabai(WindowFrameCommand.resizeOnly(windowID: windowID, frame: frame),
                       "\(stage).resize(windowID=\(windowID))")
         }
-        // 原子合发（2026-11-21）：单条 yabai 消息内按写序连发 --move + --resize，
-        // 段一一次写全帧、零段间等待。旧两段写法在装了 window_animation_duration 的
-        // 机器上会触发两段独立 proxy 动画（先移动、停、再长大）——用户主诉「多步骤、
-        // 先怎么着再怎么着」的直接来源。environment 可置 useCombinedWrite=false 复现历史。
-        let applyCombined = {
-            sendYabai(WindowFrameCommand.applyFrame(windowID: windowID, frame: frame, order: writeOrder),
-                      "\(stage).apply(windowID=\(windowID))")
-        }
+        // 原子合发（2026-11-21 引入 → 2026-11-23 移除）：曾把两段合成单条 yabai 消息，
+        // 但它把**尺寸也交给了 yabai** —— yabai 的 set_window_frame 会用它进程内缓存的
+        // 宽高写三遍，终端窗口因此被字符网格吸附（目标 640 落成 664）。真机否掉，已删。
+        // 帧写入现在恒走「尺寸 AX / 位置 yabai」两段（见 FrameWriteExecutor）。
         // 段间等待逻辑在 FrameWriteExecutor.waitForPhase（Batch 3 提取，含超时告警）。
         // AX resize 通道（同屏 resize 无 fork）：窗口 AX 解析失败/属性不可写时 fallback yabai。
         // 解析顺序：yabai queryWindow(pid) → findWindowByPID（queryWindow 走流程内缓存常命中）。
@@ -210,76 +215,14 @@ extension WindowManager {
         var axResizeUnreliable = axWindow == nil
         /// AX 尺寸通道此刻是否仍可用（每次实时求值：写一次失败即永久降级）。
         func axPreciseSizeAvailable() -> Bool { axWindow != nil && !axResizeUnreliable }
-        // AX 位置通道（2026-11-23）——**仅限同屏目标**。
+        // AX 位置通道：**已移除**（2026-11-23 真机实证）。
         //
-        // ## 为什么必须排除跨屏（真机回归，用户投诉「来回跳来跳去」）
-        // 曾让它接管跨屏 position 写，依据是「窗口已 float、不会被 re-tile 对抗」。
-        // 真机实测：裸 AX 跨屏 position 写被 WindowServer **钳回源屏**
-        // （+AXWrite.swift 头注入库即明写「跨屏移动不走本函数」），随后读回失败、
-        // 降级 yabai move 再挪一次 —— 位置因此动了不止一次，用户看到的就是来回跳。
-        // yabai 的 frame 写走 SA 注入，是唯一经真机验证的跨屏通道；
-        // AX position 只在**同屏**时才是安全捷径。
-        //
-        // ## 判定：默认跨屏，只有能确证同屏才放行
-        // 「源屏可视区」参数在各调用点语义不统一：restore 传 nil（同屏还原约定），
-        // move_to_main/stuck 传源屏可视区（跨屏）。用「nil == 同屏」推断会在 restore
-        // 的主屏→副屏上把跨屏误判成同屏、重新引入跳跃。故只认「目标 frame 完整落在
-        // 传入的源屏可视区内」；nil 一律按跨屏（保守，零额外 NSScreen 查询）。
-        let crossDisplayMove: Bool = sourceVisibleFrame.map { !$0.contains(frame) } ?? true
-        let axPositionWindow: AXUIElement? = axWindow.flatMap { ax -> AXUIElement? in
-            // 跨屏一律不启用 AX position（见上文）。
-            guard !crossDisplayMove else { return nil }
-            let settable = environment.map { $0.isSettable(ax, kAXPositionAttribute) }
-                ?? isAttributeSettable(ax, attribute: kAXPositionAttribute)
-            return settable ? ax : nil
-        }
-        /// 位置写是否仍可走 AX（写失败/读回不达标即永久降级——不再对已证明无效的
-        /// 通道反复撞，这是 2026-09-06 AX resize 吞写教训的同款处置）。
-        var axPositionUnreliable = axPositionWindow == nil
-        var axPositionSendCount = 0
-        var axPositionWriteMs = 0
-        func axPreciseMoveAvailable() -> Bool { axPositionWindow != nil && !axPositionUnreliable }
-        /// AX 直写位置 + 读回校验（origin 漂移在容差内才算成功）。
-        /// 返回 false 时调用方回退 yabai move，行为不比现状差。
-        func applyMovePrecise() -> Bool {
-            guard let ax = axPositionWindow, !axPositionUnreliable else { return false }
-            var writeMs = 0
-            axPositionSendCount += 1
-            let positionWriteStart = Date()
-            defer { axPositionWriteMs += elapsedMilliseconds(since: positionWriteStart) }
-            let positionOK: Bool
-            if let environment, let injected = environment.writePositionViaAX {
-                positionOK = injected(frame, ax)
-            } else {
-                positionOK = writePosition(targetFrame: frame, window: ax, op: op, stage: stage, writeMs: &writeMs)
-            }
-            guard positionOK else {
-                axPositionUnreliable = true
-                return false
-            }
-            // 读回校验：AX 位置写异步落地，给一个轴写落定节拍再判（25ms，与
-            // writeSizeWithReadback 同档）。不达标说明被 WindowServer clamp 或吞写。
-            if let environment {
-                environment.pollSleep(WindowSettle.axPhaseSettleMs)
-            } else {
-                usleep(WindowSettle.axWriteSettleMicros)
-            }
-            guard let after = readBounds() else {
-                // 读不到不判失败（CGWindowList 偶发 nil），交给段二收敛轮询裁决。
-                return true
-            }
-            let originOK = CoordinateKit.originDrift(after.origin, frame.origin) <= frameTolerance
-            if !originOK {
-                axPositionUnreliable = true
-                log("[WindowManager] moveWindowToFrameViaYabai: AX position write not applied, falling back to yabai", level: .warn, fields: [
-                    "op": op, "stage": stage, "windowID": String(windowID),
-                    "target": QuartzRect(frame).description,
-                    "after": QuartzRect(after).description,
-                    "originDrift": String(Int(CoordinateKit.originDrift(after.origin, frame.origin)))
-                ])
-            }
-            return originOK
-        }
+        // 曾让 AX 直写跨屏 position，替代 yabai --move。结果：裸 AX 跨屏 position 写被
+        // WindowServer 钳回源屏（+AXWrite.swift 头注早已写明「跨屏移动不走本函数」），
+        // 读回失败后降级 yabai move 再挪一次 → 用户看到的「来回跳来跳去」。
+        // 同屏场景下 AX position 虽可用，但跨屏是主路径，判定成本与收益不成正比，
+        // 一并移除；位置**恒**走 yabai（唯一经真机验证的跨屏通道）。
+
         func applyResizeBestChannel() {
             if let ax = axWindow, !axResizeUnreliable {
                 axResizeSendCount += 1
@@ -288,13 +231,10 @@ extension WindowManager {
                 if let environment {
                     axOK = environment.resizeViaAX(frame, ax)
                 } else {
-                    // 单次写、**不**在内部等读回（resizeViaAX 会「写→睡25ms→读回」，
-                    // 那 25ms 期间窗口已经可见地变了 —— 用户真机「先小跳一下再到位」
-                    // 的直接来源：resize 生效（小跳）→ 等 25ms → move 生效（到位）。
-                    // 这里只发一次写就返回，紧随的 move 得以背靠背；尺寸是否真的到位
-                    // 由段二收敛轮询裁决（带轮询确认，比单次读回更可靠）。
-                    var writeMs = 0
-                    axOK = writeSizeOnce(targetFrame: frame, window: ax, op: op, stage: stage, writeMs: &writeMs)
+                    // 与 e16de7b 逐字一致：AX 写走 resizeViaAX（内部「写 → 25ms → 读回」，
+                    // 不收敛则重试一轮）。这段内部等待是**尺寸确实生效**的证据，
+                    // 去掉它曾让「先小跳再到位」更明显（2026-11-23 真机实测回退）。
+                    axOK = resizeViaAX(targetFrame: frame, window: ax, windowID: windowID, op: op, stage: stage)
                 }
                 axResizeWriteMs += elapsedMilliseconds(since: writeStart)
                 if !axOK { axResizeUnreliable = true }
@@ -312,23 +252,15 @@ extension WindowManager {
         // - 合发被显式关闭 → 历史两段 + waitForPhase 轮询（兼容/夹具路径）。
         // axPreciseSize 传闭包而非快照：AX 写中途失败降级后，补发立刻改走 yabai。
         //
-        // 位置通道（2026-11-23，真机回归后收紧）：AX position **只在同屏**时可用
-        // （见 axPositionWindow 上方注释——跨屏 AX position 会被 WindowServer 钳回源屏，
-        // 真机表现为「来回跳」）。因此：
-        // - 同屏目标 → `.axFull`（尺寸与位置都走 AX，一次跳变）；
-        // - 跨屏目标 → `.axPrecise`（尺寸走 AX 保精度，位置走 yabai 这个唯一验证过的
-        //   跨屏通道；段间 25ms 节拍）。
-        let combinedWriteEnabled = environment?.useCombinedWrite ?? true
+        // 帧写入通道（2026-11-23 收敛，回到 e16de7b）：位置恒走 yabai、尺寸优先 AX、
+        // 写序自适应、段间等生效。详见 FrameWriteExecutor 头注与 FramePhase1Plan.decide。
         let executor = FrameWriteExecutor(
             deps: .init(
                 read: { readBounds() },
                 applyMove: applyMove,
                 applyResizeAdaptive: applyResizeBestChannel,
                 applyResizeRobust: applyResize,
-                applyCombined: combinedWriteEnabled ? applyCombined : nil,
-                applyMovePrecise: applyMovePrecise,
-                axPreciseSize: axPreciseSizeAvailable,
-                axPreciseMove: axPreciseMoveAvailable
+                axPreciseSize: axPreciseSizeAvailable
             ),
             tolerance: frameTolerance,
             op: op,
@@ -352,14 +284,7 @@ extension WindowManager {
             "yabaiSendCount": String(yabaiSendCount),
             "convergeRounds": String(run.convergedRounds),
             "stallResendCount": String(run.resendCount),
-            "combinedPhase1": String(run.combinedPhase1),
             "phase1Plan": Self.phase1PlanName(run.phase1Plan),
-            // 真机验收唯一事实字段：1 = 用户看到一次跳变；2 = 两步（附降级 warn）。
-            "phase1WriteSteps": String(run.phase1WriteSteps),
-            // 双向单步归因：AX 位置写次数/明细（0 = 位置走 yabai；≥1 = 全 AX 臂生效）。
-            "axPositionSendCount": String(axPositionSendCount),
-            "axPositionWriteMs": String(axPositionWriteMs),
-            "axPositionUnreliable": String(axPositionUnreliable)
         ])
         switch outcome {
         case .converged(let attempt, _):
@@ -368,21 +293,6 @@ extension WindowManager {
             ])
             return true
         case .mismatched(let attempts, let lastFrame):
-            // 吞写检测（2026-11-23）：段一改为「单次写不等读回」后，AX 尺寸写被 app
-            // 吞掉不会再在写时立即暴露。这里以收敛轮询的最终结论为准：不收敛且尺寸
-            // 仍有漂移、AX 仍是主通道 → 标记该通道不可靠，后续调用直接走 yabai。
-            // 与历史「一轮读回未确认即降级」等价，只是判定时机从写后 25ms 推到收敛
-            // 轮询结束（更可靠：轮询带多次确认，不会把「还没落定」误判成吞写）。
-            if axWindow != nil, !axResizeUnreliable, let last = lastFrame,
-               FrameConvergence.shortfalls(current: last, target: frame, tolerance: frameTolerance)
-                   .contains(.size) {
-                axResizeUnreliable = true
-                log("[WindowManager] moveWindowToFrameViaYabai: AX size channel did not converge, marking unreliable", level: .warn, fields: [
-                    "op": op, "stage": stage, "windowID": String(windowID),
-                    "lastFrame": QuartzRect(last).description,
-                    "target": QuartzRect(frame).description
-                ])
-            }
             log("[WindowManager] moveWindowToFrameViaYabai: frame not converged after \(attempts) attempts", level: .warn, fields: [
                 "op": op, "stage": stage, "windowID": String(windowID),
                 "lastFrame": lastFrame.map { QuartzRect($0).description } ?? "nil",
@@ -400,14 +310,6 @@ extension WindowManager {
     /// 段一计划 → 日志用短名（归因「这一次为什么走 AX / 合发 / 两段轮询」）。
     static func phase1PlanName(_ plan: FramePhase1Plan) -> String {
         switch plan {
-        case .combined:
-            return "combined"
-        case .axFull(let resizeFirst, let settleMs, let moveSettleBudgetMs):
-            return "ax_full_\(resizeFirst ? "resize_then_move" : "move_then_resize")_\(settleMs)ms"
-                + "_landBudget\(moveSettleBudgetMs)ms"
-        case .axPrecise(let resizeFirst, let settleMs, let moveSettleBudgetMs):
-            return "ax_\(resizeFirst ? "resize_then_move" : "move_then_resize")_\(settleMs)ms"
-                + "_landBudget\(moveSettleBudgetMs)ms"
         case .yabaiPolled(let order):
             return "yabai_polled_\(order == .resizeThenMove ? "resize_then_move" : "move_then_resize")"
         }
