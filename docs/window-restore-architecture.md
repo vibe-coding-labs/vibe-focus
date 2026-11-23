@@ -81,6 +81,14 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
    > 为什么不用 `window --space`：yabai v7 float 布局下静默失效
    > （exit 0 但窗口不动，Tests/AXMoveValidation.swift T3 实测）。
    >
+   > **双向一致性（2026-11-23）**：还原（主→副，缩小）与移动（副→主，放大）走
+   > 同一条 `moveWindowToFrameViaYabai`，差别只在 `FrameWriteOrder`：缩小/还原
+   > `resize→move`（先精确缩小，再跨屏落位）；放大 `move→resize`（先落位，否则
+   > AX size 写被源屏可视区 clamp，1079→1055 历史教训）。两者在 AX 可写时都因此变成
+   > 「两次写」——这就是本轮把它压成 `.axFull`（位置也走 AX）的原因：**只要位置经
+   > yabai，yabai 就会用缓存宽高覆盖尺寸，两步无法避免**。其余调用点（stuck 解堵、
+   > Layout 摆位、move_to_main 回滚）都收敛到同一函数，行为一致。
+   >
    > **尺寸通道（2026-11-23，必读）**：段一按通道分三臂（`FramePhase1Plan`）——
    > **尺寸与位置都可 AX → 全 AX 臂**（`.axFull`：两次 AX 写背靠背，零 yabai fork，
    > 视觉一次跳变）；只有尺寸可 AX → AX resize + yabai move（精确但两段）；
