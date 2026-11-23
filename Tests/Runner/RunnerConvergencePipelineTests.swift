@@ -535,53 +535,13 @@ extension RunnerHarness {
                 pollSleep: noSleep, phaseSettle: { _ in }
             )
             let l4Run = l4Executor.run(target: l4Target, order: .moveThenResize)
-            // 2026-11-23 二次审计：放大序先试终态（AX resize 自带读回；没被 clamp 就
-            // 以终态尺寸一次性落位），不再无条件「先跳过去再长大」。
-            check("executor L4: 放大方向全 AX —— 先试终态 [axResize, axMove]，零 yabai 写入",
-                  l4Calls == ["axResize", "axMove"])
-            // L4′. 放大序 clamp 场景：AX resize 写不生效（模拟被源屏可视区钳住）
-            //      → 必须回落到历史 move→resize，不能卡死在「先 resize」。
-            var l4bCalls: [String] = []
-            var l4bBounds = CGRect(x: 101, y: -1050, width: 640, height: 525)
-            let l4bTarget = CGRect(x: 0, y: 25, width: 1653, height: 1079)
-            /// 窗口是否已落在目标屏（决定 size 写是否会被源屏可视区钳住）。
-            var l4bOnTargetDisplay = false
-            let l4bExecutor = FrameWriteExecutor(
-                deps: .init(
-                    read: { l4bBounds },
-                    applyMove: {
-                        l4bCalls.append("yabaiMove")
-                        l4bBounds.origin = l4bTarget.origin
-                        l4bOnTargetDisplay = true
-                    },
-                    applyResizeAdaptive: {
-                        l4bCalls.append("axResize")
-                        // 还在源屏 → 被钳到 1055（差 24 > 容差 20，读回判为未到位）；
-                        // 已落目标屏 → 精确到位。
-                        l4bBounds.size = l4bOnTargetDisplay
-                            ? l4bTarget.size
-                            : CGSize(width: l4bTarget.width, height: 1055)
-                    },
-                    applyResizeRobust: { l4bCalls.append("yabaiResize") },
-                    applyCombined: { l4bCalls.append("combined") },
-                    applyMovePrecise: {
-                        l4bCalls.append("axMove")
-                        l4bBounds.origin = l4bTarget.origin
-                        l4bOnTargetDisplay = true
-                        return true
-                    },
-                    axPreciseSize: { true },
-                    axPreciseMove: { true }
-                ),
-                tolerance: tol, op: "runner", stage: "executor-ax-full-grow-clamped", windowID: 1,
-                pollSleep: noSleep, phaseSettle: { _ in }
-            )
-            let l4bRun = l4bExecutor.run(target: l4bTarget, order: .moveThenResize)
-            // 精确锁死：先试 resize（源屏 → 被钳 1055，读回判未到位）
-            // → 回落历史 move→resize（AX move 落目标屏 → AX resize 精确到位）。
-            check("executor L4′1: 放大序 resize 被钳 → 回落 [axResize, axMove, axResize]",
-                  l4bCalls == ["axResize", "axMove", "axResize"])
-            check("executor L4′2: clamp 回落路径仍收敛到终态", l4bRun.outcome.isConverged)
+            // 2026-11-23 回退：放大序试过「先 resize」造成真机「来回跳」（源屏先放大被钳
+            // → 读回失败 → 回落再动一次）。已恢复历史写序 move→resize。
+            check("executor L4: 放大方向全 AX —— 历史写序 [axMove, axResize]，零 yabai 写入",
+                  l4Calls == ["axMove", "axResize"])
+            // L4′（已删除）：原用例验证「先试 resize、被钳则回落」。该策略正是真机
+            // 「来回跳」的根因，已整体回退——没有再测的价值，回归锁改由 L4 承担
+            // （放大序必须是历史写序 move→resize）。
 
             check("executor L5: 放大方向同样标记 axFull 且收敛",
                   l4Run.phase1Plan.isAXFull && l4Run.outcome.isConverged)

@@ -210,10 +210,28 @@ extension WindowManager {
         var axResizeUnreliable = axWindow == nil
         /// AX 尺寸通道此刻是否仍可用（每次实时求值：写一次失败即永久降级）。
         func axPreciseSizeAvailable() -> Bool { axWindow != nil && !axResizeUnreliable }
-        // AX 位置通道（2026-11-23 双向单步）：窗口已 float（调用点前置），跨屏 position
-        // 直写不会被 re-tile 对抗——与 yabai-blind 通道同一真机结论。可写性单独探测
-        // （position 只读的窗口仍可能 size 可写）。
+        // AX 位置通道（2026-11-23）——**仅限同屏目标**。
+        //
+        // ## 为什么必须排除跨屏（真机回归，用户投诉「来回跳来跳去」）
+        // 曾让它接管跨屏 position 写，依据是「窗口已 float、不会被 re-tile 对抗」。
+        // 真机实测：裸 AX 跨屏 position 写被 WindowServer **钳回源屏**
+        // （+AXWrite.swift 头注入库即明写「跨屏移动不走本函数」），随后读回失败、
+        // 降级 yabai move 再挪一次 —— 位置因此动了不止一次，用户看到的就是来回跳。
+        // yabai 的 frame 写走 SA 注入，是唯一经真机验证的跨屏通道；
+        // AX position 只在**同屏**时才是安全捷径。
+        //
+        // ## 判定：默认跨屏，只有能确证同屏才放行
+        // 「源屏可视区」参数在各调用点语义不统一：restore 传 nil（同屏还原约定），
+        // move_to_main/stuck 传源屏可视区（跨屏）。用「nil == 同屏」推断会在 restore
+        // 的主屏→副屏上把跨屏误判成同屏、重新引入跳跃。故只认「目标 frame 完整落在
+        // 传入的源屏可视区内」；nil 一律按跨屏（保守，零额外 NSScreen 查询）。
+        let crossDisplayMove: Bool = {
+            guard let sourceVisible = sourceVisibleFrame else { return true }
+            return !sourceVisible.contains(frame)
+        }
         let axPositionWindow: AXUIElement? = axWindow.flatMap { ax -> AXUIElement? in
+            // 跨屏一律不启用 AX position（见上文）。
+            guard !crossDisplayMove else { return nil }
             let settable = environment.map { $0.isSettable(ax, kAXPositionAttribute) }
                 ?? isAttributeSettable(ax, attribute: kAXPositionAttribute)
             return settable ? ax : nil
@@ -291,9 +309,12 @@ extension WindowManager {
         // - 合发被显式关闭 → 历史两段 + waitForPhase 轮询（兼容/夹具路径）。
         // axPreciseSize 传闭包而非快照：AX 写中途失败降级后，补发立刻改走 yabai。
         //
-        // 位置通道（2026-11-23 双向单步）：AX position 也可写时走 .axFull——尺寸与位置
-        // 都离开 yabai，两次 AX 写背靠背，视觉一次跳变。yabai 只要参与位置写就会用它
-        // 缓存的宽高覆盖尺寸，那是「还原错尺寸」与「两步」的共同来源。
+        // 位置通道（2026-11-23，真机回归后收紧）：AX position **只在同屏**时可用
+        // （见 axPositionWindow 上方注释——跨屏 AX position 会被 WindowServer 钳回源屏，
+        // 真机表现为「来回跳」）。因此：
+        // - 同屏目标 → `.axFull`（尺寸与位置都走 AX，一次跳变）；
+        // - 跨屏目标 → `.axPrecise`（尺寸走 AX 保精度，位置走 yabai 这个唯一验证过的
+        //   跨屏通道；段间 25ms 节拍）。
         let combinedWriteEnabled = environment?.useCombinedWrite ?? true
         let executor = FrameWriteExecutor(
             deps: .init(

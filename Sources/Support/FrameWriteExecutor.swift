@@ -334,41 +334,18 @@ struct FrameWriteExecutor {
             // （axPrecise 臂仍保留 settleMs：那条臂的 move 走 yabai，yabai 会用缓存
             //   宽高覆盖尺寸，需要给它一个节拍让 AX 通知把缓存更新过来。）
             //
-            // 放大序（2026-11-23 二次审计）：**先试终态落地**，而不是无条件先 move。
+            // 放大序（2026-11-23 回退）：**必须**先 move 后 resize。
             //
-            // 历史 `writeOrder` 把放大序强制成 move→resize，理由是「先在源屏放大到
-            // 1079 会被可视区 clamp（1055）」。那条约束针对的是 **yabai 写**。全 AX 臂
-            // 的尺寸写是 App 直写 `kAXSizeAttribute`，并且 writeSizeWithReadback **自带
-            // 读回校验**：真被 clamp 会返回 false → applyResizeBestChannel 立刻置
-            // axResizeUnreliable 并把本臂降级。也就是说「clamp 与否」是可观测的，不需要
-            // 靠写序来预防。
-            //
-            // 先 resize 的收益正是用户主诉的那一项：窗口以**最终尺寸**一次性落到目标屏，
-            // 目的地不再出现「先跳过去、再慢慢长大」（2026-09-06 水波修复的目标形态，
-            // 当时因 yabai 写会被 clamp 而只能退让）。
-            //
-            // 不赌：resize 后读回确认尺寸已到位才 move；没到位就按历史的 move→resize
-            // 走（且此时 AX 通道已被标记不可靠，尺寸写自动落到 yabai）。
-            var growHandledByLeadResize = false
-            if !resizeFirst {
-                deps.applyResizeAdaptive()
-                let sizeLanded = deps.read().map {
-                    !FrameConvergence.shortfalls(current: $0, target: target, tolerance: tolerance)
-                        .contains(.size)
-                } ?? false
-                if sizeLanded {
-                    // 终态尺寸已到位 → 直接落位，目的地只见一次跳变。
-                    if moveFrame() { phase1FellBackToYabaiMove = true }
-                    if phase1FellBackToYabaiMove, deps.axPreciseSize() {
-                        deps.applyResizeAdaptive()
-                    }
-                    growHandledByLeadResize = true
-                }
-                // 尺寸写没生效（被 clamp / 被吞）→ 继续走下面的历史 move→resize。
-            }
-            if growHandledByLeadResize {
-                // 已完成（尺寸先行 + 落位），段二收敛验证照常执行。
-            } else if resizeFirst {
+            // ## 为什么试过的「先试终态」被撤回（真机实证，用户投诉「来回跳来跳去」）
+            // 曾改成「先 resize，读回不达标再回落」，理由是 AX 写自带读回、clamp 可观测。
+            // 真机上这造成明显的多次跳变：
+            //   1. 窗口还在副屏时写 1079 高 → 被副屏可视区钳到 1055，
+            //      **窗口在副屏上先变大一次**（用户看到的第 1 跳）；
+            //   2. 读回判未到位 → 回落再 move（第 2 跳）→ 再 resize（第 3 跳）。
+            // 「可观测」只保证最终值对，保证不了**中间不产生可见变化**——而后者才是
+            // 用户关心的。跨屏 clamp 无法预防，只能靠写序避开（历史 move→resize 的
+            // 原意）。已在源屏被钳的窗口还白付一次尺寸写与一次读回。
+            if resizeFirst {
                 deps.applyResizeAdaptive()
                 if moveFrame() {
                     phase1FellBackToYabaiMove = true

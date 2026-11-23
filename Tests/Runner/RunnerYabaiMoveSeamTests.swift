@@ -232,6 +232,26 @@ extension RunnerHarness {
         check("yabaiSeam A21: 位置通道只试一次（失败即降级，不反复撞）",
               state.axPositionCalls == 1)
 
+        // A″′. 跨屏回归锁（2026-11-23 真机「来回跳来跳去」）：目标 frame **不在**源屏
+        //       可视区内 → 必须拒绝 AX position（裸 AX 跨屏写被 WindowServer 钳回源屏，
+        //       读回失败再降级 yabai move = 位置动两次），位置改走 yabai。
+        reset()
+        state.axFound = true
+        state.axSettable = true
+        state.axPositionSettable = true
+        // 跨屏目标：不在 source(0,0,1000,800) 内。
+        let crossTarget = CGRect(x: 1200, y: 900, width: 500, height: 400)
+        let crossSource = source
+        let crossOK = wm.moveWindowToFrameViaYabai(
+            windowID: 7101, frame: crossTarget, op: "ut-yabai", stage: "ut",
+            sourceVisibleFrame: crossSource, environment: makeEnv())
+        check("yabaiSeam A22: 跨屏目标 → 拒绝 AX position（零 axPosition 写）",
+              state.axPositionCalls == 0)
+        check("yabaiSeam A23: 跨屏目标 → 位置走 yabai --move（唯一验证过的跨屏通道）",
+              state.yabaiArgs.contains { $0.contains("--move") })
+        // 跨屏 + 位置走 yabai + 尺寸走 AX → 应能收敛（本夹具的 yabai move 会落到 target）。
+        check("yabaiSeam A24: 跨屏路径收敛", crossOK == true)
+
         // A‴. 终端吸附场景：yabai 的 size 写落 664（iTerm2 字符网格 +24），且它缓存着
         //     664——随后的 --move 会把 AX 刚写好的 640 盖回 664。这是用户主诉
         //     「目标 640x525、实际 664x525、frameOK=false」的执行器级复现。
