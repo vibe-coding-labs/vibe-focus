@@ -80,4 +80,10 @@ enum WindowSettle {
     /// 2026-09-03 四次修复起预算 600→300ms 收窄白等。
     /// 使用点：moveWindowToFrameViaYabai 段间轮询（唯一路径）。
     static let framePhaseVerifyBudgetMs: UInt32 = 300
+
+    /// iTerm2 原子 bounds 写（osascript 单次 fork + AppleEvent）的收敛验证预算：800ms。
+    /// fork + AE 往返实测 ~200ms、应用本身单帧完成；预算兜底 busy app 的 AE 排队。
+    /// 不满足 → 调用方落回历史两段路径自愈（本通道只加速不依赖）。
+    /// 使用点：moveWindowToFrameViaAtomicBounds 收敛轮询（唯一路径）。
+    static let atomicBoundsVerifyBudgetMs: UInt32 = 800
 }

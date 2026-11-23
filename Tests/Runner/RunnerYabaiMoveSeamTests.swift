@@ -9,12 +9,18 @@ import Foundation
 // 「AX 一轮不收敛即降级 yabai」、收敛/不收敛裁决。零 fork、零真实窗口移动、
 // 零真实等待（pollSleep 注入为空操作）。
 //
-// ## 2026-11-23 收敛后的契约（本文件锁定）
-// 跨屏且改尺寸时「一步完成」在物理上不存在（三条硬约束见 FrameWriteExecutor 头注），
-// 帧写入恒走「尺寸优先 AX、位置恒 yabai」两段。曾试过并被真机否掉的：
-// 原子合发（尺寸吸附 664）、AX 跨屏 position（被钳回 → 来回跳）、
+// ## 2026-11-23 收敛后的契约（本文件锁定，2026-11-24 勘误）
+// 「AX/yabai 通道内」跨屏且改尺寸无法一步完成（三条硬约束见 FrameWriteExecutor 头注），
+// 两段路径恒走「尺寸优先 AX、位置恒 yabai」。曾试过并被真机否掉的：
+// 原子合发（尺寸吸附 664）、AX 跨屏 position（吞写+动画 → 来回跳）、
 // 放大序先试终态（三跳）、AX resize 单次写不等读回（仍跳）。相关断言已随之删除，
 // 不要凭旧提交历史把它们加回来。
+//
+// ## 2026-11-24 通道外解法（本文件两段断言不受影响）
+// AppleScript set bounds（AtomicBoundsChannel）是当时未尝试的第三通道，真机 4ms 采样
+// 实证 iTerm2 单帧、像素精确、双向成立——iTerm2 跨屏已上移到 attemptAtomicBoundsMove
+// 门控（两段路径之前分流），本文件锁定的两段契约继续服务 Terminal/其他 app/同屏/兜底。
+// 「一步在 iTerm2 上存在」勘误记录于 RunnerAtomicBoundsTests.swift 头注。
 
 final class YabaiMoveSeamState: @unchecked Sendable {
     var info: YabaiWindowInfo?

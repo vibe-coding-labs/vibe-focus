@@ -22,8 +22,15 @@ struct YabaiMoveEnvironment {
     var isSettable: (AXUIElement, String) -> Bool
     var resizeViaAX: (CGRect, AXUIElement) -> Bool
     var pollSleep: (UInt32) -> Void
+    /// 原子 bounds 通道注入缝（2026-11-24）：非 nil 时在两段路径之前尝试，true=短路返回。
+    /// Runner 用它锁定「原子成功不发两段令 / 原子失败照走两段」契约；生产为 nil，
+    /// 走 AtomicBoundsChannel 白名单 + 跨屏门控的真实实现。
+    var attemptAtomicBounds: ((UInt32, CGRect) -> Bool)? = nil
     // useCombinedWrite / writePositionViaAX 已移除（2026-11-23）：合发改由 yabai 写尺寸
     // 导致终端吸附 664；AX 跨屏 position 被 WindowServer 钳回源屏。两者均被真机否掉。
+    // （2026-11-24 勘误：AX 跨屏钳回论断被探针部分证伪——尺寸合适的窗口裸 AX position
+    // 跨屏写可粘住；但 iTerm2 对一切 AX 写做 ~300ms 内部动画且 pos+size 背靠背会吞
+    // position、可楔死状态机，跨屏已改 iTerm2 原子 bounds 通道，本结论不再作为依据。）
 }
 
 // MARK: - Window Move Operations
@@ -76,11 +83,14 @@ extension WindowManager {
     ///   `window_manager_set_window_frame()`，它「size→position→size」写三遍且用的是
     ///   yabai 进程内缓存的宽高；对按字符网格吸附的终端窗口（iTerm2）稳定停在吸附值
     ///   （目标 640 落成 664）。详见 FrameWriteExecutor.swift 头注。
-    /// - **位置恒走 yabai**：AX 跨屏 position 写被 WindowServer 钳回源屏，真机表现为
-    ///   「来回跳来跳去」（+AXWrite.swift 头注早已写明）。位置只有 yabai 一条可靠通道。
+    /// - **位置恒走 yabai**（两段路径内）：AX 跨屏 position 写在 iTerm2 上会触发内部
+    ///   动画且 pos+size 背靠背被吞（2026-11-24 探针；「WindowServer 钳回」旧论断已被
+    ///   部分证伪——尺寸合适的窗口 AX position 跨屏可粘住，但动画/吞写仍在）。
     /// - **写序自适应 + 段间等生效**：收窄/还原 resize→move，放大 move→resize；
-    ///   两段之间 waitForPhase 轮询到第一段可观测再发第二段。跨屏且要改尺寸时
-    ///   「一步完成」在物理上不存在（三条硬约束），本形态是该约束下的正确解。
+    ///   两段之间 waitForPhase 轮询到第一段可观测再发第二段。AX/yabai 通道内跨屏改尺寸
+    ///   确实无法一步完成（三条硬约束见 FramePhase1Plan.decide）；但 iTerm2 有通道外
+    ///   解法——**原子 bounds 通道**（2026-11-24，attemptAtomicBoundsMove）：一次
+    ///   AppleEvent 单帧瞬移，在本函数最前门控分流，iTerm2 跨屏不再进入两段。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(
         windowID: UInt32,
@@ -149,6 +159,17 @@ extension WindowManager {
             "order": writeOrder == .resizeThenMove ? "resize_then_move" : "move_then_resize",
             "target": QuartzRect(frame).description
         ])
+        // ===== 原子 bounds 通道（2026-11-24，iTerm2 跨屏专属，两段路径之前）=====
+        // 一次 AppleEvent 同时写位置+尺寸：单帧瞬移（探针 145 拍采样零中间态、像素精确），
+        // 绕开 iTerm2 对 AX/yabai 多段写的内部动画与 pos+size 背靠背吞 position 的楔死面。
+        // 发令失败/不收敛 → 落回下方历史两段路径自愈，本通道只加速不依赖。
+        if attemptAtomicBoundsMove(
+            windowID: windowID, frame: frame, op: op, stage: stage,
+            preWriteBounds: preWriteBounds,
+            yabaiPID: yabaiWindowInfo?.pid.map({ pid_t($0) }),
+            environment: environment) {
+            return true
+        }
         /// yabai 发令统一出口（生产走 SpaceController，注入走 environment.runYabai）。
         let sendYabai: ([String], String) -> Void = { args, operation in
             yabaiSendCount += 1
@@ -292,6 +313,100 @@ extension WindowManager {
         case .yabaiPolled(let order):
             return "yabai_polled_\(order == .resizeThenMove ? "resize_then_move" : "move_then_resize")"
         }
+    }
+
+    // MARK: - iTerm2 原子 bounds 通道（2026-11-24）
+
+    /// 跨屏门控判定（纯）：任一端 displayID 解析失败 → 判同屏（保守走历史两段路径）。
+    static func isCrossDisplayTarget(currentDisplayID: UInt32?, targetDisplayID: UInt32?) -> Bool {
+        guard let currentDisplayID, let targetDisplayID else { return false }
+        return currentDisplayID != targetDisplayID
+    }
+
+    /// 原子 bounds 通道的门控 + 发令。返回 true = 已收敛，调用方短路返回；
+    /// false = 不适用 / 未收敛，调用方继续历史两段路径（本通道只加速不依赖）。
+    ///
+    /// 门控序列（全场景自适应，任一不满足即静默落回，无额外可见行为）：
+    /// 1. 注入环境带 attemptAtomicBounds 缝（Runner）→ 直接尝试（契约测试）；
+    /// 2. 注入环境无缝（历史 Runner 用例）→ 跳过（保持注入环境的确定性）；
+    /// 3. 生产：bundle 白名单（仅 com.googlecode.iterm2，Terminal set bounds 跨屏坐标
+    ///    语义破损，仓库 2026-09-04 实证）→ 跳过；
+    /// 4. 生产：跨屏判定（写前帧与目标帧 displayID 不同）→ 同屏不启用（AX resize 快、
+    ///    无 fork，网格摆放等同屏热路径不回退 osascript ~200ms）。
+    func attemptAtomicBoundsMove(
+        windowID: UInt32,
+        frame: CGRect,
+        op: String,
+        stage: String,
+        preWriteBounds: CGRect?,
+        yabaiPID: pid_t?,
+        environment: YabaiMoveEnvironment?
+    ) -> Bool {
+        if let attempt = environment?.attemptAtomicBounds {
+            let ok = attempt(windowID, frame)
+            log("[WindowManager] atomicBounds: injected attempt", level: .info, fields: [
+                "op": op, "stage": stage, "windowID": String(windowID),
+                "verdict": ok ? "single_step_injected" : "miss_fallback_yabai"
+            ])
+            return ok
+        }
+        guard environment == nil, let pid = yabaiPID else { return false }
+        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        guard AtomicBoundsChannel.supports(bundleID: bundleID) else { return false }
+        // 跨屏判定：任一端 displayID 解析失败 → 判同屏（保守走历史路径）。
+        let currentDisplayID = preWriteBounds.flatMap { self.displayID(for: $0) }
+        let targetDisplayID = self.displayID(for: frame)
+        guard let currentDisplayID, let targetDisplayID, currentDisplayID != targetDisplayID else {
+            log("[WindowManager] atomicBounds: same-display, keep AX/yabai path", level: .debug, fields: [
+                "op": op, "stage": stage, "windowID": String(windowID)
+            ])
+            return false
+        }
+        return moveWindowToFrameViaAtomicBounds(windowID: windowID, frame: frame, pid: pid, op: op, stage: stage)
+    }
+
+    /// iTerm2 原子 bounds 写执行：osascript 单次 fork + CGWindowList 读回收敛轮询。
+    /// 语义契约见 AtomicBoundsChannel.swift 头注；收敛判据复用 FrameConvergence.shortfalls。
+    func moveWindowToFrameViaAtomicBounds(
+        windowID: UInt32,
+        frame: CGRect,
+        pid: pid_t,
+        op: String,
+        stage: String
+    ) -> Bool {
+        let script = AtomicBoundsChannel.iterm2Script(windowID: windowID, frame: frame)
+        let sendStart = Date()
+        let result = ShellRunner.run(executable: "/usr/bin/osascript", arguments: ["-e", script], timeout: 5)
+        let sendMs = elapsedMilliseconds(since: sendStart)
+        guard let result, result.exitCode == 0 else {
+            log("[WindowManager] atomicBounds: osascript failed", level: .warn, fields: [
+                "op": op, "stage": stage, "windowID": String(windowID),
+                "pid": String(pid),
+                "sendMs": String(sendMs),
+                "exitCode": result.map { String($0.exitCode) } ?? "nil",
+                "verdict": "send_failed_fallback_yabai"
+            ])
+            return false
+        }
+        let verifyStart = Date()
+        let outcome = ConditionPolling.waitUntil(
+            intervalMs: WindowSettle.frameVerifyPollIntervalMs,
+            budgetMs: WindowSettle.atomicBoundsVerifyBudgetMs,
+            sleep: { usleep(useconds_t($0) * 1_000) },
+            condition: { () -> Bool in
+                guard let current = cgWindowBounds(for: windowID) else { return false }
+                return FrameConvergence.shortfalls(current: current, target: frame, tolerance: self.frameTolerance).isEmpty
+            }
+        )
+        let verifyMs = elapsedMilliseconds(since: verifyStart)
+        log("[WindowManager] atomicBounds: iTerm2 single-event frame write", level: .info, fields: [
+            "op": op, "stage": stage, "windowID": String(windowID),
+            "target": QuartzRect(frame).description,
+            "sendMs": String(sendMs), "verifyMs": String(verifyMs),
+            "satisfied": String(outcome.satisfied),
+            "verdict": outcome.satisfied ? "single_step" : "unconverged_fallback_yabai"
+        ])
+        return outcome.satisfied
     }
 
     /// Move a specific window to the main screen with proper space and size handling.

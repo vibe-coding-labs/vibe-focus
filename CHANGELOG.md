@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cross-display moves of iTerm2 windows are now a single frame — the two-step
+  "jump then grow" (and its occasional reverse) is gone for iTerm2.**
+  - New channel: for iTerm2 windows moving across displays, the final frame is written
+    with **one Apple Event** (`tell application id "com.googlecode.iterm2" to set bounds
+    of window id N to {x1, y1, x2, y2}` — `Sources/Support/AtomicBoundsChannel.swift`,
+    wired in `attemptAtomicBoundsMove` before the two-phase executor). Real-machine
+    verification: 4 ms frame sampling across both directions (main→secondary with
+    negative-y coordinates included) captured **zero intermediate states** and a
+    pixel-exact final frame (total drift 0), focus untouched, no app-internal resize
+    animation.
+  - Why the old path looked like "messy animations" on iTerm2 (probe-verified
+    2026-11-23/24): iTerm2 runs a ~300 ms internal ease-out animation for **every** AX
+    position/size write (even position-only); back-to-back AX position+size writes get
+    the position **swallowed** (deferred, sometimes seconds later — this can also wedge
+    iTerm2's window state machine into an unclosable state); yabai's `--move` triple
+    write (`size→position→size` from its in-process cache) compounds the character-grid
+    snap. Two sequential writes each triggering their own animation = the mess users saw.
+  - Scope discipline (all-case adaptive, never a hard dependency): the atomic channel is
+    **iTerm2-only** (Terminal.app's AppleScript `set bounds` uses per-screen-local
+    coordinates and drifts across displays — repo finding 2026-09-04, re-confirmed),
+    **cross-display-only** (same-display moves keep the fast AX path; grid placement
+    keeps its no-fork latency), and **falls back** to the historical two-phase path on
+    any send failure or non-convergence. Fallback verification budget: 800 ms.
+  - Honesty amendment: the 2026-11-23 claim "one-step cross-display+resize is physically
+    impossible" was wrong in scope — it held for the AX/yabai channels only. The
+    AppleScript `set bounds` channel (never tried before) achieves it for iTerm2.
+    The three-constraints analysis remains valid for Terminal.app and other apps.
+
 ### Changed
 
 - Window switching is now **animation-free** — yabai's `window_animation_duration` is
