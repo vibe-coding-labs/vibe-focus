@@ -43,3 +43,7 @@ docs/superpowers/plans/
 
 # 第二份物理检出（只在确实需要并行构建时使用；禁止放仓库同级父目录）
 .worktrees/
+
+# App 本机运行时偏好（dev 跑 app 时落在仓库根目录的 plist，非源码）
+/inputBubbleDrafts
+/inputBubbleHistory
