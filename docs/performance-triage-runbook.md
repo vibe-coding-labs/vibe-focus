@@ -176,7 +176,8 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
 | yabai 帧动画 | 已断言 `window_animation_duration = 0`（总闸无 per-call 旁路） | `YabaiAnimationGuard` |
 | yabai `set_window_frame` 三写 | 动画总闸为 0 时它仍按 `size→position→size` 写三遍，且 size 取**进程内缓存宽高** → 尺寸被吸附（iTerm2 640→664）且需要第二次尺寸写 = 两步 | `window_manager.c:342/729` |
 | **两步的根治** | 位置与尺寸**都**走 AX（`.axFull` 臂），yabai 不参与帧写入；收窄序零段间睡眠 | `FrameWriteExecutor` |
-| 放大序「先跳过去再长大」 | 历史写序 move→resize 是为避开 yabai 写的 clamp；全 AX 臂的 size 写可读回校验 → 改为**先试终态**（resize→move），没到位才回落 | `FrameWriteExecutor` `.axFull` 臂 |
+| 放大序「先跳过去再长大」 | 写序 move→resize **必须保留**：源屏先 resize 会被可视区钳（1079→1055）→ 窗口在源屏先变大一次，再移动，再变大 = 三跳。曾试过「先 resize、读回不达标再回落」，真机表现为「来回跳」，已回退 | `FrameWriteExecutor` |
+| **跨屏「来回跳」**（2026-11-23 真机） | 裸 AX **跨屏** position 写被 WindowServer 钳回源屏 → 读回失败 → 降级 yabai move 再挪一次 = 位置动两次。AX position **只在同屏**可用；跨屏位置必须走 yabai（唯一经真机验证的跨屏通道） | `WindowManager+MoveWindow.swift` 的 `crossDisplayMove` |
 | float 脱管重摆 | `--toggle float` 后 yabai 自身重摆也会走 `animate_window`（已被总闸覆盖） | `YabaiAnimationGuard` 二次加固 |
 | 系统 space 切换 | App 关不掉（SLSShowSpaces 由系统播放；需部分关 SIP 或第三方手势合成） | 平台行为 |
 

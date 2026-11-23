@@ -225,10 +225,7 @@ extension WindowManager {
         // move_to_main/stuck 传源屏可视区（跨屏）。用「nil == 同屏」推断会在 restore
         // 的主屏→副屏上把跨屏误判成同屏、重新引入跳跃。故只认「目标 frame 完整落在
         // 传入的源屏可视区内」；nil 一律按跨屏（保守，零额外 NSScreen 查询）。
-        let crossDisplayMove: Bool = {
-            guard let sourceVisible = sourceVisibleFrame else { return true }
-            return !sourceVisible.contains(frame)
-        }
+        let crossDisplayMove: Bool = sourceVisibleFrame.map { !$0.contains(frame) } ?? true
         let axPositionWindow: AXUIElement? = axWindow.flatMap { ax -> AXUIElement? in
             // 跨屏一律不启用 AX position（见上文）。
             guard !crossDisplayMove else { return nil }
