@@ -221,12 +221,17 @@ extension WindowManager {
         /// 位置写是否仍可走 AX（写失败/读回不达标即永久降级——不再对已证明无效的
         /// 通道反复撞，这是 2026-09-06 AX resize 吞写教训的同款处置）。
         var axPositionUnreliable = axPositionWindow == nil
+        var axPositionSendCount = 0
+        var axPositionWriteMs = 0
         func axPreciseMoveAvailable() -> Bool { axPositionWindow != nil && !axPositionUnreliable }
         /// AX 直写位置 + 读回校验（origin 漂移在容差内才算成功）。
         /// 返回 false 时调用方回退 yabai move，行为不比现状差。
         func applyMovePrecise() -> Bool {
             guard let ax = axPositionWindow, !axPositionUnreliable else { return false }
             var writeMs = 0
+            axPositionSendCount += 1
+            let positionWriteStart = Date()
+            defer { axPositionWriteMs += elapsedMilliseconds(since: positionWriteStart) }
             let positionOK: Bool
             if let environment, let injected = environment.writePositionViaAX {
                 positionOK = injected(frame, ax)
@@ -324,7 +329,11 @@ extension WindowManager {
             "convergeRounds": String(run.convergedRounds),
             "stallResendCount": String(run.resendCount),
             "combinedPhase1": String(run.combinedPhase1),
-            "phase1Plan": Self.phase1PlanName(run.phase1Plan)
+            "phase1Plan": Self.phase1PlanName(run.phase1Plan),
+            // 双向单步归因：AX 位置写次数/明细（0 = 位置走 yabai；≥1 = 全 AX 臂生效）。
+            "axPositionSendCount": String(axPositionSendCount),
+            "axPositionWriteMs": String(axPositionWriteMs),
+            "axPositionUnreliable": String(axPositionUnreliable)
         ])
         switch outcome {
         case .converged(let attempt, _):
