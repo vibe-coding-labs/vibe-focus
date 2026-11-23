@@ -26,27 +26,6 @@ struct YabaiMoveEnvironment {
     // 导致终端吸附 664；AX 跨屏 position 被 WindowServer 钳回源屏。两者均被真机否掉。
 }
 
-// MARK: - Window Move Operations（主编排）
-// 文件分层（2026-08-31 拆分，行为不变）：
-//   +MoveWindow.swift（本文件）          — runShellCommand 委托 + moveWindowToMainScreen 编排
-//   +MoveWindow+PostMove.swift          — 移动后 size 校验重写 + toggle record 保存
-//   +WindowResolution.swift             — WindowIdentity → AXUIElement 四级解析
-// 注意：runShellCommand 虽与 move 无关，但被 TitleEditor/TerminalContext 多处调用，
-// 保留在 WindowManager 命名空间原位（搬动需同步评估全部调用方，本轮不做）。
-
-/// yabai 写通道的宿主依赖缝（2026-11-19 覆盖率补齐）：queryWindow / CG 读回 /
-/// yabai 发令 / AX resize 解析与写原语 / 轮询睡眠全可注入。默认 nil → 生产真实
-/// 实现；Runner 注入假实现直测写序、AX→yabai 降级与收敛裁决（零 fork、零真实窗口移动）。
-struct YabaiMoveEnvironment {
-    var queryWindow: (UInt32) -> YabaiWindowInfo?
-    var cgWindowBounds: (UInt32) -> CGRect?
-    var runYabai: ([String]) -> Void
-    var findAXWindow: (Int32, UInt32) -> AXUIElement?
-    var isSettable: (AXUIElement, String) -> Bool
-    var resizeViaAX: (CGRect, AXUIElement) -> Bool
-    var pollSleep: (UInt32) -> Void
-}
-
 // MARK: - Window Move Operations
 extension WindowManager {
 
