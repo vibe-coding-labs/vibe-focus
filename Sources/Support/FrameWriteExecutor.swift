@@ -35,20 +35,25 @@
 //
 // ### 问题二：两段动画（先移动 → 停 → 再长大）
 // AX 通道的旧路径在 resize 与 move 之间跑 `waitForPhase` 轮询（300ms 预算、25ms 节拍），
-// 还原场景实测 300~378ms——动画早被 YabaiAnimationGuard 关成 0 之后，这段等待只是纯延迟。
-// 而 AX 写原语**自带读回验证**（resizeViaAX → writeSizeWithReadback，返回即已生效），
-// 段间不需要再轮询一遍。
+// 还原场景实测 300~378ms。**这段等待保留**：它是 fork 返回 ≠ 已应用的必要同步
+// （e16de7b 实证：去掉它会在窗台/尺寸尚未落定时发第二段，产生中间态）。
 //
-// ### 三臂策略（FramePhase1Plan，纯函数决策）
-// | 通道 | 段一 | 段间 |
+// ### 当前策略（2026-11-23 收敛：恒走历史两段 + 段间等生效）
+//
+// 真机反复投诉后确认：跨屏且要改尺寸时**一步完成在物理上不存在**（三条硬约束见
+// FramePhase1Plan.decide 的注释）。因此本执行器回到 e16de7b 的形态：
+// | 段一 | 段间 | 段二 |
 // |---|---|---|
-// | AX 尺寸可精确写 | AX resize + yabai move（按写序） | 收窄：固定 25ms 节拍；放大：等 origin 可观测（25ms 节拍 / 150ms 预算，早返回） |
-// | AX 不可用 / 已证明吞写 | yabai 单条消息合发 --move+--resize | 无（单条消息无中间态） |
-// | 显式关闭合发（历史兼容/夹具） | yabai 两段 | waitForPhase 300ms 轮询 |
-// 段二补发同样按通道：尺寸偏差且 AX 可用 → AX 精确写（不再重复 yabai --resize）。
-// 另：move 与尺寸补写的配对**只在确定降级时**做（moveFrame 返回 true = 确实走了
-// yabai），不靠「move 后立刻读回」判断——那个读回常常早于落定，会把「还没更新」
-// 误判成「被覆盖」，多写一次尺寸 = 用户看到的「来回跳」（2026-11-23 真机）。
+// | resize→move（收窄）或 move→resize（放大） | waitForPhase 等第一段可观测 | 收敛轮询 + 按偏差补发 |
+//
+// - **尺寸**补发优先 AX（yabai 的 --resize 对字符网格吸附的终端永远回到 664）；
+// - **位置**只走 yabai（跨屏唯一验证过的通道）；
+// - 位置补发后不紧跟尺寸补写（多一跳）；精度由段二的 AX 尺寸补发保证。
+//
+// 曾试过并被真机否掉的：原子合发（尺寸被吸附成 664）、全 AX 位置（跨屏被钳回 →
+// 降级 yabai = 来回跳）、放大序先试终态（源屏先放大被钳 → 三跳）、AX resize
+// 单次写不等读回（与 extra 补写叠加后仍跳）。全部撤回，`FramePhase1Plan.decide`
+// 恒返回 `.yabaiPolled`。
 
 import Foundation
 
@@ -133,6 +138,24 @@ enum FramePhase1Plan: Equatable {
     ///    段间从 300ms 轮询降到 25ms 节拍）。
     /// 3. 都不能 → `.combined`（单条 yabai 消息；尺寸会被终端网格吸附，是最后的
     ///    容量通道）；合发也关闭 → 历史两段。
+    /// ## 2026-11-23 收敛：回到「两段 + 等生效」（用户真机背书的形态）
+    ///
+    /// 真机反复投诉「来回跳」后，逐条溯源得到的**硬约束**（都有源码或真机证据）：
+    /// 1. yabai `--move` 会用**进程内缓存的宽高**重写一次 size（window_manager.c:342
+    ///    → set_window_frame 三写）→ 位置只要经 yabai，尺寸必被覆盖一次。
+    /// 2. iTerm2 在「位置+尺寸同时变」时按字符网格重算 → 640 被吸成 664；只改尺寸时
+    ///    精确接受 640。
+    /// 3. 裸 AX **跨屏** position 写被 WindowServer 钳回源屏（+AXWrite.swift 头注 +
+    ///    真机「来回跳」实证）→ 跨屏位置只能走 yabai。
+    ///
+    /// 三条合起来是一个死结：跨屏且要改尺寸时，**一步完成在物理上不存在**。
+    /// 只能二选一：
+    /// - 先精确缩放（源屏）→ 再跨屏落位 = 两步，但尺寸精确、无回跳（e16de7b 实证正确）；
+    /// - 一条消息同时移动+缩放 = 一步，但终端尺寸被吸附成 664（5e0b288 实证错误）。
+    ///
+    /// 2026-11-21~23 之间的各版尝试（合发 / 全 AX / 先试终态 / 单次写）各自解锁了一项
+    /// 指标又打破另一项，全部已撤回。当前**恒走历史两段 + 段间等生效**：它不跳、
+    /// 尺寸对，代价是段间等待（那是可调的，跳不是）。
     static func decide(
         axPreciseSize: Bool,
         axPreciseMove: Bool,
@@ -141,19 +164,7 @@ enum FramePhase1Plan: Equatable {
         axSettleMs: UInt32,
         moveSettleBudgetMs: UInt32
     ) -> FramePhase1Plan {
-        if axPreciseSize, axPreciseMove {
-            return .axFull(
-                resizeFirst: order == .resizeThenMove,
-                settleMs: axSettleMs,
-                moveSettleBudgetMs: moveSettleBudgetMs)
-        }
-        if axPreciseSize {
-            return .axPrecise(
-                resizeFirst: order == .resizeThenMove,
-                settleMs: axSettleMs,
-                moveSettleBudgetMs: moveSettleBudgetMs)
-        }
-        if combinedAvailable { return .combined }
+        _ = (axPreciseMove, combinedAvailable, axSettleMs, moveSettleBudgetMs)
         return .yabaiPolled(order: order)
     }
 }
@@ -264,29 +275,6 @@ struct FrameWriteExecutor {
         )
     }
 
-    /// 位置写：优先「AX 直写 + 读回校验」，不达标当场回退 `applyMove`。
-    ///
-    /// 返回值 = **是否发生了到 `applyMove` 的回退**（调用方据此决定是否需要补写尺寸：
-    /// yabai 的 --move 会用缓存宽高覆盖 size，而 AX 通道自己的 applyMove 不会）。
-    ///
-    /// - 未提供 `applyMovePrecise`（nil）→ `applyMove` 就是该通道的位置原语（AX 直写
-    ///   通道即如此），不算回退，返回 false；
-    /// - 提供但 `axPreciseMove()` 已转 false（此前失败过）→ 直接走 `applyMove`，
-    ///   也算回退（此时 yabai 语义可能成立，补尺寸是安全的多一层）。
-    ///
-    /// 注意**不能**在这里无条件补写 AX size——放大序的 size 还没写（写序
-    /// move→resize），提前补写反而会被源屏可视区 clamp。由调用方按写序决定。
-    @discardableResult
-    private func moveFrame() -> Bool {
-        guard let precise = deps.applyMovePrecise else {
-            deps.applyMove()
-            return false
-        }
-        if deps.axPreciseMove(), precise() { return false }
-        deps.applyMove()
-        return true
-    }
-
     /// 段一实际帧写入步数（日志验收字段，见 RunOutcome.phase1WriteSteps）。
     ///
     /// 只数「会改变窗口可见位置/尺寸的写」，口径：
@@ -311,80 +299,11 @@ struct FrameWriteExecutor {
         let plan = phase1Plan(order: order)
         let combined = deps.applyCombined
         let phase1Start = Date()
-        var phase1FellBackToYabaiMove = false
+        // 2026-11-23 收敛：只走历史两段 + 段间等生效（e16de7b 的实证正确形态）。
+        // 其余臂保留为防御性兜底（decide 已恒返回 yabaiPolled），不参与正常路径。
         switch plan {
-        case .combined:
-            if let applyCombined = combined {
-                applyCombined()
-            } else {
-                // 计划说能合发但入口没给闭包（不可达的防御臂）：退回两段轮询。
-                runYabaiPolledPhases(order: order, target: target)
-            }
-        case .axFull(let resizeFirst, let settleMs, let moveSettleBudgetMs):
-            // 双向单步：尺寸与位置都走 AX，两次 AX 写背靠背（各 ~30ms），
-            // 没有 yabai fork、没有「先缩小再跳屏」的中间可见态。
-            //
-            // 写序仍按历史语义（收窄/还原 resize→move，放大 move→resize），因为
-            // WindowServer 对**单次** AX 写的可见区约束没有变；差别只在两次写之间
-            // 不再经过 yabai（fork 82~322ms + 缓存尺寸覆盖）。
-            //
-            // 收窄/还原序（resize→move）：AX resize 原语自带读回验证（返回即已生效），
-            // 紧随的 move 也走 AX —— 不使用 yabai 的进程内 frame 缓存，因此这里
-            // **不需要**任何段间睡眠。两次 AX 写真正背靠背，是一帧内的跳变。
-            //
-            // （axPrecise 臂仍保留 settleMs：那条臂的 move 走 yabai，yabai 会用缓存
-            //   宽高覆盖尺寸，需要给它一个节拍让 AX 通知把缓存更新过来。）
-            //
-            // 放大序（2026-11-23 回退）：**必须**先 move 后 resize。
-            //
-            // ## 为什么试过的「先试终态」被撤回（真机实证，用户投诉「来回跳来跳去」）
-            // 曾改成「先 resize，读回不达标再回落」，理由是 AX 写自带读回、clamp 可观测。
-            // 真机上这造成明显的多次跳变：
-            //   1. 窗口还在副屏时写 1079 高 → 被副屏可视区钳到 1055，
-            //      **窗口在副屏上先变大一次**（用户看到的第 1 跳）；
-            //   2. 读回判未到位 → 回落再 move（第 2 跳）→ 再 resize（第 3 跳）。
-            // 「可观测」只保证最终值对，保证不了**中间不产生可见变化**——而后者才是
-            // 用户关心的。跨屏 clamp 无法预防，只能靠写序避开（历史 move→resize 的
-            // 原意）。已在源屏被钳的窗口还白付一次尺寸写与一次读回。
-            if resizeFirst {
-                deps.applyResizeAdaptive()
-                if moveFrame() {
-                    phase1FellBackToYabaiMove = true
-                }
-                if phase1FellBackToYabaiMove, deps.axPreciseSize() {
-                    // 位置降级到 yabai move 时，yabai 会用缓存宽高把刚写好的精确尺寸
-                    // 覆盖掉（问题一）——立刻补写回 AX 精确值。
-                    deps.applyResizeAdaptive()
-                }
-            } else {
-                if moveFrame() { phase1FellBackToYabaiMove = true }
-                waitForPhase("move", intervalMs: settleMs, budgetMs: moveSettleBudgetMs) {
-                    !FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance).contains(.origin)
-                }
-                deps.applyResizeAdaptive()
-            }
-        case .axPrecise(let resizeFirst, let settleMs, let moveSettleBudgetMs):
-            if resizeFirst {
-                // 尺寸先精确到位（AX 写原语自带读回），短节拍让 yabai 缓存跟上，再落位。
-                deps.applyResizeAdaptive()
-                if settleMs > 0 { phaseSettle(settleMs) }
-                // 段一只做两件事：精确 resize + yabai move = 两个可见态。
-                //
-                // **不**在这里紧跟一次「move 后读回、尺寸被盖回就补写」：该读回发生在
-                // move 之后立即，CGWindowList/AX 未必已落定，容易把「还没更新」误判成
-                // 「尺寸被覆盖」而多写一次尺寸——用户真机看到的就是「来回跳」
-                // （2026-11-23 投诉）。尺寸若真被 yabai 缓存盖回，交给段二收敛轮询
-                // （convergeFramePolling：带轮询确认，且只在确实偏差时才补发）。
-                deps.applyMove()
-            } else {
-                // 放大：先落位（否则 AX size 写被源屏可视区 clamp），等 origin 可观测
-                // 再写尺寸（节拍 settleMs / 预算 moveSettleBudgetMs / 早满足早返回）。
-                deps.applyMove()
-                waitForPhase("move", intervalMs: settleMs, budgetMs: moveSettleBudgetMs) {
-                    !FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance).contains(.origin)
-                }
-                deps.applyResizeAdaptive()
-            }
+        case .combined, .axFull, .axPrecise:
+            runYabaiPolledPhases(order: order, target: target)
         case .yabaiPolled(let polledOrder):
             runYabaiPolledPhases(order: polledOrder, target: target)
         }
@@ -400,43 +319,24 @@ struct FrameWriteExecutor {
                 attemptNo += 1
                 let shortfall = FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance)
                 let segments = FrameConvergence.resendSegments(shortfall: shortfall, order: order)
-                // 全缺 + 通道支持合发 + 无 AX 精确尺寸 → 一次写全帧（补发同样不拆两段）。
-                let axPrecise = deps.axPreciseSize()
-                let axMove = deps.applyMovePrecise != nil && deps.axPreciseMove()
-                if segments.count == 2, let applyCombined = combined, !axPrecise {
-                    applyCombined()
-                } else {
-                    for segment in segments {
-                        switch segment {
-                        case .move:
-                            if axMove {
-                                // 全 AX 臂：位置补发同样走 AX（yabai 只要碰位置就会用缓存
-                                // 宽高覆盖尺寸，等于把刚修好的 640 又抹成 664）。
-                                if moveFrame(), axPrecise {
-                                    // 降级到 yabai move 了：尺寸被缓存宽高覆盖，补写回精确值。
-                                    deps.applyResizeAdaptive()
-                                }
-                            } else if axPrecise {
-                                // 位置只能走 yabai：move 后 yabai 必然用缓存宽高重写 size，
-                                // 这里**无条件**补写一次 AX 精确尺寸（确定性，不靠读回猜）。
-                                // 若 yabai 缓存恰好已跟上，这次写是幂等的同值写，不产生
-                                // 新的可见变化。
-                                deps.applyMove()
-                                deps.applyResizeAdaptive()
-                            } else {
-                                deps.applyMove()
-                            }
-                        case .resize:
-                            // 2026-11-23：尺寸补发优先 AX 精确通道——yabai 的 --resize
-                            // 对字符网格吸附的终端窗口永远收敛不到目标值，重复发它只是
-                            // 原地打转（664→664，用户主诉的「frameOK 恒 false」）。
-                            if axPrecise {
-                                deps.applyResizeAdaptive()
-                            } else if segments.count == 2 {
-                                deps.applyResizeRobust()
-                            } else {
-                                deps.applyResizeAdaptive()
-                            }
+                // 补发策略（2026-11-23 收敛，回到「不跳」的形态）：
+                // - **尺寸**补发优先 AX（yabai 的 --resize 对字符网格吸附的终端永远
+                //   回到 664，重复发只是原地打转）——这是唯一保住尺寸精度的通道；
+                // - **位置**补发只走 yabai（跨屏唯一验证过的通道）；
+                // - 位置写完**不**额外补写尺寸：yabai 会用缓存宽高覆盖一次，但那次覆盖
+                //   发生在同一轮内、紧随其后的尺寸补发会修正它；若在这一步再插一次补写，
+                //   就变成「move → resize → resize」多一跳（真机「来回跳」的来源之一）。
+                for segment in segments {
+                    switch segment {
+                    case .move:
+                        deps.applyMove()
+                    case .resize:
+                        if axPrecise {
+                            deps.applyResizeAdaptive()
+                        } else if segments.count == 2 {
+                            deps.applyResizeRobust()
+                        } else {
+                            deps.applyResizeAdaptive()
                         }
                     }
                 }
@@ -467,8 +367,8 @@ struct FrameWriteExecutor {
             phase2ConvergeMs: phase2ConvergeMs,
             combinedPhase1: plan.isCombined && combined != nil,
             phase1Plan: plan,
-            phase1WriteSteps: Self.phase1WriteSteps(
-                plan: plan, didFallBackToYabaiMove: phase1FellBackToYabaiMove)
+            // 恒走历史两段路径（见 decide 的收敛注释）→ 固定 2。
+            phase1WriteSteps: 2
         )
     }
 
