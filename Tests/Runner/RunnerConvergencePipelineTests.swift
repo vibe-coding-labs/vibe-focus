@@ -358,6 +358,7 @@ extension RunnerHarness {
             check("executor J6: 尺寸补发优先 AX 通道（不靠 yabai --resize）",
                   calls3.contains("axResize"))
         }
+    }
 
     // MARK: WindowManager.route（真实实现——toggle 执行路由唯一映射，Batch 5）
 
