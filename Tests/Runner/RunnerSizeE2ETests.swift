@@ -6,6 +6,82 @@ import Foundation
 
 // Tests/Runner/RunnerSizeE2ETests.swift — B56 自 main.swift 按域拆分（逐字搬移，零内容变更）
 
+// MARK: - 单步判定（2026-11-23）
+
+/// 可见中间态的判定内核（纯函数，Runner 直测锁定，无需真机）。
+///
+/// ## 为什么需要它
+/// 「切换是不是一步到位」此前的唯一判据是人眼——不可复现、不可回归。改用高频采样
+/// （4ms 节拍读 CGWindowList）后，「几步」变成一个可数的量：**去重后的可见状态个数**。
+///
+/// ## 判定口径
+/// - 起点帧（移动前用户已看到的状态）与终态帧都不算中间态；
+/// - 与起点、终态**都不同**的采样帧 = 中间态（用户多看到的一个状态）；
+/// - 同一中间态重复采到多次只计 1（状态去重，不是采样数）；
+/// - 采样噪声容差：与起点/终态的漂移和 ≤ `noiseTolerance` 视为同一状态
+///   （CGWindowList 有 ±2~3px 阴影噪声，不设容差会把噪声误判成中间态）。
+enum FrameStepSampler {
+
+    struct Verdict: Equatable {
+        let totalSamples: Int
+        let distinct: Int
+        /// 去重后的可见中间态数量：0 = 单步跳变，≥1 = 多段。
+        let intermediateCount: Int
+        let intermediateFrames: [CGRect]
+    }
+
+    /// 两个 frame 是否「同一可见状态」（漂移和 ≤ 容差）。
+    static func isSameState(_ a: CGRect, _ b: CGRect, noiseTolerance: CGFloat = 6) -> Bool {
+        CoordinateKit.originDrift(a.origin, b.origin) + CoordinateKit.sizeDrift(a.size, b.size)
+            <= noiseTolerance
+    }
+
+    /// 由采样序列判定可见中间态。
+    static func verdict(
+        samples: [CGRect],
+        start: CGRect,
+        end: CGRect,
+        noiseTolerance: CGFloat = 6
+    ) -> Verdict {
+        var intermediates: [CGRect] = []
+        for sample in samples {
+            if isSameState(sample, start, noiseTolerance: noiseTolerance) { continue }
+            if isSameState(sample, end, noiseTolerance: noiseTolerance) { continue }
+            // 与已记录的某个中间态相同 → 不重复计。
+            let seen = intermediates.contains {
+                isSameState($0, sample, noiseTolerance: noiseTolerance)
+            }
+            if !seen { intermediates.append(sample) }
+        }
+        return Verdict(
+            totalSamples: samples.count,
+            distinct: intermediates.count + 2,
+            intermediateCount: intermediates.count,
+            intermediateFrames: intermediates
+        )
+    }
+}
+
+/// 采样盒（采样线程与主线程共享；`stop` 由主线程置位退出）。
+final class SampleBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames: [CGRect] = []
+    var stop = false
+
+    func record(_ frame: CGRect) {
+        lock.lock()
+        frames.append(frame)
+        lock.unlock()
+    }
+
+    func verdict(start: CGRect, end: CGRect) -> FrameStepSampler.Verdict {
+        lock.lock()
+        let snapshot = frames
+        lock.unlock()
+        return FrameStepSampler.verdict(samples: snapshot, start: start, end: end)
+    }
+}
+
 extension RunnerHarness {
     func runSizeE2E() {
     // MARK: 跨屏移动尺寸保真真机 E2E（仅 VIBEFOCUS_SIZE_E2E=1 时运行）
@@ -15,6 +91,46 @@ extension RunnerHarness {
     //          区内 → 命中 af19b2b 新增的 resizeThenMove 先行终态路径）
     //   Case B 缩小跨屏（副→主，1500x900→800x600 → 缩小分支 resizeThenMove）
     // 断言：最终 frame 尺寸/位置与目标一致（±40 量化容差）。结束清理窗口。
+    // 单步判定内核（无条件跑；不需要真机——判定逻辑本身必须先在真机取证前被锁死，
+    // 否则「E2E 说单步」也可能只是判定写错了：2026-11-23 加固）。
+    do {
+        print("\n=== 单步判定内核（FrameStepSampler） ===")
+        let start = CGRect(x: 0, y: 0, width: 640, height: 525)
+        let end = CGRect(x: 1653, y: 25, width: 1653, height: 1079)
+
+        // A. 理想单步：采样里只有起点与终态（含噪声）。
+        let single = FrameStepSampler.verdict(
+            samples: [start, start, end, end], start: start, end: end)
+        check("stepSampler A1: 只有起终点 → 中间态 0（单步）", single.intermediateCount == 0)
+        check("stepSampler A2: 去重态数 = 2", single.distinct == 2)
+
+        // B. 噪声容差：±3px 抖动不产生中间态。
+        let noisy = FrameStepSampler.verdict(
+            samples: [CGRect(x: 1, y: -2, width: 642, height: 524), end],
+            start: start, end: end)
+        check("stepSampler B1: ±3px 噪声不误判中间态", noisy.intermediateCount == 0)
+
+        // C. 两步（先移动后长大）：位置已到、尺寸未到 → 采到 1 个中间态。
+        let halfMoved = CGRect(x: end.minX, y: end.minY,
+                               width: start.width, height: start.height)
+        let twoStep = FrameStepSampler.verdict(
+            samples: [start, halfMoved, halfMoved, end], start: start, end: end)
+        check("stepSampler C1: 先移后长 → 中间态 1（两步）", twoStep.intermediateCount == 1)
+        check("stepSampler C2: 同一中间态重复采样只计 1",
+              twoStep.intermediateCount == 1 && twoStep.totalSamples == 4)
+
+        // D. 三步：中间态去重后 2 个。
+        let halfGrown = CGRect(x: start.minX, y: start.minY,
+                               width: end.width, height: end.height)
+        let threeStep = FrameStepSampler.verdict(
+            samples: [start, halfGrown, halfMoved, end], start: start, end: end)
+        check("stepSampler D1: 两个不同中间态 → 计 2", threeStep.intermediateCount == 2)
+
+        // E. 空采样不崩、判为单步（尚未采到任何东西 ≠ 发现中间态）。
+        check("stepSampler E1: 空采样 → 0 中间态",
+              FrameStepSampler.verdict(samples: [], start: start, end: end).intermediateCount == 0)
+    }
+
     if ProcessInfo.processInfo.environment["VIBEFOCUS_SIZE_E2E"] == "1" {
         print("\n=== 跨屏移动尺寸保真真机 E2E ===")
         // B228：B180 探测后台化后同步断言竞态恒 false——泵 RunLoop 等结果落地
@@ -94,6 +210,25 @@ extension RunnerHarness {
                 return
             }
             print("    [诊断] \(name) 初始=\(startFrame) 目标=\(target)")
+            // ===== 单步 vs 两步：客观采样（2026-11-23）=====
+            // 人眼判断「是不是一次跳变」不可复现，这里在**同一个窗口**上做高频采样：
+            // 移动发起前启动一个 4ms 节拍的后台采样线程，记录每一拍 CGWindowList 读回的
+            // frame 快照（~2ms，非阻塞）。移动结束后按「状态去重」统计**可见中间态个数**：
+            //   - 终态（1 个）= 用户只看到一次跳变（单步）
+            //   - 终态 + ≥1 个既非起点也非终点的中间态 = 用户看到两步（多段）
+            // 起点帧本身不算中间态（那是移动前用户已看到的状态）。
+            //
+            // 为什么能区分两条臂：全 AX 臂下尺寸与位置同帧内完成；axPrecise 臂下
+            // 「尺寸已变、位置未变」或反向的中间态会被采到。
+            let samples = SampleBox()
+            let sampling = Thread {
+                let deadline = Date().addingTimeInterval(2.0)
+                while Date() < deadline, !samples.stop {
+                    if let f = cgWindowBounds(for: wid) { samples.record(f) }
+                    Thread.sleep(forTimeInterval: 0.004)
+                }
+            }
+            sampling.start()
             let moveSem = DispatchSemaphore(value: 0)
             Task { @MainActor in
                 _ = WindowManager.shared.moveWindowToFrameViaYabai(
@@ -104,6 +239,9 @@ extension RunnerHarness {
             while moveSem.wait(timeout: .now()) == .timedOut {
                 RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
             }
+            Thread.sleep(forTimeInterval: 0.35)
+            samples.stop = true
+            sampling.cancel()
             // 收敛观察窗：2s 内帧稳定即采样
             var final: CGRect?
             var last: CGRect?
@@ -127,6 +265,18 @@ extension RunnerHarness {
             check("SizeE2E \(name): 尺寸保真（Δ≤40，实测 Δ=(\(Int(sizeDW)),\(Int(sizeDH)))）",
                   sizeDW <= 40 && sizeDH <= 40)
             check("SizeE2E \(name): 位置保真（Δ≤80）", posDX <= 80 && posDY <= 80)
+
+            // 可见中间态统计（客观判定单步/两步）。
+            let verdict = samples.verdict(start: startFrame, end: target)
+            print("    [诊断] \(name) 采样\(verdict.totalSamples)拍 / 去重\(verdict.distinct)态 / 中间态\(verdict.intermediateCount)个")
+            if !verdict.intermediateFrames.isEmpty {
+                print("    [诊断] \(name) 中间态样本（最多 5 个）：")
+                for f in verdict.intermediateFrames.prefix(5) {
+                    print("        \(f)")
+                }
+            }
+            check("SizeE2E \(name): 单步跳变（无可见中间态，实测 \(verdict.intermediateCount) 个）",
+                  verdict.intermediateCount == 0)
         }
 
         // Case A：主→副 放大（旧 origin(100,100)+目标尺寸在主屏可视区内 → 命中
