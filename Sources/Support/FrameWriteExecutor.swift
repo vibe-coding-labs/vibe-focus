@@ -297,7 +297,6 @@ struct FrameWriteExecutor {
     /// 执行两段写入并收敛验证。返回结果与分段计时（供调用方 segment timing 汇总日志）。
     func run(target: CGRect, order: FrameWriteOrder) -> RunOutcome {
         let plan = phase1Plan(order: order)
-        let combined = deps.applyCombined
         let phase1Start = Date()
         // 2026-11-23 收敛：只走历史两段 + 段间等生效（e16de7b 的实证正确形态）。
         // 其余臂保留为防御性兜底（decide 已恒返回 yabaiPolled），不参与正常路径。
@@ -331,7 +330,7 @@ struct FrameWriteExecutor {
                     case .move:
                         deps.applyMove()
                     case .resize:
-                        if axPrecise {
+                        if deps.axPreciseSize() {
                             deps.applyResizeAdaptive()
                         } else if segments.count == 2 {
                             deps.applyResizeRobust()
@@ -365,7 +364,7 @@ struct FrameWriteExecutor {
             convergedRounds: convergedRounds,
             phase1Ms: phase1Ms,
             phase2ConvergeMs: phase2ConvergeMs,
-            combinedPhase1: plan.isCombined && combined != nil,
+            combinedPhase1: false,   // 恒走两段路径（见 decide 收敛注释）
             phase1Plan: plan,
             // 恒走历史两段路径（见 decide 的收敛注释）→ 固定 2。
             phase1WriteSteps: 2
