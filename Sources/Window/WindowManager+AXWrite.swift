@@ -201,6 +201,22 @@ extension WindowManager {
         }
     }
 
+    /// 单次 AX size 写、**不等读回**（发一次就返回）。语义等价于 `axWriteSizeOnce`
+    /// 但对外暴露给帧写入编排层做「背靠背两段写」——段间不再付 25ms 读回节拍，
+    /// 到位与否由段二收敛轮询裁决（2026-11-23 真机「小跳一下」修复）。
+    func writeSizeOnce(
+        targetFrame: CGRect,
+        window: AXUIElement,
+        op: String,
+        stage: String,
+        writeMs: inout Int
+    ) -> Bool {
+        let result = axWriteSizeOnce(
+            targetFrame: targetFrame, window: window, op: op, stage: stage, attempt: 1)
+        writeMs = result.writeMs
+        return result.axOK
+    }
+
     /// 单次 AX size 写（AXValueCreate + SetAttributeValue）。axOK=false 即 AXValueCreate 失败
     /// 或 AX 返回错误码，writeSizeWithReadback 视为硬失败中止。
     private func axWriteSizeOnce(

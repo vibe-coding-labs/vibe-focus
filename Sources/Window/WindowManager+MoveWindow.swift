@@ -288,7 +288,13 @@ extension WindowManager {
                 if let environment {
                     axOK = environment.resizeViaAX(frame, ax)
                 } else {
-                    axOK = resizeViaAX(targetFrame: frame, window: ax, windowID: windowID, op: op, stage: stage)
+                    // 单次写、**不**在内部等读回（resizeViaAX 会「写→睡25ms→读回」，
+                    // 那 25ms 期间窗口已经可见地变了 —— 用户真机「先小跳一下再到位」
+                    // 的直接来源：resize 生效（小跳）→ 等 25ms → move 生效（到位）。
+                    // 这里只发一次写就返回，紧随的 move 得以背靠背；尺寸是否真的到位
+                    // 由段二收敛轮询裁决（带轮询确认，比单次读回更可靠）。
+                    var writeMs = 0
+                    axOK = writeSizeOnce(targetFrame: frame, window: ax, op: op, stage: stage, writeMs: &writeMs)
                 }
                 axResizeWriteMs += elapsedMilliseconds(since: writeStart)
                 if !axOK { axResizeUnreliable = true }
@@ -362,6 +368,21 @@ extension WindowManager {
             ])
             return true
         case .mismatched(let attempts, let lastFrame):
+            // 吞写检测（2026-11-23）：段一改为「单次写不等读回」后，AX 尺寸写被 app
+            // 吞掉不会再在写时立即暴露。这里以收敛轮询的最终结论为准：不收敛且尺寸
+            // 仍有漂移、AX 仍是主通道 → 标记该通道不可靠，后续调用直接走 yabai。
+            // 与历史「一轮读回未确认即降级」等价，只是判定时机从写后 25ms 推到收敛
+            // 轮询结束（更可靠：轮询带多次确认，不会把「还没落定」误判成吞写）。
+            if axWindow != nil, !axResizeUnreliable, let last = lastFrame,
+               FrameConvergence.shortfalls(current: last, target: frame, tolerance: frameTolerance)
+                   .contains(.size) {
+                axResizeUnreliable = true
+                log("[WindowManager] moveWindowToFrameViaYabai: AX size channel did not converge, marking unreliable", level: .warn, fields: [
+                    "op": op, "stage": stage, "windowID": String(windowID),
+                    "lastFrame": QuartzRect(last).description,
+                    "target": QuartzRect(frame).description
+                ])
+            }
             log("[WindowManager] moveWindowToFrameViaYabai: frame not converged after \(attempts) attempts", level: .warn, fields: [
                 "op": op, "stage": stage, "windowID": String(windowID),
                 "lastFrame": lastFrame.map { QuartzRect($0).description } ?? "nil",
