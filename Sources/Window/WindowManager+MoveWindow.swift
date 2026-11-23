@@ -21,8 +21,6 @@ struct YabaiMoveEnvironment {
     var findAXWindow: (Int32, UInt32) -> AXUIElement?
     var isSettable: (AXUIElement, String) -> Bool
     var resizeViaAX: (CGRect, AXUIElement) -> Bool
-    /// AX 位置直写（2026-11-23 双向单步）。默认 nil 表示注入方不提供 → 走 yabai move。
-    var writePositionViaAX: ((CGRect, AXUIElement) -> Bool)? = nil
     var pollSleep: (UInt32) -> Void
     /// 是否启用原子合发（2026-11-21）。默认 true；Runner 置 false 复现历史两段序列
     /// （写序断言等），置 true 断言「一次调用写完两段、零段间等待」。
@@ -30,6 +28,9 @@ struct YabaiMoveEnvironment {
     /// 注意（2026-11-23）：合发**不再是 AX 可写窗口的段一**——AX 尺寸通道优先，
     /// 合发只在其不可用时接管（yabai 的 size 写会被终端字符网格吸附改值）。
     var useCombinedWrite: Bool = true
+    /// AX 位置直写（2026-11-23 双向单步）。默认 nil 表示注入方不提供 → 走 yabai move。
+    /// 放在末尾：memberwise init 里带默认值的参数必须排在无默认值参数之后。
+    var writePositionViaAX: ((CGRect, AXUIElement) -> Bool)? = nil
 }
 
 // MARK: - Window Move Operations

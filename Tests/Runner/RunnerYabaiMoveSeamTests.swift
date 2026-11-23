@@ -78,14 +78,6 @@ extension RunnerHarness {
                 isSettable: { _, attribute in
                     attribute == kAXPositionAttribute ? state.axPositionSettable : state.axSettable
                 },
-                writePositionViaAX: { frame, _ in
-                    state.axPositionCalls += 1
-                    guard state.axPositionResult, state.ensureConverged,
-                          state.axPositionApplies else { return state.axPositionResult }
-                    state.bounds = CGRect(origin: frame.origin,
-                                          size: state.bounds?.size ?? frame.size)
-                    return true
-                },
                 resizeViaAX: { _, _ in
                     state.axResizeCalls += 1
                     guard state.axResizeResult, state.ensureConverged else { return state.axResizeResult }
@@ -94,7 +86,15 @@ extension RunnerHarness {
                     return true
                 },
                 pollSleep: { _ in },
-                useCombinedWrite: state.combined)
+                useCombinedWrite: state.combined,
+                writePositionViaAX: { frame, _ in
+                    state.axPositionCalls += 1
+                    guard state.axPositionResult, state.ensureConverged,
+                          state.axPositionApplies else { return state.axPositionResult }
+                    state.bounds = CGRect(origin: frame.origin,
+                                          size: state.bounds?.size ?? frame.size)
+                    return true
+                })
         }
 
         let wm = WindowManager.shared

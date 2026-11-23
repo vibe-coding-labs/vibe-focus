@@ -361,7 +361,10 @@ struct FrameWriteExecutor {
                             if axMove {
                                 // 全 AX 臂：位置补发同样走 AX（yabai 只要碰位置就会用缓存
                                 // 宽高覆盖尺寸，等于把刚修好的 640 又抹成 664）。
-                                moveFrame()
+                                if moveFrame(), axPrecise {
+                                    // 降级到 yabai move 了：尺寸被缓存宽高覆盖，补写回精确值。
+                                    deps.applyResizeAdaptive()
+                                }
                             } else if axPrecise {
                                 // 位置只能走 yabai 时，每次 move 都要守住尺寸（同上原因）。
                                 applyMoveKeepingPreciseSize(target: target)
