@@ -260,25 +260,25 @@ extension RunnerHarness {
         // I. 三臂决策（2026-11-23 尺寸精度修复）：AX 精确尺寸优先于合发。
         do {
             check("plan I1: AX 可写 × 收窄/还原序 → axPrecise(resizeFirst) 25ms",
-                  FramePhase1Plan.decide(axPreciseSize: true, combinedAvailable: true,
+                  FramePhase1Plan.decide(axPreciseSize: true, axPreciseMove: false, combinedAvailable: true,
                                          order: .resizeThenMove, axSettleMs: 25,
                                          moveSettleBudgetMs: 150)
                   == .axPrecise(resizeFirst: true, settleMs: 25, moveSettleBudgetMs: 150))
             check("plan I2: AX 可写 × 放大序 → axPrecise(moveFirst)（写序语义不丢）",
-                  FramePhase1Plan.decide(axPreciseSize: true, combinedAvailable: true,
+                  FramePhase1Plan.decide(axPreciseSize: true, axPreciseMove: false, combinedAvailable: true,
                                          order: .moveThenResize, axSettleMs: 25,
                                          moveSettleBudgetMs: 150)
                   == .axPrecise(resizeFirst: false, settleMs: 25, moveSettleBudgetMs: 150))
             check("plan I3: AX 不可写 → 合发（尺寸只能靠 yabai 时才是最省通道）",
-                  FramePhase1Plan.decide(axPreciseSize: false, combinedAvailable: true,
+                  FramePhase1Plan.decide(axPreciseSize: false, axPreciseMove: false, combinedAvailable: true,
                                          order: .resizeThenMove, axSettleMs: 25,
                                          moveSettleBudgetMs: 150) == .combined)
             check("plan I4: AX 不可写且合发关闭 → 历史两段轮询（两种写序）",
-                  FramePhase1Plan.decide(axPreciseSize: false, combinedAvailable: false,
+                  FramePhase1Plan.decide(axPreciseSize: false, axPreciseMove: false, combinedAvailable: false,
                                          order: .resizeThenMove, axSettleMs: 25,
                                          moveSettleBudgetMs: 150)
                   == .yabaiPolled(order: .resizeThenMove)
-                  && FramePhase1Plan.decide(axPreciseSize: false, combinedAvailable: false,
+                  && FramePhase1Plan.decide(axPreciseSize: false, axPreciseMove: false, combinedAvailable: false,
                                             order: .moveThenResize, axSettleMs: 25,
                                             moveSettleBudgetMs: 150)
                   == .yabaiPolled(order: .moveThenResize))
@@ -445,6 +445,114 @@ extension RunnerHarness {
                       $0 == WindowSettle.axPhaseSettleMs && $0 <= WindowSettle.axMoveThenResizeWaitBudgetMs
                   })
             check("executor K′3: 迟到场景仍收敛", lateGrowRun.outcome.isConverged)
+        }
+
+        // L. 全 AX 臂（2026-11-23 双向单步）：位置也走 AX，**零 yabai 帧写入**。
+        //    这是「一次跳变」的唯一形态——yabai 只要参与位置写，就会用缓存宽高覆盖尺寸。
+        do {
+            // L1. 还原/缩小方向（resizeThenMove）：AX resize → 25ms → AX move，零 yabai。
+            var l1Calls: [String] = []
+            var l1Settles: [UInt32] = []
+            var l1Bounds = CGRect(x: 0, y: 0, width: 1653, height: 1079)  // 主屏全屏
+            let l1Target = CGRect(x: 101, y: -1050, width: 640, height: 525) // 副屏原尺寸
+            let l1Executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { l1Bounds },
+                    applyMove: { l1Calls.append("yabaiMove") },
+                    applyResizeAdaptive: {
+                        l1Calls.append("axResize")
+                        l1Bounds.size = l1Target.size
+                    },
+                    applyResizeRobust: { l1Calls.append("yabaiResize") },
+                    applyCombined: { l1Calls.append("combined") },
+                    applyMovePrecise: {
+                        l1Calls.append("axMove")
+                        l1Bounds.origin = l1Target.origin
+                        return true
+                    },
+                    axPreciseSize: { true },
+                    axPreciseMove: { true }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-full-shrink", windowID: 1,
+                pollSleep: noSleep, phaseSettle: { l1Settles.append($0) }
+            )
+            let l1Run = l1Executor.run(target: l1Target, order: .resizeThenMove)
+            check("executor L1: 还原方向全 AX —— 序列 [axResize, axMove]，零 yabai 写入",
+                  l1Calls == ["axResize", "axMove"])
+            check("executor L2: 计划为 axFull 且段间只有固定 25ms 节拍",
+                  l1Run.phase1Plan.isAXFull && l1Settles == [WindowSettle.axPhaseSettleMs])
+            check("executor L3: 还原方向收敛（640×525 精确落地）", l1Run.outcome.isConverged)
+
+            // L4. 放大方向（moveThenResize）：AX move → 等落位 → AX resize，零 yabai。
+            var l4Calls: [String] = []
+            var l4Bounds = CGRect(x: 101, y: -1050, width: 640, height: 525)  // 副屏小窗
+            let l4Target = CGRect(x: 0, y: 25, width: 1653, height: 1079)     // 主屏全屏
+            let l4Executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { l4Bounds },
+                    applyMove: { l4Calls.append("yabaiMove") },
+                    applyResizeAdaptive: {
+                        l4Calls.append("axResize")
+                        l4Bounds.size = l4Target.size
+                    },
+                    applyResizeRobust: { l4Calls.append("yabaiResize") },
+                    applyCombined: { l4Calls.append("combined") },
+                    applyMovePrecise: {
+                        l4Calls.append("axMove")
+                        l4Bounds.origin = l4Target.origin
+                        return true
+                    },
+                    axPreciseSize: { true },
+                    axPreciseMove: { true }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-full-grow", windowID: 1,
+                pollSleep: noSleep, phaseSettle: { _ in }
+            )
+            let l4Run = l4Executor.run(target: l4Target, order: .moveThenResize)
+            check("executor L4: 放大方向全 AX —— 序列 [axMove, axResize]，零 yabai 写入",
+                  l4Calls == ["axMove", "axResize"])
+            check("executor L5: 放大方向同样标记 axFull 且收敛",
+                  l4Run.phase1Plan.isAXFull && l4Run.outcome.isConverged)
+
+            // L6. AX 位置写报告失败 → 当场回退 yabai move（尺寸仍走 AX 保精度）。
+            var l6Calls: [String] = []
+            var l6Bounds = CGRect(x: 0, y: 0, width: 1653, height: 1079)
+            let l6Target = CGRect(x: 101, y: -1050, width: 640, height: 525)
+            let l6Executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { l6Bounds },
+                    applyMove: {
+                        l6Calls.append("yabaiMove")
+                        l6Bounds.origin = l6Target.origin
+                    },
+                    applyResizeAdaptive: {
+                        l6Calls.append("axResize")
+                        l6Bounds.size = l6Target.size
+                    },
+                    applyResizeRobust: { l6Calls.append("yabaiResize") },
+                    applyCombined: {},
+                    applyMovePrecise: { l6Calls.append("axMoveFailed"); return false },
+                    axPreciseSize: { true },
+                    axPreciseMove: { true }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-full-fallback", windowID: 1,
+                pollSleep: noSleep, phaseSettle: { _ in }
+            )
+            let l6Run = l6Executor.run(target: l6Target, order: .resizeThenMove)
+            // yabai move 会用缓存宽高覆盖精确尺寸 → 回退后必须立刻补写 AX size。
+            check("executor L6: AX 位置失败 → 回退 yabai move 并补写 AX 尺寸",
+                  l6Calls == ["axResize", "axMoveFailed", "yabaiMove", "axResize"]
+                  && !l6Calls.contains("yabaiResize"))
+            check("executor L7: 回退路径同样收敛", l6Run.outcome.isConverged)
+
+            // L8. 决策表：位置可 AX 才升到 axFull；只有尺寸可 AX 仍是 axPrecise。
+            check("plan L8: 尺寸+位置都可 AX → axFull（单步）；只有尺寸 → axPrecise（两步但精确）",
+                  FramePhase1Plan.decide(axPreciseSize: true, axPreciseMove: true,
+                                         combinedAvailable: true, order: .resizeThenMove,
+                                         axSettleMs: 25, moveSettleBudgetMs: 150).isAXFull
+                  && !FramePhase1Plan.decide(axPreciseSize: true, axPreciseMove: false,
+                                             combinedAvailable: true, order: .resizeThenMove,
+                                             axSettleMs: 25, moveSettleBudgetMs: 150).isAXFull)
         }
     }
 

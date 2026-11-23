@@ -21,6 +21,8 @@ struct YabaiMoveEnvironment {
     var findAXWindow: (Int32, UInt32) -> AXUIElement?
     var isSettable: (AXUIElement, String) -> Bool
     var resizeViaAX: (CGRect, AXUIElement) -> Bool
+    /// AX 位置直写（2026-11-23 双向单步）。默认 nil 表示注入方不提供 → 走 yabai move。
+    var writePositionViaAX: ((CGRect, AXUIElement) -> Bool)? = nil
     var pollSleep: (UInt32) -> Void
     /// 是否启用原子合发（2026-11-21）。默认 true；Runner 置 false 复现历史两段序列
     /// （写序断言等），置 true 断言「一次调用写完两段、零段间等待」。
@@ -207,6 +209,56 @@ extension WindowManager {
         var axResizeUnreliable = axWindow == nil
         /// AX 尺寸通道此刻是否仍可用（每次实时求值：写一次失败即永久降级）。
         func axPreciseSizeAvailable() -> Bool { axWindow != nil && !axResizeUnreliable }
+        // AX 位置通道（2026-11-23 双向单步）：窗口已 float（调用点前置），跨屏 position
+        // 直写不会被 re-tile 对抗——与 yabai-blind 通道同一真机结论。可写性单独探测
+        // （position 只读的窗口仍可能 size 可写）。
+        let axPositionWindow: AXUIElement? = axWindow.flatMap { ax -> AXUIElement? in
+            let settable = environment.map { $0.isSettable(ax, kAXPositionAttribute) }
+                ?? isAttributeSettable(ax, attribute: kAXPositionAttribute)
+            return settable ? ax : nil
+        }
+        /// 位置写是否仍可走 AX（写失败/读回不达标即永久降级——不再对已证明无效的
+        /// 通道反复撞，这是 2026-09-06 AX resize 吞写教训的同款处置）。
+        var axPositionUnreliable = axPositionWindow == nil
+        func axPreciseMoveAvailable() -> Bool { axPositionWindow != nil && !axPositionUnreliable }
+        /// AX 直写位置 + 读回校验（origin 漂移在容差内才算成功）。
+        /// 返回 false 时调用方回退 yabai move，行为不比现状差。
+        func applyMovePrecise() -> Bool {
+            guard let ax = axPositionWindow, !axPositionUnreliable else { return false }
+            var writeMs = 0
+            let positionOK: Bool
+            if let environment, let injected = environment.writePositionViaAX {
+                positionOK = injected(frame, ax)
+            } else {
+                positionOK = writePosition(targetFrame: frame, window: ax, op: op, stage: stage, writeMs: &writeMs)
+            }
+            guard positionOK else {
+                axPositionUnreliable = true
+                return false
+            }
+            // 读回校验：AX 位置写异步落地，给一个轴写落定节拍再判（25ms，与
+            // writeSizeWithReadback 同档）。不达标说明被 WindowServer clamp 或吞写。
+            if let environment {
+                environment.pollSleep(WindowSettle.axPhaseSettleMs)
+            } else {
+                usleep(WindowSettle.axWriteSettleMicros)
+            }
+            guard let after = readBounds() else {
+                // 读不到不判失败（CGWindowList 偶发 nil），交给段二收敛轮询裁决。
+                return true
+            }
+            let originOK = CoordinateKit.originDrift(after.origin, frame.origin) <= frameTolerance
+            if !originOK {
+                axPositionUnreliable = true
+                log("[WindowManager] moveWindowToFrameViaYabai: AX position write not applied, falling back to yabai", level: .warn, fields: [
+                    "op": op, "stage": stage, "windowID": String(windowID),
+                    "target": QuartzRect(frame).description,
+                    "after": QuartzRect(after).description,
+                    "originDrift": String(Int(CoordinateKit.originDrift(after.origin, frame.origin)))
+                ])
+            }
+            return originOK
+        }
         func applyResizeBestChannel() {
             if let ax = axWindow, !axResizeUnreliable {
                 axResizeSendCount += 1
@@ -232,6 +284,10 @@ extension WindowManager {
         // - AX 不可用/已证明吞写 → yabai 单条消息合发（省 fork、零段间等待）；
         // - 合发被显式关闭 → 历史两段 + waitForPhase 轮询（兼容/夹具路径）。
         // axPreciseSize 传闭包而非快照：AX 写中途失败降级后，补发立刻改走 yabai。
+        //
+        // 位置通道（2026-11-23 双向单步）：AX position 也可写时走 .axFull——尺寸与位置
+        // 都离开 yabai，两次 AX 写背靠背，视觉一次跳变。yabai 只要参与位置写就会用它
+        // 缓存的宽高覆盖尺寸，那是「还原错尺寸」与「两步」的共同来源。
         let combinedWriteEnabled = environment?.useCombinedWrite ?? true
         let executor = FrameWriteExecutor(
             deps: .init(
@@ -240,7 +296,9 @@ extension WindowManager {
                 applyResizeAdaptive: applyResizeBestChannel,
                 applyResizeRobust: applyResize,
                 applyCombined: combinedWriteEnabled ? applyCombined : nil,
-                axPreciseSize: axPreciseSizeAvailable
+                applyMovePrecise: applyMovePrecise,
+                axPreciseSize: axPreciseSizeAvailable,
+                axPreciseMove: axPreciseMoveAvailable
             ),
             tolerance: frameTolerance,
             op: op,
@@ -293,6 +351,9 @@ extension WindowManager {
         switch plan {
         case .combined:
             return "combined"
+        case .axFull(let resizeFirst, let settleMs, let moveSettleBudgetMs):
+            return "ax_full_\(resizeFirst ? "resize_then_move" : "move_then_resize")_\(settleMs)ms"
+                + "_landBudget\(moveSettleBudgetMs)ms"
         case .axPrecise(let resizeFirst, let settleMs, let moveSettleBudgetMs):
             return "ax_\(resizeFirst ? "resize_then_move" : "move_then_resize")_\(settleMs)ms"
                 + "_landBudget\(moveSettleBudgetMs)ms"

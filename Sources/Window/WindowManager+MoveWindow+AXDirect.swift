@@ -306,9 +306,13 @@ extension WindowManager {
                 applyResizeAdaptive: writeResize,
                 applyResizeRobust: writeResize,
                 // 本通道两段都是 AX 写（position/size），尺寸天然精确、无 yabai 进程缓存
-                // 参与 → 走 axPrecise 臂：段间从 300ms 等到位轮询降为固定短节拍
-                // （2026-11-23；行为差仅为省时，写序与收敛判据不变）。
-                axPreciseSize: { true }
+                // 参与 → 走 **axFull** 臂：位置与尺寸都不经 yabai，段间从 300ms 等到位
+                // 轮询降为固定短节拍（收窄序）或首读即走的落地判定（放大序）。
+                // 2026-11-23：两维都声明为可 AX（本通道的 applyMove/applyResize 本就是
+                // AX 原语；applyMovePrecise 不设 = moveFrame 直落 applyMove，等价于原
+                // 两段 AX 写，只是等待语义换成短节拍）。
+                axPreciseSize: { true },
+                axPreciseMove: { true }
             ),
             tolerance: tolerance,
             op: op,
