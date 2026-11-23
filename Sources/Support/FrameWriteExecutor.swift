@@ -42,10 +42,12 @@
 // ### 三臂策略（FramePhase1Plan，纯函数决策）
 // | 通道 | 段一 | 段间 |
 // |---|---|---|
-// | AX 尺寸可精确写 | AX resize + yabai move（按写序） | 固定 axPhaseSettleMs(25ms) |
+// | AX 尺寸可精确写 | AX resize + yabai move（按写序） | 收窄：固定 25ms 节拍；放大：等 origin 可观测（25ms 节拍 / 150ms 预算，早返回） |
 // | AX 不可用 / 已证明吞写 | yabai 单条消息合发 --move+--resize | 无（单条消息无中间态） |
 // | 显式关闭合发（历史兼容/夹具） | yabai 两段 | waitForPhase 300ms 轮询 |
 // 段二补发同样按通道：尺寸偏差且 AX 可用 → AX 精确写（不再重复 yabai --resize）。
+// 另：AX 臂每次 yabai move 之后读回一次（`applyMoveKeepingPreciseSize`），尺寸被
+// yabai 缓存宽高盖回则立即 AX 补写——补发 move 时同样适用。
 
 import Foundation
 
