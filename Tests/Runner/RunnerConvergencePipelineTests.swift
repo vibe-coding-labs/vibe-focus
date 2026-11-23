@@ -484,6 +484,8 @@ extension RunnerHarness {
             check("executor L2: 计划为 axFull 且收窄序段间零睡眠（全 AX 无需等 yabai 缓存）",
                   l1Run.phase1Plan.isAXFull && l1Settles.isEmpty)
             check("executor L3: 还原方向收敛（640×525 精确落地）", l1Run.outcome.isConverged)
+            check("executor L3″: 真机验收字段 phase1WriteSteps=1（用户看到一次跳变）",
+                  l1Run.phase1WriteSteps == 1)
 
             // L3′. 对照：axPrecise 臂（move 走 yabai）**必须**保留 25ms 节拍
             //      ——yabai 会用缓存宽高覆盖尺寸，需要给它时间同步。
@@ -568,6 +570,9 @@ extension RunnerHarness {
                   l6Calls == ["axResize", "axMoveFailed", "yabaiMove", "axResize"]
                   && !l6Calls.contains("yabaiResize"))
             check("executor L7: 回退路径同样收敛", l6Run.outcome.isConverged)
+            // 降级 = 两步：如实上报为 2，不做美化（真机日志一眼可辨）。
+            check("executor L7′: 位置降级时 phase1WriteSteps 如实为 2",
+                  l6Run.phase1WriteSteps == 2)
 
             // L8. 决策表：位置可 AX 才升到 axFull；只有尺寸可 AX 仍是 axPrecise。
             check("plan L8: 尺寸+位置都可 AX → axFull（单步）；只有尺寸 → axPrecise（两步但精确）",

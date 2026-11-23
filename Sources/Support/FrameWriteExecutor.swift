@@ -213,6 +213,12 @@ struct FrameWriteExecutor {
         let combinedPhase1: Bool
         /// 段一的实际计划（日志/测试归因；2026-11-23）。
         let phase1Plan: FramePhase1Plan
+        /// 段一**实际**的帧写入步数（1 = 单步跳变，2 = 两步）。
+        ///
+        /// 这是给真机验收用的唯一事实字段：计划是「应该几步」，这里是「实际发了几次
+        /// 会改变窗口可见状态的写」。两者不等的唯一情形是 `.axFull` 的 AX 位置写被
+        /// 系统钳住、当场降级到 yabai move（此时实际 = 2，且另有 warn 日志）。
+        let phase1WriteSteps: Int
     }
 
     let deps: Deps
@@ -280,11 +286,31 @@ struct FrameWriteExecutor {
         return true
     }
 
+    /// 段一实际帧写入步数（日志验收字段，见 RunOutcome.phase1WriteSteps）。
+    ///
+    /// 只数「会改变窗口可见位置/尺寸的写」，口径：
+    /// - `.combined`：1（单条 yabai 消息内部连写两段，用户眼里一次跳变）；
+    /// - `.axFull`：位置经 AX 实际生效 = 1（尺寸+位置各一次 AX 写，但同一帧内完成）；
+    ///   位置降级到 yabai move = 2（yabai 会用缓存宽高再写一次尺寸）；
+    /// - `.axPrecise`：2（尺寸走 AX、位置走 yabai，中间隔着一次 yabai fork）；
+    /// - `.yabaiPolled`：2。
+    static func phase1WriteSteps(plan: FramePhase1Plan, didFallBackToYabaiMove: Bool) -> Int {
+        switch plan {
+        case .combined:
+            return 1
+        case .axFull:
+            return didFallBackToYabaiMove ? 2 : 1
+        case .axPrecise, .yabaiPolled:
+            return 2
+        }
+    }
+
     /// 执行两段写入并收敛验证。返回结果与分段计时（供调用方 segment timing 汇总日志）。
     func run(target: CGRect, order: FrameWriteOrder) -> RunOutcome {
         let plan = phase1Plan(order: order)
         let combined = deps.applyCombined
         let phase1Start = Date()
+        var phase1FellBackToYabaiMove = false
         switch plan {
         case .combined:
             if let applyCombined = combined {
@@ -313,13 +339,16 @@ struct FrameWriteExecutor {
             // 时零睡眠。
             if resizeFirst {
                 deps.applyResizeAdaptive()
-                if moveFrame(), deps.axPreciseSize() {
+                if moveFrame() {
+                    phase1FellBackToYabaiMove = true
+                }
+                if phase1FellBackToYabaiMove, deps.axPreciseSize() {
                     // 位置降级到 yabai move 时，yabai 会用缓存宽高把刚写好的精确尺寸
                     // 覆盖掉（问题一）——立刻补写回 AX 精确值。
                     deps.applyResizeAdaptive()
                 }
             } else {
-                moveFrame()
+                if moveFrame() { phase1FellBackToYabaiMove = true }
                 waitForPhase("move", intervalMs: settleMs, budgetMs: moveSettleBudgetMs) {
                     !FrameConvergence.shortfalls(current: deps.read(), target: target, tolerance: tolerance).contains(.origin)
                 }
@@ -417,7 +446,9 @@ struct FrameWriteExecutor {
             phase1Ms: phase1Ms,
             phase2ConvergeMs: phase2ConvergeMs,
             combinedPhase1: plan.isCombined && combined != nil,
-            phase1Plan: plan
+            phase1Plan: plan,
+            phase1WriteSteps: Self.phase1WriteSteps(
+                plan: plan, didFallBackToYabaiMove: phase1FellBackToYabaiMove)
         )
     }
 

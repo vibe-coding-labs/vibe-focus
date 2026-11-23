@@ -330,6 +330,8 @@ extension WindowManager {
             "stallResendCount": String(run.resendCount),
             "combinedPhase1": String(run.combinedPhase1),
             "phase1Plan": Self.phase1PlanName(run.phase1Plan),
+            // 真机验收唯一事实字段：1 = 用户看到一次跳变；2 = 两步（附降级 warn）。
+            "phase1WriteSteps": String(run.phase1WriteSteps),
             // 双向单步归因：AX 位置写次数/明细（0 = 位置走 yabai；≥1 = 全 AX 臂生效）。
             "axPositionSendCount": String(axPositionSendCount),
             "axPositionWriteMs": String(axPositionWriteMs),
