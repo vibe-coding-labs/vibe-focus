@@ -634,6 +634,17 @@ withDefaults）、`FrameWriteExecutor` 省略 pollSleep 的生产默认参数、
 返回 changed=false（幂等成功）而非失败；基线淘汰场景中淘汰拍不能同时含被淘汰窗
 （否则先删后写回，淘汰根本没发生）。
 
+#### 第六轮（`test/coverage-100i`）：语音 LLM 编排解锁
+
+反馈要求「100%」后重新审视「真发声留白」这条旧豁免的边界：它只应约束音频引擎本体，
+不该连带把 `summarizeAndSpeak` 的 Task 编排（成功 speak / 剥引号 / 空总结回落 /
+网络失败回落 / 取消守卫）一起留空。用本地 mock HTTP 服务器 + mock 合成器观察开口
+文本即可，零真实发声——**`VoiceAnnouncementManager+LLMSummary.swift` 58 → 3 行**。
+
+另尝试补 `InputBubbleController+Submission` 的「预算内逐拍重试」通道，但该域 controller
+是共享单例、blindDelay 延迟闭包跨用例存活，新增时序型用例会把既有 blind 断言挤红
+（CI 两轮实测），已撤销并在台账记录：这类共享时序态域不再叠加计试用例。
+
 #### 剩余项复核（逐行）
 
 Top 缺口仍为既有 B/C 态：`InputBubbleController`(真面板/真 AX 读)、
