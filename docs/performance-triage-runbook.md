@@ -180,9 +180,22 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
 | float 脱管重摆 | `--toggle float` 后 yabai 自身重摆也会走 `animate_window`（已被总闸覆盖） | `YabaiAnimationGuard` 二次加固 |
 | 系统 space 切换 | App 关不掉（SLSShowSpaces 由系统播放；需部分关 SIP 或第三方手势合成） | 平台行为 |
 
-判定：`segment timing` 行里 `phase1Plan=ax_full_*` + `yabaiSendCount=0`
-= 帧写入一侧已单步。若仍看到两步，只剩「系统 space 动画」或「AX 位置写被钳、降级 yabai」
-（日志会打印 `AX position write not applied, falling back to yabai`）。
+**判定（一次 ⌃Q 看这一行就够）**：
+
+```bash
+grep 'moveWindowToFrameViaYabai: segment timing' ~/Library/Logs/VibeFocus/vibefocus.log | tail -5
+```
+
+| 看到什么 | 含义 |
+|---|---|
+| `phase1WriteSteps=1` + `phase1Plan=ax_full_*` + `yabaiSendCount=0` | ✅ 单步，yabai 未参与帧写入 |
+| `phase1WriteSteps=2` + `phase1Plan=ax_full_*` | ⚠️ AX 位置写被钳，已降级 yabai move（另有 `AX position write not applied` warn） |
+| `phase1Plan=ax_...`（无 `_full`） | 该窗口 position 属性不可写 → 尺寸精确但位置走 yabai（两步） |
+| `phase1Plan=combined` | AX 全不可用，退回单条 yabai 消息（尺寸可能被终端网格吸附） |
+| `phase1WriteSteps=1` 但肉眼看仍两步 | 剩下只有系统 space 切换动画（App 关不掉） |
+
+`phase1WriteSteps` 是给真机验收设计的唯一事实字段：计划字段说「应该几步」，
+它说「实际几步」。两者不等只可能是降级，且必有对应 warn。
 
 ### B. 总时长（用户说「缓慢」「卡一下」）
 
