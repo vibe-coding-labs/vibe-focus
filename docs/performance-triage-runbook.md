@@ -167,6 +167,24 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
 
 ## 「切换为什么慢/为什么是两步」专项（2026-11-23 审计，改动画相关代码前必读）
 
+> **2026-11-24 修订（先读这块，下面 2026-11-23 的表按通道分别成立）**：
+> iTerm2 的跨屏切换已改走**原子 bounds 通道**——一次 AppleEvent
+> `set bounds` 同时写位置+尺寸，4ms 采样实证单帧、像素精确、不触发 iTerm2 内部动画。
+> 2026-11-23 的「一步完成物理不存在」结论**只对 AX/yabai 通道成立**（三条硬约束都是
+> AX/yabai 的行为）；AppleScript `set bounds` 是当时未尝试的第三通道。
+> ⚠️ 同批探针实证：iTerm2 对一切 AX 写做 ~300ms 内部动画、pos+size 背靠背会**吞掉
+> position**（延迟落地，可楔死窗口状态机）——所以 iTerm2 永远不要回到多段 AX/yabai 写。
+> 通道选择在 `attemptAtomicBoundsMove`（仅 iTerm2、仅跨屏；失败/不收敛落回两段自愈）。
+> 真机单步判定：
+>
+> ```bash
+> grep 'atomicBounds: iTerm2 single-event frame write' ~/Library/Logs/VibeFocus/vibefocus.log | tail -5
+> # verdict=single_step satisfied=true = 原子通道命中且收敛（用户看到一次瞬移）
+> ```
+>
+> Terminal.app 及其他 app 仍走下方两段路径（Terminal 的 AppleScript bounds 是
+> 「当前屏局部坐标」语义，跨屏必漂移——仓库 2026-09-04 实证 + 2026-11-24 复核一致）。
+
 把一个 ⌃Q 切换拆成「可见动画」与「总时长」两条正交的轴，排查时先分清是哪一条：
 
 ### A. 可见动画（用户说「多个步骤、先怎么着再怎么着」）
@@ -189,10 +207,13 @@ grep 'moveWindowToFrameViaYabai: segment timing' ~/Library/Logs/VibeFocus/vibefo
 
 | 看到什么 | 含义 |
 |---|---|
-| `phase1Plan=yabai_polled_*` + `axResizeSendCount≥1` + `yabaiSendCount=1` | 正常路径：尺寸走 AX（精确），位置走 yabai（跨屏唯一通道） |
+| `atomicBounds ... verdict=single_step satisfied=true` | iTerm2 跨屏正常路径：一次 AppleEvent 单帧瞬移（2026-11-24 起） |
+| `atomicBounds ... verdict=send_failed/unconverged_fallback_yabai` | 原子通道未命中，已落回两段自愈——iTerm2 上不应常现，常现要查 TCC/多屏解析 |
+| `phase1Plan=yabai_polled_*` + `axResizeSendCount≥1` + `yabaiSendCount=1` | 两段路径（Terminal/其他 app/同屏）：尺寸走 AX（精确），位置走 yabai |
 | `axResizeUnreliable=true` | AX 尺寸通道被 app 吞写，已降级 yabai —— 尺寸可能不精确 |
 | `convergeRounds>1` 或 `stallResendCount>0` | 首轮未收敛、段二补发过 —— 写丢失或 app 延迟 |
-| 看起来仍有两段 | 跨屏改尺寸的**物理下限**，不是 bug |
+| iTerm2 看起来仍有两段 | 原子通道没命中（查上方 atomicBounds 行）；**这不是物理下限，是回归** |
+| Terminal/其他 app 看起来仍有两段 | 跨屏改尺寸在 AX/yabai 通道内的已知形态（见 2026-11-23 表） |
 | 窗口不动 / 整屏横向滑动 | 系统 space 切换动画（App 层无 API 关闭） |
 
 **客观取证（不靠人眼）**：要在真机上数出「这次切换有几个可见中间态」，跑跨屏 E2E
