@@ -62,57 +62,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Window switching is now verifiably single-step, and the log says so
+- Frame writes: back to the one shape that holds up on real hardware
   - **Cross-display moves never go through a bare AX position write.** WindowServer clamps
     such writes back to the source display, so the attempt fails, the executor falls back to
     a yabai move, and the window visibly moves **twice** — reported on-device as "bouncing
-    back and forth." AX position is now only used when the target frame provably sits inside
-    the source display's visible area; everything else uses yabai (the only channel
-    validated for cross-display) for position and AX for size.
-  - **Enlargements keep the historical `move → resize` order.** An earlier attempt tried
-    the terminal size first ("clamp is observable, so we can retry") — on-device that meant
-    the window grew *once on the source display* (clamped to 1055), then moved, then grew
-    again. Observability guarantees the final value, not the absence of intermediate
-    visible states. Order is the only way to avoid the source-display clamp.
-  - The all-AX path no longer sleeps 25ms between the resize and the move. That beat was
-    copied from the `axPrecise` arm, where it is genuinely needed (the move goes through
-    yabai, whose in-process frame cache must catch up). In the all-AX arm the move is also
-    an AX write — nothing reads yabai's cache — so the two writes now go back to back.
-  - `segment timing` gains `phase1WriteSteps`: **1** means the user saw a single jump,
-    **2** means it fell back to two (an AX position write that the system clamped, which
-    also logs a warning). The plan field says what *should* happen; this field says what
-    *did*. Runner locks both arms (L3″ = 1, L7′ = 2 on fallback) so the honesty cannot
-    regress.
+    back and forth." The AX position channel has been removed entirely; position always goes
+    through yabai (the only channel validated for cross-display), size through AX.
+  - **Enlargements keep the historical `move → resize` order.** An earlier attempt tried the
+    terminal size first ("clamp is observable, so we can retry") — on-device that meant the
+    window grew *once on the source display* (clamped to 1055), then moved, then grew again.
+    Observability guarantees the final value, not the absence of intermediate visible states.
+  - **Two steps for cross-display + resize is a physical limit, not a defect.** Three
+    constraints are mutually exclusive: yabai's `--move` rewrites size from its in-process
+    frame cache; iTerm2 snaps to its character grid when position and size change together
+    (640 → 664); and a bare AX cross-display position write is clamped back. Size must go
+    first and through AX; position can only go through yabai.
+  - Earlier attempts at "one step" (single combined yabai message, all-AX position, trying
+    the terminal size first, AX resize without read-back) each traded one property for
+    another and were reverted after on-device regressions. All that machinery is removed
+    rather than left dormant, so nobody re-adopts it by accident.
   - `docs/performance-triage-runbook.md` gains a "why is switching slow / why two steps"
     section splitting the problem into two orthogonal axes — **visible animation** (yabai
-    writes size→position→size from its frame cache; fix = keep position out of yabai) and
-    **total duration** (6 yabai forks per restore, no longer on the main thread since
-    B191). Mixing them up is what made earlier investigations chase the wrong layer.
+    writes size→position→size from its frame cache) and **total duration** (6 yabai forks
+    per restore, no longer on the main thread since B191). Mixing them up is what made
+    earlier investigations chase the wrong layer.
 
-- Window switching between displays is now a **single** visual step in **both directions**
-  - Moving a window to the main screen (secondary → main, enlarge) and restoring it
-    (main → secondary, shrink) used to be two writes even after the precision fix: the
-    yabai `--move` half rewrites the size from its **in-process frame cache**
-    (`window_manager.c:342` → `set_window_frame` writes size → position → size), so an
-    exact size had to be re-applied afterwards — i.e. "shrink, then jump" was still two
-    visible states.
-  - New `.axFull` phase-1 plan (`Sources/Support/FrameWriteExecutor.swift`): when the
-    window's `AXPosition` is settable too, **both** position and size are written through
-    AX directly — two AX calls back to back (~30ms each), no yabai fork, no intermediate
-    visible state.
-  - Not gambling on hardware: every AX position write is read back; if the origin did not
-    land (WindowServer clamp / swallowed write) the executor falls back to the yabai move
-    **immediately**, marks the position channel unreliable (never retried), and re-applies
-    the AX size the yabai move just overwrote.
-  - Write order is unchanged (`resize→move` when shrinking/restoring, `move→resize` when
-    enlarging) because WindowServer's per-write visible-area constraint still applies; the
-    enlarge order keeps a landing check (150ms budget, first-read fast path) so the AX size
-    write cannot be clamped by the source display (1079→1055 regression).
-  - Why a bare AX cross-display position write is safe here: the historical "AX position
-    gets clamped" lesson was about **tiled** windows fighting yabai's re-tile. Every call
-    site (restore / move_to_main / stuck) floats the window first; the AX-direct channel's
-    on-device probe (2026-09-29) measured 39ms landing for a floating window across
-    displays with no clamp.
+- （已撤回）曾有一版让位置也走 AX 直接写，号称「跨屏单步」。真机实测该通道被
+  WindowServer 钳回源屏、降级后又挪一次 —— 用户看到「来回跳来跳去」。已整体移除，
+  详见上方「Frame writes: back to the one shape that holds up on real hardware」。
 
 - Restoring a window to its original frame now lands on the **exact** size — an iTerm2
   window asked to restore to `640×525` no longer comes back `664×525` (24px wide)

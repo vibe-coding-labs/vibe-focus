@@ -84,20 +84,20 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
    > **双向一致性（2026-11-23）**：还原（主→副，缩小）与移动（副→主，放大）走
    > 同一条 `moveWindowToFrameViaYabai`，差别只在 `FrameWriteOrder`：缩小/还原
    > `resize→move`（先精确缩小，再跨屏落位）；放大 `move→resize`（先落位，否则
-   > AX size 写被源屏可视区 clamp，1079→1055 历史教训）。两者在 AX 可写时都因此变成
-   > 「两次写」——这就是本轮把它压成 `.axFull`（位置也走 AX）的原因：**只要位置经
-   > yabai，yabai 就会用缓存宽高覆盖尺寸，两步无法避免**。其余调用点（stuck 解堵、
+   > AX size 写被源屏可视区 clamp，1079→1055 历史教训）。其余调用点（stuck 解堵、
    > Layout 摆位、move_to_main 回滚）都收敛到同一函数，行为一致。
    >
-   > **尺寸通道（2026-11-23，必读）**：段一按通道分三臂（`FramePhase1Plan`）——
-   > **尺寸与位置都可 AX → 全 AX 臂**（`.axFull`：两次 AX 写背靠背，零 yabai fork，
-   > 视觉一次跳变）；只有尺寸可 AX → AX resize + yabai move（精确但两段）；
-   > AX 不可用/已证明吞写 → yabai 单条消息合发；合发显式关闭 → 历史两段。
-   > 原因：动画总闸为 0 时 yabai 的 `--move`/`--resize` 都落到
-   > `window_manager_set_window_frame()`，「size→position→size」写三遍且 size 取
-   > yabai **进程内缓存**的宽高——所以只要位置经 yabai，尺寸必被覆盖一次：
-   > 既导致按字符网格吸附的终端窗口（iTerm2）稳定停在吸附值（目标 640 落 664），
-   > 也导致「先缩小→再跳屏」的两步观感。精确尺寸与单步都要求位置也离开 yabai。
+   > **通道选择（2026-11-23 定论，必读）**：**尺寸走 AX、位置恒走 yabai、段间等生效**。
+   > 三条硬约束互斥，导致「跨屏且改尺寸」**必然两步**：
+   > ① 动画总闸为 0 时 yabai 的 `--move`/`--resize` 都落到
+   > `window_manager_set_window_frame()`，它「size→position→size」写三遍且 size 取
+   > yabai **进程内缓存**的宽高 → 位置只要经 yabai，尺寸必被覆盖一次；
+   > ② 按字符网格吸附的终端窗口（iTerm2）在位置+尺寸同变时吸附（640→664），
+   > 只改尺寸时精确；
+   > ③ 裸 AX **跨屏** position 写被 WindowServer 钳回源屏（真机「来回跳」实证）。
+   > 因此尺寸必须先行且走 AX，位置只能走 yabai。曾试过的「一步到位」方案：
+   > 合发（尺寸 664）、全 AX 位置（跨屏被钳 → 来回跳）、放大序先试终态（三跳）、
+   > AX resize 单次写不等读回（仍跳）——全部被真机否掉并移除。
    > 放大序（move→resize）保留落地判定以避开源屏可视区 clamp，首读即满足零等待。
 7.5 **落位 space 复核（2026-11-03）**：frame 收敛只证明坐标对——「工作区 2 的窗口
    还原到工作区 3 的对应位置」正是**同坐标不同 space**，旧日志会同时出现

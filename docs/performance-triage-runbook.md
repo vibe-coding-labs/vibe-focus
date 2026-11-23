@@ -175,9 +175,9 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
 |---|---|---|
 | yabai 帧动画 | 已断言 `window_animation_duration = 0`（总闸无 per-call 旁路） | `YabaiAnimationGuard` |
 | yabai `set_window_frame` 三写 | 动画总闸为 0 时它仍按 `size→position→size` 写三遍，且 size 取**进程内缓存宽高** → 尺寸被吸附（iTerm2 640→664）且需要第二次尺寸写 = 两步 | `window_manager.c:342/729` |
-| **两步的根治** | 位置与尺寸**都**走 AX（`.axFull` 臂），yabai 不参与帧写入；收窄序零段间睡眠 | `FrameWriteExecutor` |
-| 放大序「先跳过去再长大」 | 写序 move→resize **必须保留**：源屏先 resize 会被可视区钳（1079→1055）→ 窗口在源屏先变大一次，再移动，再变大 = 三跳。曾试过「先 resize、读回不达标再回落」，真机表现为「来回跳」，已回退 | `FrameWriteExecutor` |
-| **跨屏「来回跳」**（2026-11-23 真机） | 裸 AX **跨屏** position 写被 WindowServer 钳回源屏 → 读回失败 → 降级 yabai move 再挪一次 = 位置动两次。AX position **只在同屏**可用；跨屏位置必须走 yabai（唯一经真机验证的跨屏通道） | `WindowManager+MoveWindow.swift` 的 `crossDisplayMove` |
+| **跨屏且改尺寸 = 必然两步**（2026-11-23 定论） | 三条硬约束互斥：① yabai `--move` 用缓存宽高重写 size；② iTerm2 位置+尺寸同变时网格吸附（640→664）；③ 裸 AX 跨屏 position 写被钳回源屏。→「一步完成」在物理上不存在。当前形态：尺寸走 AX（精确）、位置恒走 yabai（跨屏唯一通道）、写序自适应、段间等生效 | `FrameWriteExecutor` |
+| 放大序「先跳过去再长大」 | 写序 move→resize **必须保留**：源屏先 resize 会被可视区钳（1079→1055）→ 窗口在源屏先变大一次，再移动，再变大 = 三跳。「先 resize、读回不达标再回落」已试过并被真机否掉 | `FrameWriteExecutor` |
+| **跨屏「来回跳」**（2026-11-23 真机） | 裸 AX **跨屏** position 写被 WindowServer 钳回源屏 → 读回失败 → 降级 yabai move 再挪一次 = 位置动两次。AX position 通道已整体移除；位置**恒**走 yabai | `WindowManager+MoveWindow.swift` |
 | float 脱管重摆 | `--toggle float` 后 yabai 自身重摆也会走 `animate_window`（已被总闸覆盖） | `YabaiAnimationGuard` 二次加固 |
 | 系统 space 切换 | App 关不掉（SLSShowSpaces 由系统播放；需部分关 SIP 或第三方手势合成） | 平台行为 |
 
@@ -189,16 +189,13 @@ grep 'moveWindowToFrameViaYabai: segment timing' ~/Library/Logs/VibeFocus/vibefo
 
 | 看到什么 | 含义 |
 |---|---|
-| `phase1WriteSteps=1` + `phase1Plan=ax_full_*` + `yabaiSendCount=0` | ✅ 单步，yabai 未参与帧写入 |
-| `phase1WriteSteps=2` + `phase1Plan=ax_full_*` | ⚠️ AX 位置写被钳，已降级 yabai move（另有 `AX position write not applied` warn） |
-| `phase1Plan=ax_...`（无 `_full`） | 该窗口 position 属性不可写 → 尺寸精确但位置走 yabai（两步） |
-| `phase1Plan=combined` | AX 全不可用，退回单条 yabai 消息（尺寸可能被终端网格吸附） |
-| `phase1WriteSteps=1` 但肉眼看仍两步 | 剩下只有系统 space 切换动画（App 关不掉） |
+| `phase1Plan=yabai_polled_*` + `axResizeSendCount≥1` + `yabaiSendCount=1` | 正常路径：尺寸走 AX（精确），位置走 yabai（跨屏唯一通道） |
+| `axResizeUnreliable=true` | AX 尺寸通道被 app 吞写，已降级 yabai —— 尺寸可能不精确 |
+| `convergeRounds>1` 或 `stallResendCount>0` | 首轮未收敛、段二补发过 —— 写丢失或 app 延迟 |
+| 看起来仍有两段 | 跨屏改尺寸的**物理下限**，不是 bug |
+| 窗口不动 / 整屏横向滑动 | 系统 space 切换动画（App 层无 API 关闭） |
 
-`phase1WriteSteps` 是给真机验收设计的唯一事实字段：计划字段说「应该几步」，
-它说「实际几步」。两者不等只可能是降级，且必有对应 warn。
-
-**客观取证（不靠人眼）**：要在真机上把「单步」变成可数的证据，跑跨屏 E2E
+**客观取证（不靠人眼）**：要在真机上数出「这次切换有几个可见中间态」，跑跨屏 E2E
 （真实 iTerm2 窗口，三个 case 覆盖放大/缩小/⌃Q 往返）：
 
 ```bash
@@ -211,7 +208,7 @@ VIBEFOCUS_SIZE_E2E=1 swift run VibeFocusTestRunner
 [诊断] main_to_secondary_enlarge 采样N拍 / 去重M态 / 中间态K个
 ```
 
-`K == 0` = 用户只看到一次跳变（单步）；`K >= 1` 会附上中间态样本帧
+`K == 0` = 用户只看到起止两态（无中间态）；`K >= 1` 会附上中间态样本帧
 （例如「位置已到、尺寸未到」就是两步）。判定内核 `FrameStepSampler` 有纯函数
 自测（不需要真机），所以判据本身不会悄悄写错。
 
