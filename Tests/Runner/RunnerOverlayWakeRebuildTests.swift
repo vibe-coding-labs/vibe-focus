@@ -134,10 +134,18 @@ extension RunnerHarness {
             om.pendingWakeRebuildWorkItem = nil
 
             // W4. performWakeRebuild 守卫：开关关时直接返回（不触碰窗口集合）
+            //
+            // 断言用「前后快照不变」而不是 `isEmpty`：单进程全量模式里前面的域
+            // （runOverlaySignalTests 的可见性审计重建）已经建过 overlay 窗，
+            // 集合本来就不为空——按 isEmpty 判会永远红（2026-11-23 CI 实锤，
+            // main 基线同样失败）。早退的真实语义是「一个窗口都不动」。
             om.preferences.isEnabled = false
+            let beforeIDs = Set(om.overlayWindows.keys)
+            let beforeCount = om.overlayWindows.count
             om.performWakeRebuild(reason: "ut-disabled")
-            check("wakeWiring W4: performWakeRebuild 开关关 → 早退不重建",
-                  om.overlayWindows.isEmpty)
+            check("wakeWiring W4: performWakeRebuild 开关关 → 早退不重建（窗口集合零改动）",
+                  om.overlayWindows.count == beforeCount
+                  && Set(om.overlayWindows.keys) == beforeIDs)
         }
     }
 }
