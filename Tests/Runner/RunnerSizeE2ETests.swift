@@ -62,11 +62,17 @@ enum FrameStepSampler {
     }
 }
 
-/// 采样盒（采样线程与主线程共享；`stop` 由主线程置位退出）。
+/// 采样盒（采样线程与主线程共享）。`stop` 与帧序列同一把锁保护——
+/// 无锁 bool 在采样线程读、主线程写是数据竞争（StrictConcurrency 下也属未定义行为）。
 final class SampleBox: @unchecked Sendable {
     private let lock = NSLock()
     private var frames: [CGRect] = []
-    var stop = false
+    private var stopped = false
+
+    var stop: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return stopped }
+        set { lock.lock(); stopped = newValue; lock.unlock() }
+    }
 
     func record(_ frame: CGRect) {
         lock.lock()

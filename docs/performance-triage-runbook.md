@@ -197,6 +197,23 @@ grep 'moveWindowToFrameViaYabai: segment timing' ~/Library/Logs/VibeFocus/vibefo
 `phase1WriteSteps` 是给真机验收设计的唯一事实字段：计划字段说「应该几步」，
 它说「实际几步」。两者不等只可能是降级，且必有对应 warn。
 
+**客观取证（不靠人眼）**：要在真机上把「单步」变成可数的证据，跑跨屏 E2E
+（真实 iTerm2 窗口，三个 case 覆盖放大/缩小/⌃Q 往返）：
+
+```bash
+VIBEFOCUS_SIZE_E2E=1 swift run VibeFocusTestRunner
+```
+
+每个 case 会打印并断言：
+
+```
+[诊断] main_to_secondary_enlarge 采样N拍 / 去重M态 / 中间态K个
+```
+
+`K == 0` = 用户只看到一次跳变（单步）；`K >= 1` 会附上中间态样本帧
+（例如「位置已到、尺寸未到」就是两步）。判定内核 `FrameStepSampler` 有纯函数
+自测（不需要真机），所以判据本身不会悄悄写错。
+
 ### B. 总时长（用户说「缓慢」「卡一下」）
 
 一次 restore 的 yabai fork 清单（每次 fork 实测 82~700ms，串行累加）：
