@@ -46,8 +46,9 @@
 // | AX 不可用 / 已证明吞写 | yabai 单条消息合发 --move+--resize | 无（单条消息无中间态） |
 // | 显式关闭合发（历史兼容/夹具） | yabai 两段 | waitForPhase 300ms 轮询 |
 // 段二补发同样按通道：尺寸偏差且 AX 可用 → AX 精确写（不再重复 yabai --resize）。
-// 另：AX 臂每次 yabai move 之后读回一次（`applyMoveKeepingPreciseSize`），尺寸被
-// yabai 缓存宽高盖回则立即 AX 补写——补发 move 时同样适用。
+// 另：move 与尺寸补写的配对**只在确定降级时**做（moveFrame 返回 true = 确实走了
+// yabai），不靠「move 后立刻读回」判断——那个读回常常早于落定，会把「还没更新」
+// 误判成「被覆盖」，多写一次尺寸 = 用户看到的「来回跳」（2026-11-23 真机）。
 
 import Foundation
 
@@ -367,7 +368,14 @@ struct FrameWriteExecutor {
                 // 尺寸先精确到位（AX 写原语自带读回），短节拍让 yabai 缓存跟上，再落位。
                 deps.applyResizeAdaptive()
                 if settleMs > 0 { phaseSettle(settleMs) }
-                applyMoveKeepingPreciseSize(target: target)
+                // 段一只做两件事：精确 resize + yabai move = 两个可见态。
+                //
+                // **不**在这里紧跟一次「move 后读回、尺寸被盖回就补写」：该读回发生在
+                // move 之后立即，CGWindowList/AX 未必已落定，容易把「还没更新」误判成
+                // 「尺寸被覆盖」而多写一次尺寸——用户真机看到的就是「来回跳」
+                // （2026-11-23 投诉）。尺寸若真被 yabai 缓存盖回，交给段二收敛轮询
+                // （convergeFramePolling：带轮询确认，且只在确实偏差时才补发）。
+                deps.applyMove()
             } else {
                 // 放大：先落位（否则 AX size 写被源屏可视区 clamp），等 origin 可观测
                 // 再写尺寸（节拍 settleMs / 预算 moveSettleBudgetMs / 早满足早返回）。
@@ -409,8 +417,12 @@ struct FrameWriteExecutor {
                                     deps.applyResizeAdaptive()
                                 }
                             } else if axPrecise {
-                                // 位置只能走 yabai 时，每次 move 都要守住尺寸（同上原因）。
-                                applyMoveKeepingPreciseSize(target: target)
+                                // 位置只能走 yabai：move 后 yabai 必然用缓存宽高重写 size，
+                                // 这里**无条件**补写一次 AX 精确尺寸（确定性，不靠读回猜）。
+                                // 若 yabai 缓存恰好已跟上，这次写是幂等的同值写，不产生
+                                // 新的可见变化。
+                                deps.applyMove()
+                                deps.applyResizeAdaptive()
                             } else {
                                 deps.applyMove()
                             }
@@ -458,22 +470,6 @@ struct FrameWriteExecutor {
             phase1WriteSteps: Self.phase1WriteSteps(
                 plan: plan, didFallBackToYabaiMove: phase1FellBackToYabaiMove)
         )
-    }
-
-    /// AX 精确尺寸 + yabai move 的收尾：move 会用它进程内缓存的宽高再写一次 size
-    /// （见文件头「问题一」），可能把刚写好的精确尺寸盖回吸附值。这里读一次回
-    /// （CGWindowList，零 fork），若尺寸重新偏差且 AX 通道仍可用，**立即**用 AX 补写
-    /// 一次——不等段二轮询，视觉上仍是一次跳变。
-    private func applyMoveKeepingPreciseSize(target: CGRect) {
-        deps.applyMove()
-        // 读回 + 补写只在「尺寸确实被盖回」时发生；正常路径（yabai 缓存已跟上）零额外写。
-        guard let afterMove = deps.read(), deps.axPreciseSize() else { return }
-        guard FrameConvergence.shortfalls(
-            current: afterMove,
-            target: target,
-            tolerance: tolerance
-        ).contains(.size) else { return }
-        deps.applyResizeAdaptive()
     }
 
     /// 历史两段路径：写序 + 段间 waitForPhase 轮询（fork 返回 ≠ 已应用）。
