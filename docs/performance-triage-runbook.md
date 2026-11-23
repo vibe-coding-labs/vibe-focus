@@ -176,6 +176,7 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
 | yabai 帧动画 | 已断言 `window_animation_duration = 0`（总闸无 per-call 旁路） | `YabaiAnimationGuard` |
 | yabai `set_window_frame` 三写 | 动画总闸为 0 时它仍按 `size→position→size` 写三遍，且 size 取**进程内缓存宽高** → 尺寸被吸附（iTerm2 640→664）且需要第二次尺寸写 = 两步 | `window_manager.c:342/729` |
 | **两步的根治** | 位置与尺寸**都**走 AX（`.axFull` 臂），yabai 不参与帧写入；收窄序零段间睡眠 | `FrameWriteExecutor` |
+| 放大序「先跳过去再长大」 | 历史写序 move→resize 是为避开 yabai 写的 clamp；全 AX 臂的 size 写可读回校验 → 改为**先试终态**（resize→move），没到位才回落 | `FrameWriteExecutor` `.axFull` 臂 |
 | float 脱管重摆 | `--toggle float` 后 yabai 自身重摆也会走 `animate_window`（已被总闸覆盖） | `YabaiAnimationGuard` 二次加固 |
 | 系统 space 切换 | App 关不掉（SLSShowSpaces 由系统播放；需部分关 SIP 或第三方手势合成） | 平台行为 |
 

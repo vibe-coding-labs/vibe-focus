@@ -63,6 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Window switching is now verifiably single-step, and the log says so
+  - **Enlarging (secondary → main) no longer "jumps, then grows."** The historical write
+    order forced `move → resize` for enlargements because writing the 1079-high size while
+    the window was still on the secondary display would be clamped to the visible height
+    (1055). That constraint is about **yabai** writes; the all-AX arm writes the size
+    through `kAXSizeAttribute` and `writeSizeWithReadback` verifies it — a clamp is
+    *observable*, so the order no longer has to pre-empt it. The arm now tries the terminal
+    size first and only falls back to `move → resize` if the read-back says it didn't land.
   - The all-AX path no longer sleeps 25ms between the resize and the move. That beat was
     copied from the `axPrecise` arm, where it is genuinely needed (the move goes through
     yabai, whose in-process frame cache must catch up). In the all-AX arm the move is also
