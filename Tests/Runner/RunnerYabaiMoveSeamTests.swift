@@ -140,26 +140,9 @@ extension RunnerHarness {
         check("yabaiSeam A4: 收窄场景 resize 先于 move（写序自适应）",
               firstResize != nil && firstMove != nil && firstResize! < firstMove!)
 
-        // A′. 合发开启、AX 不可写：一次消息写完两段，零段间等待、写序保留
-        //     （生产里这条臂只在 AX 尺寸不可用时接管，见 A″）。
-        reset()
-        let aPrime = run()
-        check("yabaiSeam A5: 合发路径 → 收敛", aPrime == true)
-        let combinedSends = state.yabaiArgs.filter { $0.contains("--move") && $0.contains("--resize") }
-        check("yabaiSeam A6: 合发路径首条消息同时含 --move 与 --resize（单次 fork 写全帧）",
-              combinedSends.count >= 1 && state.yabaiArgs.first == combinedSends.first)
-        if let combo = state.yabaiArgs.first {
-            let moveIdx = combo.firstIndex(of: "--move") ?? combo.count
-            let resizeIdx = combo.firstIndex(of: "--resize") ?? combo.count
-            check("yabaiSeam A7: 收窄场景合发内部 resize 仍在 move 之前（写序不丢）",
-                  resizeIdx < moveIdx)
-            check("yabaiSeam A8: 合发参数含 move 与 resize 的 abs 目标值",
-                  combo.contains("abs:\(Int(target.origin.x)):\(Int(target.origin.y))")
-                  && combo.contains("abs:\(Int(target.width)):\(Int(target.height))"))
-        } else {
-            check("yabaiSeam A7: 收窄场景合发内部 resize 仍在 move 之前（写序不丢）", false)
-            check("yabaiSeam A8: 合发参数含 move 与 resize 的 abs 目标值", false)
-        }
+        // A′（已删除）：原用例断言「合发路径首条消息同时含 --move 与 --resize」。
+        // 原子合发已于 2026-11-23 被真机否掉（尺寸被终端网格吸附成 664），决策层
+        // 恒返回 .yabaiPolled，合发不再参与任何路径。回归锁由 A1~A4 与 A16~A24 承担。
 
         // B. AX resize 可写且成功（合发关闭的兼容路径）：resize 走 AX（零 fork），move 走 yabai
         reset()

@@ -183,79 +183,10 @@ extension RunnerHarness {
             check("executor E: 不收敛如实上报 mismatched", !run.outcome.isConverged)
         }
 
-        // F. 原子合发（2026-11-21）：段一只发一次 combined、零两段调用、零段间读。
-        do {
-            var seen: [String] = []
-            var reads = 0
-            let executor = FrameWriteExecutor(
-                deps: .init(
-                    read: { reads += 1; return target },
-                    applyMove: { seen.append("move") },
-                    applyResizeAdaptive: { seen.append("resizeAdaptive") },
-                    applyResizeRobust: { seen.append("resizeRobust") },
-                    applyCombined: { seen.append("combined") }
-                ),
-                tolerance: tol, op: "runner", stage: "executor-combined", windowID: 1,
-                pollSleep: noSleep
-            )
-            let run = executor.run(target: target, order: .resizeThenMove)
-            check("executor F1: 合发段一只调用一次 combined，无 move/resize 分段",
-                  seen == ["combined"])
-            check("executor F2: 合发路径零段间等待（首读即判收敛）",
-                  run.outcome.isConverged && run.convergedRounds == 1 && run.resendCount == 0)
-            check("executor F3: combinedPhase1 标记为 true", run.combinedPhase1)
-            // 段一零读（waitForPhase 跳过）；段二 = 补发计划读 + 收敛判读各一次。
-            check("executor F4: 合计只读回 2 次（段一零读 + 段二写前/读后各一）", reads == 2)
-        }
-
-        // F′. 省略 pollSleep 的生产默认参数（2026-11-23 补口）
-        // 所有既有用例都显式传 pollSleep:{ _ in }，`{ usleep(...) }` 这个默认参数
-        // 表达式从未求值。这里不传 pollSleep、且首读即收敛 → 断言收敛且不付等待。
-        do {
-            let executor = FrameWriteExecutor(
-                deps: .init(
-                    read: { target },
-                    applyMove: {},
-                    applyResizeAdaptive: {},
-                    applyResizeRobust: {},
-                    applyCombined: {}
-                ),
-                tolerance: tol, op: "runner", stage: "executor-default-sleep", windowID: 1
-            )
-            let run = executor.run(target: target, order: .moveThenResize)
-            check("executor F′1: 省略 pollSleep 仍收敛（生产默认参数可求值）",
-                  run.outcome.isConverged && run.combinedPhase1)
-        }
-
-        // G. 合发 + 全缺补发：段二同样合发（不再拆 robust/adaptive 两段）。
-        do {
-            var seen: [String] = []
-            let executor = FrameWriteExecutor(
-                deps: .init(
-                    read: { fullMiss },
-                    applyMove: { seen.append("move") },
-                    applyResizeAdaptive: { seen.append("resizeAdaptive") },
-                    applyResizeRobust: { seen.append("resizeRobust") },
-                    applyCombined: { seen.append("combined") }
-                ),
-                tolerance: tol, op: "runner", stage: "executor-combined-miss", windowID: 1,
-                pollSleep: noSleep
-            )
-            let run = executor.run(target: target, order: .moveThenResize)
-            check("executor G1: 全缺路径全程只有 combined（无分段写）",
-                  !seen.isEmpty && seen == Array(repeating: "combined", count: seen.count))
-            check("executor G2: 不收敛如实上报且段一标记合发",
-                  !run.outcome.isConverged && run.combinedPhase1)
-        }
-
-        // H. 合发关闭（nil）→ 历史两段路径零漂移（回归锁）。
-        do {
-            var calls: [String] = []
-            let run = makeExecutor(read: { target }, calls: { calls.append($0) })
-                .run(target: target, order: .moveThenResize)
-            check("executor H1: 未提供合发时仍走两段且 combinedPhase1=false",
-                  calls == ["move", "resizeAdaptive"] && !run.combinedPhase1)
-        }
+        // F/G/H（合发相关用例，已删除）：原子合发在 2026-11-23 被真机否掉——
+        // 合发把尺寸交给 yabai，终端会被字符网格吸附成 664（用户主诉「还原尺寸错」）。
+        // 决策层已恒返回 .yabaiPolled，合发不再参与任何路径；这些用例失去对应实现，
+        // 保留会锁定一个不存在的行为。回归锁由 I/J 两个块承担。
 
         // I. 收敛后的决策契约（2026-11-23）：**恒走历史两段 + 段间等生效**。
         //
