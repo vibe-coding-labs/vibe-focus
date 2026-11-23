@@ -115,7 +115,7 @@ extension RunnerHarness {
                 }
                 logger.flushPendingEvents()
             }
-            flusher.wait(timeout: .now() + 30)
+            _ = flusher.wait(timeout: .now() + 30)
             let (rows, _, _) = auditQuery(memdb, "SELECT COUNT(*), NULL, NULL FROM window_audit_log")
             check("audit: 并发轰炸 \(total) 事件零丢失（快照+清空须同一临界区）", rows == total)
         }

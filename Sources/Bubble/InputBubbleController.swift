@@ -410,11 +410,11 @@ final class InputBubbleController: NSObject {
     /// B186：检测 LazyTyper 录音气泡是否在屏——在则降层让位、消失即恢复。
     /// 让位发生在录音气泡出现之后，不影响 LazyTyper 的活跃显示器解析（那一刻
     /// 我们的气泡仍是最顶层窗）。幂等，状态由 voiceYielded 持有。
-    /// 语音气泡此刻是否在屏（fresh 全表扫描）。B186 yield 巡检与 0.1.3 Esc 取消门
-    /// 共用同一判据。不筛 layer：LazyTyper 录音气泡实测 layer=5（floating 域），
-    /// 按 owner+尺寸识别。
-    /// Esc 门不用 voiceYielded 粘滞位的原因：该位随 ~1s 巡检更新，录音刚开始的
-    /// 半秒内可能尚未置位——而那正是用户按 Esc 取消 take 的时刻（装机取证）。
+    /// 语音气泡此刻是否在屏（fresh 全表扫描，不用 voiceYielded 粘滞位——该位随
+    /// ~1s 巡检更新，录音刚开始的半秒内可能尚未置位）。判据曾同时供 0.1.3 语音期
+    /// Esc 取消门使用，该门已于 0.1.4 按用户实测回退删除（Esc 恢复无条件关气泡），
+    /// 现仅 B186 yield 巡检在用。不筛 layer：LazyTyper 录音气泡实测 layer=5
+    /// （floating 域），按 owner+尺寸识别。
     func voiceBubblePresentNow() -> Bool {
         cgWindowListAll().contains { entry in
             entry.isOnScreen
