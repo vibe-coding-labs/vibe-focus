@@ -479,9 +479,33 @@ extension RunnerHarness {
             let l1Run = l1Executor.run(target: l1Target, order: .resizeThenMove)
             check("executor L1: 还原方向全 AX —— 序列 [axResize, axMove]，零 yabai 写入",
                   l1Calls == ["axResize", "axMove"])
-            check("executor L2: 计划为 axFull 且段间只有固定 25ms 节拍",
-                  l1Run.phase1Plan.isAXFull && l1Settles == [WindowSettle.axPhaseSettleMs])
+            // 2026-11-23 收尾审计：axFull 收窄序的 move 也走 AX，不依赖 yabai 缓存
+            // → 段间**零睡眠**（两次 AX 写真正背靠背）。
+            check("executor L2: 计划为 axFull 且收窄序段间零睡眠（全 AX 无需等 yabai 缓存）",
+                  l1Run.phase1Plan.isAXFull && l1Settles.isEmpty)
             check("executor L3: 还原方向收敛（640×525 精确落地）", l1Run.outcome.isConverged)
+
+            // L3′. 对照：axPrecise 臂（move 走 yabai）**必须**保留 25ms 节拍
+            //      ——yabai 会用缓存宽高覆盖尺寸，需要给它时间同步。
+            var l3Settles: [UInt32] = []
+            var l3Bounds = CGRect(x: 0, y: 0, width: 1653, height: 1079)
+            let l3Target = CGRect(x: 101, y: -1050, width: 640, height: 525)
+            let l3Executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { l3Bounds },
+                    applyMove: { l3Bounds.origin = l3Target.origin },
+                    applyResizeAdaptive: { l3Bounds.size = l3Target.size },
+                    applyResizeRobust: {},
+                    applyCombined: {},
+                    axPreciseSize: { true },
+                    axPreciseMove: { false }   // 位置只能走 yabai
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-precise-settle", windowID: 1,
+                pollSleep: noSleep, phaseSettle: { l3Settles.append($0) }
+            )
+            let l3Run = l3Executor.run(target: l3Target, order: .resizeThenMove)
+            check("executor L3′: axPrecise 臂（move 走 yabai）仍保留 25ms 节拍",
+                  !l3Run.phase1Plan.isAXFull && l3Settles == [WindowSettle.axPhaseSettleMs])
 
             // L4. 放大方向（moveThenResize）：AX move → 等落位 → AX resize，零 yabai。
             var l4Calls: [String] = []

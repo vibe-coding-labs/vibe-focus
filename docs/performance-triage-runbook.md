@@ -165,6 +165,41 @@ DistributedNotificationCenter.default().post(name: Notification.Name("com.vibefo
    B177 的「复位」同理是违背用户设置。B192 起 Stop 触发代码默认=false、设置页去
    「推荐」字样、setter 值变更落 INFO 日志、--diagnose 亮触发器状态（关=合法态）。
 
+## 「切换为什么慢/为什么是两步」专项（2026-11-23 审计，改动画相关代码前必读）
+
+把一个 ⌃Q 切换拆成「可见动画」与「总时长」两条正交的轴，排查时先分清是哪一条：
+
+### A. 可见动画（用户说「多个步骤、先怎么着再怎么着」）
+
+| 来源 | 现状 | 位置 |
+|---|---|---|
+| yabai 帧动画 | 已断言 `window_animation_duration = 0`（总闸无 per-call 旁路） | `YabaiAnimationGuard` |
+| yabai `set_window_frame` 三写 | 动画总闸为 0 时它仍按 `size→position→size` 写三遍，且 size 取**进程内缓存宽高** → 尺寸被吸附（iTerm2 640→664）且需要第二次尺寸写 = 两步 | `window_manager.c:342/729` |
+| **两步的根治** | 位置与尺寸**都**走 AX（`.axFull` 臂），yabai 不参与帧写入；收窄序零段间睡眠 | `FrameWriteExecutor` |
+| float 脱管重摆 | `--toggle float` 后 yabai 自身重摆也会走 `animate_window`（已被总闸覆盖） | `YabaiAnimationGuard` 二次加固 |
+| 系统 space 切换 | App 关不掉（SLSShowSpaces 由系统播放；需部分关 SIP 或第三方手势合成） | 平台行为 |
+
+判定：`segment timing` 行里 `phase1Plan=ax_full_*` + `yabaiSendCount=0`
+= 帧写入一侧已单步。若仍看到两步，只剩「系统 space 动画」或「AX 位置写被钳、降级 yabai」
+（日志会打印 `AX position write not applied, falling back to yabai`）。
+
+### B. 总时长（用户说「缓慢」「卡一下」）
+
+一次 restore 的 yabai fork 清单（每次 fork 实测 82~700ms，串行累加）：
+
+| 步骤 | fork 数 | 能否省 |
+|---|---|---|
+| `queryWindow`（最小化快检/float 决策） | 1 | 与 float 决策共用，已合并 |
+| `--toggle float`（真 toggle 时） | 1 | 已 float 时零 fork（restore 常见路径） |
+| 帧写入后强制动画复断言 | 1 | 全 AX 臂下帧写入不走 yabai → 该断言不触发 |
+| space 预切回（拓扑 + focusSpace） | 2 | 仅「源屏可见 space ≠ 目标」时发生；已是目标则跳过 |
+| 视角守卫（currentSpaceIndex） | 1 | 焦点未漂移时首查即返回 |
+| 落位复核（windowSpaceIndex） | 1 | 正确性所需（同坐标不同 space 的错工作区），不可省 |
+
+关键：**这些 fork 已不在主线程**（B191 起 toggle/restore 下放 `WindowWorkExecutor`
+串行队列），所以它们造成的是「按键到窗口到位」的总时长，而非 UI 卡死。
+要压总时长只能减 fork 数或改并行——但窗口操作天然互斥，串行是正确性要求。
+
 ## 设计约束（改代码前必读）
 
 - 所有埋点**零编译开关、常开**：`PERF_INSTRUMENT` 是 debug 工具，生产证据链不依赖它；

@@ -301,12 +301,18 @@ struct FrameWriteExecutor {
             // WindowServer 对**单次** AX 写的可见区约束没有变；差别只在两次写之间
             // 不再经过 yabai（fork 82~322ms + 缓存尺寸覆盖）。
             //
-            // 唯一保留的等待：放大序 move 后让 origin 可观测——窗口必须先落在目标屏，
-            // 否则 AX size 写被源屏可视区 clamp（1079→1055 历史教训）。首读即满足时
-            // 零睡眠。收窄序 AX resize 自带读回，仅保留固定短节拍。
+            // 收窄/还原序（resize→move）：AX resize 原语自带读回验证（返回即已生效），
+            // 紧随的 move 也走 AX —— 不使用 yabai 的进程内 frame 缓存，因此这里
+            // **不需要**任何段间睡眠。两次 AX 写真正背靠背，是一帧内的跳变。
+            //
+            // （axPrecise 臂仍保留 settleMs：那条臂的 move 走 yabai，yabai 会用缓存
+            //   宽高覆盖尺寸，需要给它一个节拍让 AX 通知把缓存更新过来。）
+            //
+            // 放大序（move→resize）：move 后必须让 origin 可观测——窗口先落在目标屏，
+            // 否则 AX size 写被源屏可视区 clamp（1079→1055 历史教训）。首读即满足
+            // 时零睡眠。
             if resizeFirst {
                 deps.applyResizeAdaptive()
-                if settleMs > 0 { phaseSettle(settleMs) }
                 if moveFrame(), deps.axPreciseSize() {
                     // 位置降级到 yabai move 时，yabai 会用缓存宽高把刚写好的精确尺寸
                     // 覆盖掉（问题一）——立刻补写回 AX 精确值。
