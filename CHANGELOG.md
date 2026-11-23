@@ -60,6 +60,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     delivery (`SessionRestoreExecutor`) and terminal-grid space delivery
     (`TerminalGridController+SpaceDelivery`).
 
+### Fixed
+
+- Restoring a window to its original frame now lands on the **exact** size — an iTerm2
+  window asked to restore to `640×525` no longer comes back `664×525` (24px wide)
+  - Root cause: the atomic combined write (above) handed the *size* to yabai. With
+    `window_animation_duration = 0`, both `--move` and `--resize` end up in
+    `window_manager_set_window_frame()`, which writes `size → position → size` and takes
+    the size from yabai's **in-process** window-frame cache. For windows that snap to a
+    character grid (iTerm2, ~8px per column) that sequence settles on the snapped value.
+    The app writing `kAXSizeAttribute` once gets the exact 640 — same window, same target,
+    only the channel differs (`e16de7b` correct, `5e0b288` onward wrong).
+  - Fix: `FramePhase1Plan` (new, in `Sources/Support/FrameWriteExecutor.swift`) decides
+    phase 1 by channel: **AX size writable → AX resize + yabai move back to back**; AX
+    unavailable or proven to swallow writes → yabai combined message (kept, it is still
+    the cheapest channel when size has to go through yabai); combined explicitly disabled
+    → the historical two-segment path. Size *retries* follow the same rule, so a snapped
+    window no longer spins on yabai `--resize` returning 664 forever (`frameOK=false`).
+  - The `--move` half can still rewrite the cached width, so after the move the executor
+    reads the frame back once (CGWindowList, no fork) and re-issues the AX size write
+    **immediately** if it was overwritten — still a single visual jump.
+- Window switching is now a **single** visual step — the 300ms stall between "move" and
+  "grow" is gone
+  - The old AX path polled `waitForPhase` between the resize and the move (25ms tick,
+    300ms budget) and measured 300–378ms on restores. The AX write primitive already
+    verifies its own result (`resizeViaAX` → `writeSizeWithReadback`), so the poll was
+    pure latency once yabai animations were forced to 0.
+  - Now the two writes are back to back with only a fixed 25ms beat
+    (`WindowSettle.axPhaseSettleMs`) between them to let yabai's frame cache catch up.
+    The enlarge order (`move → resize`) still waits for the window to land on the target
+    display before writing the AX size — but on a 150ms budget
+    (`WindowSettle.axMoveThenResizeWaitBudgetMs`, early-exit), half the old 300ms, which
+    preserves the source-screen clamp protection.
+
 - Settings window visual overhaul — unified design system introduced in
   `Sources/Settings/DesignSystem.swift` and applied across all five tabs
   - Brand indigo accent (light/dark adaptive) injected via root `.tint`, replacing

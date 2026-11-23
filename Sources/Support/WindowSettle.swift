@@ -43,6 +43,30 @@ enum WindowSettle {
     /// 随 convergeFrame 循环统一并入本档，取保守大值）。
     static let axWriteSettleMicros: useconds_t = 25_000
 
+    /// AX 精确通道（AX resize + yabai move）段间的**固定**节拍：25ms。
+    /// 使用点：FrameWriteExecutor 段一 FramePhase1Plan.axPrecise(resizeFirst: true)
+    /// 的段间固定短睡（2026-11-23 还原尺寸精度 + 两段停顿修复）。
+    ///
+    /// ## 为什么是固定短睡而不是轮询 300ms
+    /// - AX 写原语（resizeViaAX → writeSizeWithReadback）**自带**读回验证，返回时尺寸已
+    ///   被 WindowServer 应用，段间再轮询读回是纯重复（原 300ms 预算的来源之一）；
+    /// - 但仍不能零等待：yabai 是独立进程，它进程内缓存着窗口 frame，`--move` 的
+    ///   set_window_frame 会用**缓存宽高**重写一次 size。AX 精确写后要给 yabai 的 AX
+    ///   通知处理留一个节拍，否则 move 会把缓存里的旧尺寸盖回来（收敛轮询最终仍能
+    ///   修正，但视觉上多一次抖动）；
+    /// - 25ms 与人眼可感知阈值（~100ms）差一个数量级，两段合起来是一帧内的跳变。
+    static let axPhaseSettleMs: UInt32 = 25
+
+    /// AX 通道放大序（move→resize）里「move 后等落位」的预算：150ms。
+    /// 使用点：FrameWriteExecutor 段一 Phase1Plan.axPrecise(resizeFirst: false)。
+    ///
+    /// ## 语义
+    /// 放大序必须等窗口先在目标屏落地，再写 AX size——否则写被**源屏可视区 clamp**
+    /// （历史实测副→主 1079 被钳到 1055）。yabai 在动画总闸为 0 时 `set_window_frame`
+    /// 是同步 AX 写，fork 返回时位置多半已生效，首次读回即满足、零睡眠；本预算只兜
+    /// WindowServer 异步落定的尾巴，比历史两段的 300ms 短一半且会早返回。
+    static let axMoveThenResizeWaitBudgetMs: UInt32 = 150
+
     /// Mission Control dismiss 后等动画结束再操作 space。150ms。
     /// 使用点：NativeSpaceBridge.dismissMissionControl。
     static let missionControlDismissSettleMicros: useconds_t = 150_000
@@ -74,6 +98,7 @@ enum WindowSettle {
     /// 第一段必须轮询到效果可观测才能发第二段）；yabai 单命令 fork 实测 82~322ms。
     /// 被源屏可视区 clamp 的 resize 永不生效（等也白等，由段二按偏差补发自愈），
     /// 2026-09-03 四次修复起预算 600→300ms 收窄白等。
-    /// 使用点：moveWindowToFrameViaYabai 段间轮询。
+    /// 使用点：moveWindowToFrameViaYabai 段间轮询（**仅** yabai 分段路径；2026-11-23 起
+    /// AX 精确通道走 axPhaseSettleMs 固定短睡，不再消费本值）。
     static let framePhaseVerifyBudgetMs: UInt32 = 300
 }

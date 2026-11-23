@@ -24,6 +24,9 @@ struct YabaiMoveEnvironment {
     var pollSleep: (UInt32) -> Void
     /// 是否启用原子合发（2026-11-21）。默认 true；Runner 置 false 复现历史两段序列
     /// （写序断言等），置 true 断言「一次调用写完两段、零段间等待」。
+    ///
+    /// 注意（2026-11-23）：合发**不再是 AX 可写窗口的段一**——AX 尺寸通道优先，
+    /// 合发只在其不可用时接管（yabai 的 size 写会被终端字符网格吸附改值）。
     var useCombinedWrite: Bool = true
 }
 
@@ -56,7 +59,8 @@ extension WindowManager {
     ///   frame 包含，中心不落第三方 display。
     /// - 段间等生效（2026-09-03 乱蹦二次修复）：fork 返回 ≠ 窗口服务已应用——仅按
     ///   发令排序不够（实测 move 落地时 resize 尚未生效，yabai 把仍全屏尺寸的窗口
-    ///   clamp 到目标屏可视区顶边），第一段必须轮询到效果可观测再发第二段。
+    ///   clamp 到目标屏可视区顶边），yabai 两段路径的第一段必须轮询到效果可观测再发
+    ///   第二段。（AX 精确通道不受此限，见下。）
     /// - resize 走 AX（2026-09-04 混合写入）：resize 段窗口未跨屏（源屏收窄/已达
     ///   目标屏放大），AX 同屏写有效且无进程 fork（~25ms vs yabai fork 40-90ms）；
     ///   AX 不可写（属性只读/解析失败）时 fallback yabai resize。move 恒走 yabai
@@ -71,11 +75,21 @@ extension WindowManager {
     /// - 停滞重发 + AX 失败降级（2026-09-06 水波/慢修复）：收敛轮询内连续 4 读不变即幂等
     ///   补发缺失段（写丢失不再干等整轮 400ms）；AX resize 一轮不收敛后，后续补发改走
     ///   yabai 通道（不再对吞写的 app 撞死胡同）。
-    /// - **原子合发（2026-11-21「多段动画」根治）**：默认把两段合成**一条** yabai 消息
-    ///   （`--move` 与 `--resize` 按写序连发，见 WindowFrameCommand.applyFrame）。
+    /// - **AX 精确尺寸优先（2026-11-23 还原尺寸修复，B3xx）**：段一按通道分三臂（决策
+    ///   唯一事实源 FramePhase1Plan）：AX 尺寸可写 → AX resize + yabai move 背靠背、段间
+    ///   只有固定 25ms 节拍（**不再** 300ms 轮询——这是「两段停顿」的直接来源）；AX 不可
+    ///   用 → yabai 单条消息合发（2026-11-21 的省 fork 通道保留）；合发被显式关闭 →
+    ///   历史两段 + 轮询（兼容路径）。尺寸补发同理优先 AX。
+    ///   为什么尺寸必须绕开 yabai：`--resize`/`--move` 在动画总闸 0 时都落到
+    ///   `window_manager_set_window_frame()`，它「size→position→size」写三遍且用的是
+    ///   yabai 进程内缓存的宽高；对按字符网格吸附的终端窗口（iTerm2）稳定停在吸附值
+    ///   （目标 640 落成 664，同窗口 e16de7b 正确 / 5e0b288 起错误）。详见
+    ///   Sources/Support/FrameWriteExecutor.swift 头注。
+    /// - **原子合发（2026-11-21「多段动画」根治）**：AX 尺寸不可用时把两段合成**一条**
+    ///   yabai 消息（`--move` 与 `--resize` 按写序连发，见 WindowFrameCommand.applyFrame）。
     ///   装了 `window_animation_duration` 的 yabai 会给每个写原语各跑一段独立 proxy 动画，
-    ///   旧两段写法因此表现为「先移动→停→再长大」；合发后段一只有一次 fork、零段间等待，
-    ///   视觉为一次跳变。补发计划只缺一维时仍单发该维；全缺时同样合发一次。
+    ///   旧两段写法因此表现为「先移动→停→再长大」；合发后段一只有一次 fork、零段间等待。
+    ///   补发计划只缺一维时仍单发该维；全缺时同样合发一次。
     /// - Returns: 最终验证是否收敛到目标 frame。
     func moveWindowToFrameViaYabai(
         windowID: UInt32,
@@ -191,6 +205,8 @@ extension WindowManager {
         // axResizeUnreliable：AX 写一轮读回未确认生效（写被 busy app 吞/延迟）后置位，
         // 后续补发改走 yabai——不对已证明吞写的通道反复重试（2026-09-06）。
         var axResizeUnreliable = axWindow == nil
+        /// AX 尺寸通道此刻是否仍可用（每次实时求值：写一次失败即永久降级）。
+        func axPreciseSizeAvailable() -> Bool { axWindow != nil && !axResizeUnreliable }
         func applyResizeBestChannel() {
             if let ax = axWindow, !axResizeUnreliable {
                 axResizeSendCount += 1
@@ -210,10 +226,12 @@ extension WindowManager {
         // 段间等待 + 段二收敛验证的执行编排委托 FrameWriteExecutor（Batch 3 提取）：
         // 补发计划由 FrameConvergence 唯一事实源产出（shortfalls 判缺哪维 +
         // resendSegments 按写序定补发顺序），使 clamp 在窗口落目标屏后自愈。
-        // 执行器差异保留历史行为：单 .resize 走 AX/yabai 择优通道；全缺（两段都在
-        // 计划里）走纯 yabai 最稳通道。停滞重发（连续 4 读不变）在轮询内幂等补发，
-        // 写丢失不再干等整轮预算。
-        // 合发开关：生产恒开；AX 择优通道只影响「仅尺寸」补发，不影响合发（合发走纯 yabai）。
+        // 通道策略（2026-11-23 尺寸精度修复）：
+        // - AX 精确尺寸可用 → 段一 AX resize + yabai move 背靠背（固定 25ms 节拍），
+        //   尺寸不经 yabai（yabai 的 size 写对字符网格吸附的终端窗口会停在 664）；
+        // - AX 不可用/已证明吞写 → yabai 单条消息合发（省 fork、零段间等待）；
+        // - 合发被显式关闭 → 历史两段 + waitForPhase 轮询（兼容/夹具路径）。
+        // axPreciseSize 传闭包而非快照：AX 写中途失败降级后，补发立刻改走 yabai。
         let combinedWriteEnabled = environment?.useCombinedWrite ?? true
         let executor = FrameWriteExecutor(
             deps: .init(
@@ -221,7 +239,8 @@ extension WindowManager {
                 applyMove: applyMove,
                 applyResizeAdaptive: applyResizeBestChannel,
                 applyResizeRobust: applyResize,
-                applyCombined: combinedWriteEnabled ? applyCombined : nil
+                applyCombined: combinedWriteEnabled ? applyCombined : nil,
+                axPreciseSize: axPreciseSizeAvailable
             ),
             tolerance: frameTolerance,
             op: op,
@@ -245,7 +264,8 @@ extension WindowManager {
             "yabaiSendCount": String(yabaiSendCount),
             "convergeRounds": String(run.convergedRounds),
             "stallResendCount": String(run.resendCount),
-            "combinedPhase1": String(run.combinedPhase1)
+            "combinedPhase1": String(run.combinedPhase1),
+            "phase1Plan": Self.phase1PlanName(run.phase1Plan)
         ])
         switch outcome {
         case .converged(let attempt, _):
@@ -265,6 +285,19 @@ extension WindowManager {
         case .writeFailed:
             // writeFailed 对 yabai 写不可达（防御分支）。
             return false
+        }
+    }
+
+    /// 段一计划 → 日志用短名（归因「这一次为什么走 AX / 合发 / 两段轮询」）。
+    static func phase1PlanName(_ plan: FramePhase1Plan) -> String {
+        switch plan {
+        case .combined:
+            return "combined"
+        case .axPrecise(let resizeFirst, let settleMs, let moveSettleBudgetMs):
+            return "ax_\(resizeFirst ? "resize_then_move" : "move_then_resize")_\(settleMs)ms"
+                + "_landBudget\(moveSettleBudgetMs)ms"
+        case .yabaiPolled(let order):
+            return "yabai_polled_\(order == .resizeThenMove ? "resize_then_move" : "move_then_resize")"
         }
     }
 

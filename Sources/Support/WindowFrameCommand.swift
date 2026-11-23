@@ -21,8 +21,18 @@
 //   - 两段写入在 yabai 侧连续无间隔，视觉上是一次跳变而非两段接续动画。
 // 2026-11-22 起动画本身也不再存在：YabaiAnimationGuard 把 window_animation_duration
 // 断言为 0（见 Sources/Support/YabaiAnimationGuard.swift），合发只保留「省 fork/省轮询」的收益。
-// 命令构造收敛到本类型，两个写通道（yabai / AX）与三处调用点同源，避免再次各写一份。
 //
+// ## 2026-11-23 降级为**回退**通道（重要）
+// 合发把尺寸也交给了 yabai。yabai 在动画总闸为 0 时，`--move`/`--resize` 都落到
+// `window_manager_set_window_frame()`：它「size → position → size」写三遍，且 size 用的是
+// yabai 进程内缓存的宽高。对按字符网格吸附的终端窗口（iTerm2）这组写入会停在吸附值
+// （目标 640 → 664，每列 ~8px）。App 直接写一次 `kAXSizeAttribute` 才是精确的。
+// 因此 `moveWindowToFrameViaYabai` 现在：AX 尺寸可写时走「AX resize + yabai move」
+// （FramePhase1Plan.axPrecise），**只有** AX 不可写/已证明吞写时才用本类型的合发；
+// 会话恢复/终端网格投递仍用合发——它们的目标窗是新建的、AX 引用尚在懒建立期，
+// 且历史实证（SpaceDelivery 头注）AX resize 会被 iTerm2 的窗口自动恢复行为吞掉。
+// 命令构造收敛到本类型，两个写通道（yabai / AX）与三处调用点同源，避免再次各写一份。
+
 // ## 语义契约（Runner FrameCommand 域锁定）
 // - 参数顺序恒为 `--move` 在 `--resize` 前（与历史 move-then-resize 一致；先定位再定尺寸，
 //   中间态窗口落在目标屏，VisualDirty 风险留 R5 真机定夺）；

@@ -267,12 +267,23 @@ extension RunnerHarness {
               WindowSettle.conditionPollIntervalMs == 50
               && WindowSettle.spaceSwitchWaitBudgetMs == 800
               && WindowSettle.framePhaseVerifyBudgetMs == 300)
+        // 2026-11-23 新增两档（AX 精确通道）：段间固定短睡 25ms + 放大序落位预算 150ms。
+        // 语义：前者是「给 yabai frame 缓存一个节拍」（必须远小于人眼可感知 100ms），
+        // 后者是「等窗口在目标屏落地再写 AX size」（不超过历史段间预算 300ms）。
+        check("settle: AX 精确通道两档锁定（段间固定 25ms / 放大序落位预算 150ms）",
+              WindowSettle.axPhaseSettleMs == 25
+              && WindowSettle.axMoveThenResizeWaitBudgetMs == 150)
+        check("settle: AX 段间节拍 ≤ AX 写落定节拍的 10 倍（都不是可感知停顿），放大序预算 ≤ 历史段间预算",
+              WindowSettle.axPhaseSettleMs <= 10 * WindowSettle.frameVerifyPollIntervalMs
+              && WindowSettle.axMoveThenResizeWaitBudgetMs <= WindowSettle.framePhaseVerifyBudgetMs)
         check("settle: 两级关系不变量——重摆下限 ≤ 预算、轮询节拍 ≤ 50ms、全部预算 ≤ 1s（用户可感知路径）",
               WindowSettle.floatRelayoutMinSettleMicros <= WindowSettle.floatRelayoutSettleMicros
               && WindowSettle.frameVerifyPollIntervalMs <= 50
               && WindowSettle.conditionPollIntervalMs <= 50
               && max(WindowSettle.frameVerifyBudgetMs,
-                     max(WindowSettle.spaceSwitchWaitBudgetMs, WindowSettle.framePhaseVerifyBudgetMs)) <= 1_000)
+                     max(WindowSettle.spaceSwitchWaitBudgetMs,
+                         max(WindowSettle.framePhaseVerifyBudgetMs,
+                             WindowSettle.axMoveThenResizeWaitBudgetMs))) <= 1_000)
     }
 
     // MARK: LAN IP 选择（真实实现——B73：en0 硬编码修为 en0 优先/enX 次之/虚拟口排除）

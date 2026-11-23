@@ -256,6 +256,196 @@ extension RunnerHarness {
             check("executor H1: 未提供合发时仍走两段且 combinedPhase1=false",
                   calls == ["move", "resizeAdaptive"] && !run.combinedPhase1)
         }
+
+        // I. 三臂决策（2026-11-23 尺寸精度修复）：AX 精确尺寸优先于合发。
+        do {
+            check("plan I1: AX 可写 × 收窄/还原序 → axPrecise(resizeFirst) 25ms",
+                  FramePhase1Plan.decide(axPreciseSize: true, combinedAvailable: true,
+                                         order: .resizeThenMove, axSettleMs: 25,
+                                         moveSettleBudgetMs: 150)
+                  == .axPrecise(resizeFirst: true, settleMs: 25, moveSettleBudgetMs: 150))
+            check("plan I2: AX 可写 × 放大序 → axPrecise(moveFirst)（写序语义不丢）",
+                  FramePhase1Plan.decide(axPreciseSize: true, combinedAvailable: true,
+                                         order: .moveThenResize, axSettleMs: 25,
+                                         moveSettleBudgetMs: 150)
+                  == .axPrecise(resizeFirst: false, settleMs: 25, moveSettleBudgetMs: 150))
+            check("plan I3: AX 不可写 → 合发（尺寸只能靠 yabai 时才是最省通道）",
+                  FramePhase1Plan.decide(axPreciseSize: false, combinedAvailable: true,
+                                         order: .resizeThenMove, axSettleMs: 25,
+                                         moveSettleBudgetMs: 150) == .combined)
+            check("plan I4: AX 不可写且合发关闭 → 历史两段轮询（两种写序）",
+                  FramePhase1Plan.decide(axPreciseSize: false, combinedAvailable: false,
+                                         order: .resizeThenMove, axSettleMs: 25,
+                                         moveSettleBudgetMs: 150)
+                  == .yabaiPolled(order: .resizeThenMove)
+                  && FramePhase1Plan.decide(axPreciseSize: false, combinedAvailable: false,
+                                            order: .moveThenResize, axSettleMs: 25,
+                                            moveSettleBudgetMs: 150)
+                  == .yabaiPolled(order: .moveThenResize))
+            check("plan I5: 只有历史两段路径轮询段间（合发/AX 均不轮询）",
+                  !FramePhase1Plan.combined.pollsBetweenPhases
+                  && !FramePhase1Plan.axPrecise(resizeFirst: true, settleMs: 25, moveSettleBudgetMs: 150).pollsBetweenPhases
+                  && FramePhase1Plan.yabaiPolled(order: .moveThenResize).pollsBetweenPhases)
+        }
+
+        // J. AX 精确通道段（2026-11-23 用户主诉「还原 640 落成 664」+「两段停顿」）：
+        //    - 段一 = AX resize → 固定 25ms → yabai move（**不**轮询、**不**合发）；
+        //    - 段间等待是固定短睡，不是 300ms 级等到位轮询（pollSleep 零调用为证）；
+        //    - 终端吸附场景：AX 写一次即收敛，全程零 yabai --resize。
+        do {
+            var calls: [String] = []
+            var sleeps: [UInt32] = []
+            var phaseSettles: [UInt32] = []
+            var axAvailable = true
+            var bounds: CGRect = CGRect(x: 0, y: 0, width: 1000, height: 800)
+            let executor = FrameWriteExecutor(
+                deps: .init(
+                    read: { bounds },
+                    applyMove: {
+                        calls.append("move")
+                        bounds.origin = target.origin
+                    },
+                    applyResizeAdaptive: {
+                        calls.append("resizeAdaptive")
+                        // AX 精确写：640 就是 640，终端吸附不参与。
+                        bounds.size = target.size
+                    },
+                    applyResizeRobust: { calls.append("resizeRobust") },
+                    applyCombined: { calls.append("combined") },
+                    axPreciseSize: { axAvailable }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-precise", windowID: 1,
+                pollSleep: { sleeps.append($0) },
+                phaseSettle: { phaseSettles.append($0) }
+            )
+            let run = executor.run(target: target, order: .resizeThenMove)
+            check("executor J1: 段一 [resizeAdaptive, move]——AX 精确尺寸先行，不合发",
+                  calls == ["resizeAdaptive", "move"])
+            check("executor J2: 段间的唯一等待是固定 25ms 短睡（无 300ms 级等到位轮询）",
+                  phaseSettles == [WindowSettle.axPhaseSettleMs]
+                  && !phaseSettles.contains(WindowSettle.framePhaseVerifyBudgetMs))
+            // 收窄/还原序：AX 写原语自带读回，段间不轮询——pollSleep 只可能在段二的
+            // 收敛轮询里出现，且本场景首读即收敛，故一条都没有。
+            check("executor J3: 段间零轮询读回（AX 写原语自带读回）— pollSleep 未被调用",
+                  sleeps.isEmpty)
+            check("executor J4: 计划标记 axPrecise 且 combinedPhase1=false",
+                  run.phase1Plan == .axPrecise(resizeFirst: true, settleMs: WindowSettle.axPhaseSettleMs, moveSettleBudgetMs: WindowSettle.axMoveThenResizeWaitBudgetMs)
+                  && !run.combinedPhase1 && run.outcome.isConverged)
+            check("executor J5: 吸附场景全程零 yabai --resize（不想再撞 664）",
+                  !calls.contains("resizeRobust") && !calls.contains("combined"))
+
+            // J′. 段一后尺寸被 yabai move 的缓存宽高盖回（664）：段二补发必须仍走 AX。
+            //     读回：段一之前/之内的读一律是吸附值（+24），AX 第二次写后才变成目标值。
+            var axWrites = 0
+            var yabaiResizes = 0
+            var stickySource = CGRect(x: 0, y: 0, width: 1000, height: 800)
+            let missedExecutor = FrameWriteExecutor(
+                deps: .init(
+                    read: {
+                        axWrites >= 2 ? stickySource
+                                      : CGRect(x: target.minX, y: target.minY,
+                                               width: target.width + 24, height: target.height)
+                    },
+                    applyMove: {},
+                    applyResizeAdaptive: {
+                        axWrites += 1
+                        // 第一次 AX 写被 yabai 缓存盖回；第二次才真正生效。
+                        if axWrites >= 2 { stickySource = target }
+                    },
+                    applyResizeRobust: { yabaiResizes += 1 },
+                    applyCombined: {},
+                    axPreciseSize: { axAvailable }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-sticky", windowID: 1,
+                pollSleep: noSleep, phaseSettle: { _ in }
+            )
+            let stickyRun = missedExecutor.run(target: target, order: .resizeThenMove)
+            check("executor J′1: 尺寸被吸附改值 → 补发仍走 AX（axWrites ≥ 2）",
+                  axWrites >= 2)
+            check("executor J′2: 补发不落回 yabai --resize（yabaiResizes == 0）",
+                  yabaiResizes == 0)
+            check("executor J′3: 最终收敛（640 而非 664）", stickyRun.outcome.isConverged)
+
+            // J″. AX 中途被证明吞写（axPreciseSize 实时转 false）→ 补发回退仍如实收敛语义。
+            axAvailable = false
+            check("executor J″1: axPreciseSize 实时求值——降级后计划改判合发",
+                  executor.phase1Plan(order: .resizeThenMove) == .combined)
+            axAvailable = true
+
+            // K. 放大序（moveThenResize）：先落位、等 origin 可观测、再 AX 写尺寸——
+            //    否则 AX size 写被源屏可视区 clamp（历史 1079→1055 教训）。等落位的
+            //    预算是 axMoveThenResizeWaitBudgetMs，比历史 300ms 短且会早返回。
+            var kCalls: [String] = []
+            var kSleeps: [UInt32] = []
+            var kBounds = CGRect(x: 0, y: 0, width: 300, height: 200)   // 小窗 → 放大序
+            let growExecutor = FrameWriteExecutor(
+                deps: .init(
+                    read: { kBounds },
+                    applyMove: {
+                        kCalls.append("move")
+                        kBounds.origin = target.origin
+                    },
+                    applyResizeAdaptive: {
+                        kCalls.append("resizeAdaptive")
+                        kBounds.size = target.size
+                    },
+                    applyResizeRobust: { kCalls.append("resizeRobust") },
+                    applyCombined: { kCalls.append("combined") },
+                    axPreciseSize: { axAvailable }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-grow", windowID: 1,
+                pollSleep: { kSleeps.append($0) }, phaseSettle: { _ in }
+            )
+            let growRun = growExecutor.run(target: target, order: .moveThenResize)
+            check("executor K1: 放大序段一 [move, resizeAdaptive]（先落位再写尺寸）",
+                  kCalls == ["move", "resizeAdaptive"])
+            check("executor K2: 落位等待首读即满足 → 零睡眠（move 同步生效时不白等）",
+                  kSleeps.isEmpty)
+            check("executor K3: 计划标记 axPrecise(resizeFirst=false) 且收敛",
+                  growRun.phase1Plan == .axPrecise(
+                      resizeFirst: false,
+                      settleMs: WindowSettle.axPhaseSettleMs,
+                      moveSettleBudgetMs: WindowSettle.axMoveThenResizeWaitBudgetMs)
+                  && growRun.outcome.isConverged)
+
+            // K′. move 迟到生效（读回前两次仍是旧 origin）：落位等待按节拍轮询、早满足
+            //     早返回，且其单轮睡眠不超过预算（不会退化成 300ms 级等待）。
+            var lCalls: [String] = []
+            var lSleeps: [UInt32] = []
+            var lReads = 0
+            var lBounds = CGRect(x: 0, y: 0, width: 300, height: 200)
+            let lateGrowExecutor = FrameWriteExecutor(
+                deps: .init(
+                    read: {
+                        lReads += 1
+                        // 前两次读仍报旧 origin（模拟 WindowServer 异步落定滞后）。
+                        if lReads <= 2 { return CGRect(origin: .zero, size: lBounds.size) }
+                        return lBounds
+                    },
+                    applyMove: {
+                        lCalls.append("move")
+                        lBounds.origin = target.origin
+                    },
+                    applyResizeAdaptive: {
+                        lCalls.append("resizeAdaptive")
+                        lBounds.size = target.size
+                    },
+                    applyResizeRobust: {},
+                    applyCombined: {},
+                    axPreciseSize: { true }
+                ),
+                tolerance: tol, op: "runner", stage: "executor-ax-grow-late", windowID: 1,
+                pollSleep: { lSleeps.append($0) }, phaseSettle: { _ in }
+            )
+            let lateGrowRun = lateGrowExecutor.run(target: target, order: .moveThenResize)
+            check("executor K′1: 落位迟到 → 轮询后仍按 [move, resizeAdaptive] 收尾",
+                  lCalls == ["move", "resizeAdaptive"])
+            check("executor K′2: 每轮睡眠 ≤ axMoveThenResizeWaitBudgetMs 且节拍为 25ms",
+                  !lSleeps.isEmpty && lSleeps.allSatisfy {
+                      $0 == WindowSettle.axPhaseSettleMs && $0 <= WindowSettle.axMoveThenResizeWaitBudgetMs
+                  })
+            check("executor K′3: 迟到场景仍收敛", lateGrowRun.outcome.isConverged)
+        }
     }
 
     // MARK: WindowManager.route（真实实现——toggle 执行路由唯一映射，Batch 5）
