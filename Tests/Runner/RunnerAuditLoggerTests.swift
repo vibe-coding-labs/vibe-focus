@@ -73,6 +73,52 @@ extension RunnerHarness {
                 "SELECT COUNT(*), NULL, NULL FROM window_audit_log WHERE event_type='backlog'")
             check("audit: 积压看门触发路径事件仍全落库", n5 == AuditLogger.backlogWarnThreshold)
         }
+
+        // ===== B323 竞态回归锁：flush 快照与清空窗口期并发 record 不得丢事件 =====
+        // 修复前形态：快照 stateLock.withLock { pendingEvents } 之后才在锁外 pendingEvents = []——
+        // 窗口作业线程（B180 record 跨线程入口）在缝隙里 append 的事件会被清空吞掉，
+        // 且属性写入本身脱离锁保护（B194「审计通道静默丢事件」同族根因类）。
+        // 轰炸形态复刻：4 线程 record × 1 线程循环 flush，落库行数必须 == 发出总数。
+        // 红演示见台账 B323（修复前实跑 rows < total 实锤）；修复后快照+清空同一临界区，
+        // 本断言结构性不可能假红（除非锁纪律被回退）。
+        do {
+            var mem: OpaquePointer?
+            let opened = sqlite3_open(":memory:", &mem) == SQLITE_OK
+            guard opened, let memdb = mem else {
+                sqlite3_close(mem)
+                check("audit: 竞态夹具 :memory: 库可开（前置）", false)
+                return
+            }
+            defer { sqlite3_close(memdb) }
+            let logger = AuditLogger(db: memdb)
+
+            let writerThreads = 4
+            let perThread = 2000
+            let total = writerThreads * perThread
+            let writers = DispatchGroup()
+            for t in 0..<writerThreads {
+                writers.enter()
+                DispatchQueue.global().async {
+                    defer { writers.leave() }
+                    for j in 0..<perThread {
+                        logger.record(eventType: "race", windowID: UInt32(j), pid: Int32(t))
+                    }
+                }
+            }
+            let flusher = DispatchGroup()
+            flusher.enter()
+            DispatchQueue.global().async { [weak logger] in
+                defer { flusher.leave() }
+                guard let logger else { return }
+                while writers.wait(timeout: .now()) != .success {
+                    logger.flushPendingEvents()
+                }
+                logger.flushPendingEvents()
+            }
+            _ = flusher.wait(timeout: .now() + 30)
+            let (rows, _, _) = auditQuery(memdb, "SELECT COUNT(*), NULL, NULL FROM window_audit_log")
+            check("audit: 并发轰炸 \(total) 事件零丢失（快照+清空须同一临界区）", rows == total)
+        }
     }
 }
 

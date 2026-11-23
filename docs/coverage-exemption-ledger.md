@@ -3,8 +3,8 @@
 > **口径裁决**（用户 2026-09-20 选定）：发布门槛 = **① CLI 可提缝面单测 100%** + **② 真机域每块 E2E 通道全绿** + **③ 物理不可达行在本台账逐项归因**。
 > 字面意义的 llvm-cov 100.00% 不作验收要求（一小部分代码在单测通道内物理不可执行，见 C5）。
 >
-> 测量工具：`bash Scripts/coverage_test_runner.sh`（llvm-cov，插桩构建+全量 Runner）。
-> Sources 纯净口径自算：`llvm-cov report … | grep '^Sources/'` 后按 Lines 列加权（全口径报告含 Tests 行数会虚高）。
+> 测量工具：`bash scripts/coverage_test_runner.sh`（llvm-cov，插桩构建+全量 Runner；目录已改小写 scripts/，旧文 Scripts/ 路径自 B324 勘正）。
+> Sources 纯净口径自算：`llvm-cov report <bin> -instr-profile=<profdata> Sources` 输出的 Filename 列相对 Sources/（形如 `Settings/...`，无 `Sources/` 前缀），按 Lines 列加权（全口径报告含 Tests 行数会虚高）。
 > 刷新命令：跑完覆盖率脚本后对照本台账逐行核对；**每条豁免必须有替代验证通道，否则不得豁免**。
 > ⚠️**门禁环境注记**（2026-09-20 B299 后补）：**显示器休眠会使 yabai v7.1.18 的全局聚合查询
 > （`-m query --spaces` / `--displays`）确定性截断**（恒返 2 字节 `[` 且 exit 0；按 display 作用域

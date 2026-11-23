@@ -104,8 +104,15 @@ final class AuditLogger: @unchecked Sendable {
     /// 批量写入待处理事件到 SQLite
     /// internal 以便测试直接调用（@testable import 可见）
     func flushPendingEvents() {
-        let events = stateLock.withLock { pendingEvents }
+        // B323：快照与清空必须在同一临界区。旧形态「withLock 快照后锁外 pendingEvents = []」，
+        // 并发 record()（B180 窗口作业线程）恰落缝隙时：轻则事件被清空吞掉（审计静默丢事件，
+        // B194 同族）；重则锁外 release 与锁内 COW release 对同一缓冲叠加 → 提前 dealloc →
+        // malloc 堆损坏 abort（2026-11-24 轰炸红演示实锤：crash 堆栈 _swift_release_dealloc
+        // ← flushPendingEvents，SIGABRT）。
+        stateLock.lock()
+        let events = pendingEvents
         pendingEvents = []
+        stateLock.unlock()
         guard !events.isEmpty else { return }
         // P-INST-66: AuditLogger 批量 SQLite 写耗时（异步防抖后执行，N 条 insertEventSync；record() 本身只内存 append 不阻塞，此埋点归因批量写对主线程的占用）。
         let flushStart = Date()
