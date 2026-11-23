@@ -82,13 +82,15 @@ toggle 搬运时由 `captureSpaceContext`（移动前！）捕获、`ToggleEngin
    > （exit 0 但窗口不动，Tests/AXMoveValidation.swift T3 实测）。
    >
    > **尺寸通道（2026-11-23，必读）**：段一按通道分三臂（`FramePhase1Plan`）——
-   > **AX 尺寸可写 → AX resize + yabai move 背靠背**（段间只固定 25ms 节拍，
-   > 不再 300ms 轮询）；AX 不可用/已证明吞写 → yabai 单条消息合发；合发显式关闭 →
-   > 历史两段。原因：动画总闸为 0 时 yabai 的 `--move`/`--resize` 都落到
+   > **尺寸与位置都可 AX → 全 AX 臂**（`.axFull`：两次 AX 写背靠背，零 yabai fork，
+   > 视觉一次跳变）；只有尺寸可 AX → AX resize + yabai move（精确但两段）；
+   > AX 不可用/已证明吞写 → yabai 单条消息合发；合发显式关闭 → 历史两段。
+   > 原因：动画总闸为 0 时 yabai 的 `--move`/`--resize` 都落到
    > `window_manager_set_window_frame()`，「size→position→size」写三遍且 size 取
-   > yabai **进程内缓存**的宽高——按字符网格吸附的终端窗口（iTerm2）会稳定停在吸附值
-   > （目标 640 落 664，frameOK 恒 false）。精确尺寸只能由 App 直写 `kAXSizeAttribute`。
-   > 放大序（move→resize）保留落地等待以避开源屏可视区 clamp，但预算降到 150ms 早退。
+   > yabai **进程内缓存**的宽高——所以只要位置经 yabai，尺寸必被覆盖一次：
+   > 既导致按字符网格吸附的终端窗口（iTerm2）稳定停在吸附值（目标 640 落 664），
+   > 也导致「先缩小→再跳屏」的两步观感。精确尺寸与单步都要求位置也离开 yabai。
+   > 放大序（move→resize）保留落地判定以避开源屏可视区 clamp，首读即满足零等待。
 7.5 **落位 space 复核（2026-11-03）**：frame 收敛只证明坐标对——「工作区 2 的窗口
    还原到工作区 3 的对应位置」正是**同坐标不同 space**，旧日志会同时出现
    `frameOK=true` 与 `spaceExact=true`，用户看到的是错工作区。move 后按 windowID

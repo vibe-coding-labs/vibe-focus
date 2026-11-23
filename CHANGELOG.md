@@ -62,6 +62,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Window switching between displays is now a **single** visual step in **both directions**
+  - Moving a window to the main screen (secondary → main, enlarge) and restoring it
+    (main → secondary, shrink) used to be two writes even after the precision fix: the
+    yabai `--move` half rewrites the size from its **in-process frame cache**
+    (`window_manager.c:342` → `set_window_frame` writes size → position → size), so an
+    exact size had to be re-applied afterwards — i.e. "shrink, then jump" was still two
+    visible states.
+  - New `.axFull` phase-1 plan (`Sources/Support/FrameWriteExecutor.swift`): when the
+    window's `AXPosition` is settable too, **both** position and size are written through
+    AX directly — two AX calls back to back (~30ms each), no yabai fork, no intermediate
+    visible state.
+  - Not gambling on hardware: every AX position write is read back; if the origin did not
+    land (WindowServer clamp / swallowed write) the executor falls back to the yabai move
+    **immediately**, marks the position channel unreliable (never retried), and re-applies
+    the AX size the yabai move just overwrote.
+  - Write order is unchanged (`resize→move` when shrinking/restoring, `move→resize` when
+    enlarging) because WindowServer's per-write visible-area constraint still applies; the
+    enlarge order keeps a landing check (150ms budget, first-read fast path) so the AX size
+    write cannot be clamped by the source display (1079→1055 regression).
+  - Why a bare AX cross-display position write is safe here: the historical "AX position
+    gets clamped" lesson was about **tiled** windows fighting yabai's re-tile. Every call
+    site (restore / move_to_main / stuck) floats the window first; the AX-direct channel's
+    on-device probe (2026-09-29) measured 39ms landing for a floating window across
+    displays with no clamp.
+
 - Restoring a window to its original frame now lands on the **exact** size — an iTerm2
   window asked to restore to `640×525` no longer comes back `664×525` (24px wide)
   - Root cause: the atomic combined write (above) handed the *size* to yabai. With
