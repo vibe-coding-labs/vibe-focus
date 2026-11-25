@@ -60,25 +60,45 @@ final class WindowManager: @unchecked Sendable {
     /// 静默失效数小时才被用户感知）。AXIsProcessTrusted 结果与上次不同 → WARN 日志 +
     /// UserDefaults 落账供 --diagnose 报告；首次调用仅记基线不告警。
     /// B180：AX 授权标记被后台权限检查线程读写，锁盒保护。
-    private nonisolated static let axHealBox = AXHealStateBox()
-
-    /// 运行期自愈标记锁盒（跨线程：主线程 + 窗口作业线程都会触发权限检查）。
+    /// B328：类升 internal 供 Runner 直测（独立实例轰炸，不碰生产单例）；
+    /// 锁从「声明未用」漂移落成真守护——调用方（hasAccessibilityPermission）的
+    /// check-then-set 序列在翻转瞬间可被多线程并发踩（toggle 前置跑窗口作业线程 +
+    /// 权限检查线程 + 主线程），无原子性时多次占位 = 多次派生看护多次自拉起。
     final class AXHealStateBox: @unchecked Sendable {
         private let lock = NSLock()
-        var lastKnownAXTrusted: Bool?
-        var runtimeHealAttempted = false
+        private var lastKnownAXTrusted: Bool?
+        private var runtimeHealAttempted = false
+
+        /// 锁内原子：记录本轮授权值并与上次比对；首次记录只记基线不判翻转
+        /// （与 hasAccessibilityPermission 原形态 `if let last = lastKnownAXTrusted, last != trusted` 语义一致）。
+        func detectFlip(trusted: Bool) -> (flipped: Bool, previous: Bool?) {
+            lock.lock()
+            defer { lock.unlock() }
+            let previous = lastKnownAXTrusted
+            lastKnownAXTrusted = trusted
+            guard let previous else { return (false, nil) }
+            return (previous != trusted, previous)
+        }
+
+        /// 锁内原子占位：本进程首次自愈占位返回 true，其后恒 false
+        /// （「每进程一次」语义的 check+set 收进同一临界区，竞态下恰一次 scheduleRuntimeSelfHeal）。
+        @discardableResult
+        func beginHealIfFirst() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            if runtimeHealAttempted { return false }
+            runtimeHealAttempted = true
+            return true
+        }
+
+        func isHealAttempted() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return runtimeHealAttempted
+        }
     }
 
-    private static var lastKnownAXTrusted: Bool? {
-        get { axHealBox.lastKnownAXTrusted }
-        set { axHealBox.lastKnownAXTrusted = newValue }
-    }
-
-    /// 运行期自愈「每进程一次」标记（见 AXSelfHeal.decideRuntimeFlip）。
-    private static var runtimeHealAttempted: Bool {
-        get { axHealBox.runtimeHealAttempted }
-        set { axHealBox.runtimeHealAttempted = newValue }
-    }
+    private nonisolated static let axHealBox = AXHealStateBox()
 
     /// 运行期自愈执行体：5s 复核仍假 → detached 看护自拉起；无法可靠自拉起
     /// （非 bundle / 看护派生失败）则保持运行走人工提示，绝不无人拉起。
@@ -118,7 +138,10 @@ final class WindowManager: @unchecked Sendable {
         let hapStart = Date()
         #endif
         let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": false] as CFDictionary)
-        if let last = WindowManager.lastKnownAXTrusted, last != trusted {
+        // B328：翻转检测与自愈占位经 AXHealStateBox 锁内原子序列（原「读计算属性→比对→
+        // 写计算属性」跨多个无锁访问点，翻转瞬间多线程并发可多占位=多次自拉起）
+        let flipResult = WindowManager.axHealBox.detectFlip(trusted: trusted)
+        if flipResult.flipped, let last = flipResult.previous {
             let flip = "\(last)→\(trusted)"
             let d = UserDefaults.standard
             d.set(d.integer(forKey: "axTrustRuntimeFlipCount") + 1, forKey: "axTrustRuntimeFlipCount")
@@ -129,18 +152,19 @@ final class WindowManager: @unchecked Sendable {
             // → 5s 复核防抖后走 detached 看护自拉起；其余翻转只记账。
             switch AXSelfHeal.decideRuntimeFlip(
                 nowTrusted: trusted,
-                healAlreadyAttempted: WindowManager.runtimeHealAttempted
+                healAlreadyAttempted: WindowManager.axHealBox.isHealAttempted()
             ) {
             case .healOnConfirm:
-                WindowManager.runtimeHealAttempted = true
-                scheduleRuntimeSelfHeal()
+                // 原子占位：竞态下恰一次 schedule（beginHealIfFirst false = 已被抢先，跳过）
+                if WindowManager.axHealBox.beginHealIfFirst() {
+                    scheduleRuntimeSelfHeal()
+                }
             case .ignoreAlreadyHealed:
                 log("[WindowManager] runtime flip false：本进程已自愈过，不自愈（防循环），走人工提示", level: .warn)
             case .ignoreFalseToTrue:
                 break
             }
         }
-        WindowManager.lastKnownAXTrusted = trusted
         #if PERF_INSTRUMENT
         let hapMs = elapsedMilliseconds(since: hapStart)
         if hapMs >= 50 {

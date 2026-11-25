@@ -42,6 +42,41 @@ extension RunnerHarness {
         check("runtime: false→true 且已自愈过 → ignoreFalseToTrue",
               AXSelfHeal.decideRuntimeFlip(nowTrusted: true, healAlreadyAttempted: true) == .ignoreFalseToTrue)
 
+        // ===== B328：AXHealStateBox「每进程一次」自愈占位原子性（并发轰炸回归锁） =====
+        // 背景：hasAccessibilityPermission 被 toggle 前置（窗口作业线程）+ 权限检查线程 +
+        // 主线程并发调用；AX 授权翻转瞬间多线程同时走「读 runtimeHealAttempted → 置 true →
+        // scheduleRuntimeSelfHeal」check-then-set 序列——无原子性时竞态多占位 = 多次派生
+        // 看护 + 多次自拉起（B180 声明了锁盒但锁从未被使用，漂移实锤）。
+        do {
+            let box = WindowManager.AXHealStateBox()
+            final class OccupiedCount: @unchecked Sendable {
+                private let lock = NSLock()
+                private var value = 0
+                func bump() { lock.lock(); value += 1; lock.unlock() }
+                var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+            }
+            let occupied = OccupiedCount()
+            DispatchQueue.concurrentPerform(iterations: 8 * 200) { _ in
+                if box.beginHealIfFirst() {
+                    occupied.bump()
+                }
+            }
+            check("healBox: beginHealIfFirst 并发 1600 次恰一次占位（每进程一次语义）", occupied.count == 1)
+            check("healBox: 占位后再查已标记", box.isHealAttempted())
+        }
+        do {
+            let box = WindowManager.AXHealStateBox()
+            let first = box.detectFlip(trusted: true)
+            check("healBox: 首次记录不判翻转（仅记基线）",
+                  first.flipped == false && first.previous == nil)
+            let flip = box.detectFlip(trusted: false)
+            check("healBox: true→false 判翻转且带回旧值",
+                  flip.flipped == true && flip.previous == true)
+            let restore = box.detectFlip(trusted: true)
+            check("healBox: false→true 判翻转（授权恢复也走记账）",
+                  restore.flipped == true && restore.previous == false)
+        }
+
         // ===== ExitJournal.lastExitReason(journalContents:)：上一个进程的退出原因 =====
         let lines = [
             ExitJournal.exitLine(pid: 11, at: "2026-09-10T00:00:00Z", reason: "sigterm-graceful", signal: nil, name: nil),
