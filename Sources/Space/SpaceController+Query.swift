@@ -56,7 +56,7 @@ extension SpaceController {
         // 的 queryWindow(同 windowID) 缓存命中省 fork（移动前窗口 space/display/floating 一致）。
         // 缓存 windowID 由 has-focus 窗口的 id 决定，与 toggle 入口 resolvedWindowID 一致。
         if let info, let winID = info.id, let windowID = UInt32(exactly: winID) {
-            windowQueryCache[windowID] = (result: info, cachedAt: Date())
+            withStateLock { windowQueryCache[windowID] = (result: info, cachedAt: Date()) }
         }
         log("[SpaceController] queryFocusedWindow", fields: [
             "durationMs": String(elapsedMilliseconds(since: forkStart)),
@@ -71,7 +71,9 @@ extension SpaceController {
         let qsStart = Date()
         // 1. 检查缓存（ignoreCache：等到位轮询场景消费——space 切回命令刚发出时缓存
         //    还是切前状态，读缓存会让轮询恒假白转到超时）
-        if !ignoreCache, let cached = spacesQueryCache, !isCacheExpired(cached.cachedAt) {
+        // B327：缓存读经 stateLock 快照（B314 起 fork 段下放 WindowWorkExecutor，
+        // 与主线程读并发）；fork/decode 全部留锁外。
+        if !ignoreCache, let cached = withStateLock({ spacesQueryCache }), !isCacheExpired(cached.cachedAt) {
             log("[SpaceController] querySpaces cache hit", level: .debug, fields: [
                 "caller": caller,
                 "durationMs": String(elapsedMilliseconds(since: qsStart)),
@@ -109,7 +111,7 @@ extension SpaceController {
         }
         // 仅缓存成功解码的结果（decode 失败同样不缓存，见上）
         if let spaces {
-            spacesQueryCache = (result: spaces, cachedAt: Date())
+            withStateLock { spacesQueryCache = (result: spaces, cachedAt: Date()) }
         }
         log("[SpaceController] querySpaces fork", fields: [
             "caller": caller,
@@ -125,8 +127,8 @@ extension SpaceController {
     nonisolated func queryWindow(windowID: UInt32, ignoreCache: Bool = false) -> YabaiWindowInfo? {
         // P-INST-6: queryWindow fork 耗时 + cacheHit（toggle 入口 queryFocusedWindow 预填缓存，命中应 ~0ms）。
         let qwStart = Date()
-        // 1. 检查缓存
-        if !ignoreCache, let cached = windowQueryCache[windowID], !isCacheExpired(cached.cachedAt) {
+        // 1. 检查缓存（B327：读经 stateLock 快照；grid 链下放后与主线程 toggle 入口并发）
+        if !ignoreCache, let cached = withStateLock({ windowQueryCache[windowID] }), !isCacheExpired(cached.cachedAt) {
             log("[SpaceController] queryWindow cache hit", fields: [
                 "windowID": String(windowID),
                 "durationMs": String(elapsedMilliseconds(since: qwStart)),
@@ -140,7 +142,7 @@ extension SpaceController {
         if let directResult, directResult.exitCode == 0 {
             let info = decodeSingleOrFirst(YabaiWindowInfo.self, from: directResult.stdout)
             if info != nil {
-                windowQueryCache[windowID] = (result: info, cachedAt: Date())
+                withStateLock { windowQueryCache[windowID] = (result: info, cachedAt: Date()) }
                 log("[SpaceController] queryWindow direct", fields: [
                     "windowID": String(windowID),
                     "durationMs": String(elapsedMilliseconds(since: qwStart)),
@@ -185,7 +187,7 @@ extension SpaceController {
                 "cacheHit": "false"
             ]
         )
-        windowQueryCache[windowID] = (result: match, cachedAt: Date())
+        withStateLock { windowQueryCache[windowID] = (result: match, cachedAt: Date()) }
         return match
     }
 
@@ -306,22 +308,30 @@ extension SpaceController {
     /// NSScreen → yabai display index（几何精确，1s 缓存；yabai 不可用/表缺该屏回退猜序版）。
     /// 热路径（restore 预切回 / move sourceVisibleFrame / toggle 路由 / 网格投递）一律经此，
     /// 禁止直接消费 CoordinateKit.yabaiDisplayIndex(for:) 猜序版。
+    /// B327：表读写收 stateLock；rebuild（真 fork + NSScreen 读）留锁外——先锁内快照判过期，
+    /// 锁外重建后锁内写回。并发双 rebuild 只是重复一次 fork，写回后取值与单线程语义一致。
     func exactYabaiDisplayIndex(for screen: NSScreen) -> Int? {
-        if displayMatchTable == nil || Date().timeIntervalSince(displayMatchTable!.mappedAt) > 1.0 {
-            displayMatchTable = rebuildDisplayMatchTable()
+        var table = withStateLock { displayMatchTable }
+        if table == nil || Date().timeIntervalSince(table!.mappedAt) > 1.0 {
+            table = rebuildDisplayMatchTable()
+            withStateLock { displayMatchTable = table }
         }
-        if let table = displayMatchTable, let yabai = table.yabaiIndexByCGDisplayID[screen.cgDirectDisplayID ?? 0] {
+        if let table, let yabai = table.yabaiIndexByCGDisplayID[screen.cgDirectDisplayID ?? 0] {
             return yabai
         }
         return CoordinateKit.yabaiDisplayIndex(for: screen)
     }
 
     /// yabai display index → NSScreen（几何精确，1s 缓存；yabai 不可用回退猜序版）。
+    /// B327：同 exactYabaiDisplayIndex 的锁纪律（本方法 nonisolated，restore 链/grid 链
+    /// 从 WindowWorkExecutor 队列调用，与主线程 overlay/toggle 路径并发）。
     nonisolated func exactNSScreen(forYabaiDisplayIndex index: Int) -> NSScreen? {
-        if displayMatchTable == nil || Date().timeIntervalSince(displayMatchTable!.mappedAt) > 1.0 {
-            displayMatchTable = rebuildDisplayMatchTable()
+        var table = withStateLock { displayMatchTable }
+        if table == nil || Date().timeIntervalSince(table!.mappedAt) > 1.0 {
+            table = rebuildDisplayMatchTable()
+            withStateLock { displayMatchTable = table }
         }
-        if let table = displayMatchTable, let cgID = table.cgDisplayIDByYabaiIndex[index],
+        if let table, let cgID = table.cgDisplayIDByYabaiIndex[index],
            let screen = CoordinateKit.nsScreen(forCGDisplayID: cgID) {
             return screen
         }
@@ -338,6 +348,6 @@ extension SpaceController {
 
     /// 拓扑变化（didChangeScreenParameters）即时失效几何匹配表。
     func invalidateDisplayMatchTable() {
-        displayMatchTable = nil
+        withStateLock { displayMatchTable = nil }
     }
 }

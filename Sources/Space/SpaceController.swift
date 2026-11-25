@@ -29,15 +29,47 @@ final class SpaceController: ObservableObject, @unchecked Sendable {
     /// 查询缓存 TTL — 短到不会错过 yabai 状态变化，长到覆盖一次 toggle 操作
     private static let queryCacheTTL: TimeInterval = 2.0
 
+    /// B327：缓存守护锁。本类是 @unchecked Sendable 无锁普通类，缓存历史上靠「主线程
+    /// 独占」约定保证安全；B313/B314 把 grid 链 queryWindow/querySpaces/exact* 下放
+    /// WindowWorkExecutor 专用队列后，主线程 toggle/restore 热路径与 executor 线程并发
+    /// 读写同一缓存（spacesQueryCache / windowQueryCache / displayMatchTable）——无锁
+    /// 字典并发写实锤崩溃（红演示 crash：Dictionary._Variant.setValue →
+    /// doesNotRecognizeSelector → SIGABRT，B323 同族）。
+    /// 收锁面 = **纯容器**（上述三缓存 + clear* 清扫）。@Published 值面
+    /// （lastErrorMessage/canControlSpaces/isEnabled/availability）**显式不收锁**：
+    /// @Published setter 同步 send objectWillChange，后台线程持锁写会在锁内触发 SwiftUI
+    /// 图失效 → Update.syncMain 同步等主线程——若主线程被同步阻塞即成三环死锁
+    /// （2026-11-26 Runner 轰炸实测卡死：sample 栈 withStateLock → PublishedSubject.send
+    /// → AttributeInvalidatingSubscriber → _MovableLockSyncMain → psynch_cvwait）。
+    /// 值面为原子写，竞态最坏=陈旧值非崩溃，显式留白。
+    /// 临界区纪律：**锁内禁止 fork/IO/回调/@Published 写**——yabai fork 留锁外
+    /// （先锁内快照 → 锁外 fork → 锁内写回），临界区保持 µs 级，stateLock 为叶子锁。
+    private let stateLock = NSLock()
+
+    /// stateLock 临界区跑短纯内存段；锁内禁调任何会 fork/IO 的方法（见 stateLock 注记）
+    func withStateLock<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
+    }
+
     /// 缓存 queryWindow 结果 — key 是 windowID
+    /// （internal 仅为 Runner 测试注入保留；生产读写一律经 withStateLock）
     var windowQueryCache: [UInt32: (result: YabaiWindowInfo?, cachedAt: Date)] = [:]
-    /// 缓存 querySpaces 结果
+    /// 缓存 querySpaces 结果（同上：生产读写经 withStateLock）
     var spacesQueryCache: (result: [YabaiSpaceInfo]?, cachedAt: Date)?
+
+    /// B327 测试注入缝：非 nil 时 runProcess 直接返回该闭包结果（零 fork）。
+    /// 生产恒为 nil（走真实 ShellRunner fork）；仅 Runner 并发回归锁注入即时假结果，
+    /// 使轰炸只打缓存/状态临界区而非进程 fork。
+    var processRunnerOverride: ((String, [String]) -> ShellResult?)?
 
     /// 清除所有查询缓存 — 每次 toggle 操作结束后调用
     func clearQueryCache() {
-        windowQueryCache.removeAll()
-        spacesQueryCache = nil
+        withStateLock {
+            windowQueryCache.removeAll()
+            spacesQueryCache = nil
+        }
     }
 
     /// 仅清除 queryWindow 缓存，保留 spacesQueryCache。
@@ -49,7 +81,9 @@ final class SpaceController: ObservableObject, @unchecked Sendable {
     /// SpaceController 调用方（captureSpaceContext/displayLocalSpaceIndex/nativeSpaceID/visibleSpaceIndex
     /// 只用 index/display/is-visible/id，focus=false 下均不变）。restore 路径仍用 clearQueryCache。
     func clearWindowQueryCache() {
-        windowQueryCache.removeAll()
+        withStateLock {
+            windowQueryCache.removeAll()
+        }
     }
 
     /// 检查缓存是否过期
@@ -98,6 +132,12 @@ final class SpaceController: ObservableObject, @unchecked Sendable {
     deinit {}
 
     func updateEnabledState() {
+        // B327 注记：isEnabled 是 @Published——写不收 stateLock。@Published setter 同步
+        // send objectWillChange，后台线程持锁写会在锁内触发 SwiftUI 图失效 → Update.syncMain
+        // 同步等主线程；若主线程恰被同步阻塞（测试 concurrentPerform / 生产主线程持同类
+        // 等待）即成三环死锁（2026-11-26 Runner 实测卡死，sample 栈：withStateLock →
+        // PublishedSubject.send → AttributeInvalidatingSubscriber → _MovableLockSyncMain
+        // → psynch_cvwait）。值面竞态最坏=陈旧值（原子写不崩），显式留白。
         let newValue = SpacePreferences.integrationEnabled && availability == .available
         if isEnabled != newValue {
             isEnabled = newValue
@@ -127,6 +167,9 @@ final class SpaceController: ObservableObject, @unchecked Sendable {
                 "durationMs": String(elapsedMilliseconds(since: raStart))
             ])
         }
+        // B327 注记：lastCheckAt/lastErrorMessage 不收 stateLock——lastErrorMessage 是
+        // @Published（锁内写=syncMain 死锁面，见 updateEnabledState 注记）；lastCheckAt
+        // 节流误判最坏=多派发一次后台探测，非崩溃面。节流判定保持原形态。
         if !force, let lastCheckAt, Date().timeIntervalSince(lastCheckAt) < checkInterval {
             return
         }

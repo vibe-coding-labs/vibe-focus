@@ -111,6 +111,8 @@ extension SpaceController {
         if let direct = directResult, direct.exitCode == 0 {
             ssrResult = "loaded"
             scriptingAdditionRecoverySucceeded = true
+            // B327 注记：canControlSpaces/lastErrorMessage 是 @Published，写不收 stateLock
+            // （锁内写=syncMain 死锁面，见 SpaceController.updateEnabledState 注记）
             canControlSpaces = true
             lastErrorMessage = nil
             recordRecoveryState(.succeeded, op: "silent", output: "direct --load-sa")

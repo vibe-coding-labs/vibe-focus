@@ -404,6 +404,7 @@ final class FakeAuditor: RestoreAuditing {
         runDomain("runSessionLivePanelRenderTests") { runSessionLivePanelRenderTests() }
         runDomain("runTerminalGridSettingsLogicTests") { runTerminalGridSettingsLogicTests() }
         runDomain("runSpaceQueryCacheTests") { runSpaceQueryCacheTests() }
+        runDomain("runSpaceControllerCacheRaceTests") { runSpaceControllerCacheRaceTests() }
         runDomain("runSettingsCommonSectionRenderTests") { runSettingsCommonSectionRenderTests() }
         runDomain("runWorkspaceAndSessionRenderTests") { runWorkspaceAndSessionRenderTests() }
         runDomain("runAllSectionsRenderTests") { runAllSectionsRenderTests() }

@@ -183,6 +183,9 @@ extension SpaceController {
 
     func markOperationError(from result: ShellResult?, fallback: String, operationID: String? = nil) {
         let op = operationID ?? "none"
+        // B327 注记：lastErrorMessage/canControlSpaces 是 @Published——写不收 stateLock
+        // （锁内写=syncMain 死锁面，见 SpaceController.updateEnabledState 注记）。
+        // 值面竞态最坏=陈旧错误文案/熔断标志延迟一拍，非崩溃面，显式留白。
         if let result {
             if isScriptingAdditionError(result) {
                 lastErrorMessage = "yabai scripting-addition 不可用，跨工作区恢复功能受限。请在设置中加载 scripting-addition。"
@@ -220,6 +223,11 @@ extension SpaceController {
     // MARK: - Process & Decoding Utilities
 
     nonisolated func runProcess(executable: String, arguments: [String]) -> ShellResult? {
+        // B327 测试注入缝：Runner 并发回归锁经 processRunnerOverride 提供即时假结果，
+        // 生产恒 nil 走真实 fork（语义零变更）。
+        if let override = processRunnerOverride {
+            return override(executable, arguments)
+        }
         // P-INST-194: SpaceController 进程执行入口耗时（委托 ShellRunner.run fork P-INST-49；yabai 查询/SA 探测等 SpaceController 路径调用，≥50ms warn 归因调用点）。
         let rpStart = Date()
         let result = ShellRunner.run(executable: executable, arguments: arguments)
